@@ -1,0 +1,18 @@
+{
+  "projects": {
+    "default": "burgonomics-7faa8"
+  },
+  "targets": {
+    "burgonomics-7faa8": {
+      "hosting": {
+        "burgonomics-app": [
+          "burgonomics-7faa8"
+        ],
+        "burgonomics-partner": [
+          "burgonomics-partner"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

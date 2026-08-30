@@ -1,0 +1,33 @@
+# Agent tooling / runtime state (never commit)
+.agents/
+.opencode/
+.swarm/
+.swarm-worktrees/
+.firebase/
+
+# Secrets & credentials (never commit)
+CLIENT_HANDOVER_AND_KEYS.md
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.key
+*.cer
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+serviceAccountKey.json
+
+# Build / generated artifacts
+*.out
+*.exe
+
+# Large binary media (not needed for source attribution)
+ULTRA FINAL MENU PICS/
+*.pptx
+
+# Standalone app repos (own git history)
+burgonomics-foundation-core/
+burgonomics-partner/

@@ -1,0 +1,369 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // HELPER FUNCTIONS (RBAC & Identity)
+    // =========================================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getAdminDoc() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token != null && (request.auth.token.role in ['brand_owner', 'developer', 'support', 'regional_manager', 'branch_owner', 'branch_staff']))
+      );
+    }
+
+    function isBrandOwner() {
+      return isAdmin() && (
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && getAdminDoc().data.role in ['brand_owner', 'developer']) ||
+        (request.auth.token != null && (request.auth.token.role in ['brand_owner', 'developer']))
+      );
+    }
+
+    function isBranchOwner() {
+      return isAdmin() && (
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && getAdminDoc().data.role in ['branch_owner', 'branch_staff']) ||
+        (request.auth.token != null && (request.auth.token.role in ['branch_owner', 'branch_staff']))
+      );
+    }
+
+    function ownsBranch(branchId) {
+      return isBrandOwner() || (
+        isBranchOwner() && (
+          (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && getAdminDoc().data.branchId == branchId) ||
+          (request.auth.token != null && branchId in request.auth.token.branchIds)
+        )
+      );
+    }
+
+    // =========================================================================
+    // CRM: CUSTOMERS & GLOBAL LOYALTY (Brand-wide)
+    // =========================================================================
+
+    match /customers/{customerId} {
+      allow read: if isUser(customerId) || isAdmin();
+      allow create: if isUser(customerId)
+        && (!('loyaltyPoints' in request.resource.data) || request.resource.data.loyaltyPoints == 0);
+      allow update: if (isUser(customerId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['loyaltyPoints', 'role', 'isStaff']))
+        || isBrandOwner();
+      allow delete: if false;
+
+      match /addresses/{addressId} {
+        allow read: if isUser(customerId) || isAdmin();
+        allow write: if isUser(customerId);
+      }
+    }
+
+    match /users/{userId} {
+      allow read: if isUser(userId) || isAdmin();
+      allow create: if isUser(userId)
+        && !request.resource.data.keys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints']);
+      allow update: if isBrandOwner() || (
+        isUser(userId)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints'])
+      );
+      allow delete: if false;
+
+      match /addresses/{addressId} {
+        allow read: if isUser(userId) || isAdmin();
+        allow write: if isUser(userId);
+      }
+
+      match /notifications/{notifId} {
+        allow read: if isUser(userId) || isAdmin();
+        allow write: if isUser(userId) || isAdmin();
+      }
+
+      match /orders/{orderId} {
+        allow read: if isUser(userId) || isAdmin();
+        allow create: if isUser(userId);
+        allow update, delete: if false;
+      }
+    }
+
+    // =========================================================================
+    // SALES: ORDERS (Branch-scoped, customer own-only)
+    // =========================================================================
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        resource.data.userId == request.auth.uid ||
+        ownsBranch(resource.data.branchId)
+      );
+
+      allow create: if isAuthenticated() && (
+        request.resource.data.customerId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid
+      );
+
+      allow update: if isBrandOwner() || (
+        isBranchOwner() &&
+        ownsBranch(resource.data.branchId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId'])
+      );
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // BRANCHES & PRODUCTS CATALOG
+    // =========================================================================
+
+    match /branches/{branchId} {
+      allow read: if true;
+      allow create: if isBrandOwner();
+      allow update: if isBrandOwner() || ownsBranch(branchId);
+      allow delete: if isBrandOwner();
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /menu_items/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    // Per-branch synced menu (partner app: sync + availability toggles)
+    match /menu/{branchId}/categories/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isBrandOwner() || ownsBranch(branchId);
+      allow delete: if isBrandOwner();
+    }
+
+    match /menu/{branchId}/items/{itemId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isBrandOwner() || ownsBranch(branchId);
+      allow delete: if isBrandOwner();
+    }
+
+    match /stores/{storeId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /admin_stores/{storeId} {
+      allow read: if true;
+      allow create: if isBrandOwner() || isBranchOwner();
+      allow update: if isBrandOwner() || ownsBranch(storeId);
+      allow delete: if isBrandOwner();
+    }
+
+    // Petpooja catalog — public read, server-side writes via Admin SDK
+    match /petpooja_categories/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /petpooja_products/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /petpooja_offers/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /petpooja_sync_logs/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+match /petpooja_webhook_logs/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Branch launch announcements (partner useBranches broadcastLaunchAlert addDoc)
+    match /branch_announcements/{docId} {
+      allow read: if true;
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // SUPPORT TICKETING (support_tickets & tickets)
+    // =========================================================================
+
+    match /support_tickets/{ticketId} {
+      allow read: if isBrandOwner() || (
+        isBranchOwner() && ownsBranch(resource.data.branchId)
+      ) || (
+        isAuthenticated() && resource.data.customerId == request.auth.uid
+      );
+      allow create: if isAuthenticated()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.branchId is string
+        && request.resource.data.branchId.size() > 0;
+      allow update: if isBrandOwner() || (
+        isBranchOwner() && ownsBranch(resource.data.branchId)
+      ) || (
+        isAuthenticated() && resource.data.customerId == request.auth.uid
+      );
+      allow delete: if false;
+    }
+
+    match /tickets/{ticketId} {
+      allow read: if isBrandOwner() || (
+        isBranchOwner() && ownsBranch(resource.data.branchId)
+      ) || (
+        isAuthenticated() && resource.data.customerId == request.auth.uid
+      );
+      allow create: if isAuthenticated()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.branchId is string
+        && request.resource.data.branchId.size() > 0;
+      allow update: if isBrandOwner() || (
+        isBranchOwner() && ownsBranch(resource.data.branchId)
+      ) || (
+        isAuthenticated() && resource.data.customerId == request.auth.uid
+      );
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // PAYMENT AUDIT TRAIL & DEVELOPER ERROR SNAPSHOTS (Append-only / Admin read)
+    // =========================================================================
+
+    // Server-only append collections — Admin SDK bypasses rules; block all client direct writes
+    match /payment_audits/{auditId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /paymentAudits/{auditId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /dev_error_snapshots/{snapshotId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Payment ledger — partner admin app reads payments and manages refunds/discrepancies
+    match /payments/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false; // server-only via Admin SDK
+    }
+
+    match /refunds/{refundId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /payment_discrepancies/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // CHATS & DIRECT MESSAGING
+    // =========================================================================
+
+    // Chat thread metadata — participants may read/update their own threads
+    match /chats/{chatId} {
+      allow read: if isAdmin() || (
+        isAuthenticated() && request.auth.uid in resource.data.participantIds
+      );
+      allow create: if isAuthenticated()
+        && request.auth.uid in request.resource.data.participantIds;
+      allow update: if isAdmin() || (
+        isAuthenticated() && request.auth.uid in resource.data.participantIds
+      );
+      allow delete: if false;
+    }
+
+    match /chats/{pairId}/messages/{messageId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
+    // ADMINS & APP SETTINGS
+    // =========================================================================
+
+    match /admins/{uid} {
+      allow read: if isUser(uid) || isBrandOwner();
+      allow write: if isBrandOwner();
+    }
+
+    // Admin session tracking (partner adminAuthService/login) + session listing
+    match /admins/{uid}/sessions/{sessionId} {
+      allow read: if isUser(uid) || isBrandOwner();
+      allow create, update: if isUser(uid);
+      allow delete: if false;
+    }
+
+    // Top-level notifications (partner useNotifications reads/updates own by userId)
+    match /notifications/{notifId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    match /app_settings/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /device_tokens/{token} {
+      allow read: if false;
+      allow create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
+    // =========================================================================
+    // FRANCHISE LEADS & COUPONS (India franchise pipeline + promo validation)
+    // =========================================================================
+
+    match /franchise_leads/{leadId} {
+      allow read: if isBrandOwner() || isBranchOwner();
+      allow create: if isAuthenticated();
+      allow update: if isBrandOwner() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      allow delete: if isBrandOwner();
+    }
+
+    // Partner app uses 'franchise_inquiries' (useFranchiseLeads) — mirror franchise_leads
+    match /franchise_inquiries/{leadId} {
+      allow read: if isBrandOwner() || isBranchOwner();
+      allow create: if isAuthenticated();
+      allow update: if isBrandOwner() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      allow delete: if isBrandOwner();
+    }
+
+    match /coupons/{couponCode} {
+      allow read: if true; // public coupon validation at checkout — unauth guest checkout needs read
+      allow write: if isBrandOwner();
+    }
+
+    // Admin audit trail — immutable append-only
+    match /admin_audit_logs/{logId} {
+      allow read: if isBrandOwner();
+      allow create, update, delete: if false; // server-only via Admin SDK
+    }
+  }
+}

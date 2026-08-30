@@ -1,0 +1,262 @@
+import { describe, it, expect, vi } from "vitest";
+
+const { mockDb, savedDocs } = vi.hoisted(() => {
+  const savedDocs: Record<string, any> = {};
+  const mockDb = {
+    collection: (colName: string) => ({
+      doc: (docId: string) => ({
+        id: docId,
+        set: vi.fn(async (data: any) => {
+          savedDocs[`${colName}/${docId}`] = {
+            ...(savedDocs[`${colName}/${docId}`] || {}),
+            ...data,
+          };
+        }),
+        get: vi.fn(async () => ({
+          exists: true,
+          data: () =>
+            savedDocs[`${colName}/${docId}`] || {
+              branchId: "branch_ahmedabad_1",
+              branchName: "Burgonomics CG Road",
+              branchCoordinates: { lat: 23.0131, lng: 72.5085 },
+              deliveryAddress: {
+                full: "102, Shivalik Highstreet, Vastrapur",
+                lat: 23.0338,
+                lng: 72.5262,
+              },
+              customerPhone: "+91 99999 88888",
+              customerName: "Aarav Shah",
+              status: "ready",
+            },
+          ref: {
+            set: vi.fn(async (data: any) => {
+              savedDocs[`${colName}/${docId}`] = {
+                ...(savedDocs[`${colName}/${docId}`] || {}),
+                ...data,
+              };
+            }),
+          },
+        })),
+      }),
+      where: (field: string, op: string, val: any) => ({
+        limit: (n: number) => ({
+          get: async () => ({
+            empty: false,
+            docs: [
+              {
+                ref: {
+                  set: vi.fn(async (data: any) => {
+                    savedDocs[`${colName}/matched_order`] = {
+                      ...(savedDocs[`${colName}/matched_order`] || {}),
+                      ...data,
+                    };
+                  }),
+                },
+                data: () => ({ status: "ready" }),
+              },
+            ],
+          }),
+        }),
+      }),
+    }),
+  };
+  return { mockDb, savedDocs };
+});
+
+vi.mock("firebase-admin", () => {
+  const FieldValue = {
+    serverTimestamp: () => "MOCK_TIMESTAMP",
+    increment: (n: number) => n,
+    arrayUnion: (item: any) => [item],
+  };
+
+  const firestoreFn: any = vi.fn(() => mockDb);
+  firestoreFn.FieldValue = FieldValue;
+
+  return {
+    default: {
+      firestore: firestoreFn,
+      auth: vi.fn(() => ({})),
+      messaging: vi.fn(() => ({})),
+      initializeApp: vi.fn(),
+      apps: [{ name: "mock" }],
+    },
+    firestore: firestoreFn,
+    auth: vi.fn(() => ({})),
+    messaging: vi.fn(() => ({})),
+    initializeApp: vi.fn(),
+    apps: [{ name: "mock" }],
+  };
+});
+
+import {
+  getDeliveryQuote,
+  normalizePorterEvent,
+  bookPorterRider,
+  handlePorterWebhook,
+  generateDeliveryOtp,
+  verifyDeliveryOtp,
+  manualBranchDispatch,
+  pollActivePorterOrdersWorker,
+} from "../src/modules/porter/porter.service";
+import { computeHmacSha256 } from "../src/core/security";
+import { config } from "../src/config/env";
+
+describe("Porter Logistics Service", () => {
+  describe("getDeliveryQuote", () => {
+    it("calculates live fare quote based on pickup and drop distance", async () => {
+      const quote = await getDeliveryQuote({
+        pickupLat: 23.0131,
+        pickupLng: 72.5085,
+        dropLat: 23.0338,
+        dropLng: 72.5262,
+      });
+
+      expect(quote).toBeDefined();
+      expect(quote.estimatedDistanceKm).toBeGreaterThan(0);
+      expect(quote.estimatedFare).toBeGreaterThanOrEqual(40);
+      expect(quote.vehicleType).toContain("2-Wheeler");
+      expect(quote.validForSeconds).toBe(600);
+      expect(quote.expiresAt).toBeGreaterThan(Date.now());
+    });
+
+    it("applies base minimum fare of ₹40 for short trips under 2km", async () => {
+      const quote = await getDeliveryQuote({
+        pickupLat: 23.0131,
+        pickupLng: 72.5085,
+        dropLat: 23.0141, // very close (~150m)
+        dropLng: 72.509,
+      });
+
+      expect(quote.estimatedFare).toBe(40);
+    });
+  });
+
+  describe("normalizePorterEvent", () => {
+    it("reconciles Porter standard events with platform events", () => {
+      expect(normalizePorterEvent("ASSIGNED")).toBe("DRIVER_ALLOCATED");
+      expect(normalizePorterEvent("DRIVER_ALLOCATED")).toBe("DRIVER_ALLOCATED");
+      expect(normalizePorterEvent("ARRIVED_AT_PICKUP")).toBe("ARRIVED_AT_PICKUP");
+      expect(normalizePorterEvent("IN_TRANSIT")).toBe("STARTED_DELIVERY");
+      expect(normalizePorterEvent("STARTED_DELIVERY")).toBe("STARTED_DELIVERY");
+      expect(normalizePorterEvent("DELIVERED")).toBe("DELIVERED");
+      expect(normalizePorterEvent("CANCELLED")).toBe("RIDER_CANCELLED");
+      expect(normalizePorterEvent("RIDER_CANCELLED")).toBe("RIDER_CANCELLED");
+    });
+  });
+
+  describe("bookPorterRider & handlePorterWebhook", () => {
+    it("books Porter rider and stores dispatch metadata", async () => {
+      const result = await bookPorterRider("order_prt_101", "Store Manager");
+      expect(result).toBeDefined();
+      expect(result.porterOrderId).toMatch(/^PRTR-ORD-/);
+      expect(result.riderName).toBeDefined();
+      expect(result.status).toBe("dispatched");
+      expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("dispatched");
+    });
+
+    it("processes Porter webhook transit and delivery events", async () => {
+      // 1. In Transit
+      await handlePorterWebhook("raw_body", "sig", {
+        event: "IN_TRANSIT",
+        request_id: "REQ-order_prt_101",
+        order_id: "PRTR-ORD-12345",
+      });
+      expect(savedDocs["orders/order_prt_101"]?.status).toBe("out_for_delivery");
+      expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("in_transit");
+
+      // 2. Delivered
+      await handlePorterWebhook("raw_body", "sig", {
+        event: "DELIVERED",
+        request_id: "REQ-order_prt_101",
+        order_id: "PRTR-ORD-12345",
+      });
+      expect(savedDocs["orders/order_prt_101"]?.status).toBe("delivered");
+      expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("delivered");
+    });
+  });
+
+  describe("Delivery OTP Verification & Manual Dispatch", () => {
+    it("generates a 4-digit numeric OTP", () => {
+      const otp = generateDeliveryOtp();
+      expect(otp).toMatch(/^\d{4}$/);
+    });
+
+    it("verifies valid customer OTP and marks order delivered", async () => {
+      savedDocs["orders/order_otp_101"] = {
+        id: "order_otp_101",
+        deliveryOtpHash: computeHmacSha256("4589", config.razorpay.webhookSecret),
+        status: "out_for_delivery",
+      };
+
+      const res = await verifyDeliveryOtp({
+        orderId: "order_otp_101",
+        otp: "4589",
+        staffName: "Karan Cashier",
+      });
+
+      expect(res.success).toBe(true);
+      expect(savedDocs["orders/order_otp_101"]?.status).toBe("delivered");
+      expect(savedDocs["orders/order_otp_101"]?.deliveryVerifiedBy).toBe("customer_otp");
+    });
+
+    it("rejects invalid delivery OTP with descriptive error", async () => {
+      savedDocs["orders/order_otp_102"] = {
+        id: "order_otp_102",
+        deliveryOtpHash: computeHmacSha256("8899", config.razorpay.webhookSecret),
+        status: "out_for_delivery",
+      };
+
+      await expect(
+        verifyDeliveryOtp({
+          orderId: "order_otp_102",
+          otp: "1234",
+        })
+      ).rejects.toThrow(/Invalid Delivery OTP/);
+    });
+
+    it("falls back to legacy plaintext OTP when no hash is stored", async () => {
+      savedDocs["orders/order_otp_103"] = {
+        id: "order_otp_103",
+        deliveryOtp: "4589",
+        status: "out_for_delivery",
+      };
+
+      const res = await verifyDeliveryOtp({
+        orderId: "order_otp_103",
+        otp: "4589",
+        staffName: "Karan Cashier",
+      });
+
+      expect(res.success).toBe(true);
+      expect(savedDocs["orders/order_otp_103"]?.status).toBe("delivered");
+      expect(savedDocs["orders/order_otp_103"]?.deliveryVerifiedBy).toBe("customer_otp");
+    });
+
+    it("dispatches order manually via Branch POS Terminal fallback", async () => {
+      savedDocs["orders/order_manual_103"] = {
+        id: "order_manual_103",
+        status: "ready",
+      };
+
+      const result = await manualBranchDispatch({
+        orderId: "order_manual_103",
+        riderName: "Vikram Local Rider",
+        riderPhone: "+91 98980 12345",
+        staffName: "Branch Manager",
+      });
+
+      expect(result.success).toBe(true);
+      expect(savedDocs["orders/order_manual_103"]?.dispatchType).toBe("manual_branch_terminal");
+      expect(savedDocs["orders/order_manual_103"]?.riderName).toBe("Vikram Local Rider");
+      expect(savedDocs["orders/order_manual_103"]?.deliveryStatus).toBe("dispatched");
+    });
+
+    it("runs 5-minute polling fallback worker safely", async () => {
+      const result = await pollActivePorterOrdersWorker();
+      expect(result).toBeDefined();
+      expect(typeof result.polledCount).toBe("number");
+      expect(typeof result.updatedCount).toBe("number");
+    });
+  });
+});

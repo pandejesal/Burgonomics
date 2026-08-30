@@ -1,0 +1,17 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.key
+*.cer
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+serviceAccountKey.json
+
+node_modules
+dist
+.firebase
