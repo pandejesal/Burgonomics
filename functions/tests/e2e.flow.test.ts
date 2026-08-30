@@ -41,26 +41,30 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
           };
         }),
       }),
-      where: (field: string, op: string, val: any) => ({
-        limit: (n: number) => ({
-          get: async () => ({
-            empty: false,
-            docs: [
-              {
-                ref: {
-                  set: vi.fn(async (data: any) => {
-                    savedDocs[`${colName}/matched_doc`] = {
-                      ...(savedDocs[`${colName}/matched_doc`] || {}),
-                      ...data,
-                    };
-                  }),
+      where: (field: string, op: string, val: any) => {
+        const query = {
+          where: (f2: string, o2: string, v2: any) => query,
+          limit: (n: number) => ({
+            get: async () => ({
+              empty: false,
+              docs: [
+                {
+                  ref: {
+                    set: vi.fn(async (data: any) => {
+                      savedDocs[`${colName}/matched_doc`] = {
+                        ...(savedDocs[`${colName}/matched_doc`] || {}),
+                        ...data,
+                      };
+                    }),
+                  },
+                  data: () => ({ status: "ready" }),
                 },
-                data: () => ({ status: "ready" }),
-              },
-            ],
+              ],
+            }),
           }),
-        }),
-      }),
+        };
+        return query;
+      },
     }),
     batch: () => ({
       set: vi.fn((ref: any, data: any) => {
@@ -104,6 +108,7 @@ import {
   createPaymentOrder,
   verifyPayment,
   autoRefund,
+  retryPendingRouteTransfersWorker,
 } from "../src/modules/payments/razorpay.service";
 import {
   pushOrderToPetpooja,
@@ -264,5 +269,16 @@ describe("End-to-End Platform Integration Flow", () => {
     expect(refundResult.id).toBeDefined();
     expect(savedDocs[`orders/${orderId}`].refundStatus).toBe("refunded");
     expect(savedDocs[`orders/${orderId}`].refundAmount).toBe(104);
+  });
+
+  it("drains pending_retry route transfers without throwing (mock-safe worker)", async () => {
+    // The shared mock `where` returns a single order doc lacking branch/pricing/payment
+    // linkage, so the worker must mark it failed (missing data) rather than throw.
+    const result = await retryPendingRouteTransfersWorker();
+
+    expect(result).toBeDefined();
+    expect(typeof result.retriedCount).toBe("number");
+    // Missing linkage is handled gracefully and never crashes the batch.
+    expect(savedDocs["orders/matched_doc"]?.routeTransferStatus).toBe("failed");
   });
 });
