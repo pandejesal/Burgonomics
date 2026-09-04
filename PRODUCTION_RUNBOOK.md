@@ -102,18 +102,22 @@ Until linked, customer orders appear only under **All Outlets**.
   Mirrored 1:1 in `functions/src/modules/porter/client.ts`.
 - Wallet is prepaid — top up before volume. Webhook secret → `PORTER_WEBHOOK_SECRET`.
 
-## 7. GitHub
+## 7. GitHub (wired 2026-09-04)
 
-- Delivery app pushes to `github.com/pandejesal/Burgonomics-App` (`origin` set).
-- **Partner app has no remote; repo root has no remote.** To connect:
-  `git remote add origin https://github.com/<owner>/<repo>.git` (new repo per app,
-  or one monorepo — decide once), then `git push -u origin master`.
-- ⚠️ **Rotate the GitHub token**: a personal access token is embedded in the
-  delivery app's git remote URL (readable by anyone with disk access).
-  Steps: GitHub → Settings → Developer settings → revoke it → `gh auth login`
-  (recommended) or issue a fine-grained token stored in the OS credential
-  manager — never inside remote URLs. `.env` files are gitignored and were
-  verified untracked; keep it that way.
+| Local | Remote | Branch pushed |
+|---|---|---|
+| `burgonomics-foundation-core/` | `github.com/pandejesal/Burgonomics-App` | `main` |
+| `burgonomics-partner/` | `github.com/pandejesal/Burgonomics-Partner` | `feat/partner-device-smoke` |
+| repo root (functions, rules, docs) | `github.com/pandejesal/Burgonomics` | `master` |
+
+All remotes use clean `https://github.com/…` URLs (no tokens on disk —
+`gh` credential helper handles auth). repos are public; make private via
+`gh repo edit <name> --visibility private` if desired.
+- ⚠️ **STILL REQUIRED — rotate the classic token**: it was removed from disk
+  but is still valid on GitHub (and appeared in a chat log). GitHub → Settings
+  → Developer settings → Personal access tokens → revoke the `ghp_…` token.
+  Note: the `gh` CLI session token in this environment cannot push (read-only
+  scope) — after revoking, run `gh auth login` once to restore push access.
 
 ## 8. Debugging rules (why fallbacks were removed)
 
