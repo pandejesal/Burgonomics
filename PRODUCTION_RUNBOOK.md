@@ -170,7 +170,10 @@ All remotes use clean `https://github.com/…` URLs (no tokens on disk —
    `menu/{branchId}/…` are deprecated — verify Firestore holds no live data
    there before deleting. Home-screen rails (bestsellers/combos) are still
    mock-fed (separate feature, not the menu page).
-2. Backfill: pre-bridge orders lack `customerId/createdAt/branchId` (script TBD).
+2. ~~Backfill~~ DONE 2026-09-04: `npm run backfill:orders` (dry-run default) in
+   `functions/`, `--apply` to write. Fills ONLY missing
+   `customerId/createdAt/updatedAt/branchId` (never overwrites); branchId only
+   from the embedded store link. Needs `GOOGLE_APPLICATION_CREDENTIALS` or ADC.
 3. Remove `*/netlify/functions` once Firebase Functions serve all traffic.
 4. App Check enforcement, web-push client, branch-topic subscriptions (FCM gaps).
 5. Blaze app: not started (§1).
