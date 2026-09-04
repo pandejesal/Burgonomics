@@ -13,6 +13,9 @@ export interface PetpoojaMenuItem {
   itemcategoryid: string;
   in_stock: string | number | boolean;
   item_attributeid?: string; // 1 = Veg, 2 = NonVeg, 3 = Egg
+  itemimageurl?: string;
+  image_url?: string;
+  image?: string;
   addon_groups?: any[];
 }
 
