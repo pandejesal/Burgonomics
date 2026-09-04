@@ -55,6 +55,8 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
 
 /**
  * Outgoing stock toggle from Partner POS App to Petpooja Cloud API.
+ * Resolves the branch's Petpooja restID (ops-linked) — never sends the
+ * internal branchId as rest_id.
  */
 export async function pushItemStockToPetpooja(
   branchId: string,
@@ -67,6 +69,15 @@ export async function pushItemStockToPetpooja(
   }
 
   try {
+    let restId: string = branchId;
+    try {
+      const branchSnap = await db.collection("branches").doc(branchId).get();
+      const b = branchSnap.data() as any;
+      if (b?.petpoojaStoreId) restId = b.petpoojaStoreId;
+    } catch {
+      // branch lookup failure — proceed with branchId as restId
+    }
+
     const petpoojaConfig = getPetpoojaConfig();
     const response = await fetch(petpoojaConfig.stockUrl, {
       method: "POST",
@@ -79,7 +90,7 @@ export async function pushItemStockToPetpooja(
         app_key: petpoojaConfig.appKey,
         app_secret: petpoojaConfig.appSecret,
         access_token: petpoojaConfig.accessToken,
-        rest_id: branchId,
+        rest_id: restId,
         item_id: itemId,
         in_stock: inStock ? 1 : 0,
       }),

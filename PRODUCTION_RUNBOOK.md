@@ -84,14 +84,18 @@ Rollback: set flag back to `false`, redeploy clients (mocks resume instantly).
 ## 5. Outlet linking (store ↔ branch) — ops procedure
 
 Delivery (`stores/*`) and Partner (`branches/*`) were seeded independently.
-Until linked, customer orders appear only under **All Outlets**.
+Until linked, customer orders appear only under **All Outlets**, and the
+Delivery menu for the store is empty.
 
-1. In the Petpooja panel, confirm Delivery `petpoojaRestId` and Partner
-   `petpoojaStoreId` are the same physical outlet.
+1. In the Petpooja panel, confirm the outlet's restID, then write that SAME
+   restID to both records: `stores/{storeId}.petpoojaRestId` and
+   `branches/{branchId}.petpoojaStoreId`.
 2. Set Firestore `stores/{storeId}.partnerBranchId = "{branchId}"`.
 3. Add the same pair to Partner `utils/storeBranchRegistry.ts` with
    `verified: true` (covers historical orders lacking `branchId`).
-4. Verify: branch-scoped Orders/KDS/Analytics show the outlet's orders.
+4. Run Partner menu sync for the branch (or wait for the hourly scheduler).
+5. Verify: branch-scoped Orders/KDS/Analytics show the outlet's orders AND
+   the Delivery menu + Partner menu show the same items with live 86-ing.
 
 ## 6. Porter reference (implementation matches the real API)
 
@@ -159,9 +163,13 @@ All remotes use clean `https://github.com/…` URLs (no tokens on disk —
 - KOT numeric callback codes (community consensus + in-repo simulation agree).
 
 **Still open:**
-1. Menu pipeline (3 collections!): Partner reads `menu/{branchId}/items`,
-   Delivery reads `petpooja_products`, server sync writes `products`.
-   Unify on one path with `petpoojaItemId` as the join key.
+1. ~~Menu pipeline~~ DONE 2026-09-04: canonical `products` collection (server
+   writes with `branchId` + `restId`; Partner reads by `branchId`, Delivery by
+   `restId`; `petpoojaItemId` is the 86-ing join key both ways; category toggle
+   86s the whole category). Legacy `petpooja_products` / `petpooja_categories` /
+   `menu/{branchId}/…` are deprecated — verify Firestore holds no live data
+   there before deleting. Home-screen rails (bestsellers/combos) are still
+   mock-fed (separate feature, not the menu page).
 2. Backfill: pre-bridge orders lack `customerId/createdAt/branchId` (script TBD).
 3. Remove `*/netlify/functions` once Firebase Functions serve all traffic.
 4. App Check enforcement, web-push client, branch-topic subscriptions (FCM gaps).

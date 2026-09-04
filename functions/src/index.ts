@@ -3,6 +3,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 
 // Security Middleware
 import {
@@ -26,7 +27,8 @@ import {
   handlePetpoojaStockWebhook,
   handlePetpoojaWebhook,
   pushOrderToPetpooja,
-} from "./modules/petpooja/petpooja.service";
+  pushItemStockToPetpooja,
+} from "./modules/petpooja";
 import {
   syncAllBranchesPetpoojaMenu,
   retryPendingPetpoojaOrdersWorker,
@@ -48,7 +50,27 @@ import {
 } from "./modules/tickets/tickets.service";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
-import { setUserCustomClaims } from "./modules/auth/auth.service";
+import {
+  setUserCustomClaims,
+  assignUserRole,
+  revokeUserRole,
+  migrateGuestAccount,
+  verifyBonusEligibility,
+  cleanupExpiredGuestSessionsWorker,
+} from "./modules/auth";
+import { assertProductionKeys } from "./config/env";
+
+// Enforce live production keys check on deployment
+assertProductionKeys();
+
+// Rate limiting middleware
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: { error: "Too many requests from this IP, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const app = express();
 
@@ -77,9 +99,22 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "2mb" }));
+app.use(limiter);
+
+app.use(
+  express.json({
+    limit: "2mb",
+    verify: (req, _res, buf) => {
+      (req as any).rawBody = buf;
+    },
+  })
+);
 
 const REGION = "asia-south1";
+
+app.get("/health", (_req, res) => {
+  res.status(200).json({ status: "healthy", timestamp: new Date().toISOString(), service: "burgonomics-api" });
+});
 
 // ==========================================
 // 1. PAYMENT ROUTES
@@ -172,6 +207,25 @@ app.post(
       res.status(200).json({ success });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "KOT push failed" });
+    }
+  }
+);
+
+app.post(
+  "/petpooja/pushStock",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { branchId, itemId, inStock } = req.body;
+      if (!branchId || !itemId || typeof inStock !== "boolean") {
+        res.status(400).json({ error: "branchId, itemId and boolean inStock are required" });
+        return;
+      }
+      const success = await pushItemStockToPetpooja(branchId, itemId, inStock);
+      res.status(200).json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Stock push failed" });
     }
   }
 );
@@ -338,10 +392,77 @@ app.post(
   requireRole(["brand_owner", "developer"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const success = await setUserCustomClaims(req.body);
-      res.status(200).json({ success });
+      const result = await setUserCustomClaims(req.body);
+      res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to set custom claims" });
+    }
+  }
+);
+
+app.post(
+  "/auth/assignRole",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await assignUserRole(req.user, req.body);
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status = err.message?.includes("Permission denied") ? 403 : 400;
+      res.status(status).json({ error: err.message || "Failed to assign user role" });
+    }
+  }
+);
+
+app.post(
+  "/auth/revokeRole",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const targetUid = req.body.targetUid || req.body.uid;
+      const result = await revokeUserRole(req.user, targetUid);
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status = err.message?.includes("Permission denied") ? 403 : 400;
+      res.status(status).json({ error: err.message || "Failed to revoke user role" });
+    }
+  }
+);
+
+app.post(
+  "/auth/migrateGuest",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const permanentUid = req.user?.uid || req.body.permanentUid;
+      if (!permanentUid) {
+        res.status(400).json({ error: "Missing authenticated customer UID" });
+        return;
+      }
+      const result = await migrateGuestAccount({
+        ...req.body,
+        permanentUid,
+        phone: req.body.phone || (req.user as any)?.phone_number,
+        email: req.body.email || (req.user as any)?.email,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to migrate guest session" });
+    }
+  }
+);
+
+app.post(
+  "/auth/verifyBonusEligibility",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const phone = req.body.phone || (req.user as any)?.phone_number;
+      const uid = req.user?.uid || req.body.uid;
+      const result = await verifyBonusEligibility(phone, uid);
+      res.status(200).json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to verify bonus eligibility" });
     }
   }
 );
@@ -425,36 +546,26 @@ export const pollActivePorterDeliveries = onSchedule(
   }
 );
 
+export const cleanupExpiredGuestSessions = onSchedule(
+  {
+    region: REGION,
+    schedule: "0 3 * * *", // Daily at 3:00 AM IST
+    timeZone: "Asia/Kolkata",
+  },
+  async () => {
+    const result = await cleanupExpiredGuestSessionsWorker();
+    console.log(`[Guest Cleanup Worker] Purged ${result.cleanedCartsCount} expired guest carts`);
+  }
+);
+
 // ==========================================
 // 7. FIRESTORE TRIGGERS
 // ==========================================
 
-export const onOrderCreatedTrigger = onDocumentCreated(
-  {
-    region: REGION,
-    document: "orders/{orderId}",
-  },
-  async (event) => {
-    const snap = event.data;
-    if (!snap) return;
-    const order = snap.data();
-    const orderId = event.params.orderId;
-    const branchId = order.branchId;
+export {
+  onOrderCreatedNotificationTrigger,
+  onOrderStatusChangedNotificationTrigger,
+  onTicketEscalatedNotificationTrigger,
+} from "./modules/notifications";
 
-    // Dispatch loud new order alert to branch
-    if (branchId) {
-      await dispatchFCM({
-        topic: `branch_${branchId}`,
-        title: "🔔 New Order Received!",
-        body: `Order #${orderId.substring(0, 6)} received for ₹${
-          order.pricing?.grandTotal || order.total
-        }. Start preparation!`,
-        data: {
-          type: "new_order",
-          orderId,
-        },
-        sound: "new_order.wav",
-      });
-    }
-  }
-);
+
