@@ -99,6 +99,7 @@ import {
   manualBranchDispatch,
   pollActivePorterOrdersWorker,
 } from "../src/modules/porter/porter.service";
+import { checkBranchDeliveryServiceability } from "../src/core/utils/geo.utils";
 import { computeHmacSha256 } from "../src/core/security";
 import { config } from "../src/config/env";
 
@@ -162,7 +163,10 @@ describe("Porter Logistics Service", () => {
         request_id: "REQ-order_prt_101",
         order_id: "PRTR-ORD-12345",
       });
-      expect(savedDocs["orders/order_prt_101"]?.status).toBe("out_for_delivery");
+      expect(savedDocs["orders/order_prt_101"]?.status).toMatchObject({
+        code: "OUT_FOR_DELIVERY",
+        kind: "in_progress",
+      });
       expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("in_transit");
 
       // 2. Delivered
@@ -171,7 +175,11 @@ describe("Porter Logistics Service", () => {
         request_id: "REQ-order_prt_101",
         order_id: "PRTR-ORD-12345",
       });
-      expect(savedDocs["orders/order_prt_101"]?.status).toBe("delivered");
+      expect(savedDocs["orders/order_prt_101"]?.status).toMatchObject({
+        code: "DELIVERED",
+        kind: "completed",
+        terminal: true,
+      });
       expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("delivered");
     });
   });
@@ -196,7 +204,11 @@ describe("Porter Logistics Service", () => {
       });
 
       expect(res.success).toBe(true);
-      expect(savedDocs["orders/order_otp_101"]?.status).toBe("delivered");
+      expect(savedDocs["orders/order_otp_101"]?.status).toMatchObject({
+        code: "DELIVERED",
+        kind: "completed",
+        terminal: true,
+      });
       expect(savedDocs["orders/order_otp_101"]?.deliveryVerifiedBy).toBe("customer_otp");
     });
 
@@ -229,7 +241,11 @@ describe("Porter Logistics Service", () => {
       });
 
       expect(res.success).toBe(true);
-      expect(savedDocs["orders/order_otp_103"]?.status).toBe("delivered");
+      expect(savedDocs["orders/order_otp_103"]?.status).toMatchObject({
+        code: "DELIVERED",
+        kind: "completed",
+        terminal: true,
+      });
       expect(savedDocs["orders/order_otp_103"]?.deliveryVerifiedBy).toBe("customer_otp");
     });
 
@@ -257,6 +273,22 @@ describe("Porter Logistics Service", () => {
       expect(result).toBeDefined();
       expect(typeof result.polledCount).toBe("number");
       expect(typeof result.updatedCount).toBe("number");
+    });
+
+    it("accurately evaluates branch delivery serviceability within and outside radius", () => {
+      const branchLat = 21.1518;
+      const branchLng = 72.7758;
+
+      // Drop ~2km away (serviced)
+      const nearResult = checkBranchDeliveryServiceability(branchLat, branchLng, 21.1650, 72.7850, 8.0);
+      expect(nearResult.isServiced).toBe(true);
+      expect(nearResult.distanceKm).toBeLessThanOrEqual(8.0);
+
+      // Drop ~15km away (not serviced)
+      const farResult = checkBranchDeliveryServiceability(branchLat, branchLng, 21.2800, 72.8800, 8.0);
+      expect(farResult.isServiced).toBe(false);
+      expect(farResult.distanceKm).toBeGreaterThan(8.0);
+      expect(farResult.reason).toContain("exceeds the 8km branch delivery zone");
     });
   });
 });

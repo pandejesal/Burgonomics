@@ -3,7 +3,7 @@ dotenv.config();
 
 export const config = {
   firebase: {
-    projectId: process.env.FIREBASE_PROJECT_ID || "burgonomics-prod",
+    projectId: process.env.FIREBASE_PROJECT_ID || "burgonomics-7faa8",
     region: process.env.FIREBASE_REGION || "asia-south1",
   },
   razorpay: {
@@ -18,10 +18,16 @@ export const config = {
     accessToken: process.env.PETPOOJA_ACCESS_TOKEN || "mockPetpoojaToken",
     menuUrl:
       process.env.PETPOOJA_MENU_URL ||
-      "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1",
+      "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/mapped_restaurant_menus",
     orderUrl:
       process.env.PETPOOJA_ORDER_URL ||
-      "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1",
+      "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+    stockUrl:
+      process.env.PETPOOJA_STOCK_URL ||
+      "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_item_stock",
+    callbackUrl:
+      process.env.PETPOOJA_CALLBACK_URL ||
+      `https://asia-south1-${process.env.FIREBASE_PROJECT_ID || "burgonomics-7faa8"}.cloudfunctions.net/api/petpooja/webhook`,
   },
   porter: {
     enabled: process.env.PORTER_ENABLED !== "false",

@@ -1,23 +1,23 @@
 import * as crypto from "crypto";
+import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { config } from "../../config/env";
-import { verifyRazorpaySignature, computeHmacSha256 } from "../../core/security";
+import {
+  verifyRazorpaySignature,
+  computeHmacSha256,
+  getOtpHmacSecret,
+} from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
-import * as admin from "firebase-admin";
+import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
+import {
+  attemptRouteTransfer,
+  retryPendingRouteTransfersWorker,
+  calculateRouteSplit,
+} from "./routeTransfers";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const Razorpay = require("razorpay");
-
-export function getRazorpayClient() {
-  if (config.mock.paymentGateway) {
-    return null;
-  }
-  return new Razorpay({
-    key_id: config.razorpay.keyId,
-    key_secret: config.razorpay.keySecret,
-  });
-}
+export { retryPendingRouteTransfersWorker, calculateRouteSplit } from "./routeTransfers";
+export { getOtpHmacSecret };
 
 export interface CreateOrderParams {
   orderId?: string;
@@ -61,7 +61,11 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         amount: amountPaise,
         currency: "INR",
         receipt,
+        // Required for Razorpay Route: transfers only execute on captured
+        // payments of orders with partial payments disabled.
+        partial_payment: false,
         notes: {
+          orderId: params.orderId || "",
           branchId: params.branchId,
           customerId: params.customerId,
           orderType: params.orderType,
@@ -90,7 +94,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     currency: "INR",
     receipt,
     pricing,
-    keyId: config.mock.paymentGateway ? "rzp_test_mockKey123" : config.razorpay.keyId,
+    keyId: getRazorpayKeyId(),
   };
 }
 
@@ -99,77 +103,6 @@ export interface VerifyPaymentParams {
   razorpayOrderId: string;
   razorpayPaymentId: string;
   razorpaySignature: string;
-}
-
-interface RoutePricingSplit {
-  branchTransferPaise: number;
-  brandRoyaltyAmount: number;
-}
-
-interface RouteTransferAttempt {
-  ok: boolean;
-  skipped?: boolean;
-  result?: any;
-  error?: string;
-}
-
-/**
- * Executes a Razorpay Route transfer split for a captured payment.
- * Never throws — returns a structured attempt result so the caller can decide
- * how to persist the outcome (success, pending retry, or skipped).
- */
-async function attemptRouteTransfer(
-  paymentId: string,
-  branchId: string,
-  pricingSplit: RoutePricingSplit,
-  orderId: string
-): Promise<RouteTransferAttempt> {
-  try {
-    const branchSnap = await db.collection("branches").doc(branchId).get();
-    const branchData = branchSnap.data();
-    const razorpayAccountId = branchData?.razorpayAccountId;
-
-    if (!razorpayAccountId || !pricingSplit || pricingSplit.branchTransferPaise <= 0) {
-      return {
-        ok: false,
-        skipped: true,
-        error: "No linked Razorpay account or transfer amount for branch",
-      };
-    }
-
-    if (config.mock.paymentGateway) {
-      return {
-        ok: true,
-        result: {
-          id: `trf_mock_${Date.now()}`,
-          account: razorpayAccountId,
-          amount: pricingSplit.branchTransferPaise,
-          status: "processed",
-        },
-      };
-    }
-
-    const razorpay = getRazorpayClient();
-    const result = await razorpay.payments.transfer(paymentId, {
-      transfers: [
-        {
-          account: razorpayAccountId,
-          amount: pricingSplit.branchTransferPaise,
-          currency: "INR",
-          notes: {
-            orderId,
-            branchId,
-            brandRoyalty: pricingSplit.brandRoyaltyAmount,
-          },
-          linked_account_notes: ["orderId"],
-          on_hold: 0,
-        },
-      ],
-    });
-    return { ok: true, result };
-  } catch (err: any) {
-    return { ok: false, error: (err as any)?.message || String(err) };
-  }
 }
 
 /**
@@ -212,8 +145,6 @@ export async function verifyPayment(params: VerifyPaymentParams) {
   let transferResult: any = null;
 
   // 3. Execute Razorpay Route split transfer if linked account exists.
-  //    Failures are marked pending_retry for the retry worker — brand royalty
-  //    reconciliation must not be lost; the buyer flow continues regardless.
   const pricingSplit = orderData.pricing?.split;
   if (branchId && pricingSplit && pricingSplit.branchTransferPaise > 0) {
     const attempt = await attemptRouteTransfer(razorpayPaymentId, branchId, pricingSplit, orderId);
@@ -257,21 +188,28 @@ export async function verifyPayment(params: VerifyPaymentParams) {
       ? String(crypto.randomInt(1000, 10000))
       : undefined);
 
+  // Canonical object form: Partner normalizes it, Delivery reads .code, and
+  // server triggers accept both shapes. Never write a bare string status.
   const updatePayload: Record<string, any> = {
     paymentStatus: "completed",
     "payment.status": "completed",
     "payment.razorpayPaymentId": razorpayPaymentId,
     "payment.razorpayOrderId": razorpayOrderId,
     "payment.verifiedAt": admin.firestore.FieldValue.serverTimestamp(),
-    status: "accepted",
-    "status.kind": "accepted",
+    status: {
+      code: "CONFIRMED",
+      label: "Order confirmed",
+      kind: "upcoming",
+      terminal: false,
+    },
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
   if (deliveryOtp) {
-    // Crypto-secure OTP storage for India compliance — only the HMAC-SHA256
-    // hash is persisted; the raw OTP is returned once in the response.
-    updatePayload.deliveryOtpHash = computeHmacSha256(deliveryOtp, config.razorpay.webhookSecret);
+    updatePayload.deliveryOtpHash = computeHmacSha256(
+      deliveryOtp,
+      getOtpHmacSecret(config.razorpay.webhookSecret)
+    );
   }
 
   await orderRef.set(updatePayload, { merge: true });
@@ -298,118 +236,6 @@ export async function verifyPayment(params: VerifyPaymentParams) {
   };
 }
 
-/**
- * Retries pending Razorpay Route transfers for orders marked pending_retry.
- * Runs on a schedule (see index.ts retryRouteTransfers) and never throws —
- * each order is handled independently so one failure cannot block the batch.
- */
-export async function retryPendingRouteTransfersWorker() {
-  const pendingSnap = await db
-    .collection("orders")
-    .where("routeTransferStatus", "==", "pending_retry")
-    .where("routeTransferRetryCount", "<=", 3)
-    .limit(20)
-    .get();
-
-  let retriedCount = 0;
-
-  for (const doc of pendingSnap.docs) {
-    const order = doc.data();
-    const orderId = doc.id;
-    const branchId = order.branchId;
-    const pricingSplit = order.pricing?.split;
-    const paymentId =
-      order.payment?.razorpayPaymentId || order.razorpayPaymentId || order["payment.razorpayPaymentId"];
-
-    try {
-      if (!branchId || !pricingSplit || pricingSplit.branchTransferPaise <= 0 || !paymentId) {
-        await doc.ref.set(
-          {
-            routeTransferStatus: "failed",
-            routeTransferError: "Missing branch, pricing split, or payment id for route transfer retry",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-        continue;
-      }
-
-      const attempt = await attemptRouteTransfer(paymentId, branchId, pricingSplit, orderId);
-
-      if (attempt.skipped) {
-        // No linked Razorpay account — this order can never be transferred.
-        await doc.ref.set(
-          {
-            routeTransferStatus: "failed",
-            routeTransferError: attempt.error,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-        continue;
-      }
-
-      if (!attempt.ok) {
-        const prevRetryCount =
-          typeof order.routeTransferRetryCount === "number" ? order.routeTransferRetryCount : 0;
-        const nextRetryCount = prevRetryCount + 1;
-        const exhausted = nextRetryCount > 3;
-
-        await doc.ref.set(
-          {
-            routeTransferRetryCount: admin.firestore.FieldValue.increment(1),
-            routeTransferError: attempt.error,
-            routeTransferRetryAt: admin.firestore.FieldValue.serverTimestamp(),
-            ...(exhausted
-              ? {
-                  routeTransferStatus: "failed",
-                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                }
-              : {}),
-          },
-          { merge: true }
-        );
-
-        if (exhausted) {
-          await captureErrorSnapshot({
-            source: "payments",
-            severity: "high",
-            message: `Route transfer retries exhausted for order ${orderId}: ${attempt.error}`,
-            orderId,
-            branchId,
-            razorpayPaymentId: paymentId,
-          });
-        }
-        continue;
-      }
-
-      await doc.ref.set(
-        {
-          routeTransferStatus: "transferred",
-          "payment.routeTransfer": attempt.result,
-          routeTransferError: admin.firestore.FieldValue.delete(),
-          routeTransferRetryAt: admin.firestore.FieldValue.delete(),
-          routeTransferRetryCount: admin.firestore.FieldValue.delete(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      retriedCount += 1;
-    } catch (err: any) {
-      await captureErrorSnapshot({
-        source: "payments",
-        severity: "high",
-        message: `Route transfer retry worker failed for order ${orderId}: ${err.message || err}`,
-        orderId,
-        branchId,
-        razorpayPaymentId: paymentId,
-      });
-    }
-  }
-
-  return { retriedCount };
-}
-
 export interface RefundParams {
   orderId: string;
   razorpayPaymentId: string;
@@ -424,7 +250,7 @@ export async function autoRefund(params: RefundParams) {
   const { orderId, razorpayPaymentId, amountRupees, reason } = params;
 
   const refundPayload: any = {
-    reverse_all: 1, // Automatically reverses split transfer proportionally from branch
+    reverse_all: true, // Automatically reverses split transfer proportionally from branch
     notes: {
       orderId,
       reason: reason || "Customer support resolution / item rejection",

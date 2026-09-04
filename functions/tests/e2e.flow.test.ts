@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+﻿import { describe, it, expect, vi } from "vitest";
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
@@ -113,7 +113,7 @@ import {
 import {
   pushOrderToPetpooja,
   handlePetpoojaWebhook,
-} from "../src/modules/petpooja/petpooja.service";
+} from "../src/modules/petpooja";
 import {
   getDeliveryQuote,
   bookPorterRider,
@@ -125,7 +125,7 @@ describe("End-to-End Platform Integration Flow", () => {
   const orderId = "ord_e2e_live_flow_001";
   const branchId = "branch_ahmedabad_cg_road";
 
-  it("executes complete lifecycle: Price → Razorpay Route → Petpooja KOT → Porter 3PL Delivery", async () => {
+  it("executes complete lifecycle: Price â†’ Razorpay Route â†’ Petpooja KOT â†’ Porter 3PL Delivery", async () => {
     // 1. Calculate Authoritative Server Pricing & Route Split
     const pricing = await calculateOrderPricing({
       items: [
@@ -144,9 +144,9 @@ describe("End-to-End Platform Integration Flow", () => {
     expect(pricing.packagingFee).toBe(15);
     expect(pricing.grandTotal).toBe(577);
 
-    // Route split: default 7% brand royalty, rest branch settlement
-    expect(pricing.split.brandRoyaltyAmount).toBe(34.79);
-    expect(pricing.split.branchTransferAmount).toBe(542.06);
+    // Route split: default 5% brand royalty (spec 95/5), rest branch settlement
+    expect(pricing.split.brandRoyaltyAmount).toBe(24.85);
+    expect(pricing.split.branchTransferAmount).toBe(552.0);
     expect(pricing.split.brandRoyaltyPaise + pricing.split.branchTransferPaise).toBe(
       Math.round((497 + 15 + 40 + 24.85) * 100)
     );
@@ -196,7 +196,11 @@ describe("End-to-End Platform Integration Flow", () => {
     });
 
     expect(paymentVerification.success).toBe(true);
-    expect(savedDocs[`orders/${orderId}`].status).toBe("accepted");
+    expect(savedDocs[`orders/${orderId}`].status).toMatchObject({
+      code: "CONFIRMED",
+      kind: "upcoming",
+      terminal: false,
+    });
     expect(savedDocs[`orders/${orderId}`].paymentStatus).toBe("completed");
     expect(
       paymentVerification.transfer ||
@@ -214,7 +218,10 @@ describe("End-to-End Platform Integration Flow", () => {
       order_id: orderId,
       status: 5,
     });
-    expect(savedDocs[`orders/${orderId}`].status).toBe("ready");
+    expect(savedDocs[`orders/${orderId}`].status).toMatchObject({
+      code: "READY_FOR_PICKUP",
+      kind: "in_progress",
+    });
 
     // 6. Delivery Quote Calculation with 10-min Fee Lock TTL
     const quote = await getDeliveryQuote({
@@ -240,7 +247,10 @@ describe("End-to-End Platform Integration Flow", () => {
       request_id: `REQ-${orderId}`,
       order_id: dispatchResult.porterOrderId,
     });
-    expect(savedDocs[`orders/${orderId}`].status).toBe("out_for_delivery");
+    expect(savedDocs[`orders/${orderId}`].status).toMatchObject({
+      code: "OUT_FOR_DELIVERY",
+      kind: "in_progress",
+    });
 
     // 9. Customer Delivery OTP Verification on Handover
     const customerOtp =
@@ -254,7 +264,11 @@ describe("End-to-End Platform Integration Flow", () => {
       staffName: "Courier Driver",
     });
     expect(otpVerification.success).toBe(true);
-    expect(savedDocs[`orders/${orderId}`].status).toBe("delivered");
+    expect(savedDocs[`orders/${orderId}`].status).toMatchObject({
+      code: "DELIVERED",
+      kind: "completed",
+      terminal: true,
+    });
     expect(savedDocs[`orders/${orderId}`].deliveryStatus).toBe("delivered");
     expect(savedDocs[`orders/${orderId}`].deliveryVerifiedBy).toBe("customer_otp");
 
@@ -282,3 +296,4 @@ describe("End-to-End Platform Integration Flow", () => {
     expect(savedDocs["orders/matched_doc"]?.routeTransferStatus).toBe("failed");
   });
 });
+

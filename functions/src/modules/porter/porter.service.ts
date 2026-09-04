@@ -5,6 +5,7 @@ import {
   timingSafeEqual,
   verifyPorterWebhookSignature,
   computeHmacSha256,
+  getOtpHmacSecret,
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import {
@@ -217,10 +218,18 @@ export async function bookPorterRider(orderId: string, staffName?: string) {
         body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.message || "Porter order dispatch rejected");
+        let errMessage = `Porter order dispatch rejected (HTTP ${response.status})`;
+        try {
+          const errData = await response.json();
+          if (errData?.message) errMessage = errData.message;
+        } catch {
+          // Non-JSON error body (e.g. 502/504 gateway response)
+        }
+        throw new Error(errMessage);
       }
+
+      const data = await response.json();
 
       dispatchResult = {
         porterOrderId: data.order_id,
@@ -322,14 +331,23 @@ export async function handlePorterWebhook(
       break;
 
     case "STARTED_DELIVERY":
-      updateData.status = "out_for_delivery";
-      updateData["status.kind"] = "out_for_delivery";
+      // Canonical object form (both apps + triggers accept it).
+      updateData.status = {
+        code: "OUT_FOR_DELIVERY",
+        label: "Out for delivery",
+        kind: "in_progress",
+        terminal: false,
+      };
       updateData.deliveryStatus = "in_transit";
       break;
 
     case "DELIVERED":
-      updateData.status = "delivered";
-      updateData["status.kind"] = "delivered";
+      updateData.status = {
+        code: "DELIVERED",
+        label: "Delivered",
+        kind: "completed",
+        terminal: true,
+      };
       updateData.deliveryStatus = "delivered";
       updateData.deliveredAt = admin.firestore.FieldValue.serverTimestamp();
       break;
@@ -399,7 +417,10 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
   // Hash-first: new orders persist only an HMAC-SHA256 hash; legacy plaintext
   // orders are still verified until they are re-verified and migrated.
   const isValid = storedHash
-    ? timingSafeEqual(computeHmacSha256(enteredOtp, config.razorpay.webhookSecret), storedHash)
+    ? timingSafeEqual(
+        computeHmacSha256(enteredOtp, getOtpHmacSecret(config.razorpay.webhookSecret)),
+        storedHash
+      )
     : timingSafeEqual(enteredOtp, legacyOtp);
 
   if (!isValid) {
@@ -412,9 +433,15 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
     throw new Error("Invalid Delivery OTP. Please verify the code on the customer screen.");
   }
 
+  // Canonical object form (both apps + triggers accept it; bare strings with
+  // invalid kinds like "delivered" break Delivery tracking).
   const updateData = {
-    status: "delivered",
-    "status.kind": "delivered",
+    status: {
+      code: "DELIVERED",
+      label: "Delivered",
+      kind: "completed",
+      terminal: true,
+    },
     deliveryStatus: "delivered",
     deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
     deliveryVerifiedBy: "customer_otp",
@@ -510,8 +537,12 @@ export async function pollActivePorterOrdersWorker(): Promise<{
           if (timeSinceUpdate >= 20 * 60 * 1000) {
             await doc.ref.set(
               {
-                status: "out_for_delivery",
-                "status.kind": "out_for_delivery",
+                status: {
+                  code: "OUT_FOR_DELIVERY",
+                  label: "Out for delivery",
+                  kind: "in_progress",
+                  terminal: false,
+                },
                 deliveryStatus: "in_transit",
                 lastPolledAt: admin.firestore.FieldValue.serverTimestamp(),
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -543,12 +574,20 @@ export async function pollActivePorterOrdersWorker(): Promise<{
             if (driver.vehicle_number) updatePayload.riderVehicleNumber = driver.vehicle_number;
 
             if (normalized === "STARTED_DELIVERY") {
-              updatePayload.status = "out_for_delivery";
-              updatePayload["status.kind"] = "out_for_delivery";
+              updatePayload.status = {
+                code: "OUT_FOR_DELIVERY",
+                label: "Out for delivery",
+                kind: "in_progress",
+                terminal: false,
+              };
               updatePayload.deliveryStatus = "in_transit";
             } else if (normalized === "DELIVERED") {
-              updatePayload.status = "delivered";
-              updatePayload["status.kind"] = "delivered";
+              updatePayload.status = {
+                code: "DELIVERED",
+                label: "Delivered",
+                kind: "completed",
+                terminal: true,
+              };
               updatePayload.deliveryStatus = "delivered";
             }
 
