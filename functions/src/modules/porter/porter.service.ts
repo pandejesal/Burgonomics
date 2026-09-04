@@ -137,6 +137,22 @@ export async function bookPorterRider(orderId: string, staffName?: string) {
   }
 
   const order = orderDoc.data()!;
+
+  // Fail loudly: booking a rider against a fake/missing contact or address
+  // produces a "successful" dispatch nobody can complete. Real data or error.
+  if (!order.customerPhone) {
+    throw new Error(
+      `Cannot book Porter rider for order ${orderId}: customer phone is missing`
+    );
+  }
+  const orderType = order.orderType || order.fulfillment || "delivery";
+  const drop = order.deliveryAddress;
+  if (orderType === "delivery" && !(drop?.street || drop?.full || (drop?.lat && drop?.lng))) {
+    throw new Error(
+      `Cannot book Porter rider for order ${orderId}: delivery address is missing`
+    );
+  }
+
   const pickupLat = order.branchCoordinates?.lat || 23.0131;
   const pickupLng = order.branchCoordinates?.lng || 72.5085;
   const dropLat = order.deliveryAddress?.lat || 23.0338;
@@ -153,13 +169,17 @@ export async function bookPorterRider(orderId: string, staffName?: string) {
     const rider = mockRiders[Math.floor(Math.random() * mockRiders.length)];
     const porterOrderId = `PRTR-ORD-${Math.floor(100000 + Math.random() * 900000)}`;
 
+    // Mock riders are clearly marked: without the [TEST] prefix + source flag,
+    // simulated dispatches are indistinguishable from real riders everywhere
+    // downstream (KDS, tracking links, audits).
     dispatchResult = {
       porterOrderId,
-      riderName: rider.name,
+      riderName: `[TEST] ${rider.name}`,
       riderPhone: rider.phone,
       riderVehicleNumber: rider.vehicle,
       trackingUrl: `https://tracking.porter.in/track/${porterOrderId}`,
       status: "dispatched",
+      dispatchSource: "mock",
     };
   } else {
     try {
@@ -199,12 +219,12 @@ export async function bookPorterRider(orderId: string, staffName?: string) {
             lng: dropLng,
             contact_details: {
               name: order.customerName || "Customer",
-              phone_number: order.customerPhone || "+919999999999",
+              phone_number: order.customerPhone,
             },
           },
           lat: dropLat,
           lng: dropLng,
-          contact_number: order.customerPhone || "+919999999999",
+          contact_number: order.customerPhone,
         },
         vehicle_type: "2_WHEELER",
       };

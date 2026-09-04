@@ -67,7 +67,10 @@ export function formatPetpoojaOrderPayload(order: any, branch: any) {
       delivery_charges: deliveryFee,
       packing_charges: packagingFee,
       customer_name: order.customerName || order.customer?.name || "Customer",
-      customer_phone: order.customerPhone || order.customer?.phone || "9999999999",
+      // Never invent a phone number: an empty string fails visibly at Petpooja
+      // instead of dispatching a rider to a fake contact. Counter orders must
+      // capture a real number (Partner modal enforces this for delivery).
+      customer_phone: order.customerPhone || order.customer?.phone || "",
       customer_address:
         orderType === "1" ? order.address?.street || order.customerAddress || "" : "",
       tax_details: [
@@ -125,6 +128,27 @@ export async function pushOrderToPetpooja(orderId: string): Promise<boolean> {
 
     const petpoojaConfig = getPetpoojaConfig();
     const payload = formatPetpoojaOrderPayload(order, branchData);
+
+    // Debug visibility: missing contact or zero totals push a broken KOT that
+    // looks successful. Flag loudly instead of masking with fallbacks.
+    if (!payload.orderinfo.customer_phone) {
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "medium",
+        message: `KOT push for order ${orderId} has no customer phone — rider contact will fail`,
+        orderId,
+        branchId,
+      });
+    }
+    if (!(payload.orderinfo.total > 0)) {
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "medium",
+        message: `KOT push for order ${orderId} resolved total=0 — pricing data missing upstream`,
+        orderId,
+        branchId,
+      });
+    }
 
     const response = await fetch(petpoojaConfig.orderUrl, {
       method: "POST",

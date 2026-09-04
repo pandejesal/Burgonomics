@@ -121,8 +121,13 @@ All remotes use clean `https://github.com/…` URLs (no tokens on disk —
 
 ## 8. Debugging rules (why fallbacks were removed)
 
-- Production never shows fake data: seed catalogs/orders/stats are dev-only.
+- Production never shows fake data: seed catalogs/orders/tickets/stats are dev-only.
   Empty backend ⇒ empty/error states, never invented numbers.
+- No invented contact data: counter orders require a real phone for delivery;
+  KOT/Porter pushes throw (loudly, into the outbox/retry path) rather than
+  dialing fake numbers. Zero-total KOTs raise error snapshots.
+- Partial dashboards show an amber "Partial data" banner naming the failed source.
+- Mock riders are `[TEST]`-prefixed with `dispatchSource: "mock"`.
 - Every external call fails loudly (toast + log + persisted outbox for orders).
 - `petpooja_sync_logs` / `petpooja_webhook_logs` are the first place to look.
 
