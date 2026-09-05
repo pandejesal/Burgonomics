@@ -12,7 +12,14 @@
 - Dismissed with reason: S5 fcmTokens (allowed by exclusion — not in deny list); C3 restId composite (single-field where needs none); C4 userId query (works; customerId index kept for partner); P1 simulate fallback (explicit dev action, button gated); P3 denial unreachable (activate UI dead + rule now covers field).
 - Queued (needs product call): admin orders migration, device_tokens ownership, orders-create field mask.
 - Gates: functions 121 · partner 130 · core 205+18 skipped — all green.
-- [ ] Loop 3: Money paths re-verify (totals, caps, rounding, refunds, loyalty)
+- [ ] Loop 3: Money paths re-verify (totals, caps, rounding, refunds, loyalty) [RUNNING → done below]
+
+### Loop 3 — money paths (done)
+- Critical: live online payments were unbuildable (client sent no items/branch/loyalty → server 500). Client now sends items + storeId + coupon + loyalty + idempotency key; server resolves branch via stores.partnerBranchId, reuses open gateway orders on retry (no double charge), rejects zero totals.
+- Critical: loyalty display 50% vs server 20% (user overpaid + lost points). All client caps + copy + tests now 20%.
+- Guards: coupon percent clamped (0,100]; no-repeat transfer on re-verify; order.paid entity shape handled (+ no undefined writes).
+- Deferred (bigger): usage-count coupons, Route onboarding checks, admin refund/loyalty server transactions, analytics estimate labels.
+- Gates: functions 125 · core 205+18 skipped · builds green; root + core pushed.
 - [ ] Loop 4: Notification pipeline end-to-end (topics, channels, tokens, triggers)
 - [ ] Loop 5: Menu pipeline (sync, 86-ing both directions, images, categories)
 - [ ] Loop 6: Auth/session/RBAC (claims, guards, login flows, OTP)
