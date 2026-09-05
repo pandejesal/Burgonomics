@@ -106,7 +106,34 @@ export async function pushItemStockToPetpooja(
 
 /**
  * Handles incoming order lifecycle webhook updates (e.g. food ready, driver assigned, cancellation).
+ *
+ * Petpooja identifies outlets by restID, not our branchId. Resolve it through
+ * branches/{petpoojaStoreId} FIRST — using rest_id as branchId writes orders
+ * no branch-scoped view can ever find.
  */
+export async function resolveBranchIdForRestId(restId: string): Promise<string | null> {
+  if (!restId) return null;
+  try {
+    const col = db.collection("branches") as any;
+    // Preferred indexed query; fall back to a bounded scan on datastores
+    // without query support.
+    let docs: any[] = [];
+    if (typeof col.where === "function") {
+      const snap = await col.where("petpoojaStoreId", "==", restId).limit(1).get();
+      docs = snap.docs || [];
+    } else if (typeof col.get === "function") {
+      const snap = await col.limit(100).get().catch(() => col.get());
+      docs = (snap.docs || []).filter(
+        (d: any) => d.data?.()?.petpoojaStoreId === restId
+      );
+    }
+    if (docs.length > 0) return docs[0].id;
+  } catch (err) {
+    console.warn(`[Petpooja] branch reverse-lookup failed for rest ${restId}:`, err);
+  }
+  return null;
+}
+
 export async function handlePetpoojaWebhook(payload: any): Promise<void> {
   const orderId = payload.order_id || payload.clientOrderID || payload.client_order_id;
   if (!orderId) {

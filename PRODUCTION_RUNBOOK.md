@@ -193,6 +193,12 @@ All remotes use clean `https://github.com/…` URLs (no tokens on disk —
 8. Admin orders board (`burgonomics-partner` AdminOrdersPage + adminOrdersService)
    still queries phantom fields (`orderStatus`, `store.id`) — permanently empty
    board. Migrate it onto the normalized `useOrders` contract instead of patching.
+9. Audit-lane follow-ups (4 lanes, 2026-09-04 — fixed: KDS topic, Android
+   channel, menu re-read path, dead orderService, cancel persistence, webhook
+   rest_id resolution, branch-id defaults, combo restId; queued, needs product
+   call): `orders` create-rule field mask (requires clients to stop sending
+   `totals` first), `device_tokens` ownership binding, App Check native
+   (Play Integrity plugin), web-push topic subscription for ticket alerts.
 3. Remove `*/netlify/functions` once Firebase Functions serve all traffic.
 4. App Check enforcement, web-push client, branch-topic subscriptions (FCM gaps).
 5. Blaze app: not started (§1).

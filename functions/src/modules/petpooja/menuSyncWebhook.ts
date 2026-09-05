@@ -190,7 +190,24 @@ export async function handlePetpoojaMenuWebhook(payload: any): Promise<{
     throw new Error("Missing rest_id in Petpooja menu webhook payload");
   }
 
-  const result = await syncPetpoojaMenu(restId);
+  // rest_id is Petpooja's id, NOT our branchId — passing it through writes
+  // products no branch-scoped view can find. Resolve first; skip loudly if
+  // the outlet isn't linked yet (Runbook §5). Mock mode has no Petpooja, so
+  // rest_id doubles as the test branch id (existing behavior preserved).
+  const { config } = await import("../../config/env");
+  let branchId: string | null = null;
+  if (config.mock.petpoojaPos) {
+    branchId = restId;
+  } else {
+    const { resolveBranchIdForRestId } = await import("./item86ingSync");
+    branchId = await resolveBranchIdForRestId(restId);
+  }
+  if (!branchId) {
+    console.warn(`[Petpooja Webhook] rest_id ${restId} has no linked branch — menu push skipped`);
+    return { success: false, itemCount: 0 };
+  }
+
+  const result = await syncPetpoojaMenu(branchId);
   return {
     success: true,
     itemCount: result.itemCount,
