@@ -3,27 +3,45 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { mockDb, savedDocs, addedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
   const addedDocs: Array<{ col: string; data: any }> = [];
+  const docRef = (colName: string, docId: string) => ({
+    id: docId,
+    path: `${colName}/${docId}`,
+    get: vi.fn(async () => ({
+      exists: !!savedDocs[`${colName}/${docId}`],
+      data: () => savedDocs[`${colName}/${docId}`] || {},
+    })),
+    set: vi.fn(async (data: any, options?: any) => {
+      const docPath = `${colName}/${docId}`;
+      savedDocs[docPath] =
+        options?.merge && savedDocs[docPath]
+          ? { ...savedDocs[docPath], ...data }
+          : data;
+      if (colName === "coin_transactions") {
+        addedDocs.push({ col: colName, data: savedDocs[docPath] });
+      }
+    }),
+  });
   const mockDb = {
     collection: (colName: string) => ({
-      doc: (docId: string) => ({
-        id: docId,
-        path: `${colName}/${docId}`,
-        get: vi.fn(async () => ({
-          exists: !!savedDocs[`${colName}/${docId}`],
-          data: () => savedDocs[`${colName}/${docId}`] || {},
-        })),
-        set: vi.fn(async (data: any, options?: any) => {
-          const docPath = `${colName}/${docId}`;
-          savedDocs[docPath] =
-            options?.merge && savedDocs[docPath]
-              ? { ...savedDocs[docPath], ...data }
-              : data;
-        }),
-      }),
+      doc: (docId?: string) =>
+        docRef(colName, docId || `auto_${colName}_${Math.random().toString(36).slice(2, 8)}`),
       add: vi.fn(async (data: any) => {
         addedDocs.push({ col: colName, data });
         return { id: `auto_${addedDocs.length}` };
       }),
+    }),
+    // Serializes the transaction body against the same store (mirrors
+    // Firestore's all-or-nothing from the test's point of view).
+    runTransaction: vi.fn(async (fn: any) => {
+      const tx = {
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, options?: any) => ref.set(data, options),
+        update: (ref: any, data: any) => ref.set(data, { merge: true }),
+        delete: (ref: any) => {
+          delete savedDocs[ref.path];
+        },
+      };
+      return fn(tx);
     }),
   };
   return { mockDb, savedDocs, addedDocs };

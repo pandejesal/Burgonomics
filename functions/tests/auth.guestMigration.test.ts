@@ -219,10 +219,12 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
 
     it("awards the welcome bonus exactly once under concurrent claims (deterministic create)", async () => {
       const { awardWelcomeBonus } = await import("../src/modules/auth/guestMigration");
-      const first = await awardWelcomeBonus("usr_race_1", "+91 98250 22222", 50);
-      const second = await awardWelcomeBonus("usr_race_1", "9825022222", 50);
-      expect(first).toBe(50);
-      expect(second).toBe(0);
+      // Truly concurrent (not sequential awaits): exactly one claim wins.
+      const [first, second] = await Promise.all([
+        awardWelcomeBonus("usr_race_1", "+91 98250 22222", 50),
+        awardWelcomeBonus("usr_race_1", "9825022222", 50),
+      ]);
+      expect([first, second].sort()).toEqual([0, 50]);
     });
   });
 

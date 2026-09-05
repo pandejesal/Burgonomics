@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "../../core/firebase";
 import * as admin from "firebase-admin";
-import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
+import { isBrandAdminClaim, type StaffCaller } from "../../core/middleware";
 
 export const AdjustCustomerCoinsSchema = z.object({
   customerId: z.string().min(1, "customerId is required"),
@@ -33,40 +33,58 @@ export async function adjustCustomerCoins(
     throw new Error("Unauthorized: staff authentication required");
   }
 
+  // Atomic balance+ledger transaction: the old split-write (get → set →
+  // add as three separate awaits) lost credits under concurrency (two
+  // adjusters read 100, both wrote 150) and orphaned balances when the
+  // ledger add threw after the set. Everything happens in one transaction.
   const ref = db.collection("customers").doc(input.customerId);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw new Error(`Customer ${input.customerId} not found`);
-  }
-  const customer = snap.data()!;
+  const ledgerRef = db.collection("coin_transactions").doc();
 
-  // Branch scope via the customer's home outlet. Unknown-outlet customers
-  // are brand-admin-only (fail closed for scoped staff).
-  await assertOrderBranchAccess(caller, { branchId: customer.favoriteBranchId });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await db.runTransaction(async (tx: any) => {
+    const snap = await tx.get(ref as any);
+    if (!snap.exists) {
+      throw new Error(`Customer ${input.customerId} not found`);
+    }
+    const customer = snap.data()!;
 
-  const current = Number(customer.loyaltyPoints || 0);
-  const next = Math.max(0, current + input.delta);
-  const applied = next - current;
+    // Branch scope via the customer's home outlet (transaction-safe: no
+    // extra reads — the outlet id is on the doc we already hold).
+    // Unknown-outlet customers are brand-admin-only (fail closed).
+    if (!isBrandAdminClaim(caller)) {
+      const branchIds = Array.isArray(caller?.branchIds) ? caller.branchIds : [];
+      const home = customer.favoriteBranchId;
+      if (typeof home !== "string" || !home || !branchIds.includes(home)) {
+        throw new Error("Forbidden: customer is outside your assigned branches");
+      }
+    }
 
-  await ref.set(
-    {
-      loyaltyPoints: next,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
+    const current = Number(customer.loyaltyPoints || 0);
+    const next = Math.max(0, current + input.delta);
+    const applied = next - current;
 
-  await db.collection("coin_transactions").add({
-    customerId: input.customerId,
-    delta: applied,
-    balanceAfter: next,
-    type: "staff_adjustment",
-    reason: input.reason,
-    notes: input.notes || null,
-    actorUid: caller.uid || null,
-    actorEmail: (caller as any)?.email || null,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    tx.set(
+      ref as any,
+      {
+        loyaltyPoints: next,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    tx.set(ledgerRef as any, {
+      customerId: input.customerId,
+      delta: applied,
+      balanceAfter: next,
+      type: "staff_adjustment",
+      reason: input.reason,
+      notes: input.notes || null,
+      actorUid: caller?.uid || null,
+      actorEmail: (caller as any)?.email || null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { applied, balanceAfter: next };
   });
 
-  return { success: true, customerId: input.customerId, applied, balanceAfter: next };
+  return { success: true, customerId: input.customerId, ...result };
 }

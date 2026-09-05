@@ -1,169 +1,67 @@
 import { describe, it, expect } from 'vitest';
 
-export interface OrderNotificationPayload {
-  orderId: string;
-  orderNumber: string;
-  branchId: string;
-  fulfillmentType: 'delivery' | 'takeaway' | 'dinein';
-  totalInr: number;
-  customerName: string;
-  status: string;
-}
+// These tests import the REAL message builders. The previous file defined
+// local builders with divergent channel/sound IDs (kot_acoustic_alerts /
+// kot_alarm) — Android SILENTLY DROPS pushes on nonexistent channels, so the
+// suite was blessing payloads production must never send. The pins below are
+// load-bearing: channel + sound must exist on device (see templates.ts note).
 
-export function buildKitchenKotFcmMessage(order: OrderNotificationPayload) {
-  return {
-    topic: `branch_${order.branchId}_orders`,
-    notification: {
-      title: '🚨 NEW KOT RECEIVED!',
-      body: `Order #${order.orderNumber} (${order.fulfillmentType.toUpperCase()}) - ₹${order.totalInr}`,
-    },
-    data: {
-      orderId: order.orderId,
-      orderNumber: order.orderNumber,
-      fulfillmentType: order.fulfillmentType,
-      type: 'NEW_KOT',
-      timestamp: String(Date.now()),
-    },
-    android: {
-      priority: 'high' as const,
-      notification: {
-        channelId: 'kot_acoustic_alerts',
-        sound: 'kot_alarm',
-        priority: 'max' as const,
-        defaultVibrateTimings: true,
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: 'kot_alarm.wav',
-          badge: 1,
-          contentAvailable: true,
-        },
-      },
-    },
-    webpush: {
-      headers: {
-        Urgency: 'high',
-      },
-      notification: {
-        requireInteraction: true,
-        icon: '/icons/burgonomics-kot-icon.png',
-        badge: '/icons/badge.png',
-        actions: [
-          { action: 'view_kds', title: 'Open Makeline KDS' },
-          { action: 'print_kot', title: 'Print KOT' },
-        ],
-      },
-    },
-  };
-}
+import {
+  buildKotAlertMessage,
+  buildCustomerOrderUpdateMessage,
+  buildTicketAlertMessage,
+} from '../src/modules/notifications/templates';
 
-export function buildCustomerOrderStatusFcmMessage(
-  deviceToken: string,
-  order: OrderNotificationPayload
-) {
-  const statusTitles: Record<string, string> = {
-    accepted: '👨‍🍳 Kitchen Accepted Your Order!',
-    preparing: '🔥 Sizzling on the Grill!',
-    ready: '📦 Order Packed & Ready!',
-    out_for_delivery: '🛵 Rider is Out for Delivery!',
-    delivered: '🎉 Enjoy Your Fresh Smash Burgers!',
-  };
+describe('Backend Cloud Functions — FCM HTTP v1 Notification Payloads Suite (real builders)', () => {
+  it('builds a high-priority Kitchen KOT message on the branch topic with the on-device channel', () => {
+    const msg: any = buildKotAlertMessage('branch_ahmedabad_1', {
+      id: 'ord_9901',
+      orderNumber: 'BUR-9901',
+      fulfillmentType: 'delivery',
+      totalAmount: 450,
+    });
 
-  const title = statusTitles[order.status] || '🍔 Burgonomics Order Update';
-
-  return {
-    token: deviceToken,
-    notification: {
-      title,
-      body: `Order #${order.orderNumber}: Status is now ${order.status.replace(/_/g, ' ').toUpperCase()}`,
-    },
-    data: {
-      orderId: order.orderId,
-      status: order.status,
-      type: 'ORDER_STATUS_UPDATE',
-    },
-    android: {
-      priority: 'high' as const,
-      notification: {
-        channelId: 'customer_order_updates',
-        sound: 'default',
-      },
-    },
-  };
-}
-
-export function shouldSendStatusNotification(beforeStatus: string, afterStatus: string): boolean {
-  if (!afterStatus || beforeStatus === afterStatus) {
-    return false;
-  }
-  const notifiableStatuses = ['accepted', 'preparing', 'ready', 'out_for_delivery', 'delivered', 'cancelled'];
-  return notifiableStatuses.includes(afterStatus);
-}
-
-export function pruneDeadDeviceTokens(
-  currentTokens: string[],
-  invalidTokenResponseError: { code: string; token: string }
-): string[] {
-  if (
-    invalidTokenResponseError.code === 'messaging/registration-token-not-registered' ||
-    invalidTokenResponseError.code === 'messaging/invalid-registration-token'
-  ) {
-    return currentTokens.filter((t) => t !== invalidTokenResponseError.token);
-  }
-  return currentTokens;
-}
-
-describe('Backend Cloud Functions — FCM HTTP v1 Notification Payloads Suite', () => {
-  const sampleOrder: OrderNotificationPayload = {
-    orderId: 'ord_9901',
-    orderNumber: 'BUR-9901',
-    branchId: 'branch_ahmedabad_1',
-    fulfillmentType: 'delivery',
-    totalInr: 450,
-    customerName: 'Rohit Sharma',
-    status: 'pending',
-  };
-
-  it('builds a high-priority Kitchen KOT FCM message targeting the branch topic with acoustic sound channel', () => {
-    const fcmPayload = buildKitchenKotFcmMessage(sampleOrder);
-
-    expect(fcmPayload.topic).toBe('branch_branch_ahmedabad_1_orders');
-    expect(fcmPayload.notification.title).toBe('🚨 NEW KOT RECEIVED!');
-    expect(fcmPayload.android.notification.channelId).toBe('kot_acoustic_alerts');
-    expect(fcmPayload.android.notification.sound).toBe('kot_alarm');
-    expect(fcmPayload.apns.payload.aps.sound).toBe('kot_alarm.wav');
-    expect(fcmPayload.webpush.headers.Urgency).toBe('high');
-    expect(fcmPayload.webpush.notification.actions).toHaveLength(2);
+    expect(msg.topic).toBe('branch_branch_ahmedabad_1_orders');
+    expect(msg.notification.title).toBe('🚨 NEW KOT RECEIVED!');
+    // Must match android/res + channel creation — never invent new IDs here.
+    expect(msg.android.notification.channelId).toBe('burgonomics_orders_channel');
+    expect(msg.android.notification.sound).toBe('new_order');
+    expect(msg.data.type).toBe('NEW_KOT');
   });
 
-  it('builds customer order status notification for out_for_delivery', () => {
-    const customerOrder: OrderNotificationPayload = {
-      ...sampleOrder,
-      status: 'out_for_delivery',
-    };
-
-    const msg = buildCustomerOrderStatusFcmMessage('device_token_xyz_123', customerOrder);
+  it('builds customer order status notification for OUT_FOR_DELIVERY', () => {
+    const msg: any = buildCustomerOrderUpdateMessage(
+      'device_token_xyz_123',
+      { id: 'ord_9901', orderNumber: 'BUR-9901', fulfillmentType: 'delivery' },
+      'OUT_FOR_DELIVERY'
+    );
 
     expect(msg.token).toBe('device_token_xyz_123');
-    expect(msg.notification.title).toBe('🛵 Rider is Out for Delivery!');
-    expect(msg.data.status).toBe('out_for_delivery');
-    expect(msg.android.notification.channelId).toBe('customer_order_updates');
+    expect(msg.notification.title).toBe('🛵 Out for Delivery!');
+    expect(msg.data.status).toBe('OUT_FOR_DELIVERY');
+    expect(msg.android.notification.channelId).toBe('burgonomics_updates_channel');
   });
 
-  it('deduplicates notifications by evaluating status changes before triggering push', () => {
-    expect(shouldSendStatusNotification('preparing', 'preparing')).toBe(false);
-    expect(shouldSendStatusNotification('preparing', 'ready')).toBe(true);
-    expect(shouldSendStatusNotification('ready', 'out_for_delivery')).toBe(true);
-    expect(shouldSendStatusNotification('placed', 'unknown_status')).toBe(false);
+  it('falls back to a generic update for unknown statuses (never throws)', () => {
+    const msg: any = buildCustomerOrderUpdateMessage(
+      'device_token_xyz_123',
+      { id: 'ord_9901', orderNumber: 'BUR-9901', fulfillmentType: 'delivery' },
+      'SOME_FUTURE_STATUS'
+    );
+
+    expect(msg.notification.title).toBe('📦 Order Update');
   });
 
-  it('prunes dead registration tokens upon receipt of registration-token-not-registered error', () => {
-    const tokens = ['token_valid_1', 'token_stale_dead', 'token_valid_2'];
-    const err = { code: 'messaging/registration-token-not-registered', token: 'token_stale_dead' };
+  it('routes ticket escalation alerts to the branch tickets topic', () => {
+    const msg: any = buildTicketAlertMessage('cg_road', {
+      id: 'tk_1',
+      ticketNumber: 'TK-092',
+      subject: 'Missing extra dip',
+      priority: 'URGENT',
+    });
 
-    const pruned = pruneDeadDeviceTokens(tokens, err);
-    expect(pruned).toEqual(['token_valid_1', 'token_valid_2']);
+    expect(msg.topic).toBe('branch_cg_road_tickets');
+    expect(msg.notification?.title).toContain('Ticket Escalation (URGENT)');
+    expect(msg.data?.type).toBe('TICKET_ESCALATION');
   });
 });

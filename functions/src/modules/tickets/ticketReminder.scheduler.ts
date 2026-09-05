@@ -15,27 +15,43 @@ const ESCALATED_TOPIC = "tickets_escalated";
  * Determines the current active tier for a still-unresolved ticket.
  * If assignedTo.tier is absent/invalid, defaults to branch.
  */
-function currentTier(ticket: any): TicketEscalationTier {
+export function currentTier(ticket: any): TicketEscalationTier {
   const tier = ticket?.assignedTo?.tier;
   return TIER_ORDER.includes(tier) ? (tier as TicketEscalationTier) : "branch";
+}
+
+/** Best-effort millis for Firestore Timestamps, epoch numbers, and ISO strings. */
+function activityMillis(value: any, fallback: number): number {
+  if (value == null) return fallback;
+  if (typeof value?.toMillis === "function") {
+    const ms = value.toMillis();
+    return typeof ms === "number" ? ms : fallback;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : fallback;
+  }
+  return fallback;
 }
 
 /**
  * Returns the tier the ticket should be escalated to given how long it has
  * been sitting without an update, or null if no further escalation applies.
  */
-function nextTierForInactivity(ticket: any, nowMillis: number): TicketEscalationTier | null {
+export function nextTierForInactivity(ticket: any, nowMillis: number): TicketEscalationTier | null {
   const tier = currentTier(ticket);
   const idx = TIER_ORDER.indexOf(tier);
   if (idx >= TIER_ORDER.length - 1) return null; // already at final tier
 
   // Compute when the current tier's clock started: from lastActivityAt if present,
-  // otherwise from createdAt.
-  const lastActivity = ticket.lastActivityAt?.toMillis
-    ? ticket.lastActivityAt.toMillis()
-    : ticket.createdAt?.toMillis
-    ? ticket.createdAt.toMillis()
-    : Date.now();
+  // otherwise from createdAt. Accepts Timestamp objects, epoch numbers, and
+  // ISO strings — writers disagree on shape, and an unparseable clock must
+  // not silently disable escalation (it did: unknown shapes fell to Date.now()).
+  const lastActivity =
+    ticket.lastActivityAt != null
+      ? activityMillis(ticket.lastActivityAt, nowMillis)
+      : activityMillis(ticket.createdAt, nowMillis);
   const waitMs = TIER_WAIT_MS[tier];
 
   if (nowMillis - lastActivity >= waitMs) {

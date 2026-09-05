@@ -57,7 +57,14 @@
 - Fixed core: paid-but-no-order panel no longer lies about "no money charged" and hides Retry — shows payment id + support CTA deep-linking a prefilled PAYMENT_ISSUE ticket; invoice tile wired to working GST generator; share builds a real track URL with clipboard fallback; search empty state gains Clear action; ratings persist on-device with honest copy.
 - Dismissed: per-card motion springs (visual), chat load-older pagination (follow-up), aggregate-count billing (follow-up).
 - Gates: functions 136 · partner 138 · core 207+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 9: Test quality (mock-assertions, skipped tests, untested critical paths)
+- [ ] Loop 9: Test quality (mock-assertions, skipped tests, untested critical paths) [RUNNING → done below]
+
+### Loop 9 — test quality (done)
+- Fixed functions: webhook replay test drives the REAL handler (replay→already_processed, stale-claim takeover, orphan parking); tickets.service.test rewritten to real resolveTicket (refund executes, refusals throw, no silent resolve); forged-signature test with mock mode off; escalator test imports the real tier clocks (also fixed: numeric/ISO clocks now escalate) + real topic router; FCM test pins real on-device channels (killed divergent kot_alarm fiction); coins moved into a tx + truly-concurrent bonus test.
+- Fixed partner: auth-rbac/login tests import the REAL routePolicy/branchScope (deleted local clones + test-to-test import); new fail-closed suite pins resolveUserProfile deny (customer/typo/missing); thermal test uses the real formatter; PIN test imports real helpers; refund guard extracted to tested util; API gateway test proves endpoint/body/error mapping.
+- Fixed core: bootstrap trust gate tested via injected probe (found+fixed: dynamic firebase imports bypass mock interception — static import now); resend-open + ownership helper + trackUrl util tested; payments fictions rewritten to real pricer/HMAC/cancelOrder; FailurePanel logic extracted + branched tests; rules suite wired to CI (fail-hard on skip) + local emulator run: 18/18 PASS.
+- Dismissed: component-render tests (no DOM harness in repo — pure helpers extracted instead); aggregate-count billing (prior follow-up).
+- Gates: functions 143 · partner 145 · core 218+18 skipped (rules 18/18 green under emulator) · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 10: Docs/config drift (env examples vs code, runbook accuracy, stale .md)
 
 ## Log
