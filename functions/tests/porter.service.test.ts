@@ -227,6 +227,35 @@ describe("Porter Logistics Service", () => {
       ).rejects.toThrow(/Invalid Delivery OTP/);
     });
 
+    it("locks out after 3 wrong attempts and recovers on expiry", async () => {
+      savedDocs["orders/order_otp_109"] = {
+        id: "order_otp_109",
+        deliveryOtpHash: computeHmacSha256("7777", config.razorpay.webhookSecret),
+        status: "out_for_delivery",
+      };
+
+      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0000" })).rejects.toThrow(
+        /Invalid Delivery OTP/
+      );
+      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0001" })).rejects.toThrow(
+        /Invalid Delivery OTP/
+      );
+      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0002" })).rejects.toThrow(
+        /Too many wrong attempts/
+      );
+      // Locked: even the right code is rejected until expiry
+      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "7777" })).rejects.toThrow(
+        /Too many wrong attempts/
+      );
+      expect(savedDocs["orders/order_otp_109"]?.deliveryOtpAttempts).toBe(3);
+
+      // After expiry the right code succeeds and clears the counter
+      savedDocs["orders/order_otp_109"].deliveryOtpLockedUntil = Date.now() - 1000;
+      const res = await verifyDeliveryOtp({ orderId: "order_otp_109", otp: "7777" });
+      expect(res.success).toBe(true);
+      expect(savedDocs["orders/order_otp_109"]?.deliveryOtpAttempts).toBe(0);
+    });
+
     it("falls back to legacy plaintext OTP when no hash is stored", async () => {
       savedDocs["orders/order_otp_103"] = {
         id: "order_otp_103",

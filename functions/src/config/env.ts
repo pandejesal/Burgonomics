@@ -40,6 +40,9 @@ export const config = {
     slackWebhookUrl: process.env.SLACK_DEV_WEBHOOK_URL || "",
     discordWebhookUrl: process.env.DISCORD_DEV_WEBHOOK_URL || "",
   },
+  appCheck: {
+    enforcement: process.env.APP_CHECK_ENFORCEMENT === "true",
+  },
   mock: {
     paymentGateway:
       process.env.MOCK_PAYMENT_GATEWAY === "true" ||

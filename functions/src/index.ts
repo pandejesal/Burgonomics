@@ -10,6 +10,7 @@ import {
   requireAuth,
   optionalAuth,
   requireRole,
+  requireAppCheck,
   verifyPetpoojaAuth,
   AuthenticatedRequest,
 } from "./core/middleware";
@@ -59,6 +60,18 @@ import {
   cleanupExpiredGuestSessionsWorker,
 } from "./modules/auth";
 import { assertProductionKeys } from "./config/env";
+import {
+  validateBody,
+  createPaymentOrderSchema,
+  verifyPaymentSchema,
+  refundSchema,
+  pushOrderSchema,
+  syncMenuSchema,
+  pushStockSchema,
+  porterBookSchema,
+  verifyDeliveryOtpSchema,
+  manualDispatchSchema,
+} from "./core/validation";
 
 // Enforce live production keys check on deployment
 assertProductionKeys();
@@ -112,6 +125,37 @@ app.use(
 
 const REGION = "asia-south1";
 
+// App Check attestation on app-originated routes only (monitor by default,
+// enforced with APP_CHECK_ENFORCEMENT=true). Webhooks and /health are
+// third-party/public and intentionally excluded.
+app.use(
+  [
+    "/payments/createPaymentOrder",
+    "/payments/verifyPayment",
+    "/payments/refund",
+    "/petpooja/syncMenu",
+    "/petpooja/pushOrder",
+    "/petpooja/pushStock",
+    "/porter/quote",
+    "/porter/book",
+    "/porter/rebook",
+    "/orders/verifyDeliveryOtp",
+    "/orders/manualDispatch",
+    "/tickets/create",
+    "/tickets/message",
+    "/tickets/resolve",
+    "/tickets/escalate",
+    "/notifications/dispatch",
+    "/notifications/subscribe",
+    "/auth/setClaims",
+    "/auth/assignRole",
+    "/auth/revokeRole",
+    "/auth/migrateGuest",
+    "/auth/verifyBonusEligibility",
+  ],
+  requireAppCheck
+);
+
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "healthy", timestamp: new Date().toISOString(), service: "burgonomics-api" });
 });
@@ -120,7 +164,7 @@ app.get("/health", (_req, res) => {
 // 1. PAYMENT ROUTES
 // ==========================================
 
-app.post("/payments/createPaymentOrder", optionalAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/payments/createPaymentOrder", optionalAuth, validateBody(createPaymentOrderSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const customerId = req.user?.uid || req.body.customerId || "guest";
     const result = await createPaymentOrder({ ...req.body, customerId });
@@ -130,7 +174,7 @@ app.post("/payments/createPaymentOrder", optionalAuth, async (req: Authenticated
   }
 });
 
-app.post("/payments/verifyPayment", optionalAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/payments/verifyPayment", optionalAuth, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const result = await verifyPayment(req.body);
     res.status(200).json(result);
@@ -143,6 +187,7 @@ app.post(
   "/payments/refund",
   requireAuth,
   requireRole(["brand_owner", "developer", "support"]),
+  validateBody(refundSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const result = await autoRefund(req.body);
@@ -163,6 +208,7 @@ app.post(
   "/petpooja/syncMenu",
   requireAuth,
   requireRole(["brand_owner", "developer", "regional_manager", "branch_owner"]),
+  validateBody(syncMenuSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.body.branchId;
@@ -200,6 +246,7 @@ app.post(
   "/petpooja/pushOrder",
   requireAuth,
   requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(pushOrderSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.body.orderId;
@@ -215,13 +262,10 @@ app.post(
   "/petpooja/pushStock",
   requireAuth,
   requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(pushStockSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const { branchId, itemId, inStock } = req.body;
-      if (!branchId || !itemId || typeof inStock !== "boolean") {
-        res.status(400).json({ error: "branchId, itemId and boolean inStock are required" });
-        return;
-      }
       const success = await pushItemStockToPetpooja(branchId, itemId, inStock);
       res.status(200).json({ success });
     } catch (err: any) {
@@ -247,6 +291,7 @@ app.post(
   "/porter/book",
   requireAuth,
   requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(porterBookSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, staffName } = req.body;
@@ -262,6 +307,7 @@ app.post(
   "/porter/rebook",
   requireAuth,
   requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(porterBookSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, staffName } = req.body;
@@ -288,7 +334,7 @@ app.post("/porter/webhook", async (req, res) => {
   }
 });
 
-app.post("/orders/verifyDeliveryOtp", optionalAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/orders/verifyDeliveryOtp", optionalAuth, validateBody(verifyDeliveryOtpSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const staffName = req.user?.email || req.body.staffName || "Branch Staff";
     const result = await verifyDeliveryOtp({ ...req.body, staffName });
@@ -302,6 +348,7 @@ app.post(
   "/orders/manualDispatch",
   requireAuth,
   requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(manualDispatchSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const staffName = req.user?.email || req.body.staffName || "Branch Staff";
@@ -385,6 +432,31 @@ app.post(
     }
   }
 );
+
+// Device → branch topic subscription (FCM topics can only be subscribed
+// server-side; clients call this after push registration and branch switch).
+app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { token, topics } = req.body as { token?: string; topics?: string[] };
+    if (!token || !Array.isArray(topics) || topics.length === 0) {
+      res.status(400).json({ error: "token and non-empty topics[] are required" });
+      return;
+    }
+    const clean = [...new Set(topics)].filter((t) => /^[a-zA-Z0-9_-]{1,100}$/.test(t)).slice(0, 10);
+    if (clean.length === 0) {
+      res.status(400).json({ error: "no valid topic names" });
+      return;
+    }
+    const { messaging } = await import("./core/firebase");
+    const results = await Promise.all(
+      clean.map((topic) => messaging.subscribeToTopic(token, topic))
+    );
+    const failures = results.filter((r) => r.failureCount > 0).length;
+    res.status(200).json({ success: failures === 0, subscribed: clean, failures });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to subscribe topics" });
+  }
+});
 
 app.post(
   "/auth/setClaims",

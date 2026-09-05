@@ -174,6 +174,19 @@ All remotes use clean `https://github.com/…` URLs (no tokens on disk —
    `functions/`, `--apply` to write. Fills ONLY missing
    `customerId/createdAt/updatedAt/branchId` (never overwrites); branchId only
    from the embedded store link. Needs `GOOGLE_APPLICATION_CREDENTIALS` or ADC.
+3. ~~OTP lockout~~ DONE: 3 attempts → 15-min lock, counter cleared on success.
+4. ~~Pricing reads~~ DONE: batched catalog fetch + 60s branch cache (branch
+   config still wins over client input).
+5. ~~Branch topics~~ DONE: `POST /notifications/subscribe` + Partner subscribes
+   on token registration. ~~Web push~~ DONE (Delivery): SW + VAPID + token→user
+   linking; needs `VITE_FCM_VAPID_KEY` from Firebase Console. Native Play
+   Integrity / App Attest still open (no native plugin).
+6. ~~App Check~~ DONE (monitor mode): clients attest (reCAPTCHA v3 web),
+   server verifies on app routes, webhooks excluded. To enforce: ship
+   `VITE_RECAPTCHA_SITE_KEY`, then set functions `APP_CHECK_ENFORCEMENT=true`.
+7. ~~Validation + parity~~ DONE: Zod on 10 money/dispatch routes, 20-basket
+   parity suite, zod/vitest patch alignment (functions vitest 1.x and TS majors
+   intentionally left — major bumps need a dedicated pass).
 3. Remove `*/netlify/functions` once Firebase Functions serve all traffic.
 4. App Check enforcement, web-push client, branch-topic subscriptions (FCM gaps).
 5. Blaze app: not started (§1).

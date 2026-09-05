@@ -112,6 +112,41 @@ export function requireRole(allowedRoles: string[]) {
 }
 
 /**
+ * Firebase App Check attestation for app-originated routes.
+ *
+ * Monitor by default: missing/invalid tokens are logged, never rejected, so
+ * enabling clients can never break the apps. Set APP_CHECK_ENFORCEMENT=true
+ * (after enrolling web + registering the reCAPTCHA key) to reject.
+ * NEVER applied to webhook routes — third parties cannot mint App Check tokens.
+ */
+export async function requireAppCheck(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const token = req.headers["x-firebase-appcheck"] as string | undefined;
+  if (!token) {
+    if (config.appCheck.enforcement) {
+      res.status(403).json({ error: "Forbidden: missing App Check token" });
+      return;
+    }
+    next();
+    return;
+  }
+  try {
+    await admin.appCheck().verifyToken(token);
+    next();
+  } catch (err: any) {
+    if (config.appCheck.enforcement) {
+      res.status(403).json({ error: "Forbidden: invalid App Check token" });
+      return;
+    }
+    console.warn("[AppCheck] invalid token (monitor mode):", err?.message || err);
+    next();
+  }
+}
+
+/**
  * Webhook authentication for Petpooja POS bridge with timing-safe comparison.
  */
 export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFunction): void {
