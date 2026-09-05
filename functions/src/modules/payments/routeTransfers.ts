@@ -69,12 +69,16 @@ export async function attemptRouteTransfer(
   paymentId: string,
   branchId: string,
   pricingSplit: { branchTransferPaise: number; brandRoyaltyPaise?: number; brandRoyaltyAmount?: number },
-  orderId: string
+  orderId: string,
+  // Pre-resolved linked account from the worker's batched branch prefetch.
+  // `undefined` (direct callers/tests) keeps the old inline branch read.
+  preResolvedAccountId?: string | null
 ): Promise<RouteTransferAttempt> {
   try {
-    const branchSnap = await db.collection("branches").doc(branchId).get();
-    const branchData = branchSnap.data();
-    const razorpayAccountId = branchData?.razorpayAccountId;
+    const razorpayAccountId =
+      preResolvedAccountId !== undefined
+        ? preResolvedAccountId
+        : (await db.collection("branches").doc(branchId).get()).data()?.razorpayAccountId;
 
     if (!razorpayAccountId || !pricingSplit || pricingSplit.branchTransferPaise <= 0) {
       return {
@@ -126,9 +130,30 @@ export async function retryPendingRouteTransfersWorker() {
     .limit(20)
     .get();
 
+  // One batched prefetch for every distinct branch: the old code re-read the
+  // same branch doc once per order (N orders × 1 read + 1 external POST,
+  // all serial). External transfer POSTs then run in bounded chunks.
+  const docs = pendingSnap.docs as any[];
+  const distinctBranchIds = [
+    ...new Set(
+      docs.map((d) => d.data()?.branchId).filter((b): b is string => typeof b === "string" && !!b)
+    ),
+  ];
+  const branchAccounts = new Map<string, string | null>();
+  await Promise.all(
+    distinctBranchIds.map(async (branchId) => {
+      try {
+        const snap = await db.collection("branches").doc(branchId).get();
+        branchAccounts.set(branchId, snap.data()?.razorpayAccountId ?? null);
+      } catch {
+        branchAccounts.set(branchId, null);
+      }
+    })
+  );
+
   let retriedCount = 0;
 
-  for (const doc of pendingSnap.docs) {
+  const processDoc = async (doc: any): Promise<boolean> => {
     const order = doc.data();
     const orderId = doc.id;
     const branchId = order.branchId;
@@ -146,10 +171,16 @@ export async function retryPendingRouteTransfersWorker() {
           },
           { merge: true }
         );
-        continue;
+        return false;
       }
 
-      const attempt = await attemptRouteTransfer(paymentId, branchId, pricingSplit, orderId);
+      const attempt = await attemptRouteTransfer(
+        paymentId,
+        branchId,
+        pricingSplit,
+        orderId,
+        branchAccounts.has(branchId) ? branchAccounts.get(branchId) ?? null : undefined
+      );
 
       if (attempt.skipped) {
         await doc.ref.set(
@@ -160,7 +191,7 @@ export async function retryPendingRouteTransfersWorker() {
           },
           { merge: true }
         );
-        continue;
+        return false;
       }
 
       if (!attempt.ok) {
@@ -194,7 +225,7 @@ export async function retryPendingRouteTransfersWorker() {
             razorpayPaymentId: paymentId,
           });
         }
-        continue;
+        return false;
       }
 
       await doc.ref.set(
@@ -208,7 +239,7 @@ export async function retryPendingRouteTransfersWorker() {
         },
         { merge: true }
       );
-      retriedCount += 1;
+      return true;
     } catch (err: any) {
       await captureErrorSnapshot({
         source: "payments",
@@ -218,6 +249,16 @@ export async function retryPendingRouteTransfersWorker() {
         branchId,
         razorpayPaymentId: paymentId,
       });
+      return false;
+    }
+  };
+
+  const CHUNK_SIZE = 4;
+  for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+    const chunk = docs.slice(i, i + CHUNK_SIZE);
+    const results = await Promise.allSettled(chunk.map((doc) => processDoc(doc)));
+    for (const res of results) {
+      if (res.status === "fulfilled" && res.value) retriedCount += 1;
     }
   }
 

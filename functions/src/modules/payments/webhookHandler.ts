@@ -35,10 +35,41 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   const event = payload.event;
   const eventId = payload.id || `evt_${Date.now()}`;
 
-  // Idempotency check
+  // Idempotency CLAIM (not check-then-act): the old code wrote the audit doc
+  // only AFTER the slow FCM + KOT push, so a Razorpay retry landing mid-push
+  // re-passed this check and double-pushed the KOT. create() fails when the
+  // doc exists, serializing concurrent deliveries; a stale claim (previous
+  // attempt died >10 min ago without completing) is taken over.
   const auditDocRef = db.collection("payment_audits").doc(`aud_evt_${eventId}`);
-  const auditSnap = await auditDocRef.get();
-  if (auditSnap.exists) {
+  const CLAIM_TTL_MS = 10 * 60 * 1000;
+  const alreadyClaimed = async (): Promise<boolean> => {
+    try {
+      await auditDocRef.create({
+        eventId,
+        event,
+        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        completedAt: null,
+      });
+      return false;
+    } catch {
+      // Lost the race or a prior attempt claimed it — inspect the lease.
+      try {
+        const snap = await auditDocRef.get();
+        const data = (snap.exists ? (snap.data() as any) : undefined) as any;
+        if (data?.completedAt) return true;
+        const claimedMs =
+          typeof data?.claimedAt?.toMillis === "function"
+            ? data.claimedAt.toMillis()
+            : typeof data?.claimedAt === "number"
+              ? data.claimedAt
+              : 0;
+        return Date.now() - claimedMs < CLAIM_TTL_MS;
+      } catch {
+        return true;
+      }
+    }
+  };
+  if (await alreadyClaimed()) {
     res.status(200).json({ status: "already_processed" });
     return;
   }
@@ -169,16 +200,20 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       }
     }
 
-    // Save audit log for idempotency
-    await auditDocRef.set({
-      eventId,
-      event,
-      payloadSummary: {
-        paymentId: payload.payload?.payment?.entity?.id,
-        orderId: payload.payload?.payment?.entity?.notes?.orderId,
+    // Complete the idempotency claim (merge — the claim doc already exists).
+    await auditDocRef.set(
+      {
+        eventId,
+        event,
+        payloadSummary: {
+          paymentId: payload.payload?.payment?.entity?.id,
+          orderId: payload.payload?.payment?.entity?.notes?.orderId,
+        },
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
       },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+      { merge: true }
+    );
 
     res.status(200).json({ status: "ok" });
   } catch (err: any) {

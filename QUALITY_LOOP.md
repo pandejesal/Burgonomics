@@ -41,7 +41,14 @@
 - Fixed: customer order IDOR (ownership check); bootstrap requires live Firebase uid match; httpClient auth interceptors implemented + wired; OTP resend store-throttled; QuickAuthSheet uses canonical validators, 6-digit gate, no code autofill.
 - Dismissed: optionalAuth no-revocation (documented guest exception), categories persistence n/a, admin-portal separate session (queued).
 - Gates: functions 131 · partner 138 · core 207+18 skipped · all builds green. Committed locally; pushes blocked on 403 (credential rotation pending user).
-- [ ] Loop 7: Performance (N+1 queries, bundle weight, re-renders, pagination)
+- [ ] Loop 7: Performance (N+1 queries, bundle weight, re-renders, pagination) [RUNNING → done below]
+
+### Loop 7 — performance (done)
+- Fixed functions: Razorpay webhook idempotency claim-before-work (closes double-KOT on retry, stale-claim takeover); ticket reminder batch+allSettled; KOT retry worker chunked(4) + single-scan dead-letter; route-transfer branch prefetch + chunked attempts; pricing branch+coupon reads concurrent.
+- Fixed partner: useOrders limit(100) + server-side dateRange (was accepted-then-ignored); dashboard 3-fetch Promise.all; CustomerDetailPage drops full-collection useOrders for scoped customer.orders; chat threads/messages bounded (30/50, order preserved); tickets dual-fetch concurrent + Set dedup.
+- Fixed core: menu restId cache + 30s products cache (one scan per open, invalidated by live listener); live listener merges buckets (no pagination clobber); order history one-fetch-per-session cache; menu pager windowed to active±1; tab bar motion→CSS (shell chunk); home rails lazy+async images, first banner eager.
+- Dismissed: aggregate-query counts (needs schema alignment, follow-up); chat "load older" pagination (follow-up); React.lazy sheet splits + manualChunks (follow-up); per-card motion springs (visual, follow-up).
+- Gates: functions 131 · partner 138 · core 207+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 8: UX dead-ends (dead buttons, empty states, broken routes/links)
 - [ ] Loop 9: Test quality (mock-assertions, skipped tests, untested critical paths)
 - [ ] Loop 10: Docs/config drift (env examples vs code, runbook accuracy, stale .md)

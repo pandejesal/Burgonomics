@@ -146,38 +146,57 @@ export async function calculateOrderPricing(
     foodSubtotal += unitPrice * qty;
   }
 
-  // 2. Branch royalty & packaging config (cached 60s). Branch config always
-  // wins over client input — client-supplied fees are untrusted.
+  // 2+3. Branch config and coupon are INDEPENDENT reads — fire them together
+  // instead of two serial round trips on the hot checkout path. Branch config
+  // always wins over client input — client-supplied fees are untrusted.
+  // Coupons collection is the SOLE discount authority (no hardcoded fallback).
   let royaltyPercentage = 5; // Default 5% brand royalty (spec: 95/5 split)
   let packagingFee = input.packagingFee ?? 15; // Default ₹15 packaging
+  let couponDoc: any = null;
 
-  if (input.branchId && db && typeof db.collection === "function") {
-    const cached = branchConfigCache.get(input.branchId);
-    if (cached && Date.now() - cached.at < BRANCH_CACHE_TTL_MS) {
-      royaltyPercentage = cached.royaltyPercentage;
-      packagingFee = cached.packagingFee;
-    } else {
-      try {
-        const branchSnap = await db.collection("branches").doc(input.branchId).get();
-        if (branchSnap.exists) {
-          const branchData = branchSnap.data();
-          if (typeof branchData?.royaltyPercentage === "number") {
-            royaltyPercentage = branchData.royaltyPercentage;
+  const couponCode = input.couponCode?.trim().toUpperCase();
+  const branchRead: Promise<void> =
+    input.branchId && db && typeof db.collection === "function"
+      ? (async () => {
+          const cached = branchConfigCache.get(input.branchId!);
+          if (cached && Date.now() - cached.at < BRANCH_CACHE_TTL_MS) {
+            royaltyPercentage = cached.royaltyPercentage;
+            packagingFee = cached.packagingFee;
+            return;
           }
-          if (typeof branchData?.packagingFee === "number") {
-            packagingFee = branchData.packagingFee;
+          try {
+            const branchSnap = await db.collection("branches").doc(input.branchId!).get();
+            if (branchSnap.exists) {
+              const branchData = branchSnap.data();
+              if (typeof branchData?.royaltyPercentage === "number") {
+                royaltyPercentage = branchData.royaltyPercentage;
+              }
+              if (typeof branchData?.packagingFee === "number") {
+                packagingFee = branchData.packagingFee;
+              }
+            }
+            branchConfigCache.set(input.branchId!, {
+              at: Date.now(),
+              royaltyPercentage,
+              packagingFee,
+            });
+          } catch (err) {
+            console.warn("[Pricing Engine] Could not fetch branch details, using defaults", err);
           }
-        }
-        branchConfigCache.set(input.branchId, {
-          at: Date.now(),
-          royaltyPercentage,
-          packagingFee,
-        });
-      } catch (err) {
-        console.warn("[Pricing Engine] Could not fetch branch details, using defaults", err);
-      }
-    }
-  }
+        })()
+      : Promise.resolve();
+  const couponRead: Promise<void> =
+    couponCode && db && typeof db.collection === "function"
+      ? (async () => {
+          try {
+            const couponSnap = await db.collection("coupons").doc(couponCode).get();
+            if (couponSnap.exists) couponDoc = couponSnap.data();
+          } catch (err) {
+            console.warn("[Pricing Engine] Could not fetch coupon, applying no discount", err);
+          }
+        })()
+      : Promise.resolve();
+  await Promise.all([branchRead, couponRead]);
 
   // If takeaway or dinein, adjust delivery fee to 0
   const deliveryFee =
@@ -186,15 +205,11 @@ export async function calculateOrderPricing(
     packagingFee = 0;
   }
 
-  // 3. Discount calculation — Firestore coupons collection is the SOLE authority (no hardcoded fallback)
+  // 3. Discount calculation from the concurrently-fetched coupon doc
   let discount = 0;
-  if (input.couponCode) {
-    const code = input.couponCode.trim().toUpperCase();
-    if (db && typeof db.collection === "function") {
-      try {
-        const couponSnap = await db.collection("coupons").doc(code).get();
-        if (couponSnap.exists) {
-          const c = couponSnap.data() as any;
+  if (couponDoc) {
+    {
+      const c = couponDoc as any;
           // Validate the document is actually a coupon (has a discount field or percent type)
           const looksLikeCoupon =
             c &&
@@ -225,10 +240,6 @@ export async function calculateOrderPricing(
               discount = Math.min(capped, foodSubtotal);
             }
           }
-        }
-      } catch (err) {
-        console.warn("[Pricing Engine] Could not fetch coupon, applying no discount", err);
-      }
     }
   }
 
