@@ -1,0 +1,3 @@
+# Normalize line endings across Windows/macOS/Linux checkouts.
+# Text files are stored with LF; working copies use the platform default.
+* text=auto
