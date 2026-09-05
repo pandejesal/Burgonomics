@@ -163,6 +163,9 @@ All remotes use clean `https://github.com/…` URLs (no tokens on disk —
 - KOT numeric callback codes (community consensus + in-repo simulation agree).
 
 **Still open:**
+0. Deploy `firestore.rules` + `firestore.indexes.json` (`firebase deploy --only
+   firestore`) — the `products` staff-write rule with the price guard and all
+   new composites only take effect after deploy.
 1. ~~Menu pipeline~~ DONE 2026-09-04: canonical `products` collection (server
    writes with `branchId` + `restId`; Partner reads by `branchId`, Delivery by
    `restId`; `petpoojaItemId` is the 86-ing join key both ways; category toggle
@@ -187,6 +190,9 @@ All remotes use clean `https://github.com/…` URLs (no tokens on disk —
 7. ~~Validation + parity~~ DONE: Zod on 10 money/dispatch routes, 20-basket
    parity suite, zod/vitest patch alignment (functions vitest 1.x and TS majors
    intentionally left — major bumps need a dedicated pass).
+8. Admin orders board (`burgonomics-partner` AdminOrdersPage + adminOrdersService)
+   still queries phantom fields (`orderStatus`, `store.id`) — permanently empty
+   board. Migrate it onto the normalized `useOrders` contract instead of patching.
 3. Remove `*/netlify/functions` once Firebase Functions serve all traffic.
 4. App Check enforcement, web-push client, branch-topic subscriptions (FCM gaps).
 5. Blaze app: not started (§1).

@@ -113,7 +113,10 @@ service cloud.firestore {
       allow update: if isBrandOwner() || (
         isBranchOwner() &&
         ownsBranch(resource.data.branchId) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId'])
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
+          'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus'
+        ])
       );
 
       allow delete: if false;
@@ -126,13 +129,31 @@ service cloud.firestore {
     match /branches/{branchId} {
       allow read: if true;
       allow create: if isBrandOwner();
-      allow update: if isBrandOwner() || ownsBranch(branchId);
+      allow update: if isBrandOwner() || (
+        ownsBranch(branchId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'razorpayAccountId', 'petpooja', 'servicedRadiusKm'
+        ])
+      );
       allow delete: if isBrandOwner();
     }
 
+    // Canonical menu (both apps read; branch staff 86-ing writes).
+    // Staff may only touch availability fields — never prices or identity.
     match /products/{productId} {
       allow read: if true;
-      allow write: if isBrandOwner();
+      allow create: if isBrandOwner() || (
+        isBranchOwner() && ownsBranch(request.resource.data.branchId)
+      );
+      allow update: if isBrandOwner() || (
+        isBranchOwner() &&
+        ownsBranch(resource.data.branchId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'price', 'compareAtPrice', 'discountPercentage', 'name', 'description',
+          'categoryId', 'categoryName', 'branchId', 'restId', 'petpoojaItemId', 'id'
+        ])
+      );
+      allow delete: if isBrandOwner();
     }
 
     match /menu_items/{docId} {
@@ -142,13 +163,13 @@ service cloud.firestore {
 
     // Per-branch synced menu (partner app: sync + availability toggles)
     match /menu/{branchId}/categories/{docId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create, update: if isBrandOwner() || ownsBranch(branchId);
       allow delete: if isBrandOwner();
     }
 
     match /menu/{branchId}/items/{itemId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create, update: if isBrandOwner() || ownsBranch(branchId);
       allow delete: if isBrandOwner();
     }
