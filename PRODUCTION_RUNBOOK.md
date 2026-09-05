@@ -24,7 +24,12 @@ to `firebase.json`, add a row to this table.
 
 ## 2. Key inventory — where every credential comes from
 
-### 2a. Server (`functions/` env — `firebase functions:config` / GCP Secret Manager; never in client bundles)
+### 2a. Server (`functions/.env` dotenv file — never `firebase functions:config`, never in client bundles)
+
+> The v2 backend reads plain `process.env` via dotenv (`functions/src/config/env.ts`).
+> `firebase functions:config` is dead on this runtime and unbound Secret Manager
+> secrets are unread — keys set through either mechanism NEVER reach the code and
+> production silently runs in mock mode. Copy `functions/.env.example` → `functions/.env`.
 
 | Variable | From | Format | Used by |
 |---|---|---|---|
@@ -33,7 +38,8 @@ to `firebase.json`, add a row to this table.
 | `PETPOOJA_ACCESS_TOKEN` | Petpooja team (same panel) | 40 chars | `Authorization: Bearer` |
 | `PETPOOJA_MENU_URL` / `PETPOOJA_ORDER_URL` | defaults OK | AWS execute-api URLs | menu / order push |
 | `RAZORPAY_KEY_ID` / `KEY_SECRET` / `WEBHOOK_SECRET` | Razorpay dashboard | `rzp_live_…` | payments; deploy **refuses** to boot in production on mock keys (`assertProductionKeys`) |
-| `PORTER_API_KEY` / `PORTER_CUSTOMER_ID` / `PORTER_WEBHOOK_SECRET` | Porter Enterprise onboarding (`porter.in/api-integrations`, ~1 business day, `help@porter.in`) | — | quote/book dispatch |
+| `OTP_HMAC_SECRET` | `openssl rand -hex 32` — set BEFORE first prod deploy | 64 hex chars | delivery-OTP HMAC. Falls back to the Razorpay webhook secret with a warning — so rotating `RAZORPAY_WEBHOOK_SECRET` without this set silently invalidates every in-flight OTP |
+| `PORTER_API_KEY` / `PORTER_CUSTOMER_ID` / `PORTER_WEBHOOK_SECRET` | Porter Enterprise onboarding (`porter.in/api-integrations`, ~1 business day, `help@porter.in`) | — | quote/book dispatch; deploy **refuses** mock keys in production (same guard) |
 | `FIREBASE_SERVICE_ACCOUNT` / `FIREBASE_PROJECT_ID` | GCP console | JSON | admin SDK |
 
 Mock auto-detection (server): any key missing or containing `mock` ⇒ that
@@ -57,7 +63,9 @@ No code change needed to flip — just set real keys and redeploy.
    Razorpay live keys → Functions env + client publishable key.
 2. **Link outlets** (§5): set `stores/{id}.partnerBranchId` + confirm restIDs.
 3. **Deploy backend**: `firebase deploy --only functions,firestore` from repo root.
-4. **Verify backend**: `GET …/api/health` → `{"status":"healthy"}`.
+4. **Verify backend**: `GET …/api/health` → assert the FIELD, not the exact body:
+   `curl -s …/api/health | jq -e '.status == "healthy"'`
+   (the handler returns `{status, timestamp, service}` — exact-match checks false-fail).
 5. **Flip clients**: `VITE_PETPOOJA_ENABLED=true` in both apps → rebuild → deploy hosting:
    `firebase deploy --only hosting:burgonomics-app,hosting:burgonomics-partner`.
 6. **Smoke test**: place a test order → KOT prints (Partner Orders), menu sync pulls

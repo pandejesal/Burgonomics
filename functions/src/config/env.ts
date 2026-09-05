@@ -59,11 +59,19 @@ export const config = {
     },
 };
 
-// Fail-fast guard for India production: never silently run live payments in mock mode
+// Fail-fast guard for India production: never silently run live payments,
+// dispatch, or POS sync in mock mode. (Mock Porter/Petpooja in prod means
+// fake riders and phantom KOTs — worse than refusing to boot.)
 export function assertProductionKeys(): void {
   if (process.env.NODE_ENV === "production") {
     if (!process.env.RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID.includes("mock")) {
-      throw new Error("FATAL: RAZORPAY_KEY_ID missing or mock in production — set live Razorpay keys in functions/.env / Secret Manager");
+      throw new Error("FATAL: RAZORPAY_KEY_ID missing or mock in production — set live Razorpay keys in functions/.env (dotenv file, not functions:config)");
+    }
+    if (!process.env.PORTER_API_KEY || process.env.PORTER_API_KEY.includes("mock")) {
+      throw new Error("FATAL: PORTER_API_KEY missing or mock in production — complete Porter onboarding and set functions/.env before going live");
+    }
+    if (!process.env.PETPOOJA_APP_KEY || process.env.PETPOOJA_APP_KEY.includes("mock")) {
+      throw new Error("FATAL: PETPOOJA_APP_KEY missing or mock in production — set live Petpooja keys in functions/.env before going live");
     }
   }
 }

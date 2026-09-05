@@ -96,7 +96,9 @@ interface UserProfile {
   cityIds?: string[];                   // Scoped cities for regional managers
   loyaltyPoints: number;                // Global Grill Coins balance (1 coin = ₹1, max 20% redemption)
   totalOrders: number;
-  addresses: Address[];
+  // NOTE: addresses live in the `users/{uid}/addresses` SUBCOLLECTION
+  // (see addressService.ts) — not an inline array. Guest-migration address
+  // merges target the users-doc `addresses` field only during migration.
   fcmToken?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -139,13 +141,19 @@ interface Order {
   }>;
   specialNotes?: string;
   pricing: {
+    // AUTHORITY: functions/src/modules/payments/pricing.engine.ts recomputes
+    // every rupee server-side at checkout (client previews are estimates).
+    // Schedule: 5% GST on net · packaging = branch config else ₹15 flat
+    // (client engine previews ₹5/item — converges at charge time) ·
+    // delivery = caller quote, ₹0 takeaway/dinein (no server threshold) ·
+    // loyalty ≤20% subtotal · grand total rounded to whole ₹.
     subtotal: number;
     taxGst: number;                     // 5% GST
-    packingCharge: number;              // ₹15.00
-    deliveryFee: number;                // ₹0 if takeaway/dinein or >₹499; else Porter quote
+    packingCharge: number;              // server default ₹15.00 flat
+    deliveryFee: number;                // ₹0 if takeaway/dinein; else Porter quote
     couponDiscount: number;
     loyaltyDiscount: number;            // Capped at max 20% of subtotal
-    totalPayable: number;
+    totalPayable: number;               // whole rupees (server-rounded)
   };
   payment: {
     method: 'razorpay' | 'cash';

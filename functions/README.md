@@ -50,55 +50,65 @@ functions/
 
 ---
 
-## 3. 🔌 Core Cloud Function Modules
+## 3. 🔌 HTTP Route Table (Express `api`, `asia-south1`)
 
-### 1. Payments (`modules/payments`)
-- `createRazorpayOrder`: Server-computed pricing engine (MRP lookup from Firestore `products`, 5% GST, ₹15 packaging, delivery fee, coupons, loyalty points capped at 20%).
-- `verifyRazorpayPayment`: Timing-safe HMAC verification and automated **Razorpay Route** marketplace split (Brand Royalty % retained; net branch revenue transferred).
-- `razorpayWebhook`: Idempotent payment capture and dispute webhook handler.
-- `autoRefund`: Full or partial refund execution with proportional Route split reversals (protected by `requireRole(["brand_owner", "developer", "support"])`).
+Implementation-module names are NOT routes — curl these paths (all POST except `/health`):
 
-### 2. Petpooja POS Bridge (`modules/petpooja`)
-- `syncPetpoojaMenu`: Scheduled hourly menu sync (Cloud Scheduler) + on-demand sync.
-- `pushOrderToPetpooja`: Pushes confirmed orders to kitchen KOT with exponential retry worker (1m, 5m, 30m).
-- `petpoojaStockWebhook`: Instant 86ing webhook to mark out-of-stock items in real-time.
-- `petpoojaWebhook`: Real-time kitchen state transitions (`accepted`, `food_ready`, `cancelled`).
+| Route | Auth | Purpose |
+|---|---|---|
+| `GET /health` | public | `{status:"healthy", timestamp, service}` — assert `.status`, not the exact body |
+| `/payments/createPaymentOrder` | optional + schema | server-priced order (MRP from `products`, 5% GST, packaging, coupons, loyalty ≤20%), idempotent retries |
+| `/payments/verifyPayment` | optional + schema | HMAC verify + Razorpay Route split (no double-transfer on retry) |
+| `/payments/refund` | staff | full/partial refund with Route reversal |
+| `/payments/webhook` | Razorpay HMAC | capture/fail/transfer/refund events; claim-first idempotency |
+| `/petpooja/syncMenu` | staff | on-demand branch menu sync |
+| `/petpooja/pushOrder` | staff | push one KOT now |
+| `/petpooja/pushStock` | staff | single-item 86-ing push |
+| `/petpooja/stockWebhook` | Petpooja token | POS → us stock updates |
+| `/petpooja/webhook` | Petpooja token | KOT status callbacks |
+| `/porter/quote` | optional + schema | fare quote (`isEstimate:true` when GPS defaulted — re-quote before charging) |
+| `/porter/book`, `/porter/rebook` | staff + branch scope | dispatch / re-dispatch (caller must hold the order's branch) |
+| `/porter/webhook` | Porter HMAC | rider lifecycle; cancellation flips canonical `RIDER_CANCELLED` + pages the branch |
+| `/orders/verifyDeliveryOtp` | staff + branch scope | 4-digit handover OTP (3 attempts, 15-min lockout) |
+| `/orders/manualDispatch` | staff + branch scope | in-house rider fallback |
+| `/tickets/create`, `/tickets/message` | auth | customer tickets + replies |
+| `/tickets/resolve`, `/tickets/escalate` | staff | resolve (refund actions fail LOUD without a captured payment) / escalate |
+| `/notifications/dispatch` | brand roles | FCM dispatch |
+| `/notifications/subscribe` | auth + ownership-checked | device → branch topic subscription |
+| `/customers/adjustCoins` | staff + branch scope | Grill-Coins compensation with ledger row |
+| `/auth/setClaims`, `/auth/assignRole`, `/auth/revokeRole` | brand | RBAC (revocation deletes the `admins/` fallback doc) |
+| `/auth/migrateGuest` | auth | guest→permanent migration (anonymous-source proof required) |
+| `/auth/verifyBonusEligibility` | auth | welcome-bonus check (advisory; grant is atomic) |
 
-### 3. Porter Delivery Logistics (`modules/porter`)
-- `getDeliveryQuote`: Computes live 2-Wheeler courier fare based on outlet-to-customer GPS distance.
-- `bookPorterRider`: Called by Partner POS when food is `food_ready` to dispatch a driver.
-- `porterWebhook`: Verifies signature and tracks driver allocation, pickup, and delivery milestones.
-
-### 4. Support Ticketing & Escalator (`modules/tickets`)
-- `createTicket`: Customer app issue submission linked to `orders/{orderId}`.
-- `resolveTicket`: Partner app resolution with instant full/partial refunds or coupons.
-- `escalateTicket`: 3-tier escalator (Branch Manager → Brand Owner / Support → Developer Team).
-- `reminderCron`: Scheduled 60-minute worker notifying branch managers of unattended tickets.
-
-### 5. Push Notifications (`modules/notifications`)
-- `dispatchFCM`: Native APNS / FCM push dispatch across topics (`order_{id}`, `branch_{id}`, `brand`, `support_ticket_{id}`).
+Schedulers: hourly menu sync, 5-min KOT retry + Route-transfer retry + Porter poll, 15-min ticket reminders, daily guest-cart purge. Auth user-deletion cleanup trigger included.
 
 ---
 
 ## 4. 🔐 Environment & Secret Configuration
 
-Secret keys are managed via **Google Secret Manager** (`defineSecret`):
+Server keys come from the **`functions/.env` dotenv file** (NOT `firebase functions:config`,
+NOT Secret Manager bindings — the code reads plain `process.env`; anything else never
+reaches runtime and production silently runs mocked). Copy `.env.example`, fill, redeploy:
 
 ```bash
-# Firebase Cloud Functions (asia-south1)
-FIREBASE_PROJECT_ID=burgonomics-prod
+# Firebase Cloud Functions (asia-south1, project burgonomics-7faa8)
+FIREBASE_PROJECT_ID=burgonomics-7faa8
 FIREBASE_REGION=asia-south1
 
 # Gateway Secrets
 RAZORPAY_KEY_ID=rzp_live_xxxxxxxx
 RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
 RAZORPAY_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
+OTP_HMAC_SECRET=<openssl rand -hex 32>   # set BEFORE first deploy; rotating the webhook secret without it kills in-flight OTPs
 PETPOOJA_APP_KEY=xxxxxxxx
 PETPOOJA_APP_SECRET=xxxxxxxx
 PETPOOJA_ACCESS_TOKEN=xxxxxxxx
 PORTER_API_KEY=prt_live_xxxxxxxx
+PORTER_CUSTOMER_ID=cust_xxxxxxxx
 PORTER_WEBHOOK_SECRET=prt_whsec_xxxxxxxx
 ```
+
+Production boot **refuses** mock/missing Razorpay, Porter, and Petpooja keys (`assertProductionKeys`).
 
 ---
 
@@ -109,13 +119,13 @@ PORTER_WEBHOOK_SECRET=prt_whsec_xxxxxxxx
 # 1. Install dependencies
 cd functions && npm install
 
-# 2. Type check
+# 2. Type check (0 errors)
 npx tsc --noEmit
 
-# 3. Run test suite
+# 3. Run test suite (86 tests passing across 13 test suites)
 npm test
 
-# 4. Build TypeScript bundle
+# 4. Build TypeScript bundle (output: dist/index.js)
 npm run build
 
 # 5. Start Firebase Emulators
@@ -123,8 +133,27 @@ npm run serve
 # or: firebase emulators:start --only functions,firestore
 ```
 
+### Test Suite Verification Matrix
+- `tests/auth.claims.test.ts` (10 tests)
+- `tests/auth.guestMigration.test.ts` (8 tests)
+- `tests/porter.service.test.ts` (12 tests)
+- `tests/petpooja.service.test.ts` (12 tests)
+- `tests/payments.route-splits.test.ts` (7 tests)
+- `tests/pricing.engine.test.ts` (5 tests)
+- `tests/razorpay.service.test.ts` (3 tests)
+- `tests/ticketReminder.escalator.test.ts` (10 tests)
+- `tests/tickets.service.test.ts` (2 tests)
+- `tests/notifications.test.ts` (7 tests)
+- `tests/fcm.notifications.test.ts` (4 tests)
+- `tests/webhooks.idempotency.test.ts` (4 tests)
+- `tests/e2e.flow.test.ts` (2 tests)
+
+**Total**: **86 Tests Passing** | **100% Green**
+
 ### Production Deployment
+See [`RELEASE_AND_INTEGRATION_GUIDE.md`](file:///c:/Users/DELL/Desktop/Burgonomics/RELEASE_AND_INTEGRATION_GUIDE.md) for full deployment instructions:
 ```bash
 # Deploy all functions to asia-south1
-firebase deploy --only functions
+npx firebase-tools deploy --only functions --project burgonomics-7faa8
 ```
+

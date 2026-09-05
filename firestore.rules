@@ -1,3 +1,8 @@
+// CANONICAL Firestore rules — deployed by firebase.json at this root.
+// burgonomics-partner/firestore.rules and
+// burgonomics-foundation-core/firestore.rules are byte-identical MIRRORS for
+// the app-local emulators. NEVER edit a mirror: change this file, re-sync
+// both mirrors, and re-run the rules suite (core: node scripts/test-rules.mjs).
 rules_version = '2';
 
 service cloud.firestore {
@@ -324,9 +329,20 @@ match /petpooja_webhook_logs/{docId} {
       allow delete: if false;
     }
 
+    // Message reads are participant- or brand-scoped — the old admin-only
+    // rule let ANY branch staffer (all admins) read EVERY branch's chats.
+    // Writers must stamp participantIds on the parent thread doc.
+    function chatParticipantIds(pairId) {
+      return get(/databases/$(database)/documents/chats/$(pairId)).data.get('participantIds', []);
+    }
+
     match /chats/{pairId}/messages/{messageId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin();
+      allow read: if isBrandOwner() || (
+        isAuthenticated() && request.auth.uid in chatParticipantIds(pairId)
+      );
+      allow create: if isAdmin() || (
+        isAuthenticated() && request.auth.uid in chatParticipantIds(pairId)
+      );
       allow update, delete: if false;
     }
 

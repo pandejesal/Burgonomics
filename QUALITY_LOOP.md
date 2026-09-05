@@ -65,7 +65,16 @@
 - Fixed core: bootstrap trust gate tested via injected probe (found+fixed: dynamic firebase imports bypass mock interception — static import now); resend-open + ownership helper + trackUrl util tested; payments fictions rewritten to real pricer/HMAC/cancelOrder; FailurePanel logic extracted + branched tests; rules suite wired to CI (fail-hard on skip) + local emulator run: 18/18 PASS.
 - Dismissed: component-render tests (no DOM harness in repo — pure helpers extracted instead); aggregate-count billing (prior follow-up).
 - Gates: functions 143 · partner 145 · core 218+18 skipped (rules 18/18 green under emulator) · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 10: Docs/config drift (env examples vs code, runbook accuracy, stale .md)
+- [ ] Loop 10: Docs/config drift (env examples vs code, runbook accuracy, stale .md) [RUNNING → done below]
+
+### Loop 10 — docs/config drift (done)
+- Fixed rules fork (CRITICAL): 3 divergent copies → root canonical + byte-identical mirrors; consolidation EXPOSED a real regression (root messages rule let any staffer read any branch's chats) — fixed to participant/brand gating, proven 18/18 under emulator.
+- Fixed runbook: dotenv (not functions:config) mechanism, OTP_HMAC_SECRET row, jq field assertion; assertProductionKeys now refuses mock Porter/Petpooja in prod too.
+- Fixed functions README: real route table (23 routes), dotenv flow, burgonomics-7faa8.
+- Fixed partner: fake pg_dump/S3 backup relabeled demo (seeds zeroed), maintenance PIN has no default (refuses unset), .env.example split client/server + documents FUNCTIONS_API_URL, README routes/endpoints/commands corrected.
+- Fixed core: .env.example regenerated from env.ts (split Firebase vars, VITE_PUSH_* canonical, all readers covered); cart fallback aligned to engine schedule (499/₹40, discount-aware GST); pricing authority documented; mock-transport headers rewritten; addresses subcollection corrected.
+- Dismissed: per-item vs flat packing + server whole-₹ rounding (server authoritative at charge; previews converge — product call to unify further).
+- Gates: functions 143 · partner 145 · core 218+18 rules green · all builds green. Committed locally; pushes still blocked on 403.
 
 ## Log
 
