@@ -285,6 +285,53 @@ describe("End-to-End Platform Integration Flow", () => {
     expect(savedDocs[`orders/${orderId}`].refundAmount).toBe(104);
   });
 
+  it("reuses the open gateway order on idempotent retry (no double charge)", async () => {
+    const first = await createPaymentOrder({
+      items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+      branchId: "branch_ahmedabad_cg_road",
+      orderType: "takeaway",
+      customerId: "cust_dup",
+      idempotencyKey: "chk_dupkey_001",
+    });
+    const second = await createPaymentOrder({
+      items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+      branchId: "branch_ahmedabad_cg_road",
+      orderType: "takeaway",
+      customerId: "cust_dup",
+      idempotencyKey: "chk_dupkey_001",
+    });
+    expect(second.razorpayOrderId).toBe(first.razorpayOrderId);
+    expect((second as any).reused).toBe(true);
+  });
+
+  it("rejects unresolvable branch instead of pricing blind", async () => {
+    await expect(
+      createPaymentOrder({
+        items: [{ id: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+        orderType: "takeaway",
+        customerId: "cust_nobranch",
+      } as any)
+    ).rejects.toThrow(/Branch could not be resolved/);
+  });
+
+  it("skips transfer when already transferred (no double payout)", async () => {
+    savedDocs["orders/order_already_split"] = {
+      id: "order_already_split",
+      branchId: "branch_ahmedabad_cg_road",
+      routeTransferStatus: "transferred",
+      payment: { routeTransfer: { id: "trf_old" } },
+      pricing: { split: { branchTransferPaise: 5000 } },
+    };
+    const res = await verifyPayment({
+      orderId: "order_already_split",
+      razorpayOrderId: "order_mock_x",
+      razorpayPaymentId: "pay_mock_x",
+      razorpaySignature: "mock_signature_valid",
+    });
+    expect(res.success).toBe(true);
+    expect((res as any).transfer).toMatchObject({ id: "trf_old" });
+  });
+
   it("drains pending_retry route transfers without throwing (mock-safe worker)", async () => {
     // The shared mock `where` returns a single order doc lacking branch/pricing/payment
     // linkage, so the worker must mark it failed (missing data) rather than throw.

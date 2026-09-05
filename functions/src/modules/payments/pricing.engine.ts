@@ -213,9 +213,12 @@ export async function calculateOrderPricing(
             const branchAllowed = !c.branchId || c.branchId === input.branchId;
             const minOk = foodSubtotal >= (c.minOrder ?? c.min_order ?? 0);
             if (isActive && notExpired && branchAllowed && minOk) {
+              // Percent coupons are bounded (0,100] — a corrupt >100% value
+              // must not zero out (or negate) the bill.
+              const pct = c.discount ?? c.value ?? 0;
               const raw =
                 c.type === "percent" || c.discountType === "percent"
-                  ? Math.round((foodSubtotal * (c.discount ?? c.value ?? 0)) / 100)
+                  ? Math.round((foodSubtotal * Math.min(100, Math.max(0, pct))) / 100)
                   : (c.discount ?? c.value ?? c.amount ?? 0);
               // respect coupon maxDiscount cap if set
               const capped = c.maxDiscount ? Math.min(raw, c.maxDiscount) : raw;

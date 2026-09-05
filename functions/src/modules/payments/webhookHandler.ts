@@ -45,17 +45,26 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
 
   try {
     if (event === "payment.captured" || event === "order.paid") {
-      const paymentEntity = payload.payload?.payment?.entity;
+      // Shapes differ: payment.* nests payment.entity, order.paid nests
+      // order.entity (which carries no payment id — correlate via notes).
+      const paymentEntity =
+        event === "order.paid"
+          ? payload.payload?.order?.entity
+          : payload.payload?.payment?.entity;
       const orderId = paymentEntity?.notes?.orderId;
       const branchId = paymentEntity?.notes?.branchId;
-      const razorpayPaymentId = paymentEntity?.id;
+      const razorpayPaymentId =
+        event === "order.paid"
+          ? paymentEntity?.payments?.[0] || paymentEntity?.payment_id
+          : paymentEntity?.id;
 
       if (orderId) {
         await db.collection("orders").doc(orderId).set(
           {
             paymentStatus: "completed",
             "payment.status": "completed",
-            "payment.razorpayPaymentId": razorpayPaymentId,
+            // order.paid carries no payment id — never write undefined.
+            ...(razorpayPaymentId ? { "payment.razorpayPaymentId": razorpayPaymentId } : {}),
             // Canonical object form (see verifyPayment): both apps + triggers
             // accept it; bare-string writes break Delivery tracking.
             status: {

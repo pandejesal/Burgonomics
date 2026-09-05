@@ -10,17 +10,23 @@ import { z } from "zod";
 const nonEmptyString = z.string().min(1);
 const optionalNonNegative = z.number().min(0).optional();
 
-export const createPaymentOrderSchema = z.object({
-  items: z.array(z.any()).min(1),
-  branchId: nonEmptyString,
-  orderType: z.enum(["delivery", "takeaway", "dinein"]),
-  deliveryFee: optionalNonNegative,
-  packagingFee: optionalNonNegative,
-  couponCode: z.string().optional(),
-  loyaltyPointsToRedeem: z.number().int().min(0).optional(),
-  customerId: z.string().optional(),
-  orderId: z.string().optional(),
-});
+export const createPaymentOrderSchema = z
+  .object({
+    items: z.array(z.any()).min(1),
+    branchId: z.string().min(1).optional(),
+    storeId: z.string().min(1).optional(),
+    orderType: z.enum(["delivery", "takeaway", "dinein"]),
+    deliveryFee: optionalNonNegative,
+    packagingFee: optionalNonNegative,
+    couponCode: z.string().optional(),
+    loyaltyPointsToRedeem: z.number().int().min(0).optional(),
+    customerId: z.string().optional(),
+    orderId: z.string().optional(),
+    idempotencyKey: z.string().min(8).max(128).optional(),
+  })
+  .refine((d) => d.branchId || d.storeId, {
+    message: "branchId or storeId is required",
+  });
 
 export const verifyPaymentSchema = z.object({
   orderId: nonEmptyString,

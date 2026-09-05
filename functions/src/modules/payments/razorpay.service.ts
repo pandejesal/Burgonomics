@@ -22,7 +22,9 @@ export { getOtpHmacSecret };
 export interface CreateOrderParams {
   orderId?: string;
   items: any[];
-  branchId: string;
+  branchId?: string;
+  /** Delivery store id — resolved to a branch via stores/{id}.partnerBranchId. */
+  storeId?: string;
   orderType: "delivery" | "takeaway" | "dinein";
   deliveryFee?: number;
   packagingFee?: number;
@@ -31,21 +33,71 @@ export interface CreateOrderParams {
   customerId: string;
   customerName?: string;
   customerPhone?: string;
+  /** Stable per-checkout key: retries reuse the open gateway order. */
+  idempotencyKey?: string;
+}
+
+/**
+ * Resolves the branch for pricing, transfers, and KOT routing. Explicit
+ * branchId wins; otherwise the delivery store record's linked branch.
+ */
+async function resolveBranchId(params: CreateOrderParams): Promise<string> {
+  if (params.branchId) return params.branchId;
+  if (params.storeId && db && typeof db.collection === "function") {
+    try {
+      const snap = await db.collection("stores").doc(params.storeId).get();
+      const linked = snap.exists ? (snap.data() as any)?.partnerBranchId : undefined;
+      if (typeof linked === "string" && linked) return linked;
+    } catch (err) {
+      console.warn("[Payments] store→branch resolution failed:", err);
+    }
+  }
+  throw new Error("Branch could not be resolved for this store. Link the outlet first.");
 }
 
 /**
  * Creates a Razorpay server order with authoritative price calculation and route notes.
  */
 export async function createPaymentOrder(params: CreateOrderParams) {
+  const branchId = await resolveBranchId(params);
+
+  // Idempotent retries: same key returns the already-open gateway order
+  // instead of minting a second payable order (double-charge risk).
+  if (params.idempotencyKey && db && typeof db.collection === "function") {
+    try {
+      const prior = await db.collection("payment_intents").doc(params.idempotencyKey).get();
+      // Require a real stored order id — ghost/empty docs must not short-circuit.
+      const data = (prior.exists ? (prior.data() as any) : undefined) as any;
+      if (data?.razorpayOrderId) {
+        return {
+          razorpayOrderId: data.razorpayOrderId,
+          amountPaise: data.amountPaise,
+          amountRupees: data.amountPaise / 100,
+          currency: "INR",
+          receipt: data.receipt,
+          pricing: data.pricing,
+          keyId: getRazorpayKeyId(),
+          reused: true as const,
+        };
+      }
+    } catch (err) {
+      console.warn("[Payments] idempotency lookup failed, minting fresh order:", err);
+    }
+  }
+
   const pricing = await calculateOrderPricing({
     items: params.items,
-    branchId: params.branchId,
+    branchId,
     orderType: params.orderType,
     deliveryFee: params.deliveryFee,
     packagingFee: params.packagingFee,
     couponCode: params.couponCode,
     loyaltyPointsToRedeem: params.loyaltyPointsToRedeem,
   });
+
+  if (!(pricing.grandTotal > 0)) {
+    throw new Error("INVALID_AMOUNT: order total must be greater than zero");
+  }
 
   const amountPaise = Math.round(pricing.grandTotal * 100);
   const receipt = `rcpt_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
@@ -66,7 +118,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         partial_payment: false,
         notes: {
           orderId: params.orderId || "",
-          branchId: params.branchId,
+          branchId,
           customerId: params.customerId,
           orderType: params.orderType,
           brandRoyaltyPaise: pricing.split.brandRoyaltyPaise,
@@ -80,10 +132,29 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         severity: "high",
         message: `Failed to create Razorpay order: ${err.message || err}`,
         errorStack: err.stack,
-        branchId: params.branchId,
+        branchId,
         customerId: params.customerId,
       });
       throw new Error(`Payment gateway order creation failed: ${err.message}`);
+    }
+  }
+
+  if (params.idempotencyKey && db && typeof db.collection === "function") {
+    try {
+      await db.collection("payment_intents").doc(params.idempotencyKey).set(
+        {
+          razorpayOrderId,
+          amountPaise,
+          receipt,
+          pricing,
+          orderId: params.orderId || null,
+          customerId: params.customerId,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn("[Payments] idempotency store failed (non-blocking):", err);
     }
   }
 
@@ -145,8 +216,18 @@ export async function verifyPayment(params: VerifyPaymentParams) {
   let transferResult: any = null;
 
   // 3. Execute Razorpay Route split transfer if linked account exists.
+  // Guard: a retried/concurrent verify must never double-transfer. Transfers
+  // are keyed by payment — an already-transferred order reuses its result.
+  if (orderData.routeTransferStatus === "transferred") {
+    transferResult = orderData["payment.routeTransfer"] ?? orderData.payment?.routeTransfer ?? null;
+  }
   const pricingSplit = orderData.pricing?.split;
-  if (branchId && pricingSplit && pricingSplit.branchTransferPaise > 0) {
+  if (
+    transferResult === null &&
+    branchId &&
+    pricingSplit &&
+    pricingSplit.branchTransferPaise > 0
+  ) {
     const attempt = await attemptRouteTransfer(razorpayPaymentId, branchId, pricingSplit, orderId);
 
     if (attempt.ok && attempt.result) {

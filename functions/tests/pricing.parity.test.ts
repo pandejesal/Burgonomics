@@ -32,6 +32,9 @@ const { mockDb, getAllCalls } = vi.hoisted(() => {
       if (docId === "PERC10") {
         return { exists: true, data: () => ({ discount: 10, type: "percent", active: true, maxDiscount: 80 }), id: docId };
       }
+      if (docId === "PERC150") {
+        return { exists: true, data: () => ({ discount: 150, type: "percent", active: true }), id: docId };
+      }
       return { exists: false, data: () => ({}), id: docId };
     }
     return { exists: false, data: () => ({}), id: docId };
@@ -141,6 +144,17 @@ describe("pricing parity — 20 baskets", () => {
 
   it("batched catalog path is exercised", () => {
     expect(getAllCalls.count).toBeGreaterThan(0);
+  });
+
+  it("corrupt >100% percent coupon is clamped, never negative", async () => {
+    const r = await calculateOrderPricing({
+      items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }],
+      branchId: "b1",
+      orderType: "takeaway",
+      couponCode: "PERC150",
+    });
+    expect(r.discount).toBeLessThanOrEqual(99);
+    expect(r.grandTotal).toBeGreaterThanOrEqual(0);
   });
 
   it("golden basket: percent coupon capped at 80", async () => {
