@@ -32,6 +32,8 @@ export interface PorterQuoteResult {
   vehicleType: string;
   quoteId: string;
   source: string;
+  /** True when GPS was missing and fallback coordinates priced the quote. */
+  isEstimate?: boolean;
   validForSeconds: number;
   expiresAt: number;
 }
@@ -40,6 +42,13 @@ export interface PorterQuoteResult {
  * Calculates live Porter delivery fare quote based on pickup & drop GPS with 10-minute fee lock TTL.
  */
 export async function getDeliveryQuote(params: PorterQuoteParams): Promise<PorterQuoteResult> {
+  // Missing/zero GPS silently produced a "live-looking" fare for a fixed
+  // Ahmedabad hop — the fee charged at checkout then mismatched the address.
+  // Flag it: callers must label estimates and re-quote with real GPS before
+  // charging. (Not a hard 400: branch consoles legitimately pre-quote before
+  // the customer pins their address.)
+  const isEstimate =
+    !params.pickupLat || !params.pickupLng || !params.dropLat || !params.dropLng;
   const pickupLat = params.pickupLat || 23.0131;
   const pickupLng = params.pickupLng || 72.5085;
   const dropLat = params.dropLat || 23.0338;
@@ -80,6 +89,7 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
           vehicleType: "2-Wheeler (Bike Express)",
           quoteId: data.quote_id || `QTE-PRTR-${Date.now()}`,
           source: "porter_api_live",
+          isEstimate,
           validForSeconds: TTL_SECONDS,
           expiresAt,
         };
@@ -98,7 +108,8 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
     estimatedPickupMinutes: estimatePickupMinutes(),
     vehicleType: "2-Wheeler (Bike Express)",
     quoteId: `QTE-PRTR-${Math.floor(10000 + Math.random() * 90000)}`,
-    source: "porter_standard_rate_card",
+    source: isEstimate ? "fallback_estimate" : "porter_standard_rate_card",
+    isEstimate,
     validForSeconds: TTL_SECONDS,
     expiresAt,
   };
@@ -388,13 +399,46 @@ export async function handlePorterWebhook(
       break;
 
     case "RIDER_CANCELLED":
-    case "NO_RIDERS_FOUND":
+    case "NO_RIDERS_FOUND": {
+      // Canonical status flip (not just sidecar deliveryStatus): the old code
+      // left status.code frozen, so both apps kept showing OUT_FOR_DELIVERY
+      // and the status-change trigger (customer push) never fired. Core
+      // renders the server label verbatim; partner maps RIDER_CANCELLED into
+      // the actionable dispatch bucket (see orderContract).
+      updateData.status = {
+        code: "RIDER_CANCELLED",
+        label: "Rider cancelled — rebook required",
+        kind: "in_progress",
+        terminal: false,
+      };
       updateData.deliveryStatus = "rider_cancelled";
+      updateData.needsRebook = true;
       updateData.riderCancellationReason = payload.reason || "Driver cancelled dispatch";
       break;
+    }
   }
 
   await orderRef.set(updateData, { merge: true });
+
+  // Branch alert: without it nobody knows to hit /porter/rebook and the
+  // order rots. Customer push rides the existing status-change trigger.
+  if (event === "RIDER_CANCELLED" || event === "NO_RIDERS_FOUND") {
+    try {
+      const snap = await orderRef.get();
+      const branchId = snap.data()?.branchId;
+      if (typeof branchId === "string" && branchId) {
+        const { dispatchFCM } = await import("../notifications/fcm.service");
+        await dispatchFCM({
+          topic: `branch_${branchId}_orders`,
+          title: "Rider cancelled — rebook needed",
+          body: `Order #${orderRef.id.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`,
+          data: { type: "rider_cancelled", orderId: orderRef.id, needsRebook: "true" },
+        });
+      }
+    } catch (err: any) {
+      console.warn("[Porter Webhook] branch rebook alert failed:", err?.message || err);
+    }
+  }
 }
 
 /**

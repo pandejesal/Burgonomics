@@ -49,7 +49,14 @@
 - Fixed core: menu restId cache + 30s products cache (one scan per open, invalidated by live listener); live listener merges buckets (no pagination clobber); order history one-fetch-per-session cache; menu pager windowed to active±1; tab bar motion→CSS (shell chunk); home rails lazy+async images, first banner eager.
 - Dismissed: aggregate-query counts (needs schema alignment, follow-up); chat "load older" pagination (follow-up); React.lazy sheet splits + manualChunks (follow-up); per-card motion springs (visual, follow-up).
 - Gates: functions 131 · partner 138 · core 207+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 8: UX dead-ends (dead buttons, empty states, broken routes/links)
+- [ ] Loop 8: UX dead-ends (dead buttons, empty states, broken routes/links) [RUNNING → done below]
+
+### Loop 8 — UX dead-ends (done)
+- Fixed functions: unmatched captured payments parked in unmatched_payments (was acked-ok + dropped); resolveTicket refund throws loudly when no payment exists (was resolved+success with no money moved); KOT dead-letter sets kotSyncFailed + branch FCM (kitchen still sees order via Firestore); RIDER_CANCELLED flips canonical status + needsRebook + branch alert (customer push via status trigger); porter quotes flag isEstimate when GPS defaulted.
+- Fixed partner: Grill Coins now server-side (POST /customers/adjustCoins, branch-scoped, ledger row) — both pages call the mutation, fake local toasts gone; OrdersPage print opens real KOT preview, Porter row books a real rider; /delivery → /delivery-queue; test print renders a real slip to the print dialog; partial refunds strictly validated (digits, 1..100000, inline error, disabled execute).
+- Fixed core: paid-but-no-order panel no longer lies about "no money charged" and hides Retry — shows payment id + support CTA deep-linking a prefilled PAYMENT_ISSUE ticket; invoice tile wired to working GST generator; share builds a real track URL with clipboard fallback; search empty state gains Clear action; ratings persist on-device with honest copy.
+- Dismissed: per-card motion springs (visual), chat load-older pagination (follow-up), aggregate-count billing (follow-up).
+- Gates: functions 136 · partner 138 · core 207+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 9: Test quality (mock-assertions, skipped tests, untested critical paths)
 - [ ] Loop 10: Docs/config drift (env examples vs code, runbook accuracy, stale .md)
 

@@ -174,23 +174,30 @@ export async function resolveTicket(input: ResolveTicketInput) {
   const ticket = ticketSnap.data()!;
   let refundResult: any = null;
 
-  // 1. If full or partial refund, trigger payment autoRefund with Route split reversal
-  if ((action === "full_refund" || action === "partial_refund") && ticket.orderId) {
-    const orderSnap = await db.collection("orders").doc(ticket.orderId).get();
-    if (orderSnap.exists) {
-      const order = orderSnap.data()!;
-      const razorpayPaymentId =
-        order.payment?.razorpayPaymentId || ticket.diagnostics?.razorpayPaymentId;
-
-      if (razorpayPaymentId) {
-        refundResult = await autoRefund({
-          orderId: ticket.orderId,
-          razorpayPaymentId,
-          amountRupees: action === "partial_refund" ? amount : undefined,
-          reason: `Ticket ${ticket.ticketNumber} resolution: ${notes}`,
-        });
-      }
+  // 1. If full or partial refund, trigger payment autoRefund with Route split reversal.
+  // Fail LOUD when no captured payment exists: the old code left refundResult
+  // null and still closed the ticket as resolved — staff saw success, the
+  // customer never got money, and the closed ticket removed all recourse.
+  if (action === "full_refund" || action === "partial_refund") {
+    if (!ticket.orderId) {
+      throw new Error("Cannot refund: ticket has no linked order (guest ticket — refund via Razorpay dashboard).");
     }
+    const orderSnap = await db.collection("orders").doc(ticket.orderId).get();
+    if (!orderSnap.exists) {
+      throw new Error(`Cannot refund: linked order ${ticket.orderId} not found.`);
+    }
+    const order = orderSnap.data()!;
+    const razorpayPaymentId =
+      order.payment?.razorpayPaymentId || ticket.diagnostics?.razorpayPaymentId;
+    if (!razorpayPaymentId) {
+      throw new Error("Cannot refund: no captured Razorpay payment found for this order (COD or unpaid).");
+    }
+    refundResult = await autoRefund({
+      orderId: ticket.orderId,
+      razorpayPaymentId,
+      amountRupees: action === "partial_refund" ? amount : undefined,
+      reason: `Ticket ${ticket.ticketNumber} resolution: ${notes}`,
+    });
   }
 
   // 2. If loyalty credit, update customer profile

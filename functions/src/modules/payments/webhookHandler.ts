@@ -89,6 +89,31 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           ? paymentEntity?.payments?.[0] || paymentEntity?.payment_id
           : paymentEntity?.id;
 
+      if (!orderId) {
+        // Money captured, no order to attach it to (stripped notes, dashboard
+        // payment, misconfigured create). The old code acked ok and dropped
+        // it — customer shows unpaid, support has nothing to refund against.
+        // Park it visibly for ops; still 200 (Razorpay must not retry money).
+        const paymentId = razorpayPaymentId || paymentEntity?.id || "unknown";
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Unmatched captured payment ${paymentId} (${event}): no notes.orderId — manual review required`,
+        });
+        await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
+          {
+            eventId,
+            event,
+            razorpayPaymentId: paymentId,
+            amount: paymentEntity?.amount ? paymentEntity.amount / 100 : null,
+            currency: paymentEntity?.currency || "INR",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+          },
+          { merge: true }
+        );
+      }
+
       if (orderId) {
         await db.collection("orders").doc(orderId).set(
           {
@@ -129,9 +154,16 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           }
         }
 
-        // Auto-push KOT to Petpooja POS upon payment confirmation
+        // Auto-push KOT to Petpooja POS upon payment confirmation.
+        // pushOrderToPetpooja returns false (not throw) on POS rejection —
+        // ignoring the return hid outstanding POS syncs behind a 200 ok.
         try {
-          await pushOrderToPetpooja(orderId);
+          const pushed = await pushOrderToPetpooja(orderId);
+          if (!pushed) {
+            console.warn(
+              `[Razorpay Webhook] KOT push pending_retry for order ${orderId} — POS sync outstanding, retry worker owns it`
+            );
+          }
         } catch (err) {
           console.warn(`[Razorpay Webhook] KOT push queued for order ${orderId}:`, err);
         }

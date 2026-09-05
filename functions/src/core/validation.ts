@@ -86,6 +86,15 @@ export const manualDispatchSchema = z.object({
   notes: z.string().optional(),
 });
 
+export const adjustCoinsSchema = z.object({
+  customerId: nonEmptyString,
+  delta: z.number().int().min(-5000).max(5000).refine((n) => n !== 0, {
+    message: "delta cannot be zero",
+  }),
+  reason: z.string().trim().min(3).max(200),
+  notes: z.string().max(500).optional(),
+});
+
 export function validateBody<T>(schema: z.ZodType<T>) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const parsed = schema.safeParse(req.body);

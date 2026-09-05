@@ -1,6 +1,7 @@
 ﻿import { db } from "../../core/firebase";
 import { syncPetpoojaMenu } from "./menuSyncWebhook";
 import { pushOrderToPetpooja } from "./orderPush";
+import { dispatchFCM } from "../notifications/fcm.service";
 
 /**
  * Hourly Cron job to sync menus from Petpooja for all active branches in parallel chunks.
@@ -89,8 +90,15 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
     try {
       const { captureErrorSnapshot } = await import("../../core/errors");
       for (const doc of exhaustedDocs) {
+        // kotSyncFailed is the visible flag: partner KDS reads Firestore (not
+        // the POS), so the kitchen still sees the order — what failed is the
+        // POS/billing sync, and the branch must enter the KOT manually.
         await doc.ref.set(
-          { petpoojaStatus: "failed", updatedAt: new Date().toISOString() },
+          {
+            petpoojaStatus: "failed",
+            kotSyncFailed: true,
+            updatedAt: new Date().toISOString(),
+          },
           { merge: true }
         );
         await captureErrorSnapshot({
@@ -99,6 +107,19 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
           message: `KOT push retries exhausted for order ${doc.id} — manual KOT entry required`,
           orderId: doc.id,
         });
+        const branchId = doc.data()?.branchId;
+        if (typeof branchId === "string" && branchId) {
+          try {
+            await dispatchFCM({
+              topic: `branch_${branchId}_orders`,
+              title: "KOT sync failed — enter manually",
+              body: `Order #${doc.id.substring(0, 6)} is confirmed but POS sync failed after retries. Enter the KOT in Petpooja by hand.`,
+              data: { type: "kot_sync_failed", orderId: doc.id },
+            });
+          } catch (fcmErr: any) {
+            console.warn("[Petpooja Retry Worker] KOT-failed branch alert failed:", fcmErr?.message || fcmErr);
+          }
+        }
         failedCount++;
       }
     } catch (err: any) {

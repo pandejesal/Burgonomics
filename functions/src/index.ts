@@ -64,6 +64,7 @@ import {
   cleanupExpiredGuestSessionsWorker,
   onUserDeletedCleanup,
 } from "./modules/auth";
+import { adjustCustomerCoins } from "./modules/customers/customerCoins";
 import { assertProductionKeys } from "./config/env";
 import {
   validateBody,
@@ -77,6 +78,7 @@ import {
   porterQuoteSchema,
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
+  adjustCoinsSchema,
 } from "./core/validation";
 
 // Enforce live production keys check on deployment
@@ -433,6 +435,24 @@ app.post(
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to escalate ticket" });
+    }
+  }
+);
+
+// Staff Grill-Coins compensation. Branch-scoped server-side: the partner app
+// must never write loyaltyPoints directly (rules forbid non-brand writes, and
+// local-only "success" toasts were compensating nobody).
+app.post(
+  "/customers/adjustCoins",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "support", "branch_owner", "branch_staff"]),
+  validateBody(adjustCoinsSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await adjustCustomerCoins(req.body, req.user);
+      res.status(200).json(result);
+    } catch (err: any) {
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to adjust Grill Coins" });
     }
   }
 );
