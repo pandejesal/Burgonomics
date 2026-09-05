@@ -66,6 +66,23 @@
 - Dismissed: component-render tests (no DOM harness in repo — pure helpers extracted instead); aggregate-count billing (prior follow-up).
 - Gates: functions 143 · partner 145 · core 218+18 skipped (rules 18/18 green under emulator) · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 10: Docs/config drift (env examples vs code, runbook accuracy, stale .md) [RUNNING → done below]
+- [ ] Loop 11: Firestore indexes vs queries (missing composites, unused indexes) [RUNNING → done below]
+
+### Loop 11 — indexes vs queries (done)
+- Fixed: admin portal live/history (collectionGroup orders) had ZERO matching composites — added 4 COLLECTION_GROUP indexes (store.id/orderStatus/placedAt × asc/desc).
+- Removed dead weight: support_tickets(status,branchReminderSent,createdAt) + orders(petpoojaStatus,petpoojaRetryCount) composites (no producers anywhere); deleted orphan core firestore.indexes.json (unreferenced, divergent).
+- Kept (verified producers): tickets ×2, products(branchId,categoryId), orders branchId+createdAt ×2, support_tickets ×3, routeTransfer, coin, notifications, customerId, dev_error.
+- Dismissed: userId-vs-customerId and restId-vs-branchId standardizations (no failing query today; renames are migrations, not fixes).
+- Gates: rules 18/18 green. Committed locally; pushes still blocked on 403.
+- [ ] Loop 12: Logging/observability hygiene (PII leaks, noise, snapshot gaps) [PENDING SET 2]
+- [ ] Loop 13: Accessibility (labels, roles, touch targets) [PENDING SET 2]
+- [ ] Loop 14: Offline/empty/error resilience [PENDING SET 2]
+- [ ] Loop 15: Type safety in money/auth paths [PENDING SET 2]
+- [ ] Loop 16: Secrets/transport safety (keys, http, webviews) [PENDING SET 2]
+- [ ] Loop 17: Notification copy/topics consistency [PENDING SET 2]
+- [ ] Loop 18: Dead code elimination (verified-unreferenced only) [PENDING SET 2]
+- [ ] Loop 19: Capacitor/native parity [PENDING SET 2]
+- [ ] Loop 20: Final verification + release summary [PENDING SET 2]
 
 ### Loop 10 — docs/config drift (done)
 - Fixed rules fork (CRITICAL): 3 divergent copies → root canonical + byte-identical mirrors; consolidation EXPOSED a real regression (root messages rule let any staffer read any branch's chats) — fixed to participant/brand gating, proven 18/18 under emulator.
