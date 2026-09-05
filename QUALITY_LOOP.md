@@ -20,7 +20,12 @@
 - Guards: coupon percent clamped (0,100]; no-repeat transfer on re-verify; order.paid entity shape handled (+ no undefined writes).
 - Deferred (bigger): usage-count coupons, Route onboarding checks, admin refund/loyalty server transactions, analytics estimate labels.
 - Gates: functions 125 · core 205+18 skipped · builds green; root + core pushed.
-- [ ] Loop 4: Notification pipeline end-to-end (topics, channels, tokens, triggers)
+- [ ] Loop 4: Notification pipeline end-to-end (topics, channels, tokens, triggers) [RUNNING → done below]
+
+### Loop 4 — notifications (done)
+- Fixed: customer PLACED confirm on order create (was kitchen-only); urgent-born tickets alert (new trigger); subscribe route allowlisted + ownership-checked; FCM sound "new_order" (was 404 name); partner subscribes _tickets topics + fresh user on refresh; foreground ticket View action; refresh-login token linking; logout drops token from user fan-out (explicit uid).
+- Dismissed: server-side fcmTokens writer (client covers), token-refresh listener (Capacitor re-fires registration), inbox poll fallback (feature, not fix).
+- Gates: functions 125 · partner 130 · core tsc clean.
 - [ ] Loop 5: Menu pipeline (sync, 86-ing both directions, images, categories)
 - [ ] Loop 6: Auth/session/RBAC (claims, guards, login flows, OTP)
 - [ ] Loop 7: Performance (N+1 queries, bundle weight, re-renders, pagination)

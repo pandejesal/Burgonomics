@@ -436,6 +436,8 @@ app.post(
 
 // Device → branch topic subscription (FCM topics can only be subscribed
 // server-side; clients call this after push registration and branch switch).
+// Allowlisted to branch topics AND ownership-checked: any authed user could
+// otherwise subscribe anyone's token to any topic (notification hijack).
 app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const { token, topics } = req.body as { token?: string; topics?: string[] };
@@ -443,12 +445,20 @@ app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedReque
       res.status(400).json({ error: "token and non-empty topics[] are required" });
       return;
     }
-    const clean = [...new Set(topics)].filter((t) => /^[a-zA-Z0-9_-]{1,100}$/.test(t)).slice(0, 10);
+    const clean = [...new Set(topics)]
+      .filter((t) => /^branch_[A-Za-z0-9_-]+_(orders|tickets)$/.test(t))
+      .slice(0, 10);
     if (clean.length === 0) {
-      res.status(400).json({ error: "no valid topic names" });
+      res.status(400).json({ error: "no subscribable branch topics" });
       return;
     }
-    const { messaging } = await import("./core/firebase");
+    const { db, messaging } = await import("./core/firebase");
+    const tokenDoc = await db.collection("device_tokens").doc(token).get();
+    const ownerId = tokenDoc.exists ? (tokenDoc.data() as any)?.userId : undefined;
+    if (ownerId && ownerId !== req.user?.uid) {
+      res.status(403).json({ error: "token belongs to a different user" });
+      return;
+    }
     const results = await Promise.all(
       clean.map((topic) => messaging.subscribeToTopic(token, topic))
     );
@@ -638,6 +648,7 @@ export const cleanupExpiredGuestSessions = onSchedule(
 export {
   onOrderCreatedNotificationTrigger,
   onOrderStatusChangedNotificationTrigger,
+  onTicketCreatedUrgentTrigger,
   onTicketEscalatedNotificationTrigger,
 } from "./modules/notifications";
 

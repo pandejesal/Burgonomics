@@ -19,7 +19,9 @@ export async function dispatchFCM(params: FCMDispatchParams): Promise<boolean> {
   const { topic, token, title, body, data, sound, recipientUid, badge } = params;
 
   const isBranchAlert = topic && topic.startsWith("branch_");
-  const effectiveSound = sound || (isBranchAlert ? "new_order.wav" : "default");
+  // Android res/raw sounds are referenced WITHOUT extension — "new_order.wav"
+  // 404-silences the custom sound. The bundled asset is res/raw/new_order.
+  const effectiveSound = sound || (isBranchAlert ? "new_order" : "default");
 
   const basePayload = {
     notification: {
