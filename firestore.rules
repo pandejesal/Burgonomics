@@ -117,6 +117,14 @@ service cloud.firestore {
           'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
           'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus'
         ])
+      ) || (
+        // Customers may cancel their own pre-terminal orders only — status flip
+        // plus timestamps, nothing else. Terminal orders are immutable to them.
+        isAuthenticated() &&
+        (resource.data.customerId == request.auth.uid || resource.data.userId == request.auth.uid) &&
+        !(resource.data.status.terminal == true) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completedAt', 'updatedAt']) &&
+        request.resource.data.status.code == 'CANCELLED'
       );
 
       allow delete: if false;
@@ -132,7 +140,7 @@ service cloud.firestore {
       allow update: if isBrandOwner() || (
         ownsBranch(branchId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'razorpayAccountId', 'petpooja', 'servicedRadiusKm'
+          'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'servicedRadiusKm'
         ])
       );
       allow delete: if isBrandOwner();

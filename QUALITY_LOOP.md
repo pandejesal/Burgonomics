@@ -5,7 +5,13 @@
 > Status: `pending` | `running` | `done`. Lanes are READ-ONLY; fixes by architect.
 
 - [ ] Loop 1: Swallowed errors & silent failures (unhandled rejections, missing toasts, empty catches)
-- [ ] Loop 2: Firestore rules vs actual queries (denied reads/writes, missing indexes, offline behavior)
+- [ ] Loop 2: Firestore rules vs actual queries (denied reads/writes, missing indexes, offline behavior) [RUNNING → done below]
+
+### Loop 2 — rules vs queries (done)
+- Fixed: KDS topic orphan (`branch_<id>` → `branch_<id>_orders`); Android channel creation in customer app; useMenu re-read from dead collection; deleted dead legacy orderService; cancelOrder persists to Firestore; webhook rest_id reverse-lookup (skip-loudly when unlinked); store-id default branchIds removed; combos stamped restId+petpoojaItemId; branch guards on menu mutations; seed CRM dev-gated; sessions listener error UI; 4 new composite indexes (routeTransfer, petpooja retry, coin_transactions, notifications); `petpoojaStoreId` added to branch-update guard; customer self-cancel rule (pre-terminal, status-only); delivery gateway log writes removed (rules-denied noise) + server-side sync audit trail; tracking onError forwarding.
+- Dismissed with reason: S5 fcmTokens (allowed by exclusion — not in deny list); C3 restId composite (single-field where needs none); C4 userId query (works; customerId index kept for partner); P1 simulate fallback (explicit dev action, button gated); P3 denial unreachable (activate UI dead + rule now covers field).
+- Queued (needs product call): admin orders migration, device_tokens ownership, orders-create field mask.
+- Gates: functions 121 · partner 130 · core 205+18 skipped — all green.
 - [ ] Loop 3: Money paths re-verify (totals, caps, rounding, refunds, loyalty)
 - [ ] Loop 4: Notification pipeline end-to-end (topics, channels, tokens, triggers)
 - [ ] Loop 5: Menu pipeline (sync, 86-ing both directions, images, categories)

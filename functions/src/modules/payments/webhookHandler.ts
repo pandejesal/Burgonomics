@@ -69,11 +69,13 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           { merge: true }
         );
 
-        // Auto-notify branch kitchen display system (KDS)
+        // Auto-notify branch kitchen display system (KDS). Topic MUST match
+        // what devices subscribe to (branch_<id>_orders) — the bare
+        // branch_<id> topic has zero subscribers and alerts vanish silently.
         if (branchId) {
           try {
             await dispatchFCM({
-              topic: `branch_${branchId}`,
+              topic: `branch_${branchId}_orders`,
               title: "ðŸ”” Order Paid & Confirmed",
               body: `Order #${orderId.substring(0, 6)} confirmed. Start preparation!`,
               data: {

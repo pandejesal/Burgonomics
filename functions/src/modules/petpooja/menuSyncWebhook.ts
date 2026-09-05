@@ -172,6 +172,31 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
     { merge: true }
   );
 
+  // Server-side sync audit trail (clients cannot write here by rules).
+  // doc().set (not .add) for wider datastore-shim compatibility.
+  try {
+    await db.collection("petpooja_sync_logs").doc().set({
+      storeId: branchId,
+      storeName: branchId,
+      scope: "FULL",
+      status: "COMPLETED",
+      version: "live",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      duration: "live",
+      created: items.length,
+      updated: 0,
+      deleted: 0,
+      conflicts: 0,
+      error: null,
+      simulated: config.mock.petpoojaPos,
+      source: "menuSyncWebhook",
+    });
+  } catch (err) {
+    console.warn("[Petpooja] sync log persist failed (non-blocking):", err);
+  }
+
   return {
     itemCount: items.length,
     categoriesCount: categories.length,
