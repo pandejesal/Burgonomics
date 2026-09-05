@@ -1,5 +1,6 @@
-import { db } from "../../core/firebase";
-import { syncPetpoojaMenu, pushOrderToPetpooja } from "./petpooja.service";
+﻿import { db } from "../../core/firebase";
+import { syncPetpoojaMenu } from "./menuSyncWebhook";
+import { pushOrderToPetpooja } from "./orderPush";
 
 /**
  * Hourly Cron job to sync menus from Petpooja for all active branches in parallel chunks.
@@ -38,6 +39,7 @@ export async function syncAllBranchesPetpoojaMenu(): Promise<{
  */
 export async function retryPendingPetpoojaOrdersWorker(): Promise<{
   retriedCount: number;
+  failedCount: number;
 }> {
   const pendingOrdersSnap = await db
     .collection("orders")
@@ -48,12 +50,23 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
 
   let retriedCount = 0;
 
+  let failedCount = 0;
+
   for (const doc of pendingOrdersSnap.docs) {
-    const success = await pushOrderToPetpooja(doc.id);
-    if (success) {
-      retriedCount++;
+    try {
+      // One bad order must not abort the remaining batch.
+      const success = await pushOrderToPetpooja(doc.id);
+      if (success) {
+        retriedCount++;
+      } else {
+        failedCount++;
+      }
+    } catch (err: any) {
+      failedCount++;
+      console.warn(`[Petpooja Retry Worker] Order ${doc.id} threw, continuing batch:`, err?.message || err);
     }
   }
 
-  return { retriedCount };
+  return { retriedCount, failedCount };
 }
+

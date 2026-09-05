@@ -55,6 +55,17 @@ export const porterBookSchema = z.object({
   staffName: z.string().optional(),
 });
 
+const optionalCoord = z.number().finite().optional();
+
+export const porterQuoteSchema = z.object({
+  pickupLat: optionalCoord,
+  pickupLng: optionalCoord,
+  dropLat: optionalCoord,
+  dropLng: optionalCoord,
+  customerName: z.string().optional(),
+  customerPhone: z.string().optional(),
+});
+
 export const verifyDeliveryOtpSchema = z.object({
   orderId: nonEmptyString,
   otp: z.string().regex(/^\d{4}$/, "OTP must be exactly 4 digits"),

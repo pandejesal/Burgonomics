@@ -58,6 +58,28 @@ export function computeItemUnitPrice(item: PricingLineItem): number {
   return Math.max(0, unitPrice);
 }
 
+/** 60s in-memory branch config cache (royalty/packaging change rarely). */
+const branchConfigCache = new Map<
+  string,
+  { at: number; royaltyPercentage: number; packagingFee: number }
+>();
+const BRANCH_CACHE_TTL_MS = 60_000;
+
+function applyCatalogBasePrice(item: PricingLineItem, catalogPrice: number): number {
+  let base = catalogPrice;
+  if (Array.isArray(item.customizations)) {
+    for (const c of item.customizations) {
+      base += Number(c.price) || 0;
+    }
+  }
+  if (Array.isArray(item.modifiers)) {
+    for (const m of item.modifiers) {
+      base += Number(m.priceDelta) || 0;
+    }
+  }
+  return Math.max(0, base);
+}
+
 /**
  * Authoritative Server-Side Pricing Engine (Check 15 & Check 57)
  * Validates product prices against Firestore catalog, calculates 5% GST, packaging, delivery,
@@ -68,60 +90,92 @@ export async function calculateOrderPricing(
 ): Promise<PricingBreakdown> {
   let foodSubtotal = 0;
 
-  // 1. Authoritative Item Price Resolution
-  for (const item of input.items) {
-    let unitPrice = computeItemUnitPrice(item);
-
-    // If productId is provided, verify against catalog in Firestore
-    const targetDocId = item.productId || item.id;
-    if (targetDocId && db && typeof db.collection === "function") {
-      try {
-        const productSnap = await db.collection("products").doc(targetDocId).get();
-        if (productSnap.exists) {
-          const productData = productSnap.data();
-          if (typeof productData?.price === "number") {
-            // Recompute unit price using authoritative catalog base price
-            let authoritativeBase = productData.price;
-            if (Array.isArray(item.customizations)) {
-              for (const c of item.customizations) {
-                authoritativeBase += Number(c.price) || 0;
-              }
-            }
-            if (Array.isArray(item.modifiers)) {
-              for (const m of item.modifiers) {
-                authoritativeBase += Number(m.priceDelta) || 0;
-              }
-            }
-            unitPrice = Math.max(0, authoritativeBase);
+  // 1. Authoritative Item Price Resolution — ONE batched catalog read
+  // (db.getAll) instead of N sequential gets; degrades to sequential on
+  // Firestore shims without getAll, and to client prices on read failure.
+  const catalogPrices = new Map<string, number>();
+  const wantedIds = [...new Set(input.items.map((i) => i.productId || i.id).filter(Boolean))];
+  if (wantedIds.length > 0 && db && typeof db.collection === "function") {
+    try {
+      if (typeof (db as any).getAll === "function") {
+        const refs = wantedIds.map((id) => db.collection("products").doc(id as string));
+        const snaps = await (db as any).getAll(...refs);
+        for (const snap of snaps) {
+          const data = snap.data();
+          if (snap.exists && typeof data?.price === "number") {
+            catalogPrices.set(snap.id, data.price);
           }
         }
-      } catch {
-        // Fallback to validated client price
+      } else {
+        for (const id of wantedIds) {
+          try {
+            const snap = await db.collection("products").doc(id as string).get();
+            const data = snap.data();
+            if (snap.exists && typeof data?.price === "number") {
+              catalogPrices.set(id as string, data.price);
+            }
+          } catch {
+            // Fallback to validated client price for this item
+          }
+        }
       }
+    } catch (err) {
+      // Fallback to validated client prices — but never silently: a blind
+      // catalog read failure prices the whole order off untrusted input.
+      const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
+        captureErrorSnapshot: async () => {},
+      }));
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Catalog price resolution failed, falling back to client prices (${wantedIds.length} items)`,
+        branchId: input.branchId,
+      }).catch(() => undefined);
+      void err;
+    }
+  }
+
+  for (const item of input.items) {
+    let unitPrice = computeItemUnitPrice(item);
+    const catalogPrice = catalogPrices.get(item.productId || item.id);
+    if (catalogPrice !== undefined) {
+      unitPrice = applyCatalogBasePrice(item, catalogPrice);
     }
 
     const qty = Math.max(1, Math.floor(Number(item.quantity) || 1));
     foodSubtotal += unitPrice * qty;
   }
 
-  // 2. Fetch branch details for royalty & packaging config
-  let royaltyPercentage = 7; // Default 7% brand royalty
+  // 2. Branch royalty & packaging config (cached 60s). Branch config always
+  // wins over client input — client-supplied fees are untrusted.
+  let royaltyPercentage = 5; // Default 5% brand royalty (spec: 95/5 split)
   let packagingFee = input.packagingFee ?? 15; // Default ₹15 packaging
 
   if (input.branchId && db && typeof db.collection === "function") {
-    try {
-      const branchSnap = await db.collection("branches").doc(input.branchId).get();
-      if (branchSnap.exists) {
-        const branchData = branchSnap.data();
-        if (typeof branchData?.royaltyPercentage === "number") {
-          royaltyPercentage = branchData.royaltyPercentage;
+    const cached = branchConfigCache.get(input.branchId);
+    if (cached && Date.now() - cached.at < BRANCH_CACHE_TTL_MS) {
+      royaltyPercentage = cached.royaltyPercentage;
+      packagingFee = cached.packagingFee;
+    } else {
+      try {
+        const branchSnap = await db.collection("branches").doc(input.branchId).get();
+        if (branchSnap.exists) {
+          const branchData = branchSnap.data();
+          if (typeof branchData?.royaltyPercentage === "number") {
+            royaltyPercentage = branchData.royaltyPercentage;
+          }
+          if (typeof branchData?.packagingFee === "number") {
+            packagingFee = branchData.packagingFee;
+          }
         }
-        if (typeof branchData?.packagingFee === "number") {
-          packagingFee = branchData.packagingFee;
-        }
+        branchConfigCache.set(input.branchId, {
+          at: Date.now(),
+          royaltyPercentage,
+          packagingFee,
+        });
+      } catch (err) {
+        console.warn("[Pricing Engine] Could not fetch branch details, using defaults", err);
       }
-    } catch (err) {
-      console.warn("[Pricing Engine] Could not fetch branch details, using defaults", err);
     }
   }
 

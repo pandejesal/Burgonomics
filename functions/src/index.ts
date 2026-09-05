@@ -69,6 +69,7 @@ import {
   syncMenuSchema,
   pushStockSchema,
   porterBookSchema,
+  porterQuoteSchema,
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
 } from "./core/validation";
@@ -278,7 +279,7 @@ app.post(
 // 3. PORTER DELIVERY ROUTES
 // ==========================================
 
-app.post("/porter/quote", optionalAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/porter/quote", optionalAuth, validateBody(porterQuoteSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const quote = await getDeliveryQuote(req.body);
     res.status(200).json(quote);

@@ -314,7 +314,10 @@ export async function handlePorterWebhook(
   const porterOrderId = payload.order_id;
   const orderId = payload.request_id ? payload.request_id.replace("REQ-", "") : null;
 
-  if (!orderId && !porterOrderId) return;
+  if (!orderId && !porterOrderId) {
+    console.warn("[Porter Webhook] Dropping event with no order reference:", rawEvent);
+    return;
+  }
 
   // Locate order
   let orderRef: admin.firestore.DocumentReference | null = null;
@@ -327,7 +330,13 @@ export async function handlePorterWebhook(
     }
   }
 
-  if (!orderRef) return;
+  if (!orderRef) {
+    // Unknown order: retrying won't help, but silence loses the trail.
+    console.warn(
+      `[Porter Webhook] No matching order for event ${rawEvent} (porterOrderId=${porterOrderId || "n/a"})`
+    );
+    return;
+  }
 
   const driverDetails = payload.driver_details || payload.driver || payload.rider || {};
 
