@@ -278,6 +278,47 @@ describe("Porter Logistics Service", () => {
       expect(savedDocs["orders/order_otp_103"]?.deliveryVerifiedBy).toBe("customer_otp");
     });
 
+    it("denies OTP verification and dispatch for staff outside the order branch", async () => {
+      savedDocs["orders/order_branch_a"] = {
+        id: "order_branch_a",
+        branchId: "branch_surat_01",
+        deliveryOtpHash: computeHmacSha256("1111", config.razorpay.webhookSecret),
+        status: "out_for_delivery",
+      };
+      const outsider = { uid: "staff_b", role: "branch_staff", branchIds: ["branch_ahmedabad_01"] };
+
+      await expect(
+        verifyDeliveryOtp({ orderId: "order_branch_a", otp: "1111", caller: outsider })
+      ).rejects.toThrow(/outside your assigned branches/);
+      await expect(
+        manualBranchDispatch({
+          orderId: "order_branch_a",
+          riderName: "Rider X",
+          riderPhone: "+91 90000 00000",
+          caller: outsider,
+        })
+      ).rejects.toThrow(/outside your assigned branches/);
+      // Failed auth must not burn OTP attempts
+      expect(savedDocs["orders/order_branch_a"]?.deliveryOtpAttempts || 0).toBe(0);
+    });
+
+    it("allows OTP verification for staff holding the order branch", async () => {
+      savedDocs["orders/order_branch_b"] = {
+        id: "order_branch_b",
+        branchId: "branch_surat_01",
+        deliveryOtpHash: computeHmacSha256("2222", config.razorpay.webhookSecret),
+        status: "out_for_delivery",
+      };
+      const insider = { uid: "staff_a", role: "branch_staff", branchIds: ["branch_surat_01"] };
+
+      const res = await verifyDeliveryOtp({
+        orderId: "order_branch_b",
+        otp: "2222",
+        caller: insider,
+      });
+      expect(res.success).toBe(true);
+    });
+
     it("dispatches order manually via Branch POS Terminal fallback", async () => {
       savedDocs["orders/order_manual_103"] = {
         id: "order_manual_103",

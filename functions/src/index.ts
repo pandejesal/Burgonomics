@@ -1,6 +1,9 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
+// v2/identity has no user-delete trigger — v1 auth.user().onDelete is the
+// only Auth deletion hook. (beforeUserCreated/SignedIn are create/sign-in only.)
+import * as functionsV1 from "firebase-functions/v1";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -12,6 +15,7 @@ import {
   requireRole,
   requireAppCheck,
   verifyPetpoojaAuth,
+  staffErrorStatus,
   AuthenticatedRequest,
 } from "./core/middleware";
 
@@ -58,6 +62,7 @@ import {
   migrateGuestAccount,
   verifyBonusEligibility,
   cleanupExpiredGuestSessionsWorker,
+  onUserDeletedCleanup,
 } from "./modules/auth";
 import { assertProductionKeys } from "./config/env";
 import {
@@ -296,10 +301,14 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, staffName } = req.body;
-      const result = await bookPorterRider(orderId, staffName || req.user?.email || "Branch Staff");
+      const result = await bookPorterRider(
+        orderId,
+        staffName || req.user?.email || "Branch Staff",
+        req.user
+      );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to dispatch Porter rider" });
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to dispatch Porter rider" });
     }
   }
 );
@@ -312,10 +321,14 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, staffName } = req.body;
-      const result = await rebookPorterRider(orderId, staffName || req.user?.email || "Branch Staff");
+      const result = await rebookPorterRider(
+        orderId,
+        staffName || req.user?.email || "Branch Staff",
+        req.user
+      );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to re-book Porter rider" });
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to re-book Porter rider" });
     }
   }
 );
@@ -335,15 +348,23 @@ app.post("/porter/webhook", async (req, res) => {
   }
 });
 
-app.post("/orders/verifyDeliveryOtp", optionalAuth, validateBody(verifyDeliveryOtpSchema), async (req: AuthenticatedRequest, res) => {
-  try {
-    const staffName = req.user?.email || req.body.staffName || "Branch Staff";
-    const result = await verifyDeliveryOtp({ ...req.body, staffName });
-    res.status(200).json(result);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message || "OTP verification failed" });
+app.post("/orders/verifyDeliveryOtp",
+  // Staff-only: the OTP is a customer-possession secret read off the customer
+  // screen. Anonymous verification would let anyone burn attempts or flip an
+  // order to DELIVERED with a guessed 4-digit code.
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(verifyDeliveryOtpSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const staffName = req.user?.email || req.body.staffName || "Branch Staff";
+      const result = await verifyDeliveryOtp({ ...req.body, staffName, caller: req.user });
+      res.status(200).json(result);
+    } catch (err: any) {
+      res.status(staffErrorStatus(err, 400)).json({ error: err.message || "OTP verification failed" });
+    }
   }
-});
+);
 
 app.post(
   "/orders/manualDispatch",
@@ -353,10 +374,10 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const staffName = req.user?.email || req.body.staffName || "Branch Staff";
-      const result = await manualBranchDispatch({ ...req.body, staffName });
+      const result = await manualBranchDispatch({ ...req.body, staffName, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Manual dispatch failed" });
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Manual dispatch failed" });
     }
   }
 );
@@ -642,8 +663,18 @@ export const cleanupExpiredGuestSessions = onSchedule(
 );
 
 // ==========================================
-// 7. FIRESTORE TRIGGERS
+// 7. AUTH + FIRESTORE TRIGGERS
 // ==========================================
+
+// Revokes staff access and strips PII when an Auth account is deleted.
+// onUserDeletedCleanup was dead code until this wiring — no trigger existed.
+export const onAuthUserDeletedCleanup = functionsV1
+  .region(REGION)
+  .auth.user()
+  .onDelete(async (deletedUser) => {
+    const ok = await onUserDeletedCleanup(deletedUser.uid);
+    console.log(`[Auth Cleanup] User ${deletedUser.uid} deletion cleanup ${ok ? "done" : "FAILED"}`);
+  });
 
 export {
   onOrderCreatedNotificationTrigger,

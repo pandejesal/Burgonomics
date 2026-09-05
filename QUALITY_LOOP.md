@@ -32,7 +32,15 @@
 - Fixed: branch-scoped product doc IDs (second synced branch no longer steals the first's docs); stock webhook attributes branchId/restId (orphans staged, never merged); stock-push ack accepts all Petpooja forms; retry worker dead-letters exhausted orders; re-enable clears stale 86 metadata; POS pushes skipped (loudly) without petpoojaItemId; combos warn when restId missing; unscoped menu reads return [] instead of cross-store leak; "Other" label; category toggle index.
 - Dismissed: categories persistence (derived by design), isVeg default (pure-veg brand), image SAMPLE fallback (exact-match only), home mock rails + trending (separate feature), KDS 86 badges (feature).
 - Gates: functions 125 · partner 130 · core 205+18 skipped · all builds green.
-- [ ] Loop 6: Auth/session/RBAC (claims, guards, login flows, OTP)
+- [ ] Loop 6: Auth/session/RBAC (claims, guards, login flows, OTP) [RUNNING → done below]
+
+### Loop 6 — auth/session/RBAC (done)
+- Fixed CRITICAL: partner hardcoded PIN roster (1234/5678/9999=owner) deleted — roster empty, PINs fail closed; demo hints + operator-email directory removed from login; lock screen gains sign-out escape.
+- Fixed: partner unknown-role fail-open to developer → fail-closed deny; route policy enforced in ProtectedRoute (default-deny, single source routePolicy.ts); branch_staff locked out of picker + all hooks clamp to assigned branches (branchScope.ts); scoped-no-branch reads return empty; customers scoped for staff; single auth listener + force-refresh on bootstrap.
+- Fixed: server guest-migration now requires anonymous source proof; welcome bonus atomic via deterministic create() + E.164; delivery OTP route staff-only + branch-scoped; porter/dispatch services enforce order.branchId ∈ caller branches; claims sync admins/ registry (demotion deletes); onUserDeleted wired (v1 trigger) with PII strip.
+- Fixed: customer order IDOR (ownership check); bootstrap requires live Firebase uid match; httpClient auth interceptors implemented + wired; OTP resend store-throttled; QuickAuthSheet uses canonical validators, 6-digit gate, no code autofill.
+- Dismissed: optionalAuth no-revocation (documented guest exception), categories persistence n/a, admin-portal separate session (queued).
+- Gates: functions 131 · partner 138 · core 207+18 skipped · all builds green. Committed locally; pushes blocked on 403 (credential rotation pending user).
 - [ ] Loop 7: Performance (N+1 queries, bundle weight, re-renders, pagination)
 - [ ] Loop 8: UX dead-ends (dead buttons, empty states, broken routes/links)
 - [ ] Loop 9: Test quality (mock-assertions, skipped tests, untested critical paths)

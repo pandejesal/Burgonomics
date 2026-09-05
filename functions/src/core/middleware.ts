@@ -112,6 +112,86 @@ export function requireRole(allowedRoles: string[]) {
 }
 
 /**
+ * Least-privilege caller presented to staff-only services. Services enforce
+ * order.branchId ∈ caller.branchIds unless the caller is a brand admin.
+ * The HTTP routes ALWAYS pass req.user — an omitted caller means "trusted
+ * internal path" (schedulers/tests), never an anonymous request.
+ */
+export interface StaffCaller {
+  uid?: string;
+  role?: string | undefined;
+  branchIds?: string[] | undefined;
+  isBrandAdmin?: boolean | undefined;
+  email?: string | undefined;
+}
+
+export function isBrandAdminClaim(caller: StaffCaller | undefined): boolean {
+  return (
+    !!caller &&
+    (caller.isBrandAdmin === true ||
+      caller.role === "brand_owner" ||
+      caller.role === "developer")
+  );
+}
+
+function callerBranchIds(caller: StaffCaller | undefined): string[] {
+  const ids = caller?.branchIds;
+  return Array.isArray(ids) ? ids.filter((b): b is string => typeof b === "string") : [];
+}
+
+/** Effective branch of an order doc: explicit branchId, else linked delivery store. */
+export async function resolveOrderBranchId(
+  order: Record<string, any>
+): Promise<string | null> {
+  if (typeof order.branchId === "string" && order.branchId) return order.branchId;
+  const storeId = order.storeId;
+  if (typeof storeId === "string" && storeId) {
+    try {
+      const snap = await db.collection("stores").doc(storeId).get();
+      const linked = snap.exists ? (snap.data() as any)?.partnerBranchId : undefined;
+      if (typeof linked === "string" && linked) return linked;
+    } catch {
+      // Fall through to null — unresolvable means deny for scoped callers.
+    }
+  }
+  return null;
+}
+
+/**
+ * Throws when the caller may not act on this order. Brand admins pass any
+ * resolvable order; scoped staff must hold the order's branch. Anonymous
+ * (undefined caller) is rejected — services are never reachable without a
+ * route, and every staff route passes req.user.
+ */
+export async function assertOrderBranchAccess(
+  caller: StaffCaller | undefined,
+  order: Record<string, any>
+): Promise<string> {
+  if (!caller || (!caller.uid && !caller.email && !caller.role)) {
+    throw new Error("Unauthorized: staff authentication required");
+  }
+  const branchId = await resolveOrderBranchId(order);
+  if (!branchId) {
+    throw new Error("Forbidden: order has no resolvable branch — link the outlet first");
+  }
+  if (isBrandAdminClaim(caller)) return branchId;
+  if (!callerBranchIds(caller).includes(branchId)) {
+    throw new Error("Forbidden: order is outside your assigned branches");
+  }
+  return branchId;
+}
+
+/**
+ * Maps staff-service errors to HTTP status codes for routes.
+ */
+export function staffErrorStatus(err: any, fallback: number): number {
+  const msg = String(err?.message || "");
+  if (msg.startsWith("Unauthorized")) return 401;
+  if (msg.startsWith("Forbidden")) return 403;
+  return fallback;
+}
+
+/**
  * Firebase App Check attestation for app-originated routes.
  *
  * Monitor by default: missing/invalid tokens are logged, never rejected, so

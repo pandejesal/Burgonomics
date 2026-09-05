@@ -8,6 +8,7 @@ import {
   getOtpHmacSecret,
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
+import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 import {
   calculateHaversineDistanceKm,
   calculatePorterFare,
@@ -130,13 +131,18 @@ export function normalizePorterEvent(event: string | undefined | null): string {
 /**
  * Dispatches Porter 3PL courier rider for an order from the Partner POS.
  */
-export async function bookPorterRider(orderId: string, staffName?: string) {
+export async function bookPorterRider(
+  orderId: string,
+  staffName?: string,
+  caller?: StaffCaller
+) {
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
     throw new Error(`Order ${orderId} not found`);
   }
 
   const order = orderDoc.data()!;
+  if (caller) await assertOrderBranchAccess(caller, order);
 
   // Fail loudly: booking a rider against a fake/missing contact or address
   // produces a "successful" dispatch nobody can complete. Real data or error.
@@ -394,8 +400,12 @@ export async function handlePorterWebhook(
 /**
  * 1-Click re-booking for cancelled Porter riders.
  */
-export async function rebookPorterRider(orderId: string, staffName?: string) {
-  return await bookPorterRider(orderId, staffName);
+export async function rebookPorterRider(
+  orderId: string,
+  staffName?: string,
+  caller?: StaffCaller
+) {
+  return await bookPorterRider(orderId, staffName, caller);
 }
 
 /**
@@ -409,6 +419,8 @@ export interface VerifyDeliveryOtpParams {
   orderId: string;
   otp: string;
   staffName?: string;
+  /** Authenticated staff caller — enforced when present (all HTTP routes pass it). */
+  caller?: StaffCaller;
 }
 
 export const OTP_MAX_ATTEMPTS = 3;
@@ -423,7 +435,7 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
   orderId: string;
   deliveredAt: string;
 }> {
-  const { orderId, otp, staffName } = params;
+  const { orderId, otp, staffName, caller } = params;
   if (!orderId || !otp) {
     throw new Error("orderId and 4-digit OTP are required for delivery verification");
   }
@@ -434,6 +446,9 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
   }
 
   const order = orderDoc.data()!;
+  // Branch-scoped authorization BEFORE touching OTP state: an anonymous
+  // caller must never be able to burn attempts or flip an order to DELIVERED.
+  if (caller) await assertOrderBranchAccess(caller, order);
   const storedHash = String(order.deliveryOtpHash || "").trim();
   const legacyOtp = String(order.deliveryOtp || "").trim();
 
@@ -523,13 +538,15 @@ export interface ManualBranchDispatchParams {
   riderPhone: string;
   staffName?: string;
   notes?: string;
+  /** Authenticated staff caller — enforced when present (all HTTP routes pass it). */
+  caller?: StaffCaller;
 }
 
 /**
  * Manual Dispatch from Branch POS Terminal device when Porter 3PL courier is unavailable.
  */
 export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
-  const { orderId, riderName, riderPhone, staffName, notes } = params;
+  const { orderId, riderName, riderPhone, staffName, notes, caller } = params;
   if (!orderId || !riderName || !riderPhone) {
     throw new Error("orderId, riderName, and riderPhone are required for manual branch dispatch");
   }
@@ -538,6 +555,7 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
   if (!orderDoc.exists) {
     throw new Error(`Order ${orderId} not found`);
   }
+  if (caller) await assertOrderBranchAccess(caller, orderDoc.data()!);
 
   const dispatchResult = {
     dispatchType: "manual_branch_terminal",
