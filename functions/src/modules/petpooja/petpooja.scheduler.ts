@@ -67,6 +67,33 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
     }
   }
 
+  // Dead-letter: retries exhausted (>3) would otherwise sit as pending_retry
+  // forever, invisible. Flip them to failed with an audit snapshot.
+  try {
+    const exhaustedSnap = await db
+      .collection("orders")
+      .where("petpoojaStatus", "==", "pending_retry")
+      .where("petpoojaRetryCount", ">", 3)
+      .limit(20)
+      .get();
+    const { captureErrorSnapshot } = await import("../../core/errors");
+    for (const doc of exhaustedSnap.docs) {
+      await doc.ref.set(
+        { petpoojaStatus: "failed", updatedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `KOT push retries exhausted for order ${doc.id} — manual KOT entry required`,
+        orderId: doc.id,
+      });
+      failedCount++;
+    }
+  } catch (err: any) {
+    console.warn("[Petpooja Retry Worker] dead-letter pass failed:", err?.message || err);
+  }
+
   return { retriedCount, failedCount };
 }
 

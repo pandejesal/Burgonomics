@@ -26,7 +26,12 @@
 - Fixed: customer PLACED confirm on order create (was kitchen-only); urgent-born tickets alert (new trigger); subscribe route allowlisted + ownership-checked; FCM sound "new_order" (was 404 name); partner subscribes _tickets topics + fresh user on refresh; foreground ticket View action; refresh-login token linking; logout drops token from user fan-out (explicit uid).
 - Dismissed: server-side fcmTokens writer (client covers), token-refresh listener (Capacitor re-fires registration), inbox poll fallback (feature, not fix).
 - Gates: functions 125 · partner 130 · core tsc clean.
-- [ ] Loop 5: Menu pipeline (sync, 86-ing both directions, images, categories)
+- [ ] Loop 5: Menu pipeline (sync, 86-ing both directions, images, categories) [RUNNING → done below]
+
+### Loop 5 — menu pipeline (done)
+- Fixed: branch-scoped product doc IDs (second synced branch no longer steals the first's docs); stock webhook attributes branchId/restId (orphans staged, never merged); stock-push ack accepts all Petpooja forms; retry worker dead-letters exhausted orders; re-enable clears stale 86 metadata; POS pushes skipped (loudly) without petpoojaItemId; combos warn when restId missing; unscoped menu reads return [] instead of cross-store leak; "Other" label; category toggle index.
+- Dismissed: categories persistence (derived by design), isVeg default (pure-veg brand), image SAMPLE fallback (exact-match only), home mock rails + trending (separate feature), KDS 86 badges (feature).
+- Gates: functions 125 · partner 130 · core 205+18 skipped · all builds green.
 - [ ] Loop 6: Auth/session/RBAC (claims, guards, login flows, OTP)
 - [ ] Loop 7: Performance (N+1 queries, bundle weight, re-renders, pagination)
 - [ ] Loop 8: UX dead-ends (dead buttons, empty states, broken routes/links)

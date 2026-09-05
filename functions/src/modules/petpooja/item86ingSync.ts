@@ -40,14 +40,23 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
   const inStockBool = in_stock === 1 || in_stock === "1" || in_stock === true;
 
   if (item_id) {
-    const productId = `prod_${item_id}`;
+    // Same branch-scoped id scheme as the menu sync — and attributed with
+    // branchId/restId so the doc never becomes an unscoped orphan.
+    const branchId = await resolveBranchIdForRestId(rest_id);
+    const productId = branchId ? `prod_${branchId}_${item_id}` : `prod_unlinked_${item_id}`;
     await db.collection("products").doc(productId).set(
       {
+        petpoojaItemId: item_id,
+        ...(branchId ? { branchId, restId: rest_id } : {}),
         inStock: inStockBool,
+        lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
     );
+    if (!branchId) {
+      console.warn(`[Petpooja 86ing] rest_id ${rest_id} unlinked — stock staged on orphan doc ${productId}`);
+    }
   }
 
   console.log(`[Petpooja 86ing] Item ${item_id} at branch ${rest_id} set inStock=${inStockBool}`);
@@ -97,7 +106,14 @@ export async function pushItemStockToPetpooja(
     });
 
     const result = await response.json();
-    return result.status === "success";
+    // Petpooja acks vary (success:"1"/1/true or status:"success") — accept
+    // all documented forms, like orderPush does. Anything else is a failure.
+    return (
+      result.success === "1" ||
+      result.success === 1 ||
+      result.success === true ||
+      result.status === "success"
+    );
   } catch (err: any) {
     console.warn(`[Petpooja Stock Push Error] Failed for item ${itemId}:`, err.message);
     return false;

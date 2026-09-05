@@ -130,7 +130,10 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
   const batch = db.batch();
 
   for (const item of items) {
-    const productId = `prod_${item.itemid}`;
+    // Doc id is branch-scoped: the same Petpooja itemid exists in every
+    // outlet, and a global prod_{itemid} lets the second synced branch
+    // overwrite (and steal) the first branch's doc.
+    const productId = `prod_${branchId}_${item.itemid}`;
     const productRef = db.collection("products").doc(productId);
     const inStock = item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
 
@@ -145,8 +148,8 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
       name: item.itemname,
       description: item.item_description || "",
       price: Number(item.price) || 0,
-      categoryId: item.itemcategoryid,
-      categoryName: item.itemcategoryname,
+      categoryId: item.itemcategoryid || "uncategorized",
+      categoryName: item.itemcategoryname || "Other",
       imageUrl: item.itemimageurl || item.image_url || item.image || null,
       inStock,
       isVeg,

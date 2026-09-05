@@ -219,7 +219,12 @@ describe("Petpooja POS Bridge Service", () => {
         in_stock: 0,
       });
 
-      expect(savedDocs["products/prod_pp_b1"]?.inStock).toBe(false);
+      // rest_id is unlinked in this fixture, so stock is staged on an
+      // attributed orphan doc — never silently merged into another branch.
+      expect(savedDocs["products/prod_unlinked_pp_b1"]?.inStock).toBe(false);
+      expect(
+        savedDocs["products/prod_unlinked_pp_b1"]?.branchId
+      ).toBeUndefined();
     });
 
     it("pushes stock toggle to Petpooja API successfully", async () => {
