@@ -3,6 +3,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 // v2/identity has no user-delete trigger — v1 auth.user().onDelete is the
 // only Auth deletion hook. (beforeUserCreated/SignedIn are create/sign-in only.)
 import * as functionsV1 from "firebase-functions/v1";
+import * as admin from "firebase-admin";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -159,6 +160,8 @@ app.use(
     "/tickets/escalate",
     "/notifications/dispatch",
     "/notifications/subscribe",
+    "/notifications/unsubscribe",
+    "/notifications/registerToken",
     "/auth/setClaims",
     "/auth/assignRole",
     "/auth/revokeRole",
@@ -170,6 +173,35 @@ app.use(
 
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "healthy", timestamp: new Date().toISOString(), service: "burgonomics-api" });
+});
+
+// Minimum native versions, served from Firestore app_config/native (seeded by
+// ops; permissive defaults keep old builds working until ops sets minimums).
+// Clients compare their build and force-update when below minimum.
+app.get("/config/app", async (_req, res) => {
+  try {
+    const { db } = await import("./core/firebase");
+    const snap = await db.collection("app_config").doc("native").get();
+    const data = (snap.exists ? snap.data() : undefined) as any;
+    res.status(200).json({
+      iosMin: data?.iosMin || "0.0.0",
+      androidMin: data?.androidMin || "0.0.0",
+      iosLatest: data?.iosLatest || null,
+      androidLatest: data?.androidLatest || null,
+      forceUpdateMessage:
+        data?.forceUpdateMessage || "Please update Burgonomics to the latest version to continue.",
+    });
+  } catch (err: any) {
+    // Config unreadable: stay permissive (clients proceed), log server-side.
+    console.warn("[Config] app_config/native read failed, serving permissive defaults:", err?.message || err);
+    res.status(200).json({
+      iosMin: "0.0.0",
+      androidMin: "0.0.0",
+      iosLatest: null,
+      androidLatest: null,
+      forceUpdateMessage: "Please update Burgonomics to the latest version to continue.",
+    });
+  }
 });
 
 // ==========================================
@@ -481,6 +513,52 @@ app.post(
     }
   }
 );
+
+// Device token registration: the single server-owned entry point for push
+// identity. Clients previously wrote users/{uid}.fcmTokens + device_tokens
+// directly (no validation, no platform/version metadata, no ownership proof
+// beyond rules). This endpoint validates, stamps metadata, and links both.
+app.post("/notifications/registerToken", requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { token, platform, appVersion } = req.body as {
+      token?: string;
+      platform?: string;
+      appVersion?: string;
+    };
+    if (!token || typeof token !== "string" || token.length < 10 || token.length > 500) {
+      res.status(400).json({ error: "valid token is required" });
+      return;
+    }
+    if (platform !== undefined && !["ios", "android", "web"].includes(platform)) {
+      res.status(400).json({ error: "platform must be ios, android, or web" });
+      return;
+    }
+    const { db } = await import("./core/firebase");
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    await db
+      .collection("device_tokens")
+      .doc(token)
+      .set(
+        { token, userId: uid, platform: platform || "unknown", appVersion: appVersion || null, updatedAt: now },
+        { merge: true }
+      );
+    await db
+      .collection("users")
+      .doc(uid)
+      .set(
+        { fcmTokens: admin.firestore.FieldValue.arrayUnion(token), updatedAt: now },
+        { merge: true }
+      );
+    res.status(200).json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to register token" });
+  }
+});
 
 // Device → topic subscription (FCM topics can only be subscribed
 // server-side; clients call this after push registration and branch switch).

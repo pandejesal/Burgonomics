@@ -50,26 +50,40 @@ export async function sendMulticastFcm(
   }
 
   const prunedTokens: string[] = [];
+  let successCount = 0;
+  let failureCount = 0;
+
+  // FCM caps multicast at 500 tokens per call — chunk, or large fan-outs
+  // throw and NOBODY gets the push.
+  const CHUNK_SIZE = 500;
+  const chunks: string[][] = [];
+  for (let i = 0; i < tokens.length; i += CHUNK_SIZE) {
+    chunks.push(tokens.slice(i, i + CHUNK_SIZE));
+  }
 
   try {
     if (messaging && typeof messaging.sendEachForMulticast === "function") {
-      const response = await messaging.sendEachForMulticast({
-        ...payload,
-        tokens,
-      });
+      for (const chunk of chunks) {
+        const response = await messaging.sendEachForMulticast({
+          ...payload,
+          tokens: chunk,
+        });
+        successCount += response.successCount;
+        failureCount += response.failureCount;
 
-      response.responses.forEach((resp: any, idx: number) => {
-        if (!resp.success && resp.error) {
-          const errorCode = resp.error.code;
-          if (
-            errorCode === "messaging/registration-token-not-registered" ||
-            errorCode === "messaging/invalid-registration-token" ||
-            errorCode === "messaging/invalid-argument"
-          ) {
-            prunedTokens.push(tokens[idx]);
+        response.responses.forEach((resp: any, idx: number) => {
+          if (!resp.success && resp.error) {
+            const errorCode = resp.error.code;
+            if (
+              errorCode === "messaging/registration-token-not-registered" ||
+              errorCode === "messaging/invalid-registration-token" ||
+              errorCode === "messaging/invalid-argument"
+            ) {
+              prunedTokens.push(chunk[idx]);
+            }
           }
-        }
-      });
+        });
+      }
 
       // Automatically prune invalid tokens from Firestore
       if (prunedTokens.length > 0 && userId) {
@@ -83,11 +97,7 @@ export async function sendMulticastFcm(
         }
       }
 
-      return {
-        successCount: response.successCount,
-        failureCount: response.failureCount,
-        prunedTokens,
-      };
+      return { successCount, failureCount, prunedTokens };
     }
 
     return {

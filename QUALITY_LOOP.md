@@ -130,7 +130,14 @@
 - Deleted core: useGsapReveal, useFeedback, use-mobile, deviceInfo, error-capture (all zero refs).
 - Held (needs product/design call, NOT deleted): reminderCron/escalationScheduler duality, verifyPetpoojaSignature, useFirestore toolkit, DeliveryOtpModal/AddFutureStoreModal, shadowed ProductCard/OfferCard/dateUtils, gsap dep (lockfile regen needed).
 - Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 19: Capacitor/native parity [PENDING SET 2]
+- [ ] Loop 19: Capacitor/native parity [RUNNING → done below]
+
+### Loop 19 — native parity (done)
+- Fixed functions: POST /notifications/registerToken (server-owned push identity); multicast chunked at 500; unsubscribe + registerToken under App Check; GET /config/app version floor (permissive until ops seeds minimums).
+- Fixed partner: Android back-button → router-back/minimize; native splash+statusbar driven at runtime (auto-hide off); deviceInfo uses canonical Capacitor API; camera/photo plist strings removed (no code); package 1.0.0 synced with native builds; iOS background modes for KDS alerts.
+- Fixed core: WKAppBoundDomains cover Razorpay/Google/Firebase (was blocking pay+captcha); dead CAMERA perm + camera/photo strings removed; HTTPS App Links filter added (assetlinks/applinks already published); debug WebView pinned off; splash manual-hide.
+- Dismissed: SW compat pin (10.8.0 background channel stable; modular rewrite untestable here); Petpooja HMAC-only (their protocol); token-cache clearing (re-link lifecycle correct).
+- Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 20: Final verification + release summary [PENDING SET 2]
 
 ### Loop 10 — docs/config drift (done)
