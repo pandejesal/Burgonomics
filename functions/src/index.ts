@@ -693,7 +693,7 @@ export const onAuthUserDeletedCleanup = functionsV1
   .auth.user()
   .onDelete(async (deletedUser) => {
     const ok = await onUserDeletedCleanup(deletedUser.uid);
-    console.log(`[Auth Cleanup] User ${deletedUser.uid} deletion cleanup ${ok ? "done" : "FAILED"}`);
+    console.log(`[Auth Cleanup] User deletion cleanup ${ok ? "done" : "FAILED"}`);
   });
 
 export {

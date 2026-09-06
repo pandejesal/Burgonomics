@@ -74,7 +74,14 @@
 - Kept (verified producers): tickets ×2, products(branchId,categoryId), orders branchId+createdAt ×2, support_tickets ×3, routeTransfer, coin, notifications, customerId, dev_error.
 - Dismissed: userId-vs-customerId and restId-vs-branchId standardizations (no failing query today; renames are migrations, not fixes).
 - Gates: rules 18/18 green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 12: Logging/observability hygiene (PII leaks, noise, snapshot gaps) [PENDING SET 2]
+- [ ] Loop 12: Logging/observability hygiene (PII leaks, noise, snapshot gaps) [RUNNING → done below]
+
+### Loop 12 — logging/observability (done)
+- Fixed functions: PII boundary at captureErrorSnapshot (customer/payment ids masked, forbidden context keys dropped, pay_ ids scrubbed from messages, alerts use masked copy); idempotency-lookup failures + branch/coupon pricing fallbacks snapshot LOUD with pricingDegraded flag; KOT/customer/urgent dispatch failures snapshotted; raw UIDs removed from cleanup/prune/claims logs.
+- Fixed partner: QueueMonitor/SystemQueueTab alert()→toast+status (incl. non-OK HTTP); FCM token material out of logs; porter quote errors redacted; useOrder + admin live-stream failures staff-visible; KDS resume documents autoplay policy.
+- Fixed core: Firebase errors log codes not phones; profile/device-link floats caught via logger; getOrder denials logged; watchPosition sampled 1/min + UI state; payment/root/tracking floats caught.
+- Dismissed: wholesale logger migration of older console.* (low-noise paths; new code uses logger).
+- Gates: functions 143 · partner 145 · core 218+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 13: Accessibility (labels, roles, touch targets) [PENDING SET 2]
 - [ ] Loop 14: Offline/empty/error resilience [PENDING SET 2]
 - [ ] Loop 15: Type safety in money/auth paths [PENDING SET 2]

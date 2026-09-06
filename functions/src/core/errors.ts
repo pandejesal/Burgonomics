@@ -28,15 +28,47 @@ function maskIdentifier(val?: string): string {
 }
 
 /**
+ * Keys that must never persist in a snapshot context (PII / secrets).
+ * Callers pass operational refs (orderId/branchId); anything looking like
+ * contact data, credentials, or raw bodies is dropped at the boundary.
+ */
+const FORBIDDEN_CONTEXT_KEYS = /phone|address|token|secret|otp|password|card|cvv|rawbody/i;
+
+/**
  * Captures an error snapshot into Firestore dev_error_snapshots collection
  * and triggers developer alert channels (Slack/Discord) for P0/high severity errors.
+ *
+ * PII boundary: customerId and payment/porter/POS ids are masked before
+ * persistence (DPDP Act 2023) — orderId/branchId stay raw so ops can still
+ * find the order. Forbidden context keys are dropped, not stored.
  */
 export async function captureErrorSnapshot(
   snapshot: Omit<DevErrorSnapshot, "createdAt">
 ): Promise<string> {
   const snapshotId = `err_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const scrubbedContext: Record<string, any> | undefined = snapshot.context
+    ? Object.fromEntries(
+        Object.entries(snapshot.context).filter(([k]) => !FORBIDDEN_CONTEXT_KEYS.test(k))
+      )
+    : undefined;
+  // Caller-built messages often interpolate raw payment ids
+  // (e.g. "Unmatched captured payment pay_...") — mask those too.
+  const scrubbedMessage = snapshot.message.replace(
+    /\b(pay_[A-Za-z0-9]+)\b/g,
+    (_m, id) => maskIdentifier(id)
+  );
   const fullSnapshot: DevErrorSnapshot = {
     ...snapshot,
+    message: scrubbedMessage,
+    customerId: snapshot.customerId ? maskIdentifier(snapshot.customerId) : undefined,
+    razorpayPaymentId: snapshot.razorpayPaymentId
+      ? maskIdentifier(snapshot.razorpayPaymentId)
+      : undefined,
+    porterOrderId: snapshot.porterOrderId ? maskIdentifier(snapshot.porterOrderId) : undefined,
+    petpoojaOrderId: snapshot.petpoojaOrderId
+      ? maskIdentifier(snapshot.petpoojaOrderId)
+      : undefined,
+    context: scrubbedContext,
     id: snapshotId,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   };
@@ -49,9 +81,10 @@ export async function captureErrorSnapshot(
     console.error("[Errors] Failed to write dev_error_snapshot to Firestore:", err);
   }
 
-  // If high or P0, dispatch webhook notification with sanitized PII
+  // If high or P0, dispatch webhook notification with sanitized PII.
+  // NOTE: alert on fullSnapshot (masked), never the raw caller snapshot.
   if (snapshot.severity === "high" || snapshot.severity === "p0_critical") {
-    await dispatchDeveloperAlert(snapshotId, snapshot);
+    await dispatchDeveloperAlert(snapshotId, fullSnapshot);
   }
 
   return snapshotId;
@@ -71,6 +104,8 @@ async function dispatchDeveloperAlert(
     `• *Snapshot ID*: \`${snapshotId}\`\n` +
     (snapshot.orderId ? `• *Order ID*: \`${snapshot.orderId}\`\n` : "") +
     (snapshot.branchId ? `• *Branch ID*: \`${snapshot.branchId}\`\n` : "") +
+    // customerId arrives pre-masked from captureErrorSnapshot; mask again
+    // defensively in case this function is ever called directly.
     (snapshot.customerId ? `• *Customer*: \`${maskIdentifier(snapshot.customerId)}\`\n` : "");
 
   // Slack Webhook

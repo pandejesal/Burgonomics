@@ -28,6 +28,8 @@ export interface PricingBreakdown {
   discount: number;
   loyaltyDiscount: number;
   grandTotal: number;
+  /** True when branch/coupon reads fell back to defaults — price is degraded. */
+  pricingDegraded: boolean;
   split: {
     royaltyPercentage: number;
     brandRoyaltyAmount: number;
@@ -153,6 +155,9 @@ export async function calculateOrderPricing(
   let royaltyPercentage = 5; // Default 5% brand royalty (spec: 95/5 split)
   let packagingFee = input.packagingFee ?? 15; // Default ₹15 packaging
   let couponDoc: any = null;
+  // True when any pricing input fell back to defaults — surfaced on the
+  // result so callers/ops can distinguish a clean price from a degraded one.
+  let pricingDegraded = false;
 
   const couponCode = input.couponCode?.trim().toUpperCase();
   const branchRead: Promise<void> =
@@ -180,8 +185,18 @@ export async function calculateOrderPricing(
               royaltyPercentage,
               packagingFee,
             });
-          } catch (err) {
-            console.warn("[Pricing Engine] Could not fetch branch details, using defaults", err);
+          } catch (err: any) {
+            // Defaults change the royalty split — snapshot LOUD, never silent.
+            console.warn("[Pricing Engine] Could not fetch branch details, using defaults:", err?.message || err);
+            pricingDegraded = true;
+            const { captureErrorSnapshot } = await import("../../core/errors");
+            await captureErrorSnapshot({
+              source: "payments",
+              severity: "high",
+              message: `branch config read failed for ${input.branchId} — priced with default royalty/packaging`,
+              branchId: input.branchId,
+              errorStack: err?.stack,
+            });
           }
         })()
       : Promise.resolve();
@@ -191,8 +206,18 @@ export async function calculateOrderPricing(
           try {
             const couponSnap = await db.collection("coupons").doc(couponCode).get();
             if (couponSnap.exists) couponDoc = couponSnap.data();
-          } catch (err) {
-            console.warn("[Pricing Engine] Could not fetch coupon, applying no discount", err);
+          } catch (err: any) {
+            // A failed coupon read silently charges FULL price — snapshot it
+            // (medium: customer-overcharge report, not a royalty error).
+            console.warn("[Pricing Engine] Could not fetch coupon, applying no discount:", err?.message || err);
+            pricingDegraded = true;
+            const { captureErrorSnapshot } = await import("../../core/errors");
+            await captureErrorSnapshot({
+              source: "payments",
+              severity: "medium",
+              message: `coupon read failed for ${couponCode} — discount skipped, full price charged`,
+              errorStack: err?.stack,
+            });
           }
         })()
       : Promise.resolve();
@@ -287,6 +312,7 @@ export async function calculateOrderPricing(
     discount,
     loyaltyDiscount,
     grandTotal,
+    pricingDegraded,
     split: {
       royaltyPercentage,
       brandRoyaltyAmount: brandRoyaltyPaise / 100,

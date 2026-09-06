@@ -2,6 +2,7 @@ import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/fire
 import { db } from "../../core/firebase";
 import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlertMessage } from "./templates";
 import { sendFcmMessage, sendMulticastFcm } from "./fcmClient";
+import { captureErrorSnapshot } from "../../core/errors";
 
 const REGION = "asia-south1";
 
@@ -39,7 +40,16 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
       await sendFcmMessage(kotMessage);
       console.log(`[onOrderCreatedTrigger] Dispatched acoustic KOT alert to branch_${branchId}_orders`);
     } catch (err: any) {
+      // KDS-blind kitchen: snapshot LOUD with order+branch refs (was console-only).
       console.error("[onOrderCreatedTrigger] Failed to dispatch KOT notification:", err?.message || err);
+      await captureErrorSnapshot({
+        source: "notifications",
+        severity: "high",
+        message: `KOT push notification failed for order ${orderId} — kitchen may be blind`,
+        orderId,
+        branchId,
+        errorStack: err?.stack,
+      });
     }
 
     // Customer order confirmation (PLACED) — previously only the kitchen was
@@ -76,6 +86,13 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
       }
     } catch (err: any) {
       console.error("[onOrderCreatedTrigger] Failed to dispatch customer confirmation:", err?.message || err);
+      await captureErrorSnapshot({
+        source: "notifications",
+        severity: "medium",
+        message: `order-confirmation push failed for order ${orderId}`,
+        orderId,
+        errorStack: err?.stack,
+      });
     }
   }
 );
@@ -150,10 +167,16 @@ export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
         }
       }
     } catch (err: any) {
-      console.error(
-        `[onOrderStatusChangedTrigger] Error sending status push to customer ${customerId}:`,
-        err?.message || err
-      );
+      // Never interpolate raw customerId into log text (PII boundary).
+      console.error("[onOrderStatusChangedTrigger] Error sending status push:", err?.message || err);
+      await captureErrorSnapshot({
+        source: "notifications",
+        severity: "medium",
+        message: `status push failed for order ${orderId}`,
+        orderId,
+        customerId,
+        errorStack: err?.stack,
+      });
     }
   }
 );
@@ -186,6 +209,12 @@ export const onTicketCreatedUrgentTrigger = onDocumentCreated(
       await sendFcmMessage(message);
     } catch (err: any) {
       console.error("[onTicketCreatedUrgentTrigger] Failed:", err?.message || err);
+      await captureErrorSnapshot({
+        source: "notifications",
+        severity: "high",
+        message: `urgent-ticket alert failed for ticket ${ticketId} — SLA clock runs silently`,
+        errorStack: err?.stack,
+      });
     }
   }
 );

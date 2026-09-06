@@ -80,8 +80,18 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           reused: true as const,
         };
       }
-    } catch (err) {
-      console.warn("[Payments] idempotency lookup failed, minting fresh order:", err);
+    } catch (err: any) {
+      // A failed lookup must not silently mint a second payable order: snapshot
+      // it LOUD so ops sees the double-charge risk window. Fail-open (fresh
+      // order) is deliberate — blocking checkout on a read blip strands payers.
+      console.warn("[Payments] idempotency lookup failed, minting fresh order:", err?.message || err);
+      const { captureErrorSnapshot } = await import("../../core/errors");
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: "payment-intent idempotency lookup failed — minted fresh order (double-charge risk window)",
+        errorStack: err?.stack,
+      });
     }
   }
 

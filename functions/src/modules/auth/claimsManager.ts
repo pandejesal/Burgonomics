@@ -132,7 +132,7 @@ export async function setUserCustomClaims(input: {
   try {
     await auth.revokeRefreshTokens(targetUid);
   } catch (err) {
-    console.warn(`[Auth] Could not revoke refresh tokens for user ${targetUid}:`, err);
+    console.warn("[Auth] Could not revoke refresh tokens:", (err as any)?.message || err);
   }
 
   // 3. Synchronize with Firestore `users/{uid}` collection
