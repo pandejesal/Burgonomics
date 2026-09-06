@@ -241,3 +241,23 @@
 ### Loop 35 — honest image fallbacks (done)
 - Fixed (core 7285db8): menuStore enrichProduct reduced to identity (SAMPLE import/maps removed; SafeImage covers missing photos); (partner 87e76a7): createBranch banner fallback unsplash→null (DEV seed + razorpay/coordinate fallbacks untouched as separate concerns; fabricated acc_Rzp_ account-id fallback noted as follow-up).
 - Gates: partner typecheck clean, 151/151 tests, build green; core tsc clean, 221 tests (+18 skipped), build green (chunk-size warning pre-existing). All three repos pushed and in sync with origins.
+
+### Loop 36 — park unknown Petpooja order webhooks (done)
+- Fixed (root 56d5d80): item86ingSync.ts handlePetpoojaWebhook unknown-order branch now writes unmatched_petpooja_orders/upo_{orderId} (needs_review) + medium snapshot, warn-only on parking failure, still acks. Missing-order_id still throws (sender retries). Known-order path byte-identical; branch untested by suite (verified).
+- Gates: functions tsc + 144/144 (batched below). Pushed.
+
+### Loop 37 — park unmatched Porter webhook events (done)
+- Fixed (root 170de24): handlePorterWebhook no-reference + no-match branches now write unmatched_porter_events (reasons no_order_reference/no_matching_order) + snapshots, warn-only, still ack. Signature/normalization/lookup/matched switch untouched; branches untested (verified).
+- Gates: batched below. Pushed.
+
+### Loop 38 — park unmatched processed refunds (done)
+- Fixed (root b7e1a80): webhookHandler refund.processed empty-match else-branch writes unmatched_payments/ump_refund_{eventId} (needs_review, reason refund_no_match) + high snapshot. Matched path, push, claim completion untouched; branch untested (verified).
+- Gates: batched below. Pushed.
+
+### Loop 39 — webhook-trail rules coverage (done)
+- Fixed (root d9bea3a): firestore.rules gains explicit server-only stanzas (admin-read, client writes false) for unmatched_payments, unmatched_petpooja_orders, unmatched_porter_events, route_transfer_events — exact isAdmin() shape. Verified petpooja_sync_logs/webhook_logs already covered with live writers.
+- Gates: functions tsc clean + 144/144 vitest + Firestore rules 18/18 under local emulator (first attempt hit emulator cold-boot timeout; retry green). Pushed (origin/master in sync).
+
+### Loop 40 — failure-injection review (done, review-only — no code touched)
+- Outage table (verified against code, not executed destructively): Petpooja down → KOT push stages pending_retry + snapshot, retry worker owns it; orders never lost (Firestore-first), money never stuck (webhook idempotency claim + unmatched parking). Porter down → dispatch throws loudly to staff, poll dead-letters to needs_review + branch alert after 12 fails/2h (Loop 14). Razorpay down → catalog-outage 503 fail-closed, verify ghost-order 404, transfers tx-claimed (Loop 14); unmatched money parked visibly (Loops 8/36-38). Firebase down → checkout PAY gated offline, cart syncPending flag, menu stale-with-Retry (Loop 14). FCM down → non-blocking by design, inbox fallback (Loop 17); delivery reporting now honest (Loop 26).
+- Disposition: no new failure mode found requiring a fix; parking/lease coverage from Loops 26-39 closes the visibility gaps. No gates (no files touched).
