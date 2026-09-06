@@ -338,6 +338,28 @@ export async function handlePorterWebhook(
 
   if (!orderId && !porterOrderId) {
     console.warn("[Porter Webhook] Dropping event with no order reference:", rawEvent);
+    try {
+      await db
+        .collection("unmatched_porter_events")
+        .doc(`upe_${Date.now()}`)
+        .set(
+          {
+            rawEvent: rawEvent || null,
+            payloadOrderId: porterOrderId || null,
+            status: "needs_review",
+            reason: "no_order_reference",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      await captureErrorSnapshot({
+        source: "porter",
+        severity: "medium",
+        message: "Porter webhook with no order reference parked for review",
+      });
+    } catch (err) {
+      console.warn("[Porter Webhook] Failed to park event with no order reference:", err);
+    }
     return;
   }
 
@@ -357,6 +379,29 @@ export async function handlePorterWebhook(
     console.warn(
       `[Porter Webhook] No matching order for event ${rawEvent} (porterOrderId=${porterOrderId || "n/a"})`
     );
+    try {
+      await db
+        .collection("unmatched_porter_events")
+        .doc(`upe_${porterOrderId || orderId || Date.now()}`)
+        .set(
+          {
+            orderId: orderId || null,
+            porterOrderId: porterOrderId || null,
+            rawEvent: rawEvent || null,
+            status: "needs_review",
+            reason: "no_matching_order",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      await captureErrorSnapshot({
+        source: "porter",
+        severity: "medium",
+        message: "Porter webhook for unmatched order parked for review",
+      });
+    } catch (err) {
+      console.warn("[Porter Webhook] Failed to park unmatched order event:", err);
+    }
     return;
   }
 
