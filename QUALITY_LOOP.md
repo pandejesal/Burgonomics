@@ -106,7 +106,14 @@
 - Fixed core: cart migrate scrubs tampered lines; paymentsService rejects NaN; bootstrap shape-guards persisted user; loyalty balance finite-clamped; geofence rejects NaN coords; mockJwt requires numeric sub/iat/exp.
 - Dismissed: wholesale tx-callback retyping (claim logic already race-safe; types follow).
 - Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 16: Secrets/transport safety (keys, http, webviews) [PENDING SET 2]
+- [ ] Loop 16: Secrets/transport safety (keys, http, webviews) [RUNNING → done below]
+
+### Loop 16 — secrets/transport (done)
+- Fixed functions: Porter webhook fail-closed on missing signature; CORS localhost gated to non-prod, netlify wildcard removed; Petpooja body credentials narrowed to app_key (access_token no longer accepted inbound).
+- Fixed partner: print-window XSS escaped + noopener; campaign deep-link/image allowlists with inline errors; tracking/tel links validated; WebView debugging pinned off.
+- Fixed core: deep-link scheme+path allowlist; push deeplinks sanitized (no location.href fallback), orderId charset-checked; manifest documents in-app enforcement; embedded Razorpay test key removed (explicit simulation); httpClient refuses cleartext bases.
+- Dismissed: mock-by-default + committed mock fallbacks (prod boot now refuses all three — Loop 10 guard); Petpooja HMAC-only (their protocol echoes app_key; header-first kept); admin-portal session fallbacks (separate session, queued).
+- Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 17: Notification copy/topics consistency [PENDING SET 2]
 - [ ] Loop 18: Dead code elimination (verified-unreferenced only) [PENDING SET 2]
 - [ ] Loop 19: Capacitor/native parity [PENDING SET 2]

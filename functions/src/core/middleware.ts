@@ -235,13 +235,16 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     return;
   }
 
+  // Headers first. Body fallback is app_key ONLY: Petpooja's own protocol
+  // echoes app_key in callback bodies, but access_token/app_secret must never
+  // be accepted from a caller-supplied body (they are OUR outbound bearers —
+  // accepting them inbound lets anyone who glimpsed one call webhooks).
   const tokenHeader =
     (req.headers["x-petpooja-token"] as string) ||
     (req.headers["content_key"] as string) ||
     (req.headers["content-key"] as string) ||
     (req.headers["authorization"] as string) ||
-    req.body?.app_key ||
-    req.body?.access_token;
+    req.body?.app_key;
 
   if (!tokenHeader || typeof tokenHeader !== "string") {
     res.status(401).json({ error: "Unauthorized: Missing or invalid Petpooja credentials" });

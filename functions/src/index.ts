@@ -101,16 +101,21 @@ const allowedOrigins = [
   "https://partner.burgonomics.com",
   "https://burgonomics.netlify.app",
   "capacitor://localhost",
-  "http://localhost:8080",
-  "http://localhost:5173",
-  "http://localhost:3000",
 ];
+
+// Plain-http dev origins must never be credentialed in production: auth is
+// Bearer-based (no cookies to steal), but there is no reason to widen the
+// surface. Preview deploys use the exact host below, not a wildcard.
+const devOrigins =
+  process.env.NODE_ENV === "production"
+    ? []
+    : ["http://localhost:8080", "http://localhost:5173", "http://localhost:3000"];
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow non-browser agents (mobile apps, server curls) or whitelisted web origins
-      if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".netlify.app")) {
+      if (!origin || allowedOrigins.includes(origin) || devOrigins.includes(origin || "")) {
         callback(null, true);
       } else {
         callback(new Error("CORS origin not allowed by Burgonomics security policy"));

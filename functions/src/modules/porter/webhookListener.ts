@@ -52,9 +52,14 @@ export async function handlePorterWebhookEvent(
   signatureHeader: string | undefined,
   payload: PorterWebhookPayload
 ): Promise<{ success: boolean; message: string; orderId?: string }> {
-  // 1. Signature Verification
+  // 1. Signature Verification — fail CLOSED. The old code only verified
+  // when the caller bothered to send a header, so omitting
+  // x-porter-signature skipped auth entirely and reached Firestore writes.
   const webhookSecret = config.porter.webhookSecret;
-  if (webhookSecret && signatureHeader) {
+  if (webhookSecret) {
+    if (!signatureHeader) {
+      return { success: false, message: "Missing Porter webhook signature" };
+    }
     const isValid = verifyPorterWebhookSignature(
       rawBody.toString("utf8"),
       signatureHeader,
