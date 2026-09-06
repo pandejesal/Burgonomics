@@ -1,4 +1,5 @@
 import { db } from "../../core/firebase";
+import { captureErrorSnapshot } from "../../core/errors";
 import { config } from "../../config/env";
 import { getPetpoojaConfig } from "./client";
 import { autoRefund } from "../payments/razorpay.service";
@@ -159,6 +160,29 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
     console.warn(`[Petpooja Webhook] Order ${orderId} not found in Firestore.`);
+    try {
+      await db
+        .collection("unmatched_petpooja_orders")
+        .doc(`upo_${orderId}`)
+        .set(
+          {
+            orderId,
+            rawStatus: payload.status || payload.order_status || null,
+            restId: payload.rest_id || payload.restId || null,
+            status: "needs_review",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "medium",
+        message: `Petpooja webhook for unknown order ${orderId} parked for review`,
+        orderId,
+      });
+    } catch (err) {
+      console.warn(`[Petpooja Webhook] Failed to park unknown order ${orderId}:`, err);
+    }
     return;
   }
 
