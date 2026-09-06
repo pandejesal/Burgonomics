@@ -208,3 +208,16 @@
 - Verified-sound, no change: orderPush live path (throws on POS reject, stages pending_retry + snapshot, returns false); item86ingSync pushItemStock (mock branch side-effect-free log+true; failures return false); retry scheduler queries pending_retry only (petpooja.scheduler.ts:50,78) — new flag affects nothing.
 - Gates: functions tsc clean + petpooja 12/12 + full 144/144 green on ship tree. Committed c795e3a (scoped: 1 file), pushed (origin/master in sync).
 - Process note: swarm Stage B (reviewer/test_engineer) unreachable for file-touching tasks — Stage A transition demands pre_check_batch gates_passed=true, but secretscan flags pre-existing `access_token` API field name (orderPush.ts:164, server-env reference, confirmed false positive, unrenamable without breaking Petpooja API) and lint binaries are absent from env. Six agent-dispatch attempts + sounding board documented. User-contract gates (build+tests) green; deviation recorded here.
+
+### Loop 28 — label Porter dispatch geo source (done)
+- Fixed: functions/src/modules/porter/porter.service.ts — bookPorterRider computes usedFallbackCoords/dispatchGeoSource (fallback_default vs live_gps), stored as geoSource on both mock+live dispatchResults and dispatchGeoSource on the order doc. Additive only; no toEqual snapshots in porter tests. Verified exact diff.
+- Dismissed: quote-path defaults (already labeled fallback_estimate, by-design); changing quote math (tests pin defaults).
+- Gates: functions tsc clean + full 144/144 green on ship tree (batched with Loop 30). Committed b6b55d0 (scoped: 1 file), pushed.
+
+### Loop 29 — Razorpay + Firebase id/secret audit (done, verify-only — no code touched)
+- Verified: every mock branch in razorpay.service.ts (:135 order_mock_, :216 verify, :475 rfnd_mock_), razorpayClient.ts (:10 null SDK, :20 mock key), routeTransfers.ts (:102 trf_mock_) is gated on config.mock.paymentGateway, itself prod-guarded by assertProductionKeys (env.ts:65-77, throws on missing/mock keys when NODE_ENV==production). No placeholder reaches live paths; no sk_live/embedded secrets anywhere (Loop 25 secrets grep clean).
+- Disposition: no prod leak, no fix. No gates (no files touched).
+
+### Loop 30 — dead scheduler sweep (done, verify-only — no code touched)
+- Verified: at HEAD, runTicketReminderCron/runTicketEscalationCheck do NOT exist (only as uncommitted new files in pre-existing dirt, outside campaign scope); no tickets barrel at HEAD; zero references anywhere including tests and git history for those paths. Live scheduler checkTicketInactivityReminders confirmed wired (index.ts:56,792). Coder properly BLOCKED on annotating nonexistent files (refused to invent code — correct).
+- Disposition: nothing dead at HEAD to delete; duality note already in ledger (prior loops). No gates (no files touched).
