@@ -287,6 +287,30 @@ match /petpooja_webhook_logs/{docId} {
       allow create, update, delete: if false;
     }
 
+    // Razorpay webhook unmatched parking (webhookHandler.ts) — server-only
+    match /unmatched_payments/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Petpooja 86-ing sync unmatched parking (item86ingSync.ts) — server-only
+    match /unmatched_petpooja_orders/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Porter webhook unmatched parking (porter.service.ts) — server-only
+    match /unmatched_porter_events/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Route transfer event log (webhookHandler.ts) — server-only
+    match /route_transfer_events/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
     match /dev_error_snapshots/{snapshotId} {
       allow read: if isAdmin();
       allow create, update, delete: if false;
