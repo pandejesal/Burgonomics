@@ -12,7 +12,7 @@ export interface SendMulticastResult {
  * Sends a single FCM message via HTTP v1 API.
  */
 export async function sendFcmMessage(message: admin.messaging.Message): Promise<boolean> {
-  if (process.env.NODE_ENV === "test" || process.env.VITEST || config.mock.porterDispatch) {
+  if (process.env.NODE_ENV === "test" || process.env.VITEST) {
     return true;
   }
 
@@ -41,7 +41,7 @@ export async function sendMulticastFcm(
     return { successCount: 0, failureCount: 0, prunedTokens: [] };
   }
 
-  if (process.env.NODE_ENV === "test" || process.env.VITEST || config.mock.porterDispatch) {
+  if (process.env.NODE_ENV === "test" || process.env.VITEST) {
     return {
       successCount: tokens.length,
       failureCount: 0,
