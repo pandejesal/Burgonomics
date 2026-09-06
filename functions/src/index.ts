@@ -178,7 +178,10 @@ app.post("/payments/createPaymentOrder", optionalAuth, validateBody(createPaymen
     const result = await createPaymentOrder({ ...req.body, customerId });
     res.status(200).json(result);
   } catch (err: any) {
-    res.status(err.statusCode === 400 ? 400 : 500).json({ error: err.message || "Failed to create payment order" });
+    // Pass through service status codes (400 validation, 503 retryable
+    // outage — the client retries the SAME idempotencyKey, never a fresh one).
+    const status = err.statusCode === 400 || err.statusCode === 503 ? err.statusCode : 500;
+    res.status(status).json({ error: err.message || "Failed to create payment order" });
   }
 });
 

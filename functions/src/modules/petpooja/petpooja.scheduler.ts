@@ -1,4 +1,5 @@
 ﻿import { db } from "../../core/firebase";
+import * as admin from "firebase-admin";
 import { syncPetpoojaMenu } from "./menuSyncWebhook";
 import { pushOrderToPetpooja } from "./orderPush";
 import { dispatchFCM } from "../notifications/fcm.service";
@@ -54,18 +55,62 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
 
   let failedCount = 0;
 
-  // Bounded concurrency: each push is 1 read + 1 external POST + writes, so
-  // 20 serial pushes stall the 5-min scheduler ~10-60s exactly when the POS
-  // is down and the queue is fullest. One bad order still never aborts rest.
-  const CHUNK_SIZE = 4;
+  // Claim-then-work: overlapping 5-min scheduler instances used to push the
+  // same KOT twice (no lease, just a shared pending_retry flag). Claims flip
+  // to `processing` inside one transaction; stale claims (>10 min, crashed
+  // worker) are take-over-able. pushOrderToPetpooja releases the claim by
+  // writing synced/pending_retry itself.
+  const CLAIM_TTL_MS = 10 * 60 * 1000;
   const pendingDocs = pendingOrdersSnap.docs.filter(
     (doc: any) => Number(doc.data()?.petpoojaRetryCount || 0) <= 3
   );
   const exhaustedDocs = pendingOrdersSnap.docs.filter(
     (doc: any) => Number(doc.data()?.petpoojaRetryCount || 0) > 3
   );
-  for (let i = 0; i < pendingDocs.length; i += CHUNK_SIZE) {
-    const chunk = pendingDocs.slice(i, i + CHUNK_SIZE);
+  const claimedDocs: any[] = [];
+  if (pendingDocs.length > 0 && db && typeof (db as any).runTransaction === "function") {
+    try {
+      const claimed: any[] = await (db as any).runTransaction(async (tx: any) => {
+        const won: any[] = [];
+        for (const doc of pendingDocs) {
+          const fresh = await tx.get(doc.ref);
+          const data = (fresh.exists ? fresh.data() : undefined) as any;
+          if (!data || data.petpoojaStatus !== "pending_retry") continue;
+          // Fresh claim owned elsewhere — skip. Stale (>TTL, crashed worker)
+          // or never-claimed docs are take-over-able.
+          const claimedAt =
+            data.petpoojaClaimedAt && typeof data.petpoojaClaimedAt.toMillis === "function"
+              ? data.petpoojaClaimedAt.toMillis()
+              : 0;
+          if (data.petpoojaClaimedAt && Date.now() - claimedAt < CLAIM_TTL_MS) continue;
+          tx.set(
+            doc.ref,
+            {
+              petpoojaStatus: "processing",
+              petpoojaClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          won.push(doc);
+        }
+        return won;
+      });
+      claimedDocs.push(...claimed);
+    } catch (err: any) {
+      console.warn("[Petpooja Retry Worker] claim transaction failed, skipping tick:", err?.message || err);
+      return { retriedCount, failedCount };
+    }
+  } else {
+    claimedDocs.push(...pendingDocs);
+  }
+
+  // Bounded concurrency over CLAIMED docs only (see lease above): each push
+  // is 1 read + 1 external POST + writes, so 20 serial pushes stall the 5-min
+  // scheduler ~10-60s exactly when the POS is down and the queue is fullest.
+  // One bad order still never aborts rest.
+  const CHUNK_SIZE = 4;
+  for (let i = 0; i < claimedDocs.length; i += CHUNK_SIZE) {
+    const chunk = claimedDocs.slice(i, i + CHUNK_SIZE);
     const results = await Promise.allSettled(chunk.map((doc: any) => pushOrderToPetpooja(doc.id)));
     for (let j = 0; j < results.length; j++) {
       const res = results[j];

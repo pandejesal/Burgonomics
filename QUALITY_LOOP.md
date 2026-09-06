@@ -90,7 +90,14 @@
 - Fixed core: sheet close labeled + 44px; phone/OTP/notes labels associated; checkout errors assertive live regions; dish alt text; ADD/Redeem/stepper at 44px with group + live qty.
 - Dismissed: full screen-reader pass with devices (needs hardware + users).
 - Gates: functions 143 · partner 145 · core 218+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 14: Offline/empty/error resilience [PENDING SET 2]
+- [ ] Loop 14: Offline/empty/error resilience [RUNNING → done below]
+
+### Loop 14 — resilience (done)
+- Fixed functions: catalog-total-outage fail-closed 503; idempotency-lookup failure fail-closed 503 (same-key retry reuses); verifyPayment ghost-order 404 + tx-claimed transfers with stale takeover + busy-poll reuse; KOT + route workers claim-leased (shared `transferring` flag); porter poll dead-letters to needs_review + branch alert after 12 fails/2h.
+- Fixed partner: walk-in orders keep the form on write failure (no fake success); KDS bumps record recall only on success + buttons lock in flight; orders/menu streams surface error panels with Retry; KDS polls every 15s with refresh button + age stamp.
+- Fixed core: checkout PAY gated offline (button + handler); cart syncPending flag + banner; menu live failures keep cached data flagged stale with Retry; category empties navigate onward; MenuItemCard/BestsellerCarousel use SafeImage.
+- Dismissed: full offline queue-and-replay (needs backend outbox; cart persists locally).
+- Gates: functions 143 · partner 145 · core 218+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 15: Type safety in money/auth paths [PENDING SET 2]
 - [ ] Loop 16: Secrets/transport safety (keys, http, webviews) [PENDING SET 2]
 - [ ] Loop 17: Notification copy/topics consistency [PENDING SET 2]

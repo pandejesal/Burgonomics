@@ -81,17 +81,22 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         };
       }
     } catch (err: any) {
-      // A failed lookup must not silently mint a second payable order: snapshot
-      // it LOUD so ops sees the double-charge risk window. Fail-open (fresh
-      // order) is deliberate — blocking checkout on a read blip strands payers.
-      console.warn("[Payments] idempotency lookup failed, minting fresh order:", err?.message || err);
+      // Fail CLOSED: minting a fresh order when the lookup blips creates a
+      // second payable gateway order for the same checkout (double charge).
+      // 503 tells the client to retry the SAME idempotencyKey — the retry
+      // reuses the original open order instead of paying twice. Stranded
+      // payers are recoverable; double charges are not.
+      console.warn("[Payments] idempotency lookup failed, refusing fresh order:", err?.message || err);
       const { captureErrorSnapshot } = await import("../../core/errors");
       await captureErrorSnapshot({
         source: "payments",
         severity: "high",
-        message: "payment-intent idempotency lookup failed — minted fresh order (double-charge risk window)",
+        message: "payment-intent idempotency lookup failed — refused fresh order, client must retry same key",
         errorStack: err?.stack,
       });
+      const refused: any = new Error("Payment service is temporarily unavailable — please retry checkout (you will not be charged twice).");
+      refused.statusCode = 503;
+      throw refused;
     }
   }
 
@@ -221,19 +226,93 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     throw new Error("Invalid payment signature");
   }
 
-  // 2. Fetch order to perform Route split
+  // 2. Fetch order to perform Route split. Unknown orderId is a 404 —
+  // the old code built `orderData = {}` and resurrected a partial CONFIRMED
+  // doc (payment fields, no items/pricing) for a typo'd or deleted id.
   const orderRef = db.collection("orders").doc(orderId);
   const orderSnap = await orderRef.get();
+  if (!orderSnap.exists) {
+    throw new Error(`Order ${orderId} not found — refusing to verify payment against a ghost order`);
+  }
   const orderData = orderSnap.data() || {};
   const branchId = orderData.branchId;
 
   let transferResult: any = null;
 
   // 3. Execute Razorpay Route split transfer if linked account exists.
-  // Guard: a retried/concurrent verify must never double-transfer. Transfers
-  // are keyed by payment — an already-transferred order reuses its result.
+  // Claim-then-work inside a transaction: two concurrent verifies used to
+  // both read `!== "transferred"` and both POST the non-idempotent transfer
+  // API. The winner flips `transferring`; the loser reuses the result.
   if (orderData.routeTransferStatus === "transferred") {
-    transferResult = orderData["payment.routeTransfer"] ?? orderData.payment?.routeTransfer ?? null;
+    transferResult = orderData.payment?.routeTransfer ?? orderData["payment.routeTransfer"] ?? null;
+  } else if (db && typeof (db as any).runTransaction === "function") {
+    const claim: "claimed" | "done" | "busy" = await (db as any).runTransaction(
+      async (tx: any) => {
+        const fresh = await tx.get(orderRef as any);
+        const freshData = (fresh.exists ? fresh.data() : undefined) as any;
+        if (!freshData) return "busy";
+        if (freshData.routeTransferStatus === "transferred") {
+          transferResult =
+            freshData.payment?.routeTransfer ?? freshData["payment.routeTransfer"] ?? null;
+          return "done";
+        }
+        // Another verify/worker owns the transfer right now — never POST ours.
+        // Stale-claim takeover: a crash between claim and POST must not park
+        // the order in `transferring` forever (every future verify would 503).
+        if (freshData.routeTransferStatus === "transferring") {
+          const claimedAt = freshData.routeTransferClaimedAt;
+          const claimedMs =
+            claimedAt && typeof claimedAt.toMillis === "function" ? claimedAt.toMillis() : 0;
+          if (Date.now() - claimedMs < 10 * 60 * 1000) return "busy";
+        }
+        tx.set(
+          orderRef as any,
+          {
+            routeTransferStatus: "transferring",
+            routeTransferClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return "claimed";
+      }
+    );
+    if (claim === "done" && transferResult) {
+      // Lost the race after a winner completed — reuse, skip our own POST.
+      return finishVerifiedPayment({
+        orderRef,
+        orderData: { ...orderData, routeTransferStatus: "transferred" },
+        orderId,
+        razorpayOrderId,
+        razorpayPaymentId,
+        transferResult,
+      });
+    }
+    if (claim === "busy") {
+      // Winner still mid-flight: poll briefly for its result, else ask the
+      // client to retry verify (by then the transfer has settled). Posting
+      // our own transfer here is exactly the double-spend this guards.
+      for (let i = 0; i < 4; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const re = await orderRef.get();
+        const reData = (re.exists ? re.data() : undefined) as any;
+        if (reData?.routeTransferStatus === "transferred") {
+          const reused =
+            reData.payment?.routeTransfer ?? reData["payment.routeTransfer"] ?? null;
+          return finishVerifiedPayment({
+            orderRef,
+            orderData: { ...orderData, routeTransferStatus: "transferred" },
+            orderId,
+            razorpayOrderId,
+            razorpayPaymentId,
+            transferResult: reused,
+          });
+        }
+        if (reData?.routeTransferStatus !== "transferring") break;
+      }
+      const busy: any = new Error("Transfer in progress elsewhere — please retry payment verification.");
+      busy.statusCode = 503;
+      throw busy;
+    }
   }
   const pricingSplit = orderData.pricing?.split;
   if (
@@ -276,7 +355,33 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     }
   }
 
-  // 4. Update order state in Firestore — crypto-secure OTP for India compliance
+  // 4+5. Confirm state + audit (shared by the normal and race-loser paths).
+  return finishVerifiedPayment({
+    orderRef,
+    orderData,
+    orderId,
+    razorpayOrderId,
+    razorpayPaymentId,
+    transferResult,
+  });
+}
+
+/**
+ * Writes the CONFIRMED order state, OTP hash, and payment audit after a
+ * verified payment. Split out so the transfer-claim race loser reuses the
+ * winner's result through the identical write path (no divergent copies).
+ */
+async function finishVerifiedPayment(args: {
+  orderRef: any;
+  orderData: any;
+  orderId: string;
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  transferResult: any;
+}) {
+  const { orderRef, orderData, orderId, razorpayOrderId, razorpayPaymentId, transferResult } = args;
+
+  // Update order state in Firestore — crypto-secure OTP for India compliance
   const deliveryOtp =
     orderData.deliveryOtp ||
     (orderData.orderType === "delivery" || !orderData.orderType
@@ -309,7 +414,7 @@ export async function verifyPayment(params: VerifyPaymentParams) {
 
   await orderRef.set(updatePayload, { merge: true });
 
-  // 5. Append payment audit
+  // Append payment audit
   const auditId = `aud_${Date.now()}_${razorpayPaymentId.substring(0, 10)}`;
   await db.collection("payment_audits").doc(auditId).set({
     orderId,

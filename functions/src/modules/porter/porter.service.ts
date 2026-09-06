@@ -649,6 +649,58 @@ export async function pollActivePorterOrdersWorker(): Promise<{
     // Only poll if no updates received for > 15 minutes
     if (timeSinceUpdate >= FIFTEEN_MINUTES_MS) {
       polledCount++;
+      // Dead-letter accounting: unbounded polling during a Porter outage
+      // re-GETs stale orders forever. After MAX_POLLS failures (or 2h
+      // staleness) the order moves to needs_review with a branch alert.
+      const MAX_FAILED_POLLS = 12;
+      const STALE_MS = 2 * 60 * 60 * 1000;
+      const failCount = Number(order.porterPollCount || 0) + 1;
+      const recordPollFailure = async (reason: string) => {
+        if (failCount >= MAX_FAILED_POLLS || timeSinceUpdate >= STALE_MS) {
+          await doc.ref.set(
+            {
+              deliveryStatus: "needs_review",
+              needsRebook: true,
+              porterPollCount: failCount,
+              porterLastPollError: reason,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          const { captureErrorSnapshot } = await import("../../core/errors");
+          await captureErrorSnapshot({
+            source: "porter",
+            severity: "high",
+            message: `Porter tracking dark for order ${doc.id} (${failCount} failed polls) — needs manual review/rebook`,
+            orderId: doc.id,
+            branchId: order.branchId,
+          });
+          const branchId = order.branchId;
+          if (typeof branchId === "string" && branchId) {
+            try {
+              const { dispatchFCM } = await import("../notifications/fcm.service");
+              await dispatchFCM({
+                topic: `branch_${branchId}_orders`,
+                title: "Delivery tracking lost — review needed",
+                body: `Order #${doc.id.substring(0, 6)} has no courier updates. Check Porter or rebook.`,
+                data: { type: "porter_tracking_lost", orderId: doc.id, needsRebook: "true" },
+              });
+            } catch {
+              // Alert best-effort; snapshot above is the durable trail.
+            }
+          }
+        } else {
+          await doc.ref.set(
+            {
+              porterPollCount: failCount,
+              porterLastPollError: reason,
+              lastPolledAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      };
       try {
         if (config.mock.porterDispatch) {
           // Advance mock order if in transit > 20 mins
@@ -678,6 +730,7 @@ export async function pollActivePorterOrdersWorker(): Promise<{
           });
 
           if (response.ok) {
+            // Successful poll resets the dead-letter counter.
             const data = await response.json();
             const normalized = normalizePorterEvent(data.status || data.event);
             const driver = data.driver_details || data.driver || {};
@@ -709,12 +762,17 @@ export async function pollActivePorterOrdersWorker(): Promise<{
               updatePayload.deliveryStatus = "delivered";
             }
 
+            updatePayload.porterPollCount = 0;
+            updatePayload.porterLastPollError = null;
             await doc.ref.set(updatePayload, { merge: true });
             updatedCount++;
+          } else {
+            await recordPollFailure(`Porter API HTTP ${response.status}`);
           }
         }
       } catch (err: any) {
         console.warn(`[Porter Polling Worker] Failed to poll order ${doc.id}: ${err.message}`);
+        await recordPollFailure(err?.message || "poll exception").catch(() => undefined);
       }
     }
   }

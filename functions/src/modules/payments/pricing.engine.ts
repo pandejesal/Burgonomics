@@ -97,6 +97,9 @@ export async function calculateOrderPricing(
   // Firestore shims without getAll, and to client prices on read failure.
   const catalogPrices = new Map<string, number>();
   const wantedIds = [...new Set(input.items.map((i) => i.productId || i.id).filter(Boolean))];
+  // True only when reads themselves threw (outage) — distinct from docs that
+  // merely lack a price field (data shape, keeps per-item fallback).
+  let catalogReadFailed = false;
   if (wantedIds.length > 0 && db && typeof db.collection === "function") {
     try {
       if (typeof (db as any).getAll === "function") {
@@ -117,11 +120,13 @@ export async function calculateOrderPricing(
               catalogPrices.set(id as string, data.price);
             }
           } catch {
+            catalogReadFailed = true;
             // Fallback to validated client price for this item
           }
         }
       }
     } catch (err) {
+      catalogReadFailed = true;
       // Fallback to validated client prices — but never silently: a blind
       // catalog read failure prices the whole order off untrusted input.
       const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
@@ -135,6 +140,15 @@ export async function calculateOrderPricing(
       }).catch(() => undefined);
       void err;
     }
+  }
+
+  // Fail CLOSED on total catalog outage: pricing the whole order off
+  // untrusted client input turns any Firestore blip into arbitrary charges.
+  // Partial misses keep per-item fallback (flagged via pricingDegraded).
+  if (wantedIds.length > 0 && catalogPrices.size === 0 && catalogReadFailed) {
+    const err: any = new Error("Menu pricing is temporarily unavailable — please retry checkout.");
+    err.statusCode = 503;
+    throw err;
   }
 
   for (const item of input.items) {

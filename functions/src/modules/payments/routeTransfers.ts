@@ -151,6 +151,45 @@ export async function retryPendingRouteTransfersWorker() {
     })
   );
 
+  // Claim-then-work (shared lease with verifyPayment's `transferring` flag):
+  // overlapping scheduler ticks used to POST the same non-idempotent
+  // transfer twice. Stale claims (>10 min) are take-over-able.
+  const CLAIM_TTL_MS = 10 * 60 * 1000;
+  const claimedDocs: any[] = [];
+  if (db && typeof (db as any).runTransaction === "function") {
+    try {
+      const won: any[] = await (db as any).runTransaction(async (tx: any) => {
+        const mine: any[] = [];
+        for (const doc of docs) {
+          const fresh = await tx.get(doc.ref);
+          const data = (fresh.exists ? fresh.data() : undefined) as any;
+          if (!data || data.routeTransferStatus !== "pending_retry") continue;
+          const claimedAt =
+            data.routeTransferClaimedAt && typeof data.routeTransferClaimedAt.toMillis === "function"
+              ? data.routeTransferClaimedAt.toMillis()
+              : 0;
+          if (data.routeTransferClaimedAt && Date.now() - claimedAt < CLAIM_TTL_MS) continue;
+          tx.set(
+            doc.ref,
+            {
+              routeTransferStatus: "transferring",
+              routeTransferClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          mine.push(doc);
+        }
+        return mine;
+      });
+      claimedDocs.push(...won);
+    } catch (err: any) {
+      console.warn("[Route Transfer Worker] claim transaction failed, skipping tick:", err?.message || err);
+      return { retriedCount: 0 };
+    }
+  } else {
+    claimedDocs.push(...docs);
+  }
+
   let retriedCount = 0;
 
   const processDoc = async (doc: any): Promise<boolean> => {
@@ -254,8 +293,8 @@ export async function retryPendingRouteTransfersWorker() {
   };
 
   const CHUNK_SIZE = 4;
-  for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
-    const chunk = docs.slice(i, i + CHUNK_SIZE);
+  for (let i = 0; i < claimedDocs.length; i += CHUNK_SIZE) {
+    const chunk = claimedDocs.slice(i, i + CHUNK_SIZE);
     const results = await Promise.allSettled(chunk.map((doc) => processDoc(doc)));
     for (const res of results) {
       if (res.status === "fulfilled" && res.value) retriedCount += 1;
