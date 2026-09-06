@@ -221,3 +221,23 @@
 ### Loop 30 — dead scheduler sweep (done, verify-only — no code touched)
 - Verified: at HEAD, runTicketReminderCron/runTicketEscalationCheck do NOT exist (only as uncommitted new files in pre-existing dirt, outside campaign scope); no tickets barrel at HEAD; zero references anywhere including tests and git history for those paths. Live scheduler checkTicketInactivityReminders confirmed wired (index.ts:56,792). Coder properly BLOCKED on annotating nonexistent files (refused to invent code — correct).
 - Disposition: nothing dead at HEAD to delete; duality note already in ledger (prior loops). No gates (no files touched).
+
+### Loop 31 — dev-gate partner seed leaks (done)
+- Fixed (partner 6d851ad): useTicket.ts queryFn captures fetch error and throws in prod instead of falling through to mockSnapshots (DEV keeps mocks); useOrder.ts fake plate GJ-01-BK-4092 + synthetic porter.in URL fallbacks emptied; useOrders.ts simulateOrder throws outside DEV. Verified exact diffs; TicketDetailPage guards !ticket with Not-Found + recovery CTA (safe end state).
+- Gates: partner typecheck clean + 151/151 + build green (batched below). Pushed (feat/partner-device-smoke in sync).
+
+### Loop 32 — honest cancel-refund handler (done)
+- Fixed (partner bb2588e): OrderDetailPage handleCancelAndRefund wrapped in try/catch (toast.error + rethrow, no success toast on failure); refund copy now directs staff to Payments flow instead of claiming 'Refund initiated.' (no partner caller hits POST /payments/refund — verified). Matches handleStatusChange style.
+- Gates: batched below. Pushed.
+
+### Loop 33 — core live-by-default (done)
+- Fixed (core c3d4881): offersService fetchOffersFromFirebase returns [] instead of SAMPLE_OFFERS (import removed, tsc-clean); demoStore simulationMode + petpoojaSimulateSuccess defaults flipped true→false (fresh installs boot live; QA toggles via DebugPanel; already-persisted installs keep stored values — noted limitation). storeStore verified already honest at HEAD (null/[]); MOCK boot exists only in uncommitted dirt, out of scope.
+- Gates: core tsc clean + 221+18 + build green (batched below). Pushed (main in sync).
+
+### Loop 34 — offline gate for direct payment entry (done)
+- Fixed (core 3637339): payment.tsx mirrors checkout offline gate — useAppConfig import + isOnline subscription, startPayment guard (preflight message + idle return), AppButton disabled + title offline. support.tsx verified: localStorage-ticket gap needs a backend endpoint, out of surgical scope (queued).
+- Gates: batched below. Pushed.
+
+### Loop 35 — honest image fallbacks (done)
+- Fixed (core 7285db8): menuStore enrichProduct reduced to identity (SAMPLE import/maps removed; SafeImage covers missing photos); (partner 87e76a7): createBranch banner fallback unsplash→null (DEV seed + razorpay/coordinate fallbacks untouched as separate concerns; fabricated acc_Rzp_ account-id fallback noted as follow-up).
+- Gates: partner typecheck clean, 151/151 tests, build green; core tsc clean, 221 tests (+18 skipped), build green (chunk-size warning pre-existing). All three repos pushed and in sync with origins.
