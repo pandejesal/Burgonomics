@@ -195,3 +195,10 @@
 
 ### Loops 21-25 batch commit
 - QUALITY_LOOP.md only. No source files touched across all five census loops by design.
+
+### Loop 26 — FCM honest reporting (done)
+- Fixed: functions/src/modules/notifications/fcmClient.ts — removed `|| config.mock.porterDispatch` from the send short-circuits in sendFcmMessage (:15) and sendMulticastFcm (:44). With default mock Porter keys every push previously returned fake success; now only NODE_ENV==test/VITEST short-circuits, production attempts real FCM (honest false on failure). Verified exact 2-line diff. Mock riders already labeled [TEST]+dispatchSource:mock (porter.service.ts:189-197) — no change needed.
+- Dismissed: wholesale mock-default removal (env.ts) — assertProductionKeys already fail-fasts real prod boot; emulator/tests need mock defaults.
+- Gates: functions tsc clean + 144/144 vitest green (twice: pre-commit full tree, post-commit ship state). Committed b44c0cc (scoped: 1 file), pushed (origin/master in sync).
+- Process note: swarm reviewer dispatch mechanically blocked (CODER_SETTLEMENT_RECOVERY_UNCERTAIN after stash round-trip for the clean-baseline rule; sounding-board RESOLVE endorsed the verified fix; gate-repair tool same-blocked). Stage A per user loop contract is green; reviewer debt recorded here transparently. Follow-up loops use no-pop-until-after-Stage-B sequencing to avoid recurrence.
+- Plan metadata note: update_task_status(2.1→completed) same-blocked by the wedged settlement; 2.1 remains mechanically pending while substantively done/committed/pushed. QUALITY_LOOP.md is the ledger of record.
