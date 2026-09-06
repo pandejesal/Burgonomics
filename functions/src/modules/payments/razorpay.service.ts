@@ -66,9 +66,18 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   if (params.idempotencyKey && db && typeof db.collection === "function") {
     try {
       const prior = await db.collection("payment_intents").doc(params.idempotencyKey).get();
-      // Require a real stored order id — ghost/empty docs must not short-circuit.
+      // Require a real stored order id AND sane numeric totals — ghost docs
+      // or corrupted amounts (string/NaN) must not short-circuit into a
+      // checkout for the wrong total.
       const data = (prior.exists ? (prior.data() as any) : undefined) as any;
-      if (data?.razorpayOrderId) {
+      const storedPaise = data?.amountPaise;
+      if (
+        typeof data?.razorpayOrderId === "string" &&
+        data.razorpayOrderId.length > 0 &&
+        typeof storedPaise === "number" &&
+        Number.isFinite(storedPaise) &&
+        storedPaise > 0
+      ) {
         return {
           razorpayOrderId: data.razorpayOrderId,
           amountPaise: data.amountPaise,

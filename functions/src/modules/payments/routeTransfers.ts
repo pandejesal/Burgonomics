@@ -75,16 +75,27 @@ export async function attemptRouteTransfer(
   preResolvedAccountId?: string | null
 ): Promise<RouteTransferAttempt> {
   try {
-    const razorpayAccountId =
+    const rawAccountId =
       preResolvedAccountId !== undefined
         ? preResolvedAccountId
         : (await db.collection("branches").doc(branchId).get()).data()?.razorpayAccountId;
+    // Narrow before money moves: a string-typed paise ("5000") coerces past
+    // `> 0` and POSTs a wrong amount; a missing split must fail LOUD to
+    // pending_retry (silent skip leaves the branch unpaid with no trail).
+    const splitPaise = Number(pricingSplit?.branchTransferPaise);
+    if (!Number.isInteger(splitPaise) || splitPaise <= 0) {
+      return {
+        ok: false,
+        error: "Invalid pricing split: branchTransferPaise must be a positive integer",
+      };
+    }
+    const razorpayAccountId = typeof rawAccountId === "string" && rawAccountId ? rawAccountId : null;
 
-    if (!razorpayAccountId || !pricingSplit || pricingSplit.branchTransferPaise <= 0) {
+    if (!razorpayAccountId) {
       return {
         ok: false,
         skipped: true,
-        error: "No linked Razorpay account or transfer amount for branch",
+        error: "No linked Razorpay account for branch",
       };
     }
 
@@ -94,7 +105,7 @@ export async function attemptRouteTransfer(
         result: {
           id: `trf_mock_${Date.now()}`,
           account: razorpayAccountId,
-          amount: pricingSplit.branchTransferPaise,
+          amount: splitPaise,
           status: "processed",
         },
       };
@@ -103,7 +114,7 @@ export async function attemptRouteTransfer(
     const razorpay = getRazorpayClient();
     const transfers = buildRouteTransferPayload(
       razorpayAccountId,
-      pricingSplit.branchTransferPaise,
+      splitPaise,
       orderId,
       branchId,
       pricingSplit.brandRoyaltyPaise ?? pricingSplit.brandRoyaltyAmount

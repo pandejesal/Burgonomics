@@ -90,6 +90,23 @@ function applyCatalogBasePrice(item: PricingLineItem, catalogPrice: number): num
 export async function calculateOrderPricing(
   input: CalculateOrderPricingInput
 ): Promise<PricingBreakdown> {
+  // Defense in depth behind the zod schema (direct callers bypass routes):
+  // reject unpriceable items instead of coercing them (qty 0 → phantom +1,
+  // price "abc" → free item — both real over/under-charge vectors).
+  if (!Array.isArray(input.items) || input.items.length === 0 || input.items.length > 100) {
+    const err: any = new Error("Order must contain 1–100 items.");
+    err.statusCode = 400;
+    throw err;
+  }
+  for (const item of input.items) {
+    const price = Number((item as any)?.price);
+    const qty = Number((item as any)?.quantity);
+    if (!Number.isFinite(price) || price < 0 || price > 100000 || !Number.isInteger(qty) || qty < 1 || qty > 99) {
+      const err: any = new Error(`Invalid item in order (price and quantity 1–99 required): ${(item as any)?.productId || (item as any)?.id || "unknown"}.`);
+      err.statusCode = 400;
+      throw err;
+    }
+  }
   let foodSubtotal = 0;
 
   // 1. Authoritative Item Price Resolution — ONE batched catalog read

@@ -95,7 +95,7 @@ const BASKETS: Basket[] = [
   { name: "coupon plus loyalty", items: [{ id: "l1", productId: "prod_bigbang", name: "BB", price: 249, quantity: 2 }], orderType: "delivery", branchId: "b1", couponCode: "FLAT50", loyaltyPointsToRedeem: 60 },
   { name: "modifiers priced", items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1, modifiers: [{ id: "m1", name: "Cheese", priceDelta: 30 }] }], orderType: "takeaway", branchId: "b1" },
   { name: "unknown catalog id falls back", items: [{ id: "l1", productId: "prod_ghost", name: "G", price: 120, quantity: 1 }], orderType: "takeaway", branchId: "b1" },
-  { name: "qty clamping", items: [{ id: "l1", productId: "prod_fries", name: "F", price: 89, quantity: 0 }], orderType: "takeaway", branchId: "b1" },
+  { name: "single qty", items: [{ id: "l1", productId: "prod_fries", name: "F", price: 89, quantity: 1 }], orderType: "takeaway", branchId: "b1" },
   { name: "bulk qty", items: [{ id: "l1", productId: "prod_momos", name: "M", price: 129, quantity: 10 }], orderType: "delivery", branchId: "b1" },
   { name: "all categories", items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }, { id: "l2", productId: "prod_bigbang", name: "B", price: 249, quantity: 1 }, { id: "l3", productId: "prod_fries", name: "F", price: 89, quantity: 1 }, { id: "l4", productId: "prod_shake", name: "S", price: 159, quantity: 1 }, { id: "l5", productId: "prod_momos", name: "M", price: 129, quantity: 1 }], orderType: "delivery", branchId: "b1", couponCode: "PERC10", loyaltyPointsToRedeem: 100 },
   { name: "same item twice merges by math", items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }, { id: "l2", productId: "prod_hero", name: "H", price: 99, quantity: 3 }], orderType: "takeaway", branchId: "b1" },
@@ -155,6 +155,24 @@ describe("pricing parity — 20 baskets", () => {
     });
     expect(r.discount).toBeLessThanOrEqual(99);
     expect(r.grandTotal).toBeGreaterThanOrEqual(0);
+  });
+
+  it("rejects unpriceable items instead of coercing them", async () => {
+    // qty 0 used to become a phantom +1 unit; price "abc" a free item.
+    await expect(
+      calculateOrderPricing({
+        items: [{ id: "l1", productId: "prod_fries", name: "F", price: 89, quantity: 0 }],
+        branchId: "b1",
+        orderType: "takeaway",
+      } as any)
+    ).rejects.toThrow(/price and quantity/);
+    await expect(
+      calculateOrderPricing({
+        items: [{ id: "l1", productId: "prod_fries", name: "F", price: "abc", quantity: 1 }],
+        branchId: "b1",
+        orderType: "takeaway",
+      } as any)
+    ).rejects.toThrow(/price and quantity/);
   });
 
   it("golden basket: percent coupon capped at 80", async () => {

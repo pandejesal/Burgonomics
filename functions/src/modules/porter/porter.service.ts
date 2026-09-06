@@ -486,12 +486,13 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
     throw new Error(`Order ${orderId} not found`);
   }
 
-  const order = orderDoc.data()!;
+  const order = orderDoc.data() || {};
   // Branch-scoped authorization BEFORE touching OTP state: an anonymous
   // caller must never be able to burn attempts or flip an order to DELIVERED.
   if (caller) await assertOrderBranchAccess(caller, order);
-  const storedHash = String(order.deliveryOtpHash || "").trim();
-  const legacyOtp = String(order.deliveryOtp || "").trim();
+  const storedHash =
+    typeof order.deliveryOtpHash === "string" ? order.deliveryOtpHash.trim() : "";
+  const legacyOtp = typeof order.deliveryOtp === "string" ? order.deliveryOtp.trim() : "";
 
   if (!storedHash && !legacyOtp) {
     throw new Error("No delivery OTP found on order record");
@@ -521,7 +522,11 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
     : timingSafeEqual(enteredOtp, legacyOtp);
 
   if (!isValid) {
-    const attempts = Number(order.deliveryOtpAttempts || 0) + 1;
+    // Integer-coerced counter: a corrupt non-numeric value (console edit,
+    // partial write) used to yield NaN, and NaN >= MAX is always false — the
+    // lockout never engaged and guesses were unlimited.
+    const priorAttempts = Number(order.deliveryOtpAttempts || 0);
+    const attempts = (Number.isInteger(priorAttempts) ? priorAttempts : 0) + 1;
     const locked = attempts >= OTP_MAX_ATTEMPTS;
     await orderDoc.ref.set(
       {

@@ -10,9 +10,25 @@ import { z } from "zod";
 const nonEmptyString = z.string().min(1);
 const optionalNonNegative = z.number().min(0).optional();
 
+const pricingLineItemSchema = z.object({
+  id: z.string().min(1).optional(),
+  productId: z.string().min(1).optional(),
+  name: z.string().max(200).optional(),
+  // Finite, sane bounds: price "abc"/NaN/Infinity and quantity 0/negative
+  // used to coerce into free items or phantom +1 units downstream.
+  price: z.number().finite().min(0).max(100000),
+  quantity: z.number().int().min(1).max(99),
+  customizations: z
+    .array(z.object({ price: z.number().finite().min(0).max(100000) }).passthrough())
+    .optional(),
+  modifiers: z
+    .array(z.object({ priceDelta: z.number().finite().min(0).max(100000) }).passthrough())
+    .optional(),
+});
+
 export const createPaymentOrderSchema = z
   .object({
-    items: z.array(z.any()).min(1),
+    items: z.array(pricingLineItemSchema).min(1).max(100),
     branchId: z.string().min(1).optional(),
     storeId: z.string().min(1).optional(),
     orderType: z.enum(["delivery", "takeaway", "dinein"]),

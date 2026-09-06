@@ -15,7 +15,7 @@ describe("route request validation", () => {
   it("accepts valid money-route bodies", () => {
     expect(
       createPaymentOrderSchema.safeParse({
-        items: [{ id: "a" }],
+        items: [{ id: "a", price: 199, quantity: 1 }],
         branchId: "b1",
         orderType: "delivery",
       }).success
@@ -39,7 +39,16 @@ describe("route request validation", () => {
         .success
     ).toBe(false);
     expect(
-      createPaymentOrderSchema.safeParse({ items: [{ id: "a" }], branchId: "b", orderType: "drone" })
+      createPaymentOrderSchema.safeParse({ items: [{ id: "a", price: 10, quantity: 1 }], branchId: "b", orderType: "drone" })
+        .success
+    ).toBe(false);
+    // Unpriceable items never reach pricing (qty 0 → phantom +1, price "abc" → free).
+    expect(
+      createPaymentOrderSchema.safeParse({ items: [{ id: "a", price: 10, quantity: 0 }], branchId: "b", orderType: "delivery" })
+        .success
+    ).toBe(false);
+    expect(
+      createPaymentOrderSchema.safeParse({ items: [{ id: "a", price: "abc", quantity: 1 }], branchId: "b", orderType: "delivery" })
         .success
     ).toBe(false);
     expect(pushStockSchema.safeParse({ branchId: "b", itemId: "i", inStock: "yes" }).success).toBe(

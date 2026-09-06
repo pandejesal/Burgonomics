@@ -98,7 +98,14 @@
 - Fixed core: checkout PAY gated offline (button + handler); cart syncPending flag + banner; menu live failures keep cached data flagged stale with Retry; category empties navigate onward; MenuItemCard/BestsellerCarousel use SafeImage.
 - Dismissed: full offline queue-and-replay (needs backend outbox; cart persists locally).
 - Gates: functions 143 · partner 145 · core 218+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 15: Type safety in money/auth paths [PENDING SET 2]
+- [ ] Loop 15: Type safety in money/auth paths [RUNNING → done below]
+
+### Loop 15 — type safety (done)
+- Fixed functions: order items zod-validated (finite price, qty 1–99) + engine-level rejection; payment-intent reuse requires sane numeric totals; transfer amounts integer-narrowed (string paise can no longer POST); OTP attempts integer-coerced + hash string-checked.
+- Fixed partner: ticket docs normalized at read (tier union, timeline array); auth role unwrapping unified + claim arrays narrowed (string branchIds wrapped); coin modal capped 1–5000 client-side; counter phones normalized (no '+91 ' placeholder); status round-trip pinned by contract test.
+- Fixed core: cart migrate scrubs tampered lines; paymentsService rejects NaN; bootstrap shape-guards persisted user; loyalty balance finite-clamped; geofence rejects NaN coords; mockJwt requires numeric sub/iat/exp.
+- Dismissed: wholesale tx-callback retyping (claim logic already race-safe; types follow).
+- Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 16: Secrets/transport safety (keys, http, webviews) [PENDING SET 2]
 - [ ] Loop 17: Notification copy/topics consistency [PENDING SET 2]
 - [ ] Loop 18: Dead code elimination (verified-unreferenced only) [PENDING SET 2]
