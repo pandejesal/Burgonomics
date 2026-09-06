@@ -241,6 +241,26 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         } catch {
           // Non-blocking (see pushToCustomer).
         }
+      } else {
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Unmatched processed refund ${refundId} (payment ${paymentId}, amount ${amount}) — no order carries this payment id; manual review required`,
+        });
+        await db.collection("unmatched_payments").doc(`ump_refund_${eventId}`).set(
+          {
+            eventId,
+            event,
+            razorpayPaymentId: paymentId,
+            refundId,
+            amount,
+            currency: refundEntity?.currency || "INR",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+            reason: "refund_no_match",
+          },
+          { merge: true }
+        );
       }
     }
 
