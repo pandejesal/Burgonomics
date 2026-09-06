@@ -5,7 +5,6 @@ import { config } from "../../config/env";
 import { verifyRazorpayWebhookSignature } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { pushOrderToPetpooja } from "../petpooja";
-import { dispatchFCM } from "../notifications/fcm.service";
 
 /**
  * Handles incoming webhooks from Razorpay with signature verification & idempotent execution.
@@ -134,25 +133,11 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           { merge: true }
         );
 
-        // Auto-notify branch kitchen display system (KDS). Topic MUST match
-        // what devices subscribe to (branch_<id>_orders) — the bare
-        // branch_<id> topic has zero subscribers and alerts vanish silently.
-        if (branchId) {
-          try {
-            await dispatchFCM({
-              topic: `branch_${branchId}_orders`,
-              title: "ðŸ”” Order Paid & Confirmed",
-              body: `Order #${orderId.substring(0, 6)} confirmed. Start preparation!`,
-              data: {
-                type: "payment_captured",
-                orderId,
-                paymentId: razorpayPaymentId || "",
-              },
-            });
-          } catch (fcmErr) {
-            console.warn(`[Razorpay Webhook] FCM dispatch notice failed for order ${orderId}:`, fcmErr);
-          }
-        }
+        // No branch push here: onOrderCreatedNotificationTrigger already sent
+        // the KOT alert when the order doc was created. The old code sent a
+        // SECOND push per paid order (this one with a mojibake title) —
+        // double chimes for every online payment. (branchId from notes is
+        // intentionally unused from here on.)
 
         // Auto-push KOT to Petpooja POS upon payment confirmation.
         // pushOrderToPetpooja returns false (not throw) on POS rejection —
@@ -180,6 +165,21 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           },
           { merge: true }
         );
+        // The customer otherwise stares at a spinner: tell them plainly.
+        // (Status code is untouched, so no status trigger fires — push here.)
+        try {
+          const orderSnap = await db.collection("orders").doc(orderId).get();
+          const orderData = (orderSnap.exists ? orderSnap.data() : undefined) as any;
+          const { pushToCustomer } = await import("../notifications/fcmClient");
+          await pushToCustomer(
+            orderData?.customerId || orderData?.userId,
+            "⚠️ Payment failed",
+            `Payment for order #${orderId.substring(0, 6)} did not go through. No money was charged — please try again.`,
+            { type: "payment_failed", orderId }
+          );
+        } catch {
+          // Non-blocking (see pushToCustomer).
+        }
       }
     } else if (event === "transfer.processed" || event === "transfer.failed" || event === "transfer.reversed") {
       const transferEntity = payload.payload?.transfer?.entity;
@@ -229,6 +229,18 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           },
           { merge: true }
         );
+        try {
+          const orderData = orderDoc.data() as any;
+          const { pushToCustomer } = await import("../notifications/fcmClient");
+          await pushToCustomer(
+            orderData?.customerId || orderData?.userId,
+            "↩️ Refund processed",
+            `₹${amount} refund for order #${orderDoc.id.substring(0, 6)} is on its way (5–7 business days).`,
+            { type: "refund_processed", orderId: orderDoc.id }
+          );
+        } catch {
+          // Non-blocking (see pushToCustomer).
+        }
       }
     }
 

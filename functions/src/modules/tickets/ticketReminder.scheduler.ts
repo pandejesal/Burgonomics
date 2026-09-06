@@ -89,9 +89,11 @@ async function publishTicketAlert(params: {
   );
 
   if (branchId) {
+    // Suffixed form only — bare branch topics have zero subscribers (see
+    // /notifications/subscribe allowlist).
     attempts.push(
       messaging.send({
-        topic: `branch_${branchId}`,
+        topic: `branch_${branchId}_tickets`,
         notification: { title, body },
         data: {
           type: dataType,

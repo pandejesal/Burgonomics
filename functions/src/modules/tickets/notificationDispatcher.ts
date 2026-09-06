@@ -73,18 +73,23 @@ export async function dispatchTicketEscalationAlert(payload: TicketAlertPayload)
       android: {
         priority: "high",
         notification: {
+          // Must match a channel created on device (burgonomics_updates_channel).
+          // The old tickets_alerts ID exists nowhere — Android silently drops it.
           sound: "default",
-          channelId: "tickets_alerts",
+          channelId: "burgonomics_updates_channel",
         },
       },
     })
   );
 
-  // 2. Also notify the specific branch topic if L2/L3 so local managers stay in sync
+  // 2. Also notify the specific branch topic if L2/L3 so local managers stay in sync.
+  // MUST be the suffixed form: bare `branch_<id>` has zero subscribers (the
+  // subscribe allowlist only permits branch_*_orders/tickets) — the old bare
+  // topic paged nobody.
   if (branchId && (escalationLevel === "L2_REGIONAL" || escalationLevel === "L3_EXECUTIVE")) {
     attempts.push(
       messaging.send({
-        topic: `branch_${branchId}`,
+        topic: `branch_${branchId}_tickets`,
         notification: { title, body },
         data: {
           type: "ticket_escalated",

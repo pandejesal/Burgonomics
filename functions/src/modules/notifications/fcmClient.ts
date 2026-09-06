@@ -104,3 +104,35 @@ export async function sendMulticastFcm(
     };
   }
 }
+
+/**
+ * Best-effort customer push by users/{uid} fcmTokens. Non-blocking by design:
+ * notification loss must never fail the calling flow (payment/refund/ticket).
+ */
+export async function pushToCustomer(
+  customerId: string | undefined,
+  title: string,
+  body: string,
+  data: Record<string, string>
+): Promise<void> {
+  try {
+    if (!customerId || !db || typeof db.collection !== "function") return;
+    const userDoc = await db.collection("users").doc(customerId).get();
+    const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
+    if (fcmTokens.length === 0) return;
+    await sendMulticastFcm(
+      fcmTokens,
+      {
+        notification: { title, body },
+        data,
+        android: {
+          priority: "high",
+          notification: { sound: "default", channelId: "burgonomics_updates_channel" },
+        },
+      },
+      customerId
+    );
+  } catch (err: any) {
+    console.warn("[FCM] Customer push failed (non-blocking):", err?.message || err);
+  }
+}

@@ -242,6 +242,20 @@ export async function resolveTicket(input: ResolveTicketInput) {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
+  // Customers never learned their ticket closed. Best-effort push (never
+  // blocks resolution).
+  try {
+    const { pushToCustomer } = await import("../notifications/fcmClient");
+    await pushToCustomer(
+      ticket.customerId,
+      "✅ Support ticket resolved",
+      `Ticket ${ticket.ticketNumber || ticketId} is resolved${refundResult ? " with a refund" : ""}. Thanks for your patience!`,
+      { type: "ticket_resolved", ticketId }
+    );
+  } catch {
+    // Non-blocking (see pushToCustomer).
+  }
+
   return { success: true, ticketId, resolution };
 }
 

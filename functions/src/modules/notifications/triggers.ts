@@ -191,7 +191,9 @@ export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
 export const onTicketCreatedUrgentTrigger = onDocumentCreated(
   {
     region: REGION,
-    document: "tickets/{ticketId}",
+    // Canonical collection: tickets.service writes support_tickets. The old
+    // `tickets/` path NEVER fired — born-urgent tickets alerted nobody.
+    document: "support_tickets/{ticketId}",
   },
   async (event) => {
     const snap = event.data;
@@ -227,7 +229,8 @@ export const onTicketCreatedUrgentTrigger = onDocumentCreated(
 export const onTicketEscalatedNotificationTrigger = onDocumentUpdated(
   {
     region: REGION,
-    document: "tickets/{ticketId}",
+    // Canonical collection (see above) — the old path never fired.
+    document: "support_tickets/{ticketId}",
   },
   async (event) => {
     const change = event.data;

@@ -483,10 +483,11 @@ app.post(
   }
 );
 
-// Device → branch topic subscription (FCM topics can only be subscribed
+// Device → topic subscription (FCM topics can only be subscribed
 // server-side; clients call this after push registration and branch switch).
-// Allowlisted to branch topics AND ownership-checked: any authed user could
-// otherwise subscribe anyone's token to any topic (notification hijack).
+// Escalation fan-out topics (regional_managers, superadmins, tickets_escalated)
+// were published but UNSUBSCRIBABLE — every push went nowhere. They are now
+// subscribable with role checks; branch topics stay ownership-checked via token.
 app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const { token, topics } = req.body as { token?: string; topics?: string[] };
@@ -494,9 +495,21 @@ app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedReque
       res.status(400).json({ error: "token and non-empty topics[] are required" });
       return;
     }
+    const role = (req.user as any)?.role as string | undefined;
+    const isBrandAdmin =
+      (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
+    const isStaff = !!role && role !== "customer";
     const clean = [...new Set(topics)]
-      .filter((t) => /^branch_[A-Za-z0-9_-]+_(orders|tickets)$/.test(t))
-      .slice(0, 10);
+      .filter((t) => {
+        if (/^branch_[A-Za-z0-9_-]+_(orders|tickets)$/.test(t)) return true;
+        if (t === "regional_managers") {
+          return role === "regional_manager" || isBrandAdmin || role === "support";
+        }
+        if (t === "superadmins") return isBrandAdmin;
+        if (t === "tickets_escalated") return isStaff;
+        return false;
+      })
+      .slice(0, 12);
     if (clean.length === 0) {
       res.status(400).json({ error: "no subscribable branch topics" });
       return;
@@ -515,6 +528,46 @@ app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedReque
     res.status(200).json({ success: failures === 0, subscribed: clean, failures });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to subscribe topics" });
+  }
+});
+
+// Release stale branch topics on account/branch switch or sign-out —
+// otherwise the previous outlet keeps paging this terminal. Same shape,
+// same guards as subscribe.
+app.post("/notifications/unsubscribe", requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { token, topics } = req.body as { token?: string; topics?: string[] };
+    if (!token || !Array.isArray(topics) || topics.length === 0) {
+      res.status(400).json({ error: "token and non-empty topics[] are required" });
+      return;
+    }
+    const role = (req.user as any)?.role as string | undefined;
+    const isBrandAdmin =
+      (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
+    const isStaff = !!role && role !== "customer";
+    const clean = [...new Set(topics)]
+      .filter((t) => {
+        if (/^branch_[A-Za-z0-9_-]+_(orders|tickets)$/.test(t)) return true;
+        if (t === "regional_managers") {
+          return role === "regional_manager" || isBrandAdmin || role === "support";
+        }
+        if (t === "superadmins") return isBrandAdmin;
+        if (t === "tickets_escalated") return isStaff;
+        return false;
+      })
+      .slice(0, 12);
+    if (clean.length === 0) {
+      res.status(400).json({ error: "no unsubscribable topics" });
+      return;
+    }
+    const { messaging } = await import("./core/firebase");
+    const results = await Promise.all(
+      clean.map((topic) => messaging.unsubscribeFromTopic(token, topic))
+    );
+    const failures = results.filter((r) => r.failureCount > 0).length;
+    res.status(200).json({ success: failures === 0, unsubscribed: clean, failures });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to unsubscribe topics" });
   }
 });
 

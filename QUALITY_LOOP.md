@@ -114,7 +114,14 @@
 - Fixed core: deep-link scheme+path allowlist; push deeplinks sanitized (no location.href fallback), orderId charset-checked; manifest documents in-app enforcement; embedded Razorpay test key removed (explicit simulation); httpClient refuses cleartext bases.
 - Dismissed: mock-by-default + committed mock fallbacks (prod boot now refuses all three — Loop 10 guard); Petpooja HMAC-only (their protocol echoes app_key; header-first kept); admin-portal session fallbacks (separate session, queued).
 - Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 17: Notification copy/topics consistency [PENDING SET 2]
+- [ ] Loop 17: Notification copy/topics consistency [RUNNING → done below]
+
+### Loop 17 — notifications (done)
+- Fixed functions: ticket triggers repointed to support_tickets (dead pushes now fire); branch fan-out uses subscribable _tickets topics; invented tickets_alerts channel replaced; role-gated regional/superadmin/escalated subscriptions; webhook KOT dupe removed; payment-failed/refund/ticket-resolved customer pushes added.
+- Fixed partner: launch modal copy honest (no fake FCM claim); push init split (listeners once, reconcile every user change); stale topics unsubscribed (new endpoint); permission actually prompted; foreground/tray navigation typed (no full-reload to wrong pages).
+- Fixed core: web onMessage singleton (no double toast/push); inbox dedupe by id + 50-cap.
+- Dismissed: netlify topic-only fan-out (legacy, undeployed); badge plugin (not installed); token-cache clearing on logout (re-link lifecycle already correct).
+- Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 18: Dead code elimination (verified-unreferenced only) [PENDING SET 2]
 - [ ] Loop 19: Capacitor/native parity [PENDING SET 2]
 - [ ] Loop 20: Final verification + release summary [PENDING SET 2]
