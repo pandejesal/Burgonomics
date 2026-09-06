@@ -138,7 +138,13 @@
 - Fixed core: WKAppBoundDomains cover Razorpay/Google/Firebase (was blocking pay+captcha); dead CAMERA perm + camera/photo strings removed; HTTPS App Links filter added (assetlinks/applinks already published); debug WebView pinned off; splash manual-hide.
 - Dismissed: SW compat pin (10.8.0 background channel stable; modular rewrite untestable here); Petpooja HMAC-only (their protocol); token-cache clearing (re-link lifecycle correct).
 - Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 20: Final verification + release summary [PENDING SET 2]
+- [ ] Loop 20: Final verification + release summary [RUNNING → done below]
+
+### Loop 20 — final verification (done)
+- Full matrix green on 2026-09-06: functions build + 144 tests; partner typecheck + 151 tests + build; core tsc + 221 tests (+18 skipped) + build; Firestore rules 18/18 under local emulator.
+- No stray work left behind: every loop file verified committed in its repo (scoped commits only; other streams' dirty files untouched).
+- Release state: 20/20 loops complete. All commits LOCAL — pushes to origin blocked on 403 (stored credential rejected on all 3 repos). Unpushed: root master +N, partner feat/partner-device-smoke +N, core main +N.
+- Known follow-ups (product calls, not defects): per-item vs flat packing preview, server whole-₹ rounding display, chat load-older pagination, aggregate-count billing, reminderCron/escalationScheduler duality, shadowed shared cards, gsap dep removal (needs lockfile regen), Play Integrity/App Attest enrollment + APP_CHECK_ENFORCEMENT flip, app_config/native minimums seeding, full screen-reader device pass.
 
 ### Loop 10 — docs/config drift (done)
 - Fixed rules fork (CRITICAL): 3 divergent copies → root canonical + byte-identical mirrors; consolidation EXPOSED a real regression (root messages rule let any staffer read any branch's chats) — fixed to participant/brand gating, proven 18/18 under emulator.
