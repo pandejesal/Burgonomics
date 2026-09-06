@@ -261,3 +261,23 @@
 ### Loop 40 — failure-injection review (done, review-only — no code touched)
 - Outage table (verified against code, not executed destructively): Petpooja down → KOT push stages pending_retry + snapshot, retry worker owns it; orders never lost (Firestore-first), money never stuck (webhook idempotency claim + unmatched parking). Porter down → dispatch throws loudly to staff, poll dead-letters to needs_review + branch alert after 12 fails/2h (Loop 14). Razorpay down → catalog-outage 503 fail-closed, verify ghost-order 404, transfers tx-claimed (Loop 14); unmatched money parked visibly (Loops 8/36-38). Firebase down → checkout PAY gated offline, cart syncPending flag, menu stale-with-Retry (Loop 14). FCM down → non-blocking by design, inbox fallback (Loop 17); delivery reporting now honest (Loop 26).
 - Disposition: no new failure mode found requiring a fix; parking/lease coverage from Loops 26-39 closes the visibility gaps. No gates (no files touched).
+
+### Loop 41 — menu/home/cart polish (done, verify-only — no code touched)
+- Verified: menu pager healthy (windowed active±1, MenuSkeleton, FailureState+Retry, EmptyState+category recovery, keys); cart FloatingCartBar + migrate scrubs (Loop 15); home rails lazy. No fix-bar glitch found; per-card motion springs remain a visual follow-up (product call).
+- Disposition: no fix. No gates.
+
+### Loop 42 — checkout/payment/tracking polish (done, verify-only — no code touched)
+- Verified: checkout offline gate + geofence NaN guard + loyalty clamp (prior loops); payment FailurePanel wiring + paid-no-order honesty; price-lock banner edge investigated — lock IS set on cart mutations and cleared on empty cart, so the 600s default only renders over empty-cart checkout (no user-facing lie in any reachable non-empty state). Dismissed with reason.
+- Disposition: no fix. No gates.
+
+### Loop 43 — partner KDS/orders/menu polish (done, verify-only — no code touched)
+- Verified: KDS offline banner, memoized channel filters, live badge + age stamp + refresh, checkbox-row semantics (Loop 13). select-none root is deliberate kiosk mode (prevents accidental touch selection) — dismissed with reason. KDS 86 badges remain a feature request.
+- Disposition: no fix. No gates.
+
+### Loop 44 — empty-state live regions (done)
+- Fixed (core 6afa419): EmptyState root gains role="status" (implicit aria-live polite) — single attribute, zero visual change.
+- Gates: core tsc + 221+18 + build (batched below). Pushed.
+
+### Loop 45 — POS-channel copy correction (done)
+- Fixed (partner 0e8c5ce): AdminStoresPage POS toggle dialog drops false Swiggy/Zomgy/Petpooja channel claim + typo; outlet-name-interpolated availability sentence (repo-wide grep confirms Petpooja-only reality).
+- Gates: partner typecheck + 151/151 + build; core tsc + 221+18 + build (chunk warnings pre-existing). Both repos pushed and in sync.
