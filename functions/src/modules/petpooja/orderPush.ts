@@ -108,6 +108,7 @@ export async function pushOrderToPetpooja(orderId: string): Promise<boolean> {
         petpoojaOrderId: mockPetpoojaOrderId,
         petpoojaStatus: "synced",
         petpoojaSyncStatus: "synced",
+        petpoojaMock: true,
         kotPrinted: true,
         kotPrintedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
