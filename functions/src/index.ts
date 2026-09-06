@@ -1,6 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
 // v2/identity has no user-delete trigger — v1 auth.user().onDelete is the
 // only Auth deletion hook. (beforeUserCreated/SignedIn are create/sign-in only.)
 import * as functionsV1 from "firebase-functions/v1";

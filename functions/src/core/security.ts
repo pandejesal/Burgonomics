@@ -1,7 +1,4 @@
 import * as crypto from "crypto";
-import { Request } from "express";
-import { auth } from "./firebase";
-import * as admin from "firebase-admin";
 
 /**
  * Timing-safe string equality comparison to prevent timing attacks.
@@ -92,21 +89,4 @@ export function getOtpHmacSecret(webhookSecret: string): string {
   return webhookSecret;
 }
 
-/**
- * Authenticates request using Firebase Auth Bearer token.
- */
-export async function authenticateRequest(
-  req: Request
-): Promise<admin.auth.DecodedIdToken | null> {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return null;
-  }
-  const token = authHeader.split("Bearer ")[1];
-  try {
-    return await auth.verifyIdToken(token);
-  } catch (err) {
-    console.warn("[Security] Token verification failed:", err);
-    return null;
-  }
-}
+

@@ -122,7 +122,14 @@
 - Fixed core: web onMessage singleton (no double toast/push); inbox dedupe by id + 50-cap.
 - Dismissed: netlify topic-only fan-out (legacy, undeployed); badge plugin (not installed); token-cache clearing on logout (re-link lifecycle already correct).
 - Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 18: Dead code elimination (verified-unreferenced only) [PENDING SET 2]
+- [ ] Loop 18: Dead code elimination (verified-unreferenced only) [RUNNING → done below]
+
+### Loop 18 — dead code (done)
+- Deleted functions: authenticateRequest (superseded), onDocumentCreated import, auth.service.ts barrel-orphan, webhookListener.ts (dead file + divergent normalize) with barrel line.
+- Deleted partner: formatters.ts, lib/utils.ts cn(), utils/api.ts, useDashboardStats hook, AdminPetpoojaPage (all zero refs in src+tests).
+- Deleted core: useGsapReveal, useFeedback, use-mobile, deviceInfo, error-capture (all zero refs).
+- Held (needs product/design call, NOT deleted): reminderCron/escalationScheduler duality, verifyPetpoojaSignature, useFirestore toolkit, DeliveryOtpModal/AddFutureStoreModal, shadowed ProductCard/OfferCard/dateUtils, gsap dep (lockfile regen needed).
+- Gates: functions 144 · partner 151 · core 221+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 19: Capacitor/native parity [PENDING SET 2]
 - [ ] Loop 20: Final verification + release summary [PENDING SET 2]
 
