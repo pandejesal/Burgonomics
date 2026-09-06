@@ -281,3 +281,22 @@
 ### Loop 45 — POS-channel copy correction (done)
 - Fixed (partner 0e8c5ce): AdminStoresPage POS toggle dialog drops false Swiggy/Zomgy/Petpooja channel claim + typo; outlet-name-interpolated availability sentence (repo-wide grep confirms Petpooja-only reality).
 - Gates: partner typecheck + 151/151 + build; core tsc + 221+18 + build (chunk warnings pre-existing). Both repos pushed and in sync.
+
+### Loop 46 — Android manifest audit (done, verify-only — no code touched)
+- Verified at HEAD: partner manifest declares INTERNET only; no Geolocation/camera code ships (git grep HEAD empty) — consistent, nothing orphaned. (Worktree dirt adds COARSE/etc. as someone's in-progress native work — out of scope.) Core manifest (COARSE+FINE+NETWORK+VIBRATE+NOTIFS) matches live geofence/watchPosition/push usage.
+- Disposition: no fix. No gates.
+
+### Loop 47 — iOS plist orphan string (done)
+- Fixed (partner 2c1a098): removed orphan NSLocationWhenInUseUsageDescription key+string (zero callers; plugin installed but never invoked; coordinates arrive server-side); extended the Loop-19 camera comment with the re-add condition. Plist XML-parse verified; bg modes + all other keys identical. (First push attempt hit transient github.com connect failure; retry clean.)
+- Gates: partner typecheck + 151/151 + build green. Pushed (feat/partner-device-smoke in sync).
+
+### Loop 48 — native bridge verification (done, verify-only — no code touched)
+- Verified: push (server-owned token identity + chunked multicast, Loops 19/26), splash manual-hide + auto-hide off (Loop 19), Android back-button → router-back/minimize (Loop 19), App Links HTTPS filter + assetlinks (Loop 19), keyboard/splash/geolocation — geolocation unused by partner code (Loop 47), keyboard no bespoke bridge to verify.
+- Disposition: no fix. No gates.
+
+### Loop 49 — owner-unwanted surface (done, verify-only — no code touched)
+- Verified: mockStores.ts backs the documented VITE_PETPOOJA_ENABLED factory switch (customer auto-KOT is best-effort; the real order doc is always persisted live and partner KDS/server KOT is the live path). Deleting it would destroy the mock side of a documented deployment switch — dismissed with reason (deployment state, not prod leak).
+
+### Loop 50 — owner-missing essentials (done, verify-only — no code touched)
+- Verified: terms/privacy routes exist; support ticket backend gap needs a server endpoint (product call, queued since Loop 21); store info accuracy depends on ops-seeded branch docs (version-floor seeding still queued from Loop 19 follow-ups).
+- Disposition: no code fix in surgical scope. No gates.
