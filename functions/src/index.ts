@@ -178,7 +178,7 @@ app.post("/payments/createPaymentOrder", optionalAuth, validateBody(createPaymen
     const result = await createPaymentOrder({ ...req.body, customerId });
     res.status(200).json(result);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to create payment order" });
+    res.status(err.statusCode === 400 ? 400 : 500).json({ error: err.message || "Failed to create payment order" });
   }
 });
 

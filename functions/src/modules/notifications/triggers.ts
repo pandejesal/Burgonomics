@@ -54,8 +54,8 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
 
     // Customer order confirmation (PLACED) — previously only the kitchen was
     // notified on create; customers heard nothing until the first status bump.
+    const customerId = order.customerId || order.userId || order.customer?.id;
     try {
-      const customerId = order.customerId || order.userId || order.customer?.id;
       if (customerId && typeof db.collection === "function") {
         const userDoc = await db.collection("users").doc(customerId).get();
         const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
@@ -89,8 +89,10 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
       await captureErrorSnapshot({
         source: "notifications",
         severity: "medium",
-        message: `order-confirmation push failed for order ${orderId}`,
+        message: `customer order-confirmation push failed for order ${orderId} — customer silent, kitchen already notified; check user fcmTokens then re-push from the order page`,
         orderId,
+        branchId,
+        customerId,
         errorStack: err?.stack,
       });
     }

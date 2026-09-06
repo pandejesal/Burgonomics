@@ -157,17 +157,14 @@ export async function bookPorterRider(
 
   // Fail loudly: booking a rider against a fake/missing contact or address
   // produces a "successful" dispatch nobody can complete. Real data or error.
+  // Copy is staff-actionable with no raw ids (orderId rides in logs/snapshots).
   if (!order.customerPhone) {
-    throw new Error(
-      `Cannot book Porter rider for order ${orderId}: customer phone is missing`
-    );
+    throw new Error("Customer phone number is missing — edit the order to add it, then retry dispatch.");
   }
   const orderType = order.orderType || order.fulfillment || "delivery";
   const drop = order.deliveryAddress;
   if (orderType === "delivery" && !(drop?.street || drop?.full || (drop?.lat && drop?.lng))) {
-    throw new Error(
-      `Cannot book Porter rider for order ${orderId}: delivery address is missing`
-    );
+    throw new Error("Delivery address is incomplete — add street or map pin, then retry dispatch.");
   }
 
   const pickupLat = order.branchCoordinates?.lat || 23.0131;

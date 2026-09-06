@@ -35,8 +35,13 @@ export async function dispatchTicketEscalationAlert(payload: TicketAlertPayload)
   const { ticketId, ticketNumber, subject, branchId, escalationLevel, reason } = payload;
   const attempts: Array<Promise<unknown>> = [];
 
-  let title = `Support Ticket #${ticketNumber}`;
-  let body = subject;
+  // Push copy carries NO free-text subject: reporters paste phones and
+  // addresses into subjects, and unbounded text truncates mid-word on trays.
+  // Full subject rides in data.ticketId (open Tickets to read it).
+  let title = `🎫 Ticket #${ticketNumber} needs attention`;
+  let body = branchId
+    ? `Branch ${branchId}: urgent ticket awaiting action — open Tickets to view.`
+    : `Urgent ticket awaiting action — open Tickets to view.`;
   let topic = resolveEscalationTopic(escalationLevel, branchId);
 
   if (escalationLevel === "L1_STORE") {

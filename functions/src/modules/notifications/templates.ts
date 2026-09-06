@@ -149,10 +149,15 @@ export function buildCustomerOrderUpdateMessage(
   status: string
 ): admin.messaging.Message {
   const meta = STATUS_MESSAGES[status.toUpperCase()] || {
+    // Never interpolate raw internal status codes to the lock screen
+    // (ROUTE_TRANSFER_PENDING etc. read as jargon). Generic + actionable.
     title: "📦 Order Update",
-    body: () => `Status update for order #${order.orderNumber}: ${status}`,
+    body: () => `Order #${order.orderNumber} has a new update — open the app to track it.`,
     sound: "default",
   };
+  if (!STATUS_MESSAGES[status.toUpperCase()]) {
+    console.warn(`[Notifications] Unmapped order status pushed generically: ${status}`);
+  }
 
   const title = meta.title;
   const body = meta.body(order);

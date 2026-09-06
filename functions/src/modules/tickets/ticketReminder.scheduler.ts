@@ -169,7 +169,8 @@ export async function checkTicketInactivityReminders(): Promise<{
           ticket: ticketSnapshot,
           ticketId,
           title: `🚨 Escalated: ${ticketSnapshot?.ticketNumber || ticketId}`,
-          body: `Ticket '${ticketSnapshot?.subject || ""}' auto-escalated to ${tierLabel} for lack of activity.`,
+          // No free-text subject on the push (PII paste risk) — branch-first.
+          body: `Ticket auto-escalated to ${tierLabel} for lack of activity — open Tickets to view.`,
           dataType: "ticket_escalated",
         })
       );
@@ -195,7 +196,7 @@ export async function checkTicketInactivityReminders(): Promise<{
           ticket: ticketSnapshot,
           ticketId,
           title: `⚠️ Unresolved Ticket Alert (${ticketSnapshot?.ticketNumber || ticketId})`,
-          body: `Customer ticket '${ticketSnapshot?.subject || ""}' has been open for >60 mins. Please attend immediately.`,
+          body: `Customer ticket open for over 60 mins — please attend immediately.`,
           dataType: "ticket_reminder",
         })
       );

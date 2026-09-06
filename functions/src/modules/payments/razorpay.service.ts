@@ -106,7 +106,11 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   });
 
   if (!(pricing.grandTotal > 0)) {
-    throw new Error("INVALID_AMOUNT: order total must be greater than zero");
+    // User-facing copy (no screaming codes): the route maps this to 400.
+    const err: any = new Error("Your cart total is empty — please add an item before paying.");
+    err.code = "INVALID_AMOUNT";
+    err.statusCode = 400;
+    throw err;
   }
 
   const amountPaise = Math.round(pricing.grandTotal * 100);

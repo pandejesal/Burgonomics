@@ -82,7 +82,14 @@
 - Fixed core: Firebase errors log codes not phones; profile/device-link floats caught via logger; getOrder denials logged; watchPosition sampled 1/min + UI state; payment/root/tracking floats caught.
 - Dismissed: wholesale logger migration of older console.* (low-noise paths; new code uses logger).
 - Gates: functions 143 · partner 145 · core 218+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
-- [ ] Loop 13: Accessibility (labels, roles, touch targets) [PENDING SET 2]
+- [ ] Loop 13: Accessibility (labels, roles, touch targets) [RUNNING → done below]
+
+### Loop 13 — accessibility (done)
+- Fixed functions: generic fallback push copy (no raw status jargon on lock screens); ticket subjects out of push bodies (PII paste risk, branch-first ≤80 chars); INVALID_AMOUNT speaks human + 400; porter errors actionable without ids; confirm-failure snapshot carries branch/customer/next-action.
+- Fixed partner: KDS checklist rows are real checkbox buttons; cancel modal has dialog semantics + ESC + focus + X label (also fixed its fail-open RBAC: nonexistent roles + missing role no longer pass); order-row actions labeled + 44px; login labels associated + toggle announces state.
+- Fixed core: sheet close labeled + 44px; phone/OTP/notes labels associated; checkout errors assertive live regions; dish alt text; ADD/Redeem/stepper at 44px with group + live qty.
+- Dismissed: full screen-reader pass with devices (needs hardware + users).
+- Gates: functions 143 · partner 145 · core 218+18 skipped · all builds green. Committed locally; pushes still blocked on 403.
 - [ ] Loop 14: Offline/empty/error resilience [PENDING SET 2]
 - [ ] Loop 15: Type safety in money/auth paths [PENDING SET 2]
 - [ ] Loop 16: Secrets/transport safety (keys, http, webviews) [PENDING SET 2]
