@@ -172,6 +172,11 @@ export async function bookPorterRider(
   const dropLat = order.deliveryAddress?.lat || 23.0338;
   const dropLng = order.deliveryAddress?.lng || 72.5262;
 
+  const usedFallbackCoords =
+    !(order.branchCoordinates?.lat && order.branchCoordinates?.lng) ||
+    !(order.deliveryAddress?.lat && order.deliveryAddress?.lng);
+  const dispatchGeoSource = usedFallbackCoords ? "fallback_default" : "live_gps";
+
   let dispatchResult: any;
 
   if (config.mock.porterDispatch) {
@@ -194,6 +199,7 @@ export async function bookPorterRider(
       trackingUrl: `https://tracking.porter.in/track/${porterOrderId}`,
       status: "dispatched",
       dispatchSource: "mock",
+      geoSource: dispatchGeoSource,
     };
   } else {
     try {
@@ -272,6 +278,7 @@ export async function bookPorterRider(
         riderVehicleNumber: data.driver_details?.vehicle_number || data.driver?.vehicle_number || "",
         trackingUrl: data.tracking_url || "",
         status: "dispatched",
+        geoSource: dispatchGeoSource,
       };
     } catch (err: any) {
       await captureErrorSnapshot({
@@ -294,6 +301,7 @@ export async function bookPorterRider(
       riderPhone: dispatchResult.riderPhone,
       riderVehicleNumber: dispatchResult.riderVehicleNumber,
       riderTrackingUrl: dispatchResult.trackingUrl,
+      dispatchGeoSource,
       dispatchedBy: staffName || "Branch Staff",
       dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
