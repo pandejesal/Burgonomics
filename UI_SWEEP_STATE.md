@@ -54,3 +54,21 @@
 - Step 9 splash kill: SKIP (iteration 1 only).
 - PUSH SHAs: core 6380669, root e6ea6fc (scoped commits only; pre-existing dirty files untouched).
 - DEVIATIONS: (a) coder delegation returned CODER_SETTLEMENT_RECOVERY_UNCERTAIN no-write — self-applied identical spec with own-eyes diff + gates (iters 1–2 precedent); (b) Task tool has no model parameter — pinning requested in prompt only; (c) full suite skipped (swarm rule); (d) refix screenshots confirm no-regression only (empty-cart states can't render the banner; no seed path in harness).
+
+## Ban list additions (iter4)
+- B8 (iter4): /support section headings forced `text-white` on the light page background (near-invisible "Your Active & Past Tickets", "Direct Contact Channels", "Frequently Asked Questions"). FIXED in support.tsx (dropped text-white, theme-aware default) — never re-force light text on light surfaces; future heading work only for NEW sections.
+- B9 (iter4): competitor brand name "La Pino'z Inspired BOGO" in prod offers UI. FIXED in BOGOBanner.tsx ("Signature BOGO") — never name competitor brands in customer-facing copy; future banner work only for NEW promo logic.
+
+### Iteration 4 — 2026-09-07 — focus: core /payment + /support + /offers + /stores (foundation-core main only)
+- Screens shot (390x844, system Chrome via reused harness, vite preview 5192, post-fix dist): /payment + /support + /stores HTTP 200, ZERO console errors; /offers networkidle timeout (D1 backend-absent artifact — repository load never settles in preview; PNG still rendered full UI). Baselines .swarm/ui-shots/4/ (refix capture overwrote support/offers PNGs + console-errors.json; payment/stores entries from first capture: 200/0 errors).
+- State restated at start: iter 4, payment/support/offers/stores, B1–B7 intact (no re-fix touched them).
+- Hypotheses per screen: payment dead/dishonest CTAs (dismissed — PaymentMethodList already semantic motion.button + role=radio + disabled + focus ring; Loop 23 div-onClick claim does not reproduce, already hardened); support contrast/crash (B1 holds — 0 errors, no crash; F8 fixed); offers copy honesty (F9 fixed); stores dead buttons/empty states (dismissed — search, Nearby, map, list all render, 0 errors).
+- FIXED:
+  - F8 support.tsx:143,155,196 — three `Text variant="titleMedium" className="text-white font-bold"` headings invisible on light page bg (own-eyes: ghost "Your Active & Past Tickets (1)"). Fix: dropped `text-white` (theme-aware default, matches offers.tsx coupon-heading pattern). Dark surfaces untouched (SLA banner, ChannelRow, FaqAccordion). Verified: refix screenshot dark readable heading, 0 errors, no regressions.
+  - F9 BOGOBanner.tsx:41 — "La Pino'z Inspired BOGO" competitor chip (queued D4, own-eyes verified). Fix: "Signature BOGO" text-node only. Verified: refix screenshot badge, coupon code/logic untouched.
+- DISMISSED: /payment guest redirect to login (auth guard correct; authed money path out of scope without session, iter1 precedent); /offers goto timeout + transient ERR_CONNECTION_RESET (D1 class); consent-banner overlap (D2 artifact); stores "mock Bandra coordinates" fallback toast (dev-mode GPS fallback, not rendered in shot); hardcoded red-800/700 GPS-offline text (below bar); still queued: OTP pristine-error border, BURG50 badge.
+- GATES: npx tsc --noEmit clean (exit 0); support.test.tsx 5/5; no offers-component tests exist (nothing to run for BOGOBanner — iter2 precedent); npm run build clean (8.22s post-fix). Full suite SKIPPED per swarm no-full-suite rule.
+- A11Y: contrast IMPROVED (dark-on-light headings); BOGO text-only change, copy/Apply buttons intact; no CTA geometry touched.
+- Step 9 splash kill: SKIP (iteration 1 only).
+- PUSH SHAs: core 6c59b84 (support.tsx only — pure 3-line diff). BOGOBanner.tsx host file is UNTRACKED (other stream's in-progress offers feature); F9 applied in working tree, NOT committed — left for owning stream, not swept. Root: this file (pending).
+- DEVIATIONS: (a) both coder delegations returned CODER_SETTLEMENT_RECOVERY_UNCERTAIN no-write — self-applied identical specs with own-eyes diff + gates (iters 1–3 precedent); (b) Task tool has no model parameter — pinning requested in prompts only; (c) full suite skipped (swarm rule); (d) F9 uncommitted (untracked host file — sweeping it would claim another stream's work).
