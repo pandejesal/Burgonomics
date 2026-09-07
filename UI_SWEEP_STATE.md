@@ -127,6 +127,6 @@
 - A11Y probe at width (sandbox-safe probes beside harness, deleted after run): primary CTAs cart Explore Menu 44px + checkout Browse menu 48px + admin Authenticate 52px PASS; sub-44px hits (support RAISE 36px, offers Apply 28px, login Sign-in 42px/tabs 38px, consent X 24px, inline Privacy/Terms links ~16px) proven IDENTICAL at mobile 390x844 baseline (36/28/42/38) → same-flaw class, not tablet-specific → dismissed per standing rules (app-local nits stay queued); inline text links carry WCAG inline exception. Partner labeledInputs 2/2 both login routes.
 - FIXED: none (zero new tablet-specific flaws → FIX #1/#2 both SKIP; Step 9 SKIP iter1-only; no re-screenshots — nothing changed).
 - GATES: core npx tsc --noEmit clean (exit 0); partner npm run typecheck clean (exit 0). No touched files → no touched-file tests, no rebuild. Full suite SKIPPED per swarm no-full-suite rule.
-- PUSH SHAs: no code commit (no-op — zero edits). Heads unchanged: partner fa06c5c, core 6c59b84.
+- PUSH SHAs: no app commits (no-op — zero src edits). Heads unchanged: partner fa06c5c, core 6c59b84. Root: 0d36326 (this file only).
 - DEVIATIONS: (a) no coder delegations sent (nothing to fix — analysis-only iteration, iter5/7 precedent); Task tool has no model parameter — pinning N/A with no delegations; (b) full suite skipped (swarm rule); (c) tablet capture via sibling file (protocol-allowed) rather than editing shared harness; (d) no servers started (reused prior-iter listeners) → none killed.
 - Zero-flaw streak: 2 (non-consecutive — no early stop).
