@@ -34,5 +34,5 @@
 - GATES: npx tsc --noEmit clean (exit 0); no touched-file tests exist (no *.test references either component — nothing to run); npm run build clean (6.44s, post-fix). Full suite SKIPPED per swarm no-full-suite rule.
 - A11Y: no new barriers — removed content was decorative; bell dot decorative + label announces count; pre-existing 32px bell target noted, untouched (out of scope).
 - Step 9 splash kill: SKIP (iteration 1 only).
-- PUSH SHAs: core <core-sha>, root <root-sha> (scoped commits only; pre-existing dirty files untouched).
+- PUSH SHAs: core 7c0e61d, root 45c0c38 (scoped commits only; pre-existing dirty files untouched).
 - DEVIATIONS: (a) both coder delegations returned CODER_SETTLEMENT_RECOVERY_UNCERTAIN no-write settlements — self-applied identical specs with own-eyes diff + gates (same as iter1 deviation b); (b) Task tool has no model parameter — pinning requested in prompts only; (c) full suite skipped (swarm rule).
