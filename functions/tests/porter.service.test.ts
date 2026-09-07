@@ -154,6 +154,9 @@ describe("Porter Logistics Service", () => {
       expect(result.riderName).toBeDefined();
       expect(result.status).toBe("dispatched");
       expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("dispatched");
+      // Geo provenance is the contract: live_gps or fallback_default, never absent.
+      expect(result.geoSource).toBeDefined();
+      expect(savedDocs["orders/order_prt_101"]?.dispatchGeoSource).toBeDefined();
     });
 
     it("processes Porter webhook transit and delivery events", async () => {

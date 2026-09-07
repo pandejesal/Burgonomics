@@ -38,6 +38,24 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
   const mockDb = {
     collection: (colName: string) => ({
       doc: (docId?: string) => docRef(colName, docId || `mock_${Math.random().toString(36).slice(2, 8)}`),
+      // Refund branch queries orders by payment id; additive — existing tests
+      // never call where(), so this only serves the refund-parking test.
+      where: (field: string, op: string, value: any) => ({
+        limit: (n: number) => ({
+          get: vi.fn(async () => {
+            const getPath = (obj: any, path: string) =>
+              path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+            const docs = Object.entries(savedDocs)
+              .filter(([k, v]) => k.startsWith("orders/") && getPath(v, field) === value)
+              .map(([k, v]) => ({
+                id: k.split("/")[1],
+                ref: docRef(k.split("/")[0], k.split("/")[1]),
+                data: () => v,
+              }));
+            return { empty: docs.length === 0, docs };
+          }),
+        }),
+      }),
     }),
   };
   return { mockDb, savedDocs };
@@ -148,6 +166,32 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect(savedDocs["unmatched_payments/ump_evt_orphan_1"]).toMatchObject({
       razorpayPaymentId: "pay_test_123",
       status: "needs_review",
+    });
+  });
+
+  it("parks processed refunds with no matching order in unmatched_payments (never drops money)", async () => {
+    const payload = {
+      id: "evt_refund_orphan_1",
+      event: "refund.processed",
+      payload: {
+        refund: {
+          entity: {
+            id: "rfnd_orphan_1",
+            payment_id: "pay_ghost_1",
+            amount: 9900,
+            currency: "INR",
+          },
+        },
+      },
+    };
+    const call = mockReqRes(payload);
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    expect(savedDocs["unmatched_payments/ump_refund_evt_refund_orphan_1"]).toMatchObject({
+      razorpayPaymentId: "pay_ghost_1",
+      refundId: "rfnd_orphan_1",
+      status: "needs_review",
+      reason: "refund_no_match",
     });
   });
 });

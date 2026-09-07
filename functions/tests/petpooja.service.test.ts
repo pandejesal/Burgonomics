@@ -247,6 +247,7 @@ describe("Petpooja POS Bridge Service", () => {
       expect(success).toBe(true);
       expect(savedDocs["orders/order_test_999"]?.petpoojaStatus).toBe("synced");
       expect(savedDocs["orders/order_test_999"]?.kotPrinted).toBe(true);
+      expect(savedDocs["orders/order_test_999"]?.petpoojaMock).toBe(true);
     });
 
     it("processes webhook food ready status update", async () => {
