@@ -102,3 +102,31 @@
 - Step 9 splash kill: SKIP (iteration 1 only).
 - PUSH SHAs: partner fa06c5c (AdminLoginPage.tsx only, scoped; all other dirty files untouched). Root: this file (pending).
 - DEVIATIONS: (a) no subagent delegation for FIX #2 — self-applied 3-attribute spec with own-eyes diff + gates (iters 1–4 precedent; avoided long-hang risk after attempt-1 stall); (b) full suite skipped (swarm rule).
+
+### Iteration 7 — 2026-09-07 — focus: shared components at source (BOTH apps — core main + partner feat/partner-device-smoke)
+- State restated at start: iter 7, shared-source scope, B1–B11 intact (no re-fix touched them).
+- Harness REUSED (.swarm/ui-harness/capture.mjs, CWD=.swarm/ui-harness). No rebuild (core dist/mobile fresh — no core src changes since 6c59b84 build; partner dist fresh — iter6 fa06c5c build, no src changes since). Servers reused, never stacked (5192 core + 5191 partner, both HTTP 200).
+- Screens shot (390x844, system Chrome): core / (200, 0 console errors) + partner /login (200, 0 console errors) → .swarm/ui-shots/7/root.png + login.png + console-errors.json (merged — harness overwrites per-run, both runs logged 200/0 on stdout).
+- Analysis own-eyes, B1–B11 discarded:
+  - B10-pattern grep (hardcoded [#0E4825]/[#FF6600]): 100+ hits per app BUT all app-local (tracking cards, support forms, store maps, KDS/ticket widgets, LoginPage tiles) — out of scope for shared-source iteration, dismissed (queued for future app-local token pass; tokens themselves resolve correctly in both index.css/styles.css).
+  - B11-pattern (unlabeled shared inputs): partner LoginPage.tsx:157,174 labels ARE htmlFor-bound (operator-email/operator-password) — B11 holds, no flaw. TicketDetailPage bare labels wrap their inputs (implicit association) — not a flaw.
+  - Core / own-eyes: hero "THE HOUSE OF DAMN GOOD BURGERS" tight two-line stack + BURG50 badge (still queued, needs Banner model change) + chip truncation — all app-local core home/banner scope (D3 class / pre-existing queue), dismissed for iter7.
+  - Partner /login own-eyes: clean — labeled inputs, password toggle, honest RBAC caption, enabled CTA. No flaws.
+  - No cross-repo shared lib exists (each app owns src/shared/* + own tokens); no flaw found in shared-source files → FIX #1/#2 both SKIP, Step 9 SKIP (iter1-only), no re-screenshots (nothing changed).
+- FIXED: none (zero new shared-source flaws).
+- GATES: core npx tsc --noEmit clean (exit 0); partner npm run typecheck clean (exit 0). No touched files → no touched-file tests, no rebuild. Full suite SKIPPED per swarm no-full-suite rule.
+- A11Y: no changes; verified intact — partner /login labels associated, core / landmarks unchanged.
+- PUSH SHAs: no code commit (no-op — zero edits). Root: this file (pending). Heads unchanged: partner fa06c5c, core 6c59b84.
+- DEVIATIONS: (a) no coder delegations sent (nothing to fix — analysis-only iteration, iter5 precedent); Task tool has no model parameter — pinning N/A with no delegations; (b) full suite skipped (swarm rule); (c) console-errors.json hand-merged (harness single-baseUrl per run overwrites).
+
+### Iteration 8 — 2026-09-07 — focus: TABLET re-sweep 768x1024 of top fixed screens (BOTH apps — core main + partner feat/partner-device-smoke)
+- State restated at start: iter 8, tablet viewport, core /support /cart /checkout /offers + partner /admin/login /login, B1–B11 intact (no re-fix touched them).
+- Harness EXTENDED via sibling .swarm/ui-harness/capture-tablet.mjs (768x1024; mobile capture.mjs untouched). No rebuild (core dist fresh — no src changes since 6c59b84 build; partner dist fresh — iter6 fa06c5c build). Servers reused, never stacked (5192 core + 5191 partner, both HTTP 200).
+- Screens shot (768x1024, system Chrome): core /support (200, 0 errors) + /cart (200, 0) + /checkout (200, 0) + /offers (networkidle timeout = D1 backend-absent artifact, PNG still rendered full UI) → .swarm/ui-shots/8/core/; partner /admin/login (200, 0) + /login (200, 0) → .swarm/ui-shots/8/partner/.
+- Analysis own-eyes, B1–B11 discarded: B1 holds (/support renders ticket accordion, 0 errors); B8 holds (section headings dark readable at width); B6/B7 hold (empty cart/checkout, no fabricated lock banner); B9 holds ("Signature BOGO", no competitor copy); B2 holds (enabled "Authenticate Credentials"); B10 holds (brand green tile/orange caption = tokens); B11 holds (labels visible above inputs). No tablet-only layout breaks, no clipped CTAs.
+- A11Y probe at width (sandbox-safe probes beside harness, deleted after run): primary CTAs cart Explore Menu 44px + checkout Browse menu 48px + admin Authenticate 52px PASS; sub-44px hits (support RAISE 36px, offers Apply 28px, login Sign-in 42px/tabs 38px, consent X 24px, inline Privacy/Terms links ~16px) proven IDENTICAL at mobile 390x844 baseline (36/28/42/38) → same-flaw class, not tablet-specific → dismissed per standing rules (app-local nits stay queued); inline text links carry WCAG inline exception. Partner labeledInputs 2/2 both login routes.
+- FIXED: none (zero new tablet-specific flaws → FIX #1/#2 both SKIP; Step 9 SKIP iter1-only; no re-screenshots — nothing changed).
+- GATES: core npx tsc --noEmit clean (exit 0); partner npm run typecheck clean (exit 0). No touched files → no touched-file tests, no rebuild. Full suite SKIPPED per swarm no-full-suite rule.
+- PUSH SHAs: no code commit (no-op — zero edits). Heads unchanged: partner fa06c5c, core 6c59b84.
+- DEVIATIONS: (a) no coder delegations sent (nothing to fix — analysis-only iteration, iter5/7 precedent); Task tool has no model parameter — pinning N/A with no delegations; (b) full suite skipped (swarm rule); (c) tablet capture via sibling file (protocol-allowed) rather than editing shared harness; (d) no servers started (reused prior-iter listeners) → none killed.
+- Zero-flaw streak: 2 (non-consecutive — no early stop).
