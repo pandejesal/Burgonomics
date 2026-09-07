@@ -18,3 +18,21 @@
 - A11Y: no new barriers (logic-only edits + asset swap); star radios labeled, FAQ accordions aria-expanded, 44px targets kept; D5 contrast noted for iter2.
 - PUSH SHAs: partner a6e4e2a (feat/partner-device-smoke, 15 files), core e60df6f (main, 4 files). Root: this file only.
 - DEVIATIONS: (a) harness at .swarm/ui-harness/capture.mjs not scripts/ (root repo UNTOUCHED + gitignore rule wins); (b) both coder delegations returned no-diff settlements, self-applied identical specs with own-eyes diff + gates; (c) Task tool has no model parameter — model pinning requested in prompts but not mechanically enforceable; (d) full test suites skipped (swarm rule overrides protocol step 11).
+
+## Ban list additions (iter2)
+- B4 (iter2): customer-facing fake "Sync Telemetry / Webhook Status" panel (hardcoded mockWebhookLogs timestamps). REMOVED from PetpoojaSyncPlaceholder — never re-add fake telemetry to prod paths; future sync-status UI only with live data.
+- B5 (iter2): header bell unconditional unread dot. FIXED in LaPinozHeader (gated on unreadCount) — never re-hardcode; future bell work only for NEW indicator logic.
+
+### Iteration 2 — 2026-09-07 — focus: core / + /menu (foundation-core main only)
+- Screens shot (390x844, system Chrome via reused harness, vite preview 5192): / (200, 0 console errors), /menu (networkidle timeout — no backend in preview, same D1 artifact as iter1; PNG still written).
+- Hypotheses formed per screen (/, /menu): hero-clip class (dismissed — D3), chip/card ellipsis (dismissed — accessible names + normal scroll patterns), banner-occlusion "This"/"POS" ghosts (dismissed — D2 harness artifact), fake telemetry (FIXED), phantom bell dot (FIXED).
+- FIXED:
+  - F4 src/shared/components/feedback/PetpoojaSyncPlaceholder.tsx — deleted `mockWebhookLogs` (fake 10:42:0x timestamps) + entire "View Sync Telemetry / Webhook Status" collapsible; removed now-unused `useState`/`AnimatePresence`/`Terminal`/`ChevronRight`. Before: expanding panel showed fabricated webhook log as live status on /menu + /home empty states. After: honest waiting copy only. Verified: dist grep zero hits for "Sync Telemetry"/"mockWebhookLogs"; refix screenshot no regressions.
+  - F5 src/features/home/components/LaPinozHeader.tsx — bell unread dot now conditional on `useNotificationsStore(s => s.unreadCount) > 0` (matches profile.notifications/profile.index contract); aria-label announces "Notifications, N unread" when present. Before: phantom dot on every load. After: clean bell at zero (refix root.png eyes-on) + dist grep confirms "Notifications, " in home chunk.
+- DISMISSED: /menu networkidle timeout (D1, backend-absent); consent-banner overlap + occluded "This"/"POS" text (D2 artifact); hero/chip/card truncations (D3 class, accessible names present); BURG50 badge hardcode (Banner model has no badge field — presentational default, needs model change, below bar).
+- Queued iter1 items untouched (out of my / + /menu scope): offers "LA PINO'Z" copy, support ticket-heading contrast, OTP pristine-error border.
+- GATES: npx tsc --noEmit clean (exit 0); no touched-file tests exist (no *.test references either component — nothing to run); npm run build clean (6.44s, post-fix). Full suite SKIPPED per swarm no-full-suite rule.
+- A11Y: no new barriers — removed content was decorative; bell dot decorative + label announces count; pre-existing 32px bell target noted, untouched (out of scope).
+- Step 9 splash kill: SKIP (iteration 1 only).
+- PUSH SHAs: core <core-sha>, root <root-sha> (scoped commits only; pre-existing dirty files untouched).
+- DEVIATIONS: (a) both coder delegations returned CODER_SETTLEMENT_RECOVERY_UNCERTAIN no-write settlements — self-applied identical specs with own-eyes diff + gates (same as iter1 deviation b); (b) Task tool has no model parameter — pinning requested in prompts only; (c) full suite skipped (swarm rule).
