@@ -84,3 +84,21 @@
 - A11Y: no changes; verified intact — phone input labeled (label + aria-label) with helper counter, server errors role=alert, 56px targets, focus ring present; about/privacy semantic headings + real links.
 - PUSH SHAs: no code commit (no-op — zero edits; scope files verified untouched). Root: this file (pending).
 - DEVIATIONS: (a) no coder delegations sent (nothing to fix — analysis-only iteration); (b) full suite skipped (swarm rule).
+
+## Ban list additions (iter6)
+- B10 (iter6): partner /admin/login hardcoded brand hex (`bg-[#0E4825]`, `text-[#0E4825]`, `focus:border-[#0E4825]`, `text-[#FF6600]`, `hover:text-[#0E4825]`) bypassing theme tokens (dark-mode incorrect). FIXED in AdminLoginPage.tsx (`bg-primary`/`text-primary`/`focus:border-primary`/`text-accent dark:text-accent-light`/`hover:text-primary`) — never re-hardcode brand colors; future brand work only for NEW surfaces.
+- B11 (iter6): partner /admin/login unassociated `<label>`s (no htmlFor/id) + error box without role=alert (screen-reader users got placeholder-only inputs, silent errors). FIXED in AdminLoginPage.tsx (htmlFor admin-email/admin-password + role=alert) — never ship unlabeled auth inputs; future label work only for NEW fields.
+
+### Iteration 6 (attempt 2) — 2026-09-07 — focus: partner /login + /admin/login (burgonomics-partner feat/partner-device-smoke only)
+- State restated at start: iter 6, /login + /admin/login, B1–B9 intact (no re-fix touched them).
+- Attempt-1 context: stalled ~60+ min post-build, killed; left AdminLoginPage token fix uncommitted (adopted as-is) + zero screenshots + no STATE entry. 5191/5192 listeners from attempt 1 still up — reused 5191 (serves dist, HTTP 200), never stacked; did not start any server.
+- Screens shot (390x844, system Chrome via reused harness): /login + /admin/login both HTTP 200, ZERO console errors (.swarm/ui-shots/6/login.png + admin_login.png; refix capture overwrote admin PNG after attribute-only FIX #2 — iter4 precedent).
+- FIXED:
+  - F10 (FIX #1, attempt-1 spec adopted): AdminLoginPage.tsx — hardcoded hex → theme tokens. Tokens verified resolving in index.css @theme (--color-primary #0E4825, --color-accent #C2410C, --color-accent-light). Refix eyes-on: brand green tile/heading, orange gateway caption, enabled "Authenticate Credentials" button (B2 holds).
+  - F11 (FIX #2, own-eyes derived): AdminLoginPage.tsx labels gained htmlFor + input ids (admin-email/admin-password); error box gained role=alert. Before: placeholder-only announcement, silent error div. After: associated labels, announced errors. Attribute-only, zero visual change (refix 200/0 errors).
+- DISMISSED: B2-class stall (button enabled, isSubmitting starts false — B2 holds); /login "prefilled" creds = placeholders (value starts '', iter1-D6 class); Quick Staff PIN tab = intentional fail-closed (roster EMPTY by design, AuthContext.tsx:26-32, honest invalid-PIN error — touching it would violate fail-closed; NOT a flaw); focus:ring-[#0E4825] leftovers resolve to identical #0E4825 = primary (no visual bug); no password-visibility toggle on admin page (feature request, fail-closed on auth — not added); tab/keypad target sizes (keypad 48px pass; tabs borderline, geometry untouched per iter2 precedent); /login error boxes without role (noted, outside scoped file — left alone).
+- GATES: npm run typecheck clean; no touched-file tests exist (no *.test references AdminLoginPage — nothing to run); npm run build clean (41.13s post-fix). Full suite SKIPPED per swarm no-full-suite rule.
+- A11Y: labels associated + errors announced on admin login (IMPROVED); /login already htmlFor-bound with aria-pressed toggle; no CTA geometry touched.
+- Step 9 splash kill: SKIP (iteration 1 only).
+- PUSH SHAs: partner fa06c5c (AdminLoginPage.tsx only, scoped; all other dirty files untouched). Root: this file (pending).
+- DEVIATIONS: (a) no subagent delegation for FIX #2 — self-applied 3-attribute spec with own-eyes diff + gates (iters 1–4 precedent; avoided long-hang risk after attempt-1 stall); (b) full suite skipped (swarm rule).
