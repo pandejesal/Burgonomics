@@ -52,5 +52,5 @@
 - GATES: npx tsc --noEmit clean (exit 0); npx vitest run cart.test.tsx + checkout.test.tsx 11/11 pass; npm run build clean (6.49s). Full suite SKIPPED per swarm no-full-suite rule.
 - A11Y: no new barriers — text-node-only conditionals, same classes/contrast; no CTA geometry touched (PAY/offline button, 44px redeem toggle intact); totals region unchanged.
 - Step 9 splash kill: SKIP (iteration 1 only).
-- PUSH SHAs: core 6380669, root ff90043 (scoped commits only; pre-existing dirty files untouched).
+- PUSH SHAs: core 6380669, root e6ea6fc (scoped commits only; pre-existing dirty files untouched).
 - DEVIATIONS: (a) coder delegation returned CODER_SETTLEMENT_RECOVERY_UNCERTAIN no-write — self-applied identical spec with own-eyes diff + gates (iters 1–2 precedent); (b) Task tool has no model parameter — pinning requested in prompt only; (c) full suite skipped (swarm rule); (d) refix screenshots confirm no-regression only (empty-cart states can't render the banner; no seed path in harness).
