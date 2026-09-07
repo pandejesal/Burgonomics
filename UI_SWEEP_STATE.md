@@ -1,0 +1,20 @@
+# UI Sweep State — ban list + iteration log
+
+## Ban list
+- B1 (iter1): core /support zustand getSnapshot infinite loop (React error #185, minified text leaked to users). FIXED in support.tsx — never re-fix; any future /support crash is a NEW flaw only with a different stack signature.
+- B2 (iter1): partner /admin/login permanent "Verifying Credentials..." disabled button (store initial isLoading:true never cleared on login route). FIXED in adminAuthStore.ts — never re-fix.
+- B3 (iter1): white Capacitor-logo splash (11 partner Android drawables) + all-white 2732 iOS template glyphs (6 PNGs both apps). REPLACED with #0E4825 + mascot brand masters — never re-do; future splash work only for NEW asset/config drift.
+
+## Iteration log
+
+### Iteration 1 (attempt 2) — 2026-09-07 — focus: splash kill + harness + baselines (both apps)
+- Screens shot (390x844, system Chrome, vite preview): core / /menu /stores /offers /support /cart /checkout /payment /auth/login /about /privacy (5192); partner /login /admin/login (5191). Authed routes out of scope (no session) — skipped per protocol. All PNGs under .swarm/ui-shots/1/ (gitignored).
+- FIXED:
+  - F1 core burgonomics-foundation-core/src/routes/support.tsx:79 — `useOrdersStore(selectAllOrders)` built a fresh array per snapshot (ordersStore.ts:94-95) so getSnapshot never stabilized → "Maximum update depth exceeded" (#185), whole /support down with raw minified error text. Before: crash page + 1 console error. After: renders (SLA banner + ticket accordion), 0 errors. Fix: stable `ids` subscription + getState derive in useMemo. Verified: npx tsc --noEmit clean; support.test.tsx 5/5; refix screenshot eyes-on.
+  - F2 partner burgonomics-partner/src/admin/store/adminAuthStore.ts:20 — initial `isLoading:true` never cleared on /admin/login (AdminPortalLayout skips bootstrap there) → submit button disabled on "Verifying Credentials..." forever. Before: stuck spinner. After: enabled "Authenticate Credentials". Fix: initial false (login/logout/bootstrap set true on real work). Verified: npm run typecheck clean; refix screenshot eyes-on; no test asserts initial true.
+  - F3 splash kill — 17 assets overwritten, sizes/modes preserved, Contents.json + all config untouched: 11 partner Android drawable*/splash.png + 3 partner iOS + 3 core iOS Splash PNGs → #0E4825 bg + official mascot (sourced from public/burgonomics-logo.png 977x1024 after rejecting a blurry 16x upscale from the 320px drawable; verified via 1000px center-crop eyes-on). Rollback: git checkout the asset paths.
+- DISMISSED (not fixed, not banned): D1 /menu "AWAITING SYNC" + /menu//offers networkidle timeouts — no backend in preview, not a code flaw, revisit live; D2 consent banner overlapping every shot — fresh-profile harness artifact (never accepted); D3 / hero clipping/truncations — cosmetic, below bar; D4 /offers "LA PINO'Z INSPIRED BOGO" competitor copy — real, queued iter2; D5 refix /support ticket heading low-contrast — queued iter2; D6 partner /login "prefilled" creds — placeholders; D7 pristine OTP input red border — minor, queued; D8 banner over privacy text — same as D2.
+- GATES: partner typecheck clean + build clean (22.5s→9.0s rebuild); core tsc clean + build clean + support.test.tsx 5/5. Full suites SKIPPED per swarm no-full-suite rule (only touched-file tests run).
+- A11Y: no new barriers (logic-only edits + asset swap); star radios labeled, FAQ accordions aria-expanded, 44px targets kept; D5 contrast noted for iter2.
+- PUSH SHAs: partner a6e4e2a (feat/partner-device-smoke, 15 files), core e60df6f (main, 4 files). Root: this file only.
+- DEVIATIONS: (a) harness at .swarm/ui-harness/capture.mjs not scripts/ (root repo UNTOUCHED + gitignore rule wins); (b) both coder delegations returned no-diff settlements, self-applied identical specs with own-eyes diff + gates; (c) Task tool has no model parameter — model pinning requested in prompts but not mechanically enforceable; (d) full test suites skipped (swarm rule overrides protocol step 11).
