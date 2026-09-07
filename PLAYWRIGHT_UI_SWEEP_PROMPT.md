@@ -8,11 +8,12 @@
 - `VIEWPORT_MOBILE = 390x844`, `VIEWPORT_TABLET = 768x1024` (tablet sweep in iteration 8 only).
 - `SHOT_DIR = <Temp>/ui-shots/<iteration>/` — PNGs live here; **never commit screenshots**.
 - Repos: root `functions/` (untouched by this campaign), `burgonomics-partner` (branch `feat/partner-device-smoke`), `burgonomics-foundation-core` (branch `main`). Push each touched repo separately via gh auth. Never push with embedded tokens. Never commit unrelated dirty files — scoped commits only.
+- `MODEL = muse spark 1.3 free` — the opencode session AND every subagent it spawns (explorer/coder/reviewer/test_engineer/critic) run this exact model. No substitution: if Hermes or provider defaults would route elsewhere, override to this model. If the model is unreachable, stop and report (do not silently continue on another model).
 
 ## 1. Hermes driver protocol (outer loop — Hermes runs this, NOT the worker)
 
 1. Read `STATE_FILE` (create it on iteration 1 with an empty ban list).
-2. Open a **fresh** opencode session. Send it Part 2 (worker protocol) with this header filled in: `ITERATION = <n> | FOCUS_SCREENS = <from the rotation below> | BAN_LIST = <verbatim list> | PRIOR_SUMMARIES = <last 2 iteration summaries>`.
+2. Open a **fresh** opencode session pinned to `MODEL` (muse spark 1.3 free — session and all its subagents). Send it Part 2 (worker protocol) with this header filled in: `ITERATION = <n> | FOCUS_SCREENS = <from the rotation below> | BAN_LIST = <verbatim list> | PRIOR_SUMMARIES = <last 2 iteration summaries>`.
 3. Iteration focus rotation: 1 = splash kill + harness + baselines (both apps) · 2 = core home+menu · 3 = core cart+checkout · 4 = core payment+support+offers+stores · 5 = core auth+about+privacy · 6 = partner login+admin-login · 7 = shared components (both apps, fix at source) · 8 = tablet re-sweep top screens · 9 = full re-sweep verify · 10 = final verify + handoff.
 4. Collect the worker's HANDOFF summary. Append it + any new ban entries to `STATE_FILE`.
 5. Stop when `n == OUTER_ITERATIONS`, or `STOP_EARLY_AFTER` consecutive zero-flaw iterations, or the worker reports an unfixable gate failure (then stop and report to the human with the worker's evidence).
@@ -20,7 +21,7 @@
 
 ## 2. Opencode worker protocol (inner loop — 15 steps, same every iteration)
 
-You are the UI/UX sweep worker for **ITERATION = <n>**. Follow exactly 15 steps. **Step 1 plans and delegates; steps 2–15 execute. One agent per delegation; wait for each result. Do NOT start iteration n+1 yourself.**
+You are the UI/UX sweep worker for **ITERATION = <n>**, running on muse spark 1.3 free — every subagent you spawn uses the same model. Follow exactly 15 steps. **Step 1 plans and delegates; steps 2–15 execute. One agent per delegation; wait for each result. Do NOT start iteration n+1 yourself.**
 
 **Step 1 — PLAN.** Read `STATE_FILE`. Restate iteration number, focus screens, and ban list. Form 1–3 flaw hypotheses per focus screen. Declare exact file scope for any coder delegation. Delegate the next steps. If a step has nothing to do (e.g., no second flaw), log `SKIP with reason` — never invent work.
 
