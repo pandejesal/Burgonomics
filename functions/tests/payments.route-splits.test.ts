@@ -1,9 +1,87 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import * as crypto from "crypto";
+
+// B2-S1 worker-guard rig: the pure split/signature suites above never touch
+// Firestore; only the over-transfer worker test below uses this mock.
+const { mockDb, writes } = vi.hoisted(() => {
+  const writes: Array<{ ref: string; data: any }> = [];
+  const orderData = () => ({
+    branchId: "branch_cap_1",
+    pricing: { grandTotal: 100, split: { branchTransferPaise: 9000 } },
+    payment: { razorpayPaymentId: "pay_cap_1", capturedAmountPaise: 5000 },
+    routeTransferStatus: "pending_retry",
+    routeTransferRetryCount: 0,
+  });
+  const orderDoc: any = {
+    id: "order_cap_1",
+    data: orderData,
+    ref: {
+      get: async () => ({ exists: true, data: orderData }),
+      set: async (data: any) => {
+        writes.push({ ref: "orders/order_cap_1", data });
+      },
+    },
+  };
+  const mockDb: any = {
+    collection: (colName: string) => ({
+      doc: (docId: string) => ({
+        get: async () =>
+          colName === "branches"
+            ? { exists: true, data: () => ({ razorpayAccountId: "acc_cap_1" }) }
+            : { exists: false, data: () => ({}) },
+        set: async (data: any) => {
+          writes.push({ ref: `${colName}/${docId}`, data });
+        },
+      }),
+      where: () => ({
+        where: () => ({
+          limit: () => ({
+            get: async () => ({ docs: [orderDoc] }),
+          }),
+        }),
+      }),
+    }),
+    runTransaction: async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any) => ref.set(data),
+      }),
+  };
+  return { mockDb, writes };
+});
+
+vi.mock("firebase-admin", () => {
+  const FieldValue = {
+    serverTimestamp: () => "MOCK_TIMESTAMP",
+    increment: (n: number) => n,
+    arrayUnion: (item: any) => [item],
+    delete: () => "MOCK_DELETE",
+  };
+  const firestoreFn: any = vi.fn(() => mockDb);
+  firestoreFn.FieldValue = FieldValue;
+  return {
+    default: {
+      firestore: firestoreFn,
+      auth: vi.fn(() => ({})),
+      messaging: vi.fn(() => ({})),
+      initializeApp: vi.fn(),
+      apps: [{ name: "mock" }],
+    },
+    firestore: firestoreFn,
+    auth: vi.fn(() => ({})),
+    messaging: vi.fn(() => ({})),
+    initializeApp: vi.fn(),
+    apps: [{ name: "mock" }],
+  };
+});
+
 import {
   calculateRouteSplit,
   buildRouteTransferPayload,
+  attemptRouteTransfer,
+  retryPendingRouteTransfersWorker,
 } from "../src/modules/payments/routeTransfers";
+import { config } from "../src/config/env";
 import {
   verifyRazorpayWebhookSignature,
   verifyRazorpaySignature,
@@ -135,6 +213,59 @@ describe("Prompt 16: Razorpay Payments, Route Splits & Webhooks Suite", () => {
 
       const wrongHash = computeHmacSha256("8493", webhookSecret);
       expect(wrongHash).not.toBe(hash1);
+    });
+  });
+
+  describe("4. Over-capture transfer guard (B2-S1)", () => {
+    let prevMock: boolean;
+    const beginMock = () => {
+      prevMock = config.mock.paymentGateway;
+      config.mock.paymentGateway = true;
+    };
+    afterEach(() => {
+      config.mock.paymentGateway = prevMock;
+      writes.length = 0;
+    });
+
+    it("refuses a split above the captured amount before any gateway call", async () => {
+      const attempt = await attemptRouteTransfer(
+        "pay_x",
+        "branch_x",
+        { branchTransferPaise: 6000 },
+        "order_x",
+        "acc_x",
+        5000 // captured ceiling
+      );
+      expect(attempt.ok).toBe(false);
+      expect(attempt.error).toMatch(/exceeds captured/);
+    });
+
+    it("allows a split within the captured amount (mock gateway)", async () => {
+      beginMock();
+      const attempt = await attemptRouteTransfer(
+        "pay_x",
+        "branch_x",
+        { branchTransferPaise: 4000 },
+        "order_x",
+        "acc_x",
+        5000
+      );
+      expect(attempt.ok).toBe(true);
+      expect(attempt.result.amount).toBe(4000);
+    });
+
+    it("worker parks (never sends) a split above captured truth", async () => {
+      beginMock();
+      // Seeded order: Rs.90 split vs Rs.50 captured -> guard must refuse.
+      const result = await retryPendingRouteTransfersWorker();
+      expect(result.retriedCount).toBe(0);
+      const errWrites = writes.filter((w) => w.data?.routeTransferError);
+      expect(errWrites.length).toBeGreaterThan(0);
+      expect(String(errWrites[0].data.routeTransferError)).toMatch(/exceeds captured/);
+      // Never flipped to transferred.
+      expect(
+        writes.some((w) => w.data?.routeTransferStatus === "transferred")
+      ).toBe(false);
     });
   });
 });

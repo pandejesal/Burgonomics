@@ -2,41 +2,44 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
-  const mockDb = {
+  const defaultOrder = () => ({
+    branchId: "branch_ahmedabad_1",
+    branchName: "Burgonomics CG Road",
+    branchCoordinates: { lat: 23.0131, lng: 72.5085 },
+    deliveryAddress: {
+      full: "102, Shivalik Highstreet, Vastrapur",
+      lat: 23.0338,
+      lng: 72.5262,
+    },
+    customerPhone: "+91 99999 88888",
+    customerName: "Aarav Shah",
+    status: "ready",
+  });
+  const mergeSet = (colName: string, docId: string, data: any) => {
+    savedDocs[`${colName}/${docId}`] = {
+      ...(savedDocs[`${colName}/${docId}`] || {}),
+      ...data,
+    };
+  };
+  // Refreshable snapshot: ref.get() re-reads savedDocs so transaction
+  // re-reads (claim-then-work) observe writes, exactly like Firestore.
+  const readDoc: any = (colName: string, docId: string) => {
+    const snap: any = {
+      exists: true,
+      data: () => savedDocs[`${colName}/${docId}`] || defaultOrder(),
+      ref: {
+        get: vi.fn(async () => readDoc(colName, docId)),
+        set: vi.fn(async (data: any) => mergeSet(colName, docId, data)),
+      },
+    };
+    return snap;
+  };
+  const mockDb: any = {
     collection: (colName: string) => ({
       doc: (docId: string) => ({
         id: docId,
-        set: vi.fn(async (data: any) => {
-          savedDocs[`${colName}/${docId}`] = {
-            ...(savedDocs[`${colName}/${docId}`] || {}),
-            ...data,
-          };
-        }),
-        get: vi.fn(async () => ({
-          exists: true,
-          data: () =>
-            savedDocs[`${colName}/${docId}`] || {
-              branchId: "branch_ahmedabad_1",
-              branchName: "Burgonomics CG Road",
-              branchCoordinates: { lat: 23.0131, lng: 72.5085 },
-              deliveryAddress: {
-                full: "102, Shivalik Highstreet, Vastrapur",
-                lat: 23.0338,
-                lng: 72.5262,
-              },
-              customerPhone: "+91 99999 88888",
-              customerName: "Aarav Shah",
-              status: "ready",
-            },
-          ref: {
-            set: vi.fn(async (data: any) => {
-              savedDocs[`${colName}/${docId}`] = {
-                ...(savedDocs[`${colName}/${docId}`] || {}),
-                ...data,
-              };
-            }),
-          },
-        })),
+        set: vi.fn(async (data: any) => mergeSet(colName, docId, data)),
+        get: vi.fn(async () => readDoc(colName, docId)),
       }),
       where: (field: string, op: string, val: any) => ({
         limit: (n: number) => ({
@@ -59,6 +62,15 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
         }),
       }),
     }),
+    // Transaction shim: runs the callback against live refs (serially, like
+    // a single Firestore transaction attempt) so claim-then-work paths are
+    // exercised rather than skipped.
+    runTransaction: vi.fn(async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      })
+    ),
   };
   return { mockDb, savedDocs };
 });
@@ -93,6 +105,7 @@ import {
   getDeliveryQuote,
   normalizePorterEvent,
   bookPorterRider,
+  rebookPorterRider,
   handlePorterWebhook,
   generateDeliveryOtp,
   verifyDeliveryOtp,
@@ -214,8 +227,7 @@ describe("Porter Logistics Service", () => {
       expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("delivered");
     });
 
-    it("rejects a forged Porter webhook with 401 semantics and zero writes", async () => {
-      const before = Object.keys(savedDocs).length;
+    it("rejects a forged Porter webhook with 401 semantics and zero writes", async () => {      const before = Object.keys(savedDocs).length;
       const err: any = await handlePorterWebhook("raw_body", "forged_signature", {
         event: "DELIVERED",
         request_id: "REQ-order_prt_forged",
@@ -407,6 +419,101 @@ describe("Porter Logistics Service", () => {
       expect(farResult.isServiced).toBe(false);
       expect(farResult.distanceKm).toBeGreaterThan(8.0);
       expect(farResult.reason).toContain("exceeds the 8km branch delivery zone");
+    });
+  });
+
+  describe("book/rebook idempotency + GPS fail-closed (B2-S1)", () => {
+    const gpsOrder = (overrides: Record<string, any> = {}) => ({
+      branchId: "branch_ahmedabad_1",
+      orderType: "delivery",
+      customerPhone: "+91 99999 88888",
+      customerName: "Aarav Shah",
+      branchCoordinates: { lat: 23.0131, lng: 72.5085 },
+      deliveryAddress: {
+        full: "102, Shivalik Highstreet, Vastrapur",
+        lat: 23.0338,
+        lng: 72.5262,
+      },
+      ...overrides,
+    });
+
+    it("replays an already-dispatched order without re-POSTing", async () => {
+      savedDocs["orders/order_reuse_1"] = gpsOrder({
+        porterOrderId: "PRTR-ORD-OLD",
+        deliveryStatus: "dispatched",
+        riderName: "Old Rider",
+        riderPhone: "+91 90000 00001",
+        riderTrackingUrl: "https://tracking.porter.in/track/PRTR-ORD-OLD",
+        dispatchGeoSource: "live_gps",
+      });
+      const res = await bookPorterRider("order_reuse_1", "Store Manager");
+      expect(res).toMatchObject({
+        porterOrderId: "PRTR-ORD-OLD",
+        riderName: "Old Rider",
+        reused: true,
+      });
+      // No second booking minted.
+      expect(savedDocs["orders/order_reuse_1"].porterOrderId).toBe("PRTR-ORD-OLD");
+    });
+
+    it("fresh pending claim returns an immediate 202", async () => {
+      savedDocs["orders/order_pending_1"] = gpsOrder({
+        porterDispatchStatus: "dispatch_pending",
+        porterDispatchClaimedAt: { toMillis: () => Date.now() },
+      });
+      const started = Date.now();
+      const err: any = await bookPorterRider("order_pending_1", "Store Manager").then(
+        () => null,
+        (e) => e
+      );
+      expect(err?.code).toBe("DISPATCH_IN_PROGRESS");
+      expect(err?.statusCode).toBe(202);
+      expect(Date.now() - started).toBeLessThan(1500);
+    });
+
+    it("stale pending claim is taken over and dispatched", async () => {
+      savedDocs["orders/order_stale_1"] = gpsOrder({
+        porterDispatchStatus: "dispatch_pending",
+        porterDispatchClaimedAt: { toMillis: () => Date.now() - 11 * 60 * 1000 },
+      });
+      const res = await bookPorterRider("order_stale_1", "Store Manager");
+      expect(res.porterOrderId).toMatch(/^PRTR-ORD-/);
+      expect(savedDocs["orders/order_stale_1"].porterDispatchStatus).toBe("dispatched");
+    });
+
+    it("delivery without GPS fails closed with 422 and no dispatch", async () => {
+      savedDocs["orders/order_nogps_1"] = gpsOrder({
+        deliveryAddress: { full: "Bopal crossroads, Ahmedabad" }, // no lat/lng
+      });
+      const err: any = await bookPorterRider("order_nogps_1", "Store Manager").then(
+        () => null,
+        (e) => e
+      );
+      expect(err?.code).toBe("DISPATCH_GPS_MISSING");
+      expect(err?.statusCode).toBe(422);
+      expect(savedDocs["orders/order_nogps_1"].porterOrderId).toBeUndefined();
+      expect(savedDocs["orders/order_nogps_1"].deliveryStatus).toBeUndefined();
+    });
+
+    it("rebook is refused when the order is not rebookable", async () => {
+      // Default mock order: no needsRebook, no cancelled/failed status.
+      const err: any = await rebookPorterRider("order_rebook_nope", "Store Manager").then(
+        () => null,
+        (e) => e
+      );
+      expect(err?.code).toBe("NOT_REBOOKABLE");
+      expect(err?.statusCode).toBe(409);
+    });
+
+    it("rebook proceeds for a cancelled dispatch", async () => {
+      savedDocs["orders/order_rebook_ok"] = gpsOrder({
+        needsRebook: true,
+        deliveryStatus: "rider_cancelled",
+      });
+      const res = await rebookPorterRider("order_rebook_ok", "Store Manager");
+      expect(res.porterOrderId).toBeDefined();
+      expect(res.status).toBe("dispatched");
+      expect(savedDocs["orders/order_rebook_ok"].deliveryStatus).toBe("dispatched");
     });
   });
 });

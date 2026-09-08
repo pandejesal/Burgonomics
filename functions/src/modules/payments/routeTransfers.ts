@@ -72,7 +72,13 @@ export async function attemptRouteTransfer(
   orderId: string,
   // Pre-resolved linked account from the worker's batched branch prefetch.
   // `undefined` (direct callers/tests) keeps the old inline branch read.
-  preResolvedAccountId?: string | null
+  preResolvedAccountId?: string | null,
+  // Fail-closed ceiling: the gateway-captured amount in paise (B2-S1). When
+  // provided, a split above what the customer actually paid is refused to
+  // pending_retry — never clamped-and-sent (clamping would silently
+  // underpay the branch with no trail) and never over-transferred (which
+  // would pull brand money into the branch payout).
+  capturedAmountPaise?: number
 ): Promise<RouteTransferAttempt> {
   try {
     const rawAccountId =
@@ -87,6 +93,21 @@ export async function attemptRouteTransfer(
       return {
         ok: false,
         error: "Invalid pricing split: branchTransferPaise must be a positive integer",
+      };
+    }
+    // Over-capture guard (B2-S1): runs BEFORE the mock success branch and
+    // before any gateway POST, so neither path can move more than captured.
+    if (
+      capturedAmountPaise !== undefined &&
+      Number.isFinite(capturedAmountPaise) &&
+      capturedAmountPaise > 0 &&
+      splitPaise > capturedAmountPaise
+    ) {
+      return {
+        ok: false,
+        error:
+          `Transfer split exceeds captured payment amount — refusing over-transfer ` +
+          `(split ${splitPaise} paise > captured ${capturedAmountPaise} paise)`,
       };
     }
     const razorpayAccountId = typeof rawAccountId === "string" && rawAccountId ? rawAccountId : null;
@@ -229,7 +250,18 @@ export async function retryPendingRouteTransfersWorker() {
         branchId,
         pricingSplit,
         orderId,
-        branchAccounts.has(branchId) ? branchAccounts.get(branchId) ?? null : undefined
+        branchAccounts.has(branchId) ? branchAccounts.get(branchId) ?? null : undefined,
+        // Captured ceiling for the over-transfer guard: live gateway truth
+        // when verify stored it, else the server-priced total. Undefined when
+        // neither exists — the guard then skips (missing-data check above
+        // already failed such orders out).
+        typeof order.payment?.capturedAmountPaise === "number"
+          ? order.payment.capturedAmountPaise
+          : typeof (order as any)["payment.capturedAmountPaise"] === "number"
+            ? (order as any)["payment.capturedAmountPaise"]
+            : typeof order.pricing?.grandTotal === "number"
+              ? Math.round(order.pricing.grandTotal * 100)
+              : undefined
       );
 
       if (attempt.skipped) {

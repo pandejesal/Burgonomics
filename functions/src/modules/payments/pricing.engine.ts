@@ -353,3 +353,80 @@ export async function calculateOrderPricing(
     },
   };
 }
+
+export interface RepriceVerification {
+  expectedGrandTotal: number;
+  expectedPaise: number;
+  storedPaise: number | null;
+  matches: boolean;
+  pricingDegraded: boolean;
+}
+
+/**
+ * Server-repricing truth for payment verification (B2-S1).
+ *
+ * Recomputes the order total from the stored cart (items + branch + coupon +
+ * loyalty) through the SAME authoritative engine and compares it — in exact
+ * paise — against the stored grandTotal. A mismatch means the stored price
+ * drifted from catalog truth between pricing and payment (tamper, stale
+ * coupon, catalog edit) and must be resolved before money moves.
+ *
+ * Fail-closed on unpriceable input: missing/empty items, missing branch, or
+ * an unknown orderType throws 422 UNPRICEABLE instead of coercing a price.
+ * A missing stored total yields storedPaise=null, matches=false (nothing to
+ * compare against — the caller decides; verifyPayment's gateway-amount check
+ * is the binding control there).
+ *
+ * NOTE: intentionally NOT wired into verifyPayment's confirm path — live
+ * signature-bound orders without a stored cart (legacy docs) must keep
+ * verifying while the gateway-amount check covers them. Adopters (batch 3+
+ * reprice-before-pay routes) should treat matches=false as refuse-to-charge.
+ */
+export async function repriceOrderForVerification(
+  orderData: any
+): Promise<RepriceVerification> {
+  const unpriceable = (detail: string): Error => {
+    const err: any = new Error(`Cannot reprice order for verification: ${detail}`);
+    err.statusCode = 422;
+    err.code = "UNPRICEABLE";
+    return err;
+  };
+
+  const items = (orderData as any)?.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    throw unpriceable("no priceable items on the order.");
+  }
+  const branchId = (orderData as any)?.branchId;
+  if (typeof branchId !== "string" || branchId.length === 0) {
+    throw unpriceable("no resolvable branch on the order.");
+  }
+  const orderType = (orderData as any)?.orderType;
+  if (orderType !== "delivery" && orderType !== "takeaway" && orderType !== "dinein") {
+    throw unpriceable("unknown order type on the order.");
+  }
+
+  const recomputed = await calculateOrderPricing({
+    items,
+    branchId,
+    orderType,
+    deliveryFee: (orderData as any)?.deliveryFee,
+    packagingFee: (orderData as any)?.packagingFee,
+    couponCode: (orderData as any)?.couponCode,
+    loyaltyPointsToRedeem: (orderData as any)?.loyaltyPointsToRedeem,
+  });
+
+  const storedGrandTotal = Number((orderData as any)?.pricing?.grandTotal);
+  const storedPaise =
+    Number.isFinite(storedGrandTotal) && storedGrandTotal >= 0
+      ? Math.round(storedGrandTotal * 100)
+      : null;
+  const expectedPaise = Math.round(recomputed.grandTotal * 100);
+
+  return {
+    expectedGrandTotal: recomputed.grandTotal,
+    expectedPaise,
+    storedPaise,
+    matches: storedPaise !== null && storedPaise === expectedPaise,
+    pricingDegraded: recomputed.pricingDegraded,
+  };
+}

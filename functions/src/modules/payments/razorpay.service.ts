@@ -205,8 +205,17 @@ export interface VerifyPaymentParams {
 }
 
 /**
- * Verifies Razorpay payment signature, executes Razorpay Route transfer split,
- * and updates order status.
+ * Verifies Razorpay payment signature, binds the live gateway payment to the
+ * server-priced order (fail-closed on amount/capture mismatch — never confirms,
+ * never auto-captures), executes the Razorpay Route transfer split, and
+ * updates order status.
+ *
+ * Fail-closed contract (B2-S1): in live mode with a stored server-side total,
+ * the gateway payment is fetched and must match (order binding + paise amount
+ * + captured status + INR). Any mismatch parks a payment_discrepancies doc for
+ * ops and throws — the order is never flipped to CONFIRMED on these paths.
+ * Transfer contention resolves to an immediate 202 retry signal (no blocking
+ * poll — the client retries verify with the same key).
  */
 export async function verifyPayment(params: VerifyPaymentParams) {
   const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
@@ -232,7 +241,10 @@ export async function verifyPayment(params: VerifyPaymentParams) {
       orderId,
       razorpayPaymentId,
     });
-    throw new Error("Invalid payment signature");
+    const badSig: any = new Error("Invalid payment signature");
+    badSig.statusCode = 401;
+    badSig.code = "INVALID_SIGNATURE";
+    throw badSig;
   }
 
   // 2. Fetch order to perform Route split. Unknown orderId is a 404 —
@@ -241,10 +253,36 @@ export async function verifyPayment(params: VerifyPaymentParams) {
   const orderRef = db.collection("orders").doc(orderId);
   const orderSnap = await orderRef.get();
   if (!orderSnap.exists) {
-    throw new Error(`Order ${orderId} not found — refusing to verify payment against a ghost order`);
+    const ghost: any = new Error(
+      `Order ${orderId} not found — refusing to verify payment against a ghost order`
+    );
+    ghost.statusCode = 404;
+    ghost.code = "ORDER_NOT_FOUND";
+    throw ghost;
   }
   const orderData = orderSnap.data() || {};
   const branchId = orderData.branchId;
+
+  // Live gateway truth check (fail-closed on money mismatch, no auto-capture).
+  // Runs only in live mode AND when the order carries a stored server-side
+  // total to compare against. Legacy/test docs without pricing keep the
+  // legacy path — the HMAC signature above still binds payment↔order, and the
+  // transfer claim below still serializes payouts. Mock mode has no gateway
+  // truth to fetch, so it keeps its short-circuit.
+  const storedGrandTotal = Number(orderData.pricing?.grandTotal);
+  const hasStoredTotal =
+    Number.isFinite(storedGrandTotal) && storedGrandTotal > 0;
+  let capturedAmountPaise: number | undefined;
+  if (!config.mock.paymentGateway && hasStoredTotal) {
+    capturedAmountPaise = await assertLivePaymentMatchesOrder({
+      orderRef,
+      orderId,
+      orderData,
+      razorpayOrderId,
+      razorpayPaymentId,
+      expectedPaise: Math.round(storedGrandTotal * 100),
+    });
+  }
 
   let transferResult: any = null;
 
@@ -297,30 +335,20 @@ export async function verifyPayment(params: VerifyPaymentParams) {
       });
     }
     if (claim === "busy") {
-      // Winner still mid-flight: poll briefly for its result, else ask the
-      // client to retry verify (by then the transfer has settled). Posting
-      // our own transfer here is exactly the double-spend this guards.
-      for (let i = 0; i < 4; i++) {
-        await new Promise((r) => setTimeout(r, 500));
-        const re = await orderRef.get();
-        const reData = (re.exists ? re.data() : undefined) as any;
-        if (reData?.routeTransferStatus === "transferred") {
-          const reused =
-            reData.payment?.routeTransfer ?? reData["payment.routeTransfer"] ?? null;
-          return finishVerifiedPayment({
-            orderRef,
-            orderData: { ...orderData, routeTransferStatus: "transferred" },
-            orderId,
-            razorpayOrderId,
-            razorpayPaymentId,
-            transferResult: reused,
-          });
-        }
-        if (reData?.routeTransferStatus !== "transferring") break;
-      }
-      const busy: any = new Error("Transfer in progress elsewhere — please retry payment verification.");
-      busy.statusCode = 503;
-      throw busy;
+      // Winner still mid-flight: return a 202 retry signal IMMEDIATELY (no
+      // blocking poll — the old 4x500ms serial loop stalled checkout ~2s per
+      // M32). The client retries verify with the same key; by then the
+      // transfer has settled. Posting our own transfer here is exactly the
+      // double-spend this guards. NOTE: /payments/verifyPayment route mapping
+      // to HTTP 202 is batch-4 owned — the message below carries the retry
+      // instruction so clients retry even while the route degrades this to 400.
+      const retry: any = new Error(
+        "Transfer in progress elsewhere — please retry payment verification in a couple of seconds (you will not be charged twice)."
+      );
+      retry.statusCode = 202;
+      retry.code = "TRANSFER_IN_PROGRESS";
+      retry.retryAfterMs = 2000;
+      throw retry;
     }
   }
   const pricingSplit = orderData.pricing?.split;
@@ -372,7 +400,150 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     razorpayOrderId,
     razorpayPaymentId,
     transferResult,
+    capturedAmountPaise,
   });
+}
+
+/**
+ * Test seam for the live gateway fetch (B2-S1): unit tests inject a stub so
+ * no test ever touches the Razorpay network. Production always uses the SDK.
+ */
+let paymentsFetchOverride: ((paymentId: string) => Promise<any>) | null = null;
+
+/** Test-only: stub/unstub the live Razorpay payment fetch. */
+export function __setPaymentsFetchForTests(
+  fn: ((paymentId: string) => Promise<any>) | null
+): void {
+  paymentsFetchOverride = fn;
+}
+
+/**
+ * Fetches the live Razorpay payment and binds it to the server-priced order.
+ * Fail-closed: order binding, paise amount, captured status, and currency must
+ * ALL match. Any mismatch writes a payment_discrepancies doc for ops review
+ * and throws — the caller never confirms the order on these paths.
+ *
+ * NO AUTO-CAPTURE: an authorized-but-uncaptured payment is parked as
+ * awaiting_capture and refused. Capturing server-side without an explicit
+ * capture intent would charge customers outside the checkout they approved.
+ *
+ * Returns the captured amount in paise for downstream transfer-cap checks.
+ */
+async function assertLivePaymentMatchesOrder(args: {
+  orderRef: any;
+  orderId: string;
+  orderData: any;
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  expectedPaise: number;
+}): Promise<number> {
+  const { orderRef, orderId, razorpayOrderId, razorpayPaymentId, expectedPaise } = args;
+
+  let payment: any;
+  try {
+    // Test seam first: unit tests stub the fetch so no test ever touches the
+    // Razorpay network. Production always goes through the SDK client.
+    payment = paymentsFetchOverride
+      ? await paymentsFetchOverride(razorpayPaymentId)
+      : await getRazorpayClient().payments.fetch(razorpayPaymentId);
+  } catch (err: any) {
+    // Fail CLOSED: an unreadable payment is never confirmed — the client
+    // retries verify with the same key (no double charge; no stranded charge
+    // confirmed blind).
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Razorpay payment fetch failed for ${razorpayPaymentId} — refusing verify, client must retry`,
+      orderId,
+      razorpayPaymentId,
+      errorStack: err?.stack,
+    });
+    const unknown: any = new Error(
+      "Payment status is temporarily unavailable — please retry verification (you will not be charged twice)."
+    );
+    unknown.statusCode = 503;
+    unknown.code = "PAYMENT_STATUS_UNKNOWN";
+    unknown.retryAfterMs = 2000;
+    throw unknown;
+  }
+
+  const slug = (v: unknown): string => String(v ?? "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64) || "unknown";
+  const parkDiscrepancy = async (reason: string, extra: Record<string, any>) => {
+    const docId = `dis_${slug(orderId)}_${slug(razorpayPaymentId)}`;
+    await db.collection("payment_discrepancies").doc(docId).set(
+      {
+        orderId,
+        razorpayOrderId,
+        razorpayPaymentId,
+        expectedPaise,
+        actualPaise: typeof payment?.amount === "number" ? payment.amount : null,
+        gatewayStatus: payment?.status || null,
+        reason,
+        status: "needs_review",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...extra,
+      },
+      { merge: true }
+    );
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Payment discrepancy for order ${orderId}: ${reason} — parked for review, order NOT confirmed`,
+      orderId,
+      razorpayPaymentId,
+    });
+  };
+
+  if (payment?.order_id !== razorpayOrderId) {
+    await parkDiscrepancy("ORDER_MISMATCH", { gatewayOrderId: payment?.order_id || null });
+    const err: any = new Error(
+      "This payment belongs to a different order — verification refused. Contact support if money left your account."
+    );
+    err.statusCode = 409;
+    err.code = "ORDER_MISMATCH";
+    throw err;
+  }
+
+  if (Number(payment?.amount) !== expectedPaise) {
+    await parkDiscrepancy("AMOUNT_MISMATCH", {});
+    const err: any = new Error(
+      "The amount paid does not match your order total — verification refused. Contact support if money left your account."
+    );
+    err.statusCode = 409;
+    err.code = "AMOUNT_MISMATCH";
+    throw err;
+  }
+
+  if (payment?.currency && payment.currency !== "INR") {
+    await parkDiscrepancy("CURRENCY_MISMATCH", { currency: payment.currency });
+    const err: any = new Error(
+      "This payment is not in INR — verification refused. Contact support if money left your account."
+    );
+    err.statusCode = 409;
+    err.code = "CURRENCY_MISMATCH";
+    throw err;
+  }
+
+  if (payment?.status !== "captured") {
+    // Parked, never auto-captured (see doc comment above).
+    await orderRef.set(
+      {
+        paymentStatus: "awaiting_capture",
+        "payment.status": "awaiting_capture",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    await parkDiscrepancy("PAYMENT_NOT_CAPTURED", {});
+    const err: any = new Error(
+      "Your payment has not been captured yet — verification refused and nothing was charged beyond authorization. Please retry; contact support if the hold does not release."
+    );
+    err.statusCode = 409;
+    err.code = "PAYMENT_NOT_CAPTURED";
+    throw err;
+  }
+
+  return Number(payment.amount);
 }
 
 /**
@@ -387,8 +558,10 @@ async function finishVerifiedPayment(args: {
   razorpayOrderId: string;
   razorpayPaymentId: string;
   transferResult: any;
+  /** Live-fetched captured paise (undefined on mock/legacy paths). */
+  capturedAmountPaise?: number;
 }) {
-  const { orderRef, orderData, orderId, razorpayOrderId, razorpayPaymentId, transferResult } = args;
+  const { orderRef, orderData, orderId, razorpayOrderId, razorpayPaymentId, transferResult, capturedAmountPaise } = args;
 
   // Update order state in Firestore — crypto-secure OTP for India compliance
   const deliveryOtp =
@@ -405,6 +578,12 @@ async function finishVerifiedPayment(args: {
     "payment.razorpayPaymentId": razorpayPaymentId,
     "payment.razorpayOrderId": razorpayOrderId,
     "payment.verifiedAt": admin.firestore.FieldValue.serverTimestamp(),
+    // Live gateway truth for downstream transfer-cap checks (lane B worker
+    // refuses splits above what the customer actually paid). Mock/legacy
+    // paths leave this unset and the worker falls back to pricing paise.
+    ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
+      ? { "payment.capturedAmountPaise": capturedAmountPaise }
+      : {}),
     status: {
       code: "CONFIRMED",
       label: "Order confirmed",
@@ -456,9 +635,77 @@ export interface RefundParams {
 
 /**
  * Executes a full or partial refund with proportional Route transfer reversal.
+ *
+ * Fail-closed + idempotent (B2-S1, H-M6/C9 companion): the order must exist
+ * and carry the captured payment being refunded (refuses COD/unpaid with
+ * 409 — never a silent success the UI could celebrate); partial amounts are
+ * capped at the server-priced total; a completed refund replays idempotently
+ * instead of re-POSTing to Razorpay. Every refusal carries a statusCode.
  */
 export async function autoRefund(params: RefundParams) {
   const { orderId, razorpayPaymentId, amountRupees, reason } = params;
+
+  const orderRef = db.collection("orders").doc(orderId);
+  const orderSnap = await orderRef.get();
+  if (!orderSnap.exists) {
+    const missing: any = new Error(`Cannot refund: order ${orderId} not found.`);
+    missing.statusCode = 404;
+    missing.code = "ORDER_NOT_FOUND";
+    throw missing;
+  }
+  const order = (orderSnap.data() || {}) as any;
+  // Captured-payment proof, both storage shapes: nested (server writes via
+  // object form) and dotted-literal (merge-set writes). Either is acceptable;
+  // neither present means COD/unpaid — refuse LOUD, never silent success.
+  const capturedPaymentId =
+    order.payment?.razorpayPaymentId ?? order["payment.razorpayPaymentId"] ?? null;
+  if (!capturedPaymentId || capturedPaymentId !== razorpayPaymentId) {
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Refund refused for order ${orderId}: no captured payment matching ${razorpayPaymentId} (COD or unpaid)`,
+      orderId,
+      razorpayPaymentId,
+    });
+    const unpaid: any = new Error(
+      "Cannot refund: no captured Razorpay payment found for this order (COD or unpaid)."
+    );
+    unpaid.statusCode = 409;
+    unpaid.code = "NO_CAPTURED_PAYMENT";
+    throw unpaid;
+  }
+
+  const storedGrandTotal = Number(order.pricing?.grandTotal);
+  if (
+    amountRupees !== undefined &&
+    (!Number.isFinite(amountRupees) ||
+      amountRupees <= 0 ||
+      (Number.isFinite(storedGrandTotal) &&
+        storedGrandTotal > 0 &&
+        amountRupees > storedGrandTotal))
+  ) {
+    const over: any = new Error(
+      "Refund amount is invalid or exceeds the order total — refused."
+    );
+    over.statusCode = 400;
+    over.code = "REFUND_AMOUNT_EXCEEDS";
+    throw over;
+  }
+
+  // Idempotent replay: the same (payment, amount) refund returns the stored
+  // receipt instead of POSTing a second refund. A completed full refund
+  // followed by a DIFFERENT amount is a double-spend attempt — refuse.
+  if (order.refundStatus === "refunded" && order.refundId) {
+    const sameAmount =
+      (order.refundAmount ?? undefined) === (amountRupees ?? undefined);
+    if (sameAmount) {
+      return { id: order.refundId, payment_id: razorpayPaymentId, status: "processed", reused: true as const };
+    }
+    const dup: any = new Error("Order is already fully refunded — refusing a second refund.");
+    dup.statusCode = 409;
+    dup.code = "ALREADY_REFUNDED";
+    throw dup;
+  }
 
   const refundPayload: any = {
     reverse_all: true, // Automatically reverses split transfer proportionally from branch
@@ -493,12 +740,15 @@ export async function autoRefund(params: RefundParams) {
         orderId,
         razorpayPaymentId,
       });
-      throw new Error(`Refund failed: ${err.message}`);
+      const failed: any = new Error(`Refund failed: ${err.message}`);
+      failed.statusCode = 502;
+      failed.code = "REFUND_GATEWAY_FAILED";
+      throw failed;
     }
   }
 
   // Update order record
-  await db.collection("orders").doc(orderId).set(
+  await orderRef.set(
     {
       refundStatus: "refunded",
       refundAmount: amountRupees,

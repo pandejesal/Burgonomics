@@ -349,7 +349,17 @@ app.post(
       );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to dispatch Porter rider" });
+      // B2-S1: honor service statusCodes (202 retry, 404/409/422 dispatch
+      // guards) — staffErrorStatus only maps auth prefixes, so pass through
+      // known codes and fall back to it otherwise.
+      const code = (err as any)?.statusCode;
+      res
+        .status(
+          [202, 400, 401, 403, 404, 409, 422].includes(code)
+            ? code
+            : staffErrorStatus(err, 500)
+        )
+        .json({ error: err.message || "Failed to dispatch Porter rider" });
     }
   }
 );
@@ -369,7 +379,15 @@ app.post(
       );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to re-book Porter rider" });
+      // B2-S1: same statusCode-aware mapping as /porter/book (202/409/422).
+      const code = (err as any)?.statusCode;
+      res
+        .status(
+          [202, 400, 401, 403, 404, 409, 422].includes(code)
+            ? code
+            : staffErrorStatus(err, 500)
+        )
+        .json({ error: err.message || "Failed to re-book Porter rider" });
     }
   }
 );
@@ -385,7 +403,9 @@ app.post("/porter/webhook", async (req, res) => {
     await handlePorterWebhook(rawBody, signature, req.body);
     res.status(200).json({ status: "success" });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Porter webhook failed" });
+    // B2-S1 (H-M3/C4): the service throws 401-ready auth errors (batch-1) —
+    // map them to 401 (never 500-retry a forged webhook into a retry loop).
+    res.status((err as any)?.statusCode || 500).json({ error: err.message || "Porter webhook failed" });
   }
 });
 

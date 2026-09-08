@@ -58,6 +58,7 @@ vi.mock("firebase-admin", () => {
 import {
   calculateOrderPricing,
   computeItemUnitPrice,
+  repriceOrderForVerification,
 } from "../src/modules/payments/pricing.engine";
 
 describe("Pricing Engine", () => {
@@ -176,5 +177,100 @@ describe("Pricing Engine", () => {
     expect(breakdown.discount).toBe(0);
     // GST = 5% of 400 = 20; delivery fee defaults to 0 when not provided
     expect(breakdown.grandTotal).toBe(435); // 400 + 15 + 0 + 20
+  });
+
+  it("prices cash and online identically for the same cart (single truth)", async () => {
+    // The engine takes no payment-method input: the same cart priced twice
+    // (cash leg vs online leg) must produce the identical grand total.
+    const cart = {
+      items: [
+        {
+          id: "1",
+          productId: "p1",
+          name: "Burger",
+          price: 200,
+          quantity: 2,
+        },
+      ],
+      branchId: "branch_ahmedabad_1",
+      orderType: "delivery" as const,
+      deliveryFee: 50,
+      packagingFee: 15,
+    };
+    const cashLeg = await calculateOrderPricing(cart);
+    const onlineLeg = await calculateOrderPricing({ ...cart });
+    expect(onlineLeg.grandTotal).toBe(cashLeg.grandTotal);
+    expect(onlineLeg.grandTotal).toBe(485);
+  });
+});
+
+describe("repriceOrderForVerification (B2-S1 server truth)", () => {
+  const storedCart = {
+    items: [
+      {
+        id: "1",
+        productId: "p1",
+        name: "Burger",
+        price: 200,
+        quantity: 2,
+      },
+    ],
+    branchId: "branch_ahmedabad_1",
+    orderType: "delivery",
+    deliveryFee: 50,
+    packagingFee: 15,
+  };
+
+  it("matches when the stored total equals the server recomputation", async () => {
+    const res = await repriceOrderForVerification({
+      ...storedCart,
+      pricing: { grandTotal: 485 },
+    });
+    expect(res.matches).toBe(true);
+    expect(res.expectedGrandTotal).toBe(485);
+    expect(res.expectedPaise).toBe(48500);
+    expect(res.storedPaise).toBe(48500);
+  });
+
+  it("mismatches when the stored total drifted from catalog truth", async () => {
+    const res = await repriceOrderForVerification({
+      ...storedCart,
+      pricing: { grandTotal: 400 }, // tampered/stale total
+    });
+    expect(res.matches).toBe(false);
+    expect(res.expectedPaise).toBe(48500);
+    expect(res.storedPaise).toBe(40000);
+  });
+
+  it("reports no match when no stored total exists", async () => {
+    const res = await repriceOrderForVerification({ ...storedCart });
+    expect(res.matches).toBe(false);
+    expect(res.storedPaise).toBeNull();
+    expect(res.expectedPaise).toBe(48500);
+  });
+
+  it("throws 422 UNPRICEABLE on missing items instead of coercing", async () => {
+    const err: any = await repriceOrderForVerification({
+      branchId: "branch_ahmedabad_1",
+      orderType: "delivery",
+      pricing: { grandTotal: 485 },
+    }).then(
+      () => null,
+      (e) => e
+    );
+    expect(err?.code).toBe("UNPRICEABLE");
+    expect(err?.statusCode).toBe(422);
+  });
+
+  it("throws 422 UNPRICEABLE on an unknown order type", async () => {
+    const err: any = await repriceOrderForVerification({
+      ...storedCart,
+      orderType: "drone",
+    }).then(
+      () => null,
+      (e) => e
+    );
+    expect(err?.code).toBe("UNPRICEABLE");
+    expect(err?.statusCode).toBe(422);
   });
 });

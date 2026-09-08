@@ -139,17 +139,106 @@ export function normalizePorterEvent(event: string | undefined | null): string {
   return e;
 }
 
+/** Pending-claim lease: a crash between claim and POST must not park the
+ * order in dispatch_pending forever (every future book would 202). */
+const PORTER_DISPATCH_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+function porterClaimFreshMs(claimedAt: any): number {
+  return claimedAt && typeof claimedAt.toMillis === "function" ? claimedAt.toMillis() : 0;
+}
+
+function dispatchInProgressError(): Error {
+  // Immediate 202 (no blocking poll): the client retries book/rebook with the
+  // same order — by then the winning tap has settled. Posting our own booking
+  // here is exactly the double-book this guards.
+  const retry: any = new Error(
+    "Dispatch already in progress for this order — please retry in a couple of seconds (no second rider will be booked)."
+  );
+  retry.statusCode = 202;
+  retry.code = "DISPATCH_IN_PROGRESS";
+  retry.retryAfterMs = 2000;
+  return retry;
+}
+
+function storedDispatchSummary(d: any): any {
+  return {
+    porterOrderId: d.porterOrderId,
+    riderName: d.riderName,
+    riderPhone: d.riderPhone,
+    riderVehicleNumber: d.riderVehicleNumber,
+    trackingUrl: d.riderTrackingUrl,
+    status: "dispatched",
+    dispatchSource: d.dispatchSource,
+    geoSource: d.dispatchGeoSource,
+    reused: true as const,
+  };
+}
+
+/**
+ * Per-order dispatch gate (B2-S1): returns a stored summary for idempotent
+ * replay, throws 202 on a fresh competing claim, or claims dispatch_pending
+ * and returns null (caller proceeds to POST). Claim-then-work inside a
+ * transaction when available; read-check + direct claim on shims without it.
+ */
+async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | null> {
+  const isDispatched = (d: any): boolean =>
+    !!d?.porterOrderId && ["dispatched", "in_transit"].includes(d?.deliveryStatus);
+  const isFreshPending = (d: any): boolean =>
+    d?.porterDispatchStatus === "dispatch_pending" &&
+    Date.now() - porterClaimFreshMs(d?.porterDispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS;
+  const claimWrite = {
+    porterDispatchStatus: "dispatch_pending",
+    porterDispatchClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  if (db && typeof (db as any).runTransaction === "function") {
+    const outcome: any = await (db as any).runTransaction(async (tx: any) => {
+      const fresh = await tx.get(orderDoc.ref);
+      const d = (fresh.exists ? fresh.data() : undefined) as any;
+      if (!d) return { claimed: true };
+      if (isDispatched(d)) return { reuse: true, data: d };
+      // Another tap owns the booking right now — never POST ours. Stale
+      // claims (>10 min, owner crashed) are taken over below.
+      if (isFreshPending(d)) return { busy: true };
+      tx.set(orderDoc.ref, claimWrite, { merge: true });
+      return { claimed: true };
+    });
+    if (outcome?.reuse) return storedDispatchSummary(outcome.data);
+    if (outcome?.busy) throw dispatchInProgressError();
+    return null;
+  }
+
+  // Fallback for Firestore shims without transactions (tests): same rules on
+  // the already-read order. Concurrent taps are serialized by the caller's
+  // per-order pending UI state (partner H-M8 fix); this is the last guard.
+  if (isDispatched(order)) return storedDispatchSummary(order);
+  if (isFreshPending(order)) throw dispatchInProgressError();
+  await orderDoc.ref.set(claimWrite, { merge: true });
+  return null;
+}
+
 /**
  * Dispatches Porter 3PL courier rider for an order from the Partner POS.
+ *
+ * Idempotent per order (B2-S1, H-M8 double-book): an already-dispatched order
+ * replays its stored dispatch instead of POSTing a second booking; concurrent
+ * taps serialize on a per-order pending claim (fresh claim → immediate 202
+ * retry signal, stale claim → takeover). Fail-closed GPS: delivery dispatch
+ * without drop coordinates is refused (422) — never sent to fallback
+ * defaults. Claim lifecycle: dispatch_pending → dispatched | dispatch_failed.
  */
 export async function bookPorterRider(
   orderId: string,
   staffName?: string,
-  caller?: StaffCaller
+  caller?: StaffCaller,
+  opts?: { idempotencyKey?: string }
 ) {
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
-    throw new Error(`Order ${orderId} not found`);
+    const missing: any = new Error(`Order ${orderId} not found`);
+    missing.statusCode = 404;
+    missing.code = "ORDER_NOT_FOUND";
+    throw missing;
   }
 
   const order = orderDoc.data()!;
@@ -166,6 +255,22 @@ export async function bookPorterRider(
   if (orderType === "delivery" && !(drop?.street || drop?.full || (drop?.lat && drop?.lng))) {
     throw new Error("Delivery address is incomplete — add street or map pin, then retry dispatch.");
   }
+  // Fail-closed GPS (B2-S1, H-R19): a textual address without coordinates must
+  // never dispatch a rider to fallback defaults — the courier would drive to
+  // the wrong pin on a paid booking. Pin the address first (422, retryable).
+  if (orderType === "delivery" && !(drop?.lat && drop?.lng)) {
+    const noGps: any = new Error(
+      "Delivery location is missing map coordinates — pin the customer address on the map, then retry dispatch."
+    );
+    noGps.statusCode = 422;
+    noGps.code = "DISPATCH_GPS_MISSING";
+    throw noGps;
+  }
+
+  // Per-order idempotency gate: replay + pending claim live here (before any
+  // external POST) so neither the mock path nor the live path can double-book.
+  const reuse = await claimPorterDispatch(orderDoc, order);
+  if (reuse) return reuse;
 
   const pickupLat = order.branchCoordinates?.lat || 23.0131;
   const pickupLng = order.branchCoordinates?.lng || 72.5085;
@@ -288,6 +393,21 @@ export async function bookPorterRider(
         orderId,
         branchId: order.branchId,
       });
+      // Release the pending claim as failed (retryable): without this a
+      // gateway outage parks every affected order in dispatch_pending until
+      // the 10-minute stale-takeover — with it, staff can retry immediately.
+      try {
+        await orderDoc.ref.set(
+          {
+            porterDispatchStatus: "dispatch_failed",
+            porterDispatchError: err?.message || "Porter booking failed",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch {
+        // Best-effort: the snapshot above is the durable trail.
+      }
       throw err;
     }
   }
@@ -297,6 +417,8 @@ export async function bookPorterRider(
     {
       porterOrderId: dispatchResult.porterOrderId,
       deliveryStatus: "dispatched",
+      porterDispatchStatus: "dispatched",
+      porterDispatchError: null,
       riderName: dispatchResult.riderName,
       riderPhone: dispatchResult.riderPhone,
       riderVehicleNumber: dispatchResult.riderVehicleNumber,
@@ -529,13 +651,32 @@ export async function handlePorterWebhook(
 
 /**
  * 1-Click re-booking for cancelled Porter riders.
+ *
+ * Guarded (B2-S1, H-M8/H22): only orders the courier actually dropped
+ * (rider_cancelled / needs_review / dispatch_failed, or an explicit
+ * needsRebook flag) may rebook — rebooking a live dispatch would pay for a
+ * second rider on the same order.
  */
 export async function rebookPorterRider(
   orderId: string,
   staffName?: string,
-  caller?: StaffCaller
+  caller?: StaffCaller,
+  opts?: { idempotencyKey?: string }
 ) {
-  return await bookPorterRider(orderId, staffName, caller);
+  const orderSnap = await db.collection("orders").doc(orderId).get();
+  const order = (orderSnap.exists ? orderSnap.data() : undefined) as any;
+  const rebookable =
+    order?.needsRebook === true ||
+    ["rider_cancelled", "needs_review", "dispatch_failed"].includes(order?.deliveryStatus);
+  if (!rebookable) {
+    const err: any = new Error(
+      "This order is not waiting for a rebook — only cancelled, failed, or review-flagged dispatches can be rebooked."
+    );
+    err.statusCode = 409;
+    err.code = "NOT_REBOOKABLE";
+    throw err;
+  }
+  return await bookPorterRider(orderId, staffName, caller, opts);
 }
 
 /**
