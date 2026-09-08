@@ -17,6 +17,15 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
     ? req.body
     : JSON.stringify(req.body);
 
+  // Fail-closed: without a configured webhook secret there is nothing to
+  // verify against — deny instead of checking against a mock/empty secret.
+  // (Mock-gateway bypass below is owned by Batch 1 S2 env lockdown.)
+  if (!config.mock.paymentGateway && !config.razorpay.webhookSecret) {
+    console.warn("[Razorpay Webhook] webhook secret missing — denying webhook (fail-closed)");
+    res.status(401).json({ error: "Webhook verification unavailable" });
+    return;
+  }
+
   if (!config.mock.paymentGateway) {
     const isValid = verifyRazorpayWebhookSignature(
       rawBody,
@@ -24,15 +33,38 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       config.razorpay.webhookSecret
     );
     if (!isValid) {
+      // 401 (never 500): a forged signature is an auth failure, not a
+      // retryable server error — Razorpay must not retry forged deliveries
+      // into a 500 loop, and 500s page on-call for an attacker probe.
       console.warn("[Razorpay Webhook] Invalid signature received");
-      res.status(400).json({ error: "Invalid webhook signature" });
+      res.status(401).json({ error: "Invalid webhook signature" });
       return;
     }
   }
 
   const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
   const event = payload.event;
-  const eventId = payload.id || `evt_${Date.now()}`;
+  // Fail-closed idempotency key: a payload without a real Razorpay event id
+  // is rejected outright. The old `|| evt_Date.now()` fallback minted a fresh
+  // key per delivery, so every Razorpay retry double-fired KOT + status flips.
+  const eventId = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : null;
+  if (!eventId) {
+    console.warn("[Razorpay Webhook] missing payload.id — rejecting (fail-closed, no order write)");
+    res.status(401).json({ error: "Missing webhook event id" });
+    return;
+  }
+
+  // Freshness window: Razorpay stamps top-level `created_at` (Unix seconds).
+  // Deliveries older than the window are stale replays — reject. Payloads
+  // without the stamp predate this check and stay accepted (the idempotency
+  // claim below still dedups them).
+  const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
+  const createdAtSec = typeof payload.created_at === "number" ? payload.created_at : null;
+  if (createdAtSec !== null && Date.now() - createdAtSec * 1000 > FRESHNESS_WINDOW_MS) {
+    console.warn("[Razorpay Webhook] stale event delivery — rejecting", { eventId, event });
+    res.status(401).json({ error: "Stale webhook event" });
+    return;
+  }
 
   // Idempotency CLAIM (not check-then-act): the old code wrote the audit doc
   // only AFTER the slow FCM + KOT push, so a Razorpay retry landing mid-push

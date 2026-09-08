@@ -26,7 +26,7 @@ import {
   autoRefund,
   retryPendingRouteTransfersWorker,
 } from "./modules/payments/razorpay.service";
-import { handleRazorpayWebhook } from "./modules/payments/razorpay.webhook";
+import { handleRazorpayWebhook } from "./modules/payments/webhookHandler";
 import {
   syncPetpoojaMenu,
   handlePetpoojaStockWebhook,
