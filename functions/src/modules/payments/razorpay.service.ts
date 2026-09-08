@@ -415,9 +415,11 @@ async function finishVerifiedPayment(args: {
   };
 
   if (deliveryOtp) {
+    // Fail-closed OTP secret (H-M24): dedicated OTP_HMAC_SECRET, never the
+    // webhook secret. Mechanical fallout of security.ts — logic unchanged.
     updatePayload.deliveryOtpHash = computeHmacSha256(
       deliveryOtp,
-      getOtpHmacSecret(config.razorpay.webhookSecret)
+      getOtpHmacSecret()
     );
   }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // These tests drive the REAL handleRazorpayWebhook (not a local
 // re-implementation): replay idempotency via the audit-claim doc, stale-claim
@@ -87,6 +87,7 @@ vi.mock("firebase-admin", () => {
 });
 
 import { handleRazorpayWebhook } from "../src/modules/payments/webhookHandler";
+import { config } from "../src/config/env";
 
 function mockReqRes(payload: any) {
   const req: any = { headers: {}, body: payload };
@@ -117,6 +118,22 @@ const capturedPayload = (eventId: string) => ({
 });
 
 describe("Razorpay webhook idempotency (real handler)", () => {
+  // Explicit sandbox opt-in (was auto-mock): this suite exercises
+  // idempotency, not auth — auth-denial is covered by webhook.reject.test.ts
+  // (S1) and env.failclosed.test.ts (S3). Fail-closed env defaults to live.
+  let prevPg = false;
+  let prevPp = false;
+  beforeEach(() => {
+    prevPg = config.mock.paymentGateway;
+    prevPp = config.mock.petpoojaPos;
+    config.mock.paymentGateway = true;
+    config.mock.petpoojaPos = true;
+  });
+  afterEach(() => {
+    config.mock.paymentGateway = prevPg;
+    config.mock.petpoojaPos = prevPp;
+  });
+
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];
     savedDocs["orders/order_replay_1"] = {

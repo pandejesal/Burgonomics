@@ -68,25 +68,22 @@ export function verifyPorterWebhookSignature(
   return timingSafeEqual(expectedSignature, signature);
 }
 
-let otpSecretFallbackWarned = false;
-
 /**
- * Dedicated HMAC secret for delivery OTP hashes. Falls back to the Razorpay
- * webhook secret only when OTP_HMAC_SECRET is unset (warns once) so existing
- * hashes keep verifying until ops sets the dedicated secret — after which
- * the webhook secret can rotate freely without invalidating OTPs.
+ * Dedicated HMAC secret for delivery OTP hashes — FAIL-CLOSED (H-M24/C4/M16).
+ * Throws when OTP_HMAC_SECRET is unset/empty. The Razorpay webhook secret is
+ * NEVER reused: sharing one secret across OTPs and webhooks means a webhook
+ * rotation invalidates outstanding OTPs (or a leaked OTP hash weakens webhook
+ * trust). Set OTP_HMAC_SECRET before going live; see functions/.env.example.
  */
-export function getOtpHmacSecret(webhookSecret: string): string {
+export function getOtpHmacSecret(): string {
   const dedicated = process.env.OTP_HMAC_SECRET;
-  if (dedicated) return dedicated;
-  if (!otpSecretFallbackWarned) {
-    otpSecretFallbackWarned = true;
-    console.warn(
-      "[security] OTP_HMAC_SECRET unset — falling back to webhook secret. " +
-        "Set a dedicated OTP_HMAC_SECRET so webhook rotation never invalidates OTPs."
+  if (!dedicated) {
+    throw new Error(
+      "FATAL: OTP_HMAC_SECRET is unset — set a dedicated OTP HMAC secret in " +
+        "functions/.env. The Razorpay webhook secret is never reused for OTPs."
     );
   }
-  return webhookSecret;
+  return dedicated;
 }
 
 

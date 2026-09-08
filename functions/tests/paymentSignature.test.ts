@@ -58,14 +58,25 @@ import { config } from "../src/config/env";
 
 describe("Payment signature enforcement (live HMAC path)", () => {
   const prevMock = config.mock.paymentGateway;
+  const prevKeySecret = config.razorpay.keySecret;
+  let prevOtpSecret: string | undefined;
 
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];
     config.mock.paymentGateway = false;
+    // Fail-closed env leaves keySecret empty (denies everything); the live
+    // path under test needs an explicit test secret — never a mock literal.
+    config.razorpay.keySecret = "test_rzp_key_secret_sig_only";
+    // verifyPayment mints the delivery OTP hash via the dedicated secret.
+    prevOtpSecret = process.env.OTP_HMAC_SECRET;
+    process.env.OTP_HMAC_SECRET = "test_otp_hmac_sig_only";
   });
 
   afterEach(() => {
     config.mock.paymentGateway = prevMock;
+    config.razorpay.keySecret = prevKeySecret;
+    if (prevOtpSecret === undefined) delete process.env.OTP_HMAC_SECRET;
+    else process.env.OTP_HMAC_SECRET = prevOtpSecret;
   });
 
   it("rejects a forged signature before touching the order", async () => {

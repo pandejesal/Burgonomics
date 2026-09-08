@@ -1,21 +1,33 @@
 import * as dotenv from "dotenv";
 dotenv.config();
 
+// Fail-closed env (H-M2/C3): NO mock literals anywhere in this file. Every
+// secret defaults to "" (unset). Webhook/signature verifiers treat an empty
+// secret as "deny" (their verify*() return false when !secret), so booting
+// with an empty env denies forged webhooks with 401/400 — it never mints
+// order_mock_* payable orders. Mock mode engages ONLY on explicit
+// MOCK_*="true" (exact string match); a missing/empty/renamed value is live.
+//
+/** Explicit opt-in: only the exact string "true" enables a mock flag. */
+function explicitMock(flag: string | undefined): boolean {
+  return flag === "true";
+}
+
 export const config = {
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID || "burgonomics-7faa8",
     region: process.env.FIREBASE_REGION || "asia-south1",
   },
   razorpay: {
-    keyId: process.env.RAZORPAY_KEY_ID || "rzp_test_mockKey123",
-    keySecret: process.env.RAZORPAY_KEY_SECRET || "mockSecretKey456",
-    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "whsec_mockSecret789",
+    keyId: process.env.RAZORPAY_KEY_ID || "",
+    keySecret: process.env.RAZORPAY_KEY_SECRET || "",
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "",
   },
   petpooja: {
     enabled: process.env.PETPOOJA_ENABLED !== "false",
-    appKey: process.env.PETPOOJA_APP_KEY || "mockPetpoojaAppKey",
-    appSecret: process.env.PETPOOJA_APP_SECRET || "mockPetpoojaSecret",
-    accessToken: process.env.PETPOOJA_ACCESS_TOKEN || "mockPetpoojaToken",
+    appKey: process.env.PETPOOJA_APP_KEY || "",
+    appSecret: process.env.PETPOOJA_APP_SECRET || "",
+    accessToken: process.env.PETPOOJA_ACCESS_TOKEN || "",
     menuUrl:
       process.env.PETPOOJA_MENU_URL ||
       "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/mapped_restaurant_menus",
@@ -31,9 +43,9 @@ export const config = {
   },
   porter: {
     enabled: process.env.PORTER_ENABLED !== "false",
-    apiKey: process.env.PORTER_API_KEY || "prt_live_mockKey",
-    customerId: process.env.PORTER_CUSTOMER_ID || "cust_mock123",
-    webhookSecret: process.env.PORTER_WEBHOOK_SECRET || "prt_whsec_mockSecret",
+    apiKey: process.env.PORTER_API_KEY || "",
+    customerId: process.env.PORTER_CUSTOMER_ID || "",
+    webhookSecret: process.env.PORTER_WEBHOOK_SECRET || "",
     baseUrl: process.env.PORTER_BASE_URL || "https://api.porter.in",
   },
   alerts: {
@@ -44,34 +56,90 @@ export const config = {
     enforcement: process.env.APP_CHECK_ENFORCEMENT === "true",
   },
   mock: {
-    paymentGateway:
-      process.env.MOCK_PAYMENT_GATEWAY === "true" ||
-      !process.env.RAZORPAY_KEY_ID ||
-      process.env.RAZORPAY_KEY_ID.includes("mock"),
-    porterDispatch:
-      process.env.MOCK_PORTER_DISPATCH === "true" ||
-      !process.env.PORTER_API_KEY ||
-      process.env.PORTER_API_KEY.includes("mock"),
-    petpoojaPos:
-      process.env.MOCK_PETPOOJA_POS === "true" ||
-      !process.env.PETPOOJA_APP_KEY ||
-      process.env.PETPOOJA_APP_KEY.includes("mock"),
-    },
+    paymentGateway: explicitMock(process.env.MOCK_PAYMENT_GATEWAY),
+    porterDispatch: explicitMock(process.env.MOCK_PORTER_DISPATCH),
+    petpoojaPos: explicitMock(process.env.MOCK_PETPOOJA_POS),
+  },
 };
 
+/**
+ * Fail-closed secret accessor for webhook/HMAC paths. Throws — never returns
+ * a mock literal — when the secret is unset, so a misconfigured boot denies
+ * instead of verifying against a well-known value.
+ */
+export function requireEnvSecret(
+  value: string | undefined,
+  envName: string
+): string {
+  if (!value) {
+    throw new Error(
+      `FATAL: ${envName} is unset — refusing to verify webhooks against an empty secret. ` +
+        `Set ${envName} in functions/.env (dotenv file, not functions:config).`
+    );
+  }
+  return value;
+}
+
+/** Names of the secrets a live boot must provide (docs live in .env.example). */
+const REQUIRED_SECRETS: Array<[envName: string, value: () => string]> = [
+  ["RAZORPAY_KEY_ID", () => config.razorpay.keyId],
+  ["RAZORPAY_KEY_SECRET", () => config.razorpay.keySecret],
+  ["RAZORPAY_WEBHOOK_SECRET", () => config.razorpay.webhookSecret],
+  ["PETPOOJA_APP_KEY", () => config.petpooja.appKey],
+  ["PETPOOJA_APP_SECRET", () => config.petpooja.appSecret],
+  ["PETPOOJA_ACCESS_TOKEN", () => config.petpooja.accessToken],
+  ["PORTER_API_KEY", () => config.porter.apiKey],
+  ["PORTER_WEBHOOK_SECRET", () => config.porter.webhookSecret],
+  ["OTP_HMAC_SECRET", () => process.env.OTP_HMAC_SECRET || ""],
+];
+
+/**
+ * Throws listing every unset secret. Call at boot when the process must not
+ * run half-configured (production); webhook handlers additionally deny
+ * per-request via empty-secret checks, so an empty env can never accept a
+ * forged webhook even where this assert is not wired.
+ */
+export function assertWebhookSecrets(): void {
+  const missing = REQUIRED_SECRETS.filter(([, read]) => !read()).map(
+    ([name]) => name
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `FATAL: missing secrets (${missing.join(", ")}) — set them in functions/.env ` +
+        `(dotenv file, not functions:config). Refusing to boot half-configured.`
+    );
+  }
+}
+
 // Fail-fast guard for India production: never silently run live payments,
-// dispatch, or POS sync in mock mode. (Mock Porter/Petpooja in prod means
-// fake riders and phantom KOTs — worse than refusing to boot.)
+// dispatch, or POS sync in mock mode or half-configured. (Mock Porter/Petpooja
+// in prod means fake riders and phantom KOTs — worse than refusing to boot.)
 export function assertProductionKeys(): void {
   if (process.env.NODE_ENV === "production") {
-    if (!process.env.RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID.includes("mock")) {
-      throw new Error("FATAL: RAZORPAY_KEY_ID missing or mock in production — set live Razorpay keys in functions/.env (dotenv file, not functions:config)");
+    assertWebhookSecrets();
+    const activeMocks = (
+      [
+        ["MOCK_PAYMENT_GATEWAY", config.mock.paymentGateway],
+        ["MOCK_PORTER_DISPATCH", config.mock.porterDispatch],
+        ["MOCK_PETPOOJA_POS", config.mock.petpoojaPos],
+      ] as Array<[string, boolean]>
+    )
+      .filter(([, on]) => on)
+      .map(([name]) => name);
+    if (activeMocks.length > 0) {
+      throw new Error(
+        `FATAL: mock mode active in production (${activeMocks.join(", ")}) — ` +
+          `fake riders and phantom KOTs are worse than refusing to boot.`
+      );
     }
-    if (!process.env.PORTER_API_KEY || process.env.PORTER_API_KEY.includes("mock")) {
-      throw new Error("FATAL: PORTER_API_KEY missing or mock in production — complete Porter onboarding and set functions/.env before going live");
-    }
-    if (!process.env.PETPOOJA_APP_KEY || process.env.PETPOOJA_APP_KEY.includes("mock")) {
-      throw new Error("FATAL: PETPOOJA_APP_KEY missing or mock in production — set live Petpooja keys in functions/.env before going live");
+    const mockLike = REQUIRED_SECRETS.filter(([, read]) =>
+      read().toLowerCase().includes("mock")
+    ).map(([name]) => name);
+    if (mockLike.length > 0) {
+      throw new Error(
+        `FATAL: mock-like secrets in production (${mockLike.join(", ")}) — ` +
+          `set live keys in functions/.env (dotenv file, not functions:config).`
+      );
     }
   }
 }

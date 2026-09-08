@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
@@ -88,8 +88,19 @@ import {
   pushItemStockToPetpooja,
   handlePetpoojaMenuWebhook,
 } from "../src/modules/petpooja";
+import { config } from "../src/config/env";
 
 describe("Petpooja POS Bridge Service", () => {
+  // Explicit sandbox opt-in (was auto-mock): fail-closed env defaults to
+  // live, so tests exercising mock paths must set MOCK_PETPOOJA_POS.
+  let prevMock = false;
+  beforeEach(() => {
+    prevMock = config.mock.petpoojaPos;
+    config.mock.petpoojaPos = true;
+  });
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+  });
   it("synchronizes mock catalog into Firestore with items and categories", async () => {
     const result = await syncPetpoojaMenu("branch_ahmedabad_1");
     expect(result).toBeDefined();

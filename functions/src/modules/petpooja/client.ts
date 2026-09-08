@@ -12,10 +12,12 @@ export interface PetpoojaClientConfig {
 }
 
 export function getPetpoojaConfig(): PetpoojaClientConfig {
+  // Fail-closed (H-M2/C3): no mock literals. Unset secrets stay "" and every
+  // verifier below denies on empty — never verify against a well-known value.
   return {
-    appKey: config.petpooja.appKey || "mock_app_key",
-    appSecret: config.petpooja.appSecret || "mock_app_secret",
-    accessToken: config.petpooja.accessToken || "mock_access_token",
+    appKey: config.petpooja.appKey || "",
+    appSecret: config.petpooja.appSecret || "",
+    accessToken: config.petpooja.accessToken || "",
     menuUrl:
       config.petpooja.menuUrl ||
       "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/mapped_restaurant_menus",
@@ -30,15 +32,13 @@ export function getPetpoojaConfig(): PetpoojaClientConfig {
 
 /**
  * Validates HMAC SHA256 signature for incoming Petpooja webhooks.
+ * Fail-closed: no mock bypass — empty secret or empty signature denies.
  */
 export function verifyPetpoojaSignature(
   rawBody: string,
   signature: string,
   appSecret?: string
 ): boolean {
-  if (config.mock.petpoojaPos) {
-    return true; // Bypass signature verification in mock mode
-  }
   const secret = appSecret || config.petpooja.appSecret;
   if (!secret || !signature) return false;
 

@@ -227,24 +227,28 @@ export async function requireAppCheck(
 }
 
 /**
- * Webhook authentication for Petpooja POS bridge with timing-safe comparison.
+ * Webhook authentication for Petpooja POS bridge — FAIL-CLOSED (H-M3/C4).
+ *
+ * Single inbound secret: PETPOOJA_APP_KEY only, presented via headers
+ * (x-petpooja-token, content_key, or Bearer authorization). The body.app_key
+ * fallback is REMOVED (caller-controlled bodies must not authenticate), and
+ * our OUTBOUND bearers (access_token/app_secret) are never accepted inbound —
+ * accepting them would let anyone who glimpsed one call webhooks.
+ * No mock bypass: an unset appKey denies everything with 401 (never
+ * next(), never 500).
  */
 export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFunction): void {
-  if (config.mock.petpoojaPos) {
-    next();
+  const inboundSecret = config.petpooja.appKey;
+  if (!inboundSecret) {
+    res.status(401).json({ error: "Unauthorized: Petpooja webhook not configured" });
     return;
   }
 
-  // Headers first. Body fallback is app_key ONLY: Petpooja's own protocol
-  // echoes app_key in callback bodies, but access_token/app_secret must never
-  // be accepted from a caller-supplied body (they are OUR outbound bearers —
-  // accepting them inbound lets anyone who glimpsed one call webhooks).
   const tokenHeader =
     (req.headers["x-petpooja-token"] as string) ||
     (req.headers["content_key"] as string) ||
     (req.headers["content-key"] as string) ||
-    (req.headers["authorization"] as string) ||
-    req.body?.app_key;
+    (req.headers["authorization"] as string);
 
   if (!tokenHeader || typeof tokenHeader !== "string") {
     res.status(401).json({ error: "Unauthorized: Missing or invalid Petpooja credentials" });
@@ -255,15 +259,7 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     ? tokenHeader.split("Bearer ")[1].trim()
     : tokenHeader.trim();
 
-  const validTokens = [
-    config.petpooja.appKey,
-    config.petpooja.accessToken,
-    config.petpooja.appSecret,
-  ].filter((t): t is string => Boolean(t) && typeof t === "string");
-
-  const isValid = validTokens.some((validToken) => timingSafeEqual(token, validToken));
-
-  if (isValid) {
+  if (token && timingSafeEqual(token, inboundSecret)) {
     next();
     return;
   }

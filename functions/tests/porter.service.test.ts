@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
@@ -103,6 +103,34 @@ import { checkBranchDeliveryServiceability } from "../src/core/utils/geo.utils";
 import { computeHmacSha256 } from "../src/core/security";
 import { config } from "../src/config/env";
 
+// Fail-closed test rig (H-M2/H-M3): sandbox paths engage ONLY via explicit
+// opt-in flags — never auto-mock. Webhook + OTP secrets are test-only values.
+const TEST_PORTER_WEBHOOK_SECRET = "test_porter_whsec_vitest_only";
+const TEST_OTP_SECRET = "test_otp_hmac_vitest_only";
+
+let prevMockPorter = false;
+let prevPorterSecret = "";
+let prevOtpSecret: string | undefined;
+
+beforeEach(() => {
+  prevMockPorter = config.mock.porterDispatch;
+  config.mock.porterDispatch = true;
+  prevPorterSecret = config.porter.webhookSecret;
+  config.porter.webhookSecret = TEST_PORTER_WEBHOOK_SECRET;
+  prevOtpSecret = process.env.OTP_HMAC_SECRET;
+  process.env.OTP_HMAC_SECRET = TEST_OTP_SECRET;
+});
+
+afterEach(() => {
+  config.mock.porterDispatch = prevMockPorter;
+  config.porter.webhookSecret = prevPorterSecret;
+  if (prevOtpSecret === undefined) delete process.env.OTP_HMAC_SECRET;
+  else process.env.OTP_HMAC_SECRET = prevOtpSecret;
+});
+
+const porterSig = (rawBody: string) =>
+  computeHmacSha256(rawBody, TEST_PORTER_WEBHOOK_SECRET);
+
 describe("Porter Logistics Service", () => {
   describe("getDeliveryQuote", () => {
     it("calculates live fare quote based on pickup and drop distance", async () => {
@@ -160,8 +188,8 @@ describe("Porter Logistics Service", () => {
     });
 
     it("processes Porter webhook transit and delivery events", async () => {
-      // 1. In Transit
-      await handlePorterWebhook("raw_body", "sig", {
+      // 1. In Transit (valid HMAC — the enforced live path, no mock bypass)
+      await handlePorterWebhook("raw_body", porterSig("raw_body"), {
         event: "IN_TRANSIT",
         request_id: "REQ-order_prt_101",
         order_id: "PRTR-ORD-12345",
@@ -173,7 +201,7 @@ describe("Porter Logistics Service", () => {
       expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("in_transit");
 
       // 2. Delivered
-      await handlePorterWebhook("raw_body", "sig", {
+      await handlePorterWebhook("raw_body", porterSig("raw_body"), {
         event: "DELIVERED",
         request_id: "REQ-order_prt_101",
         order_id: "PRTR-ORD-12345",
@@ -184,6 +212,23 @@ describe("Porter Logistics Service", () => {
         terminal: true,
       });
       expect(savedDocs["orders/order_prt_101"]?.deliveryStatus).toBe("delivered");
+    });
+
+    it("rejects a forged Porter webhook with 401 semantics and zero writes", async () => {
+      const before = Object.keys(savedDocs).length;
+      const err: any = await handlePorterWebhook("raw_body", "forged_signature", {
+        event: "DELIVERED",
+        request_id: "REQ-order_prt_forged",
+        order_id: "PRTR-ORD-99999",
+      }).then(
+        () => null,
+        (e) => e
+      );
+      expect(err?.message).toMatch(/Invalid Porter webhook signature/);
+      expect(err?.statusCode).toBe(401);
+      // Fail-closed: no order flip, no parked doc, no writes at all.
+      expect(Object.keys(savedDocs).length).toBe(before);
+      expect(savedDocs["orders/order_prt_forged"]).toBeUndefined();
     });
   });
 
@@ -196,7 +241,7 @@ describe("Porter Logistics Service", () => {
     it("verifies valid customer OTP and marks order delivered", async () => {
       savedDocs["orders/order_otp_101"] = {
         id: "order_otp_101",
-        deliveryOtpHash: computeHmacSha256("4589", config.razorpay.webhookSecret),
+        deliveryOtpHash: computeHmacSha256("4589", TEST_OTP_SECRET),
         status: "out_for_delivery",
       };
 
@@ -218,7 +263,7 @@ describe("Porter Logistics Service", () => {
     it("rejects invalid delivery OTP with descriptive error", async () => {
       savedDocs["orders/order_otp_102"] = {
         id: "order_otp_102",
-        deliveryOtpHash: computeHmacSha256("8899", config.razorpay.webhookSecret),
+        deliveryOtpHash: computeHmacSha256("8899", TEST_OTP_SECRET),
         status: "out_for_delivery",
       };
 
@@ -233,7 +278,7 @@ describe("Porter Logistics Service", () => {
     it("locks out after 3 wrong attempts and recovers on expiry", async () => {
       savedDocs["orders/order_otp_109"] = {
         id: "order_otp_109",
-        deliveryOtpHash: computeHmacSha256("7777", config.razorpay.webhookSecret),
+        deliveryOtpHash: computeHmacSha256("7777", TEST_OTP_SECRET),
         status: "out_for_delivery",
       };
 
@@ -285,7 +330,7 @@ describe("Porter Logistics Service", () => {
       savedDocs["orders/order_branch_a"] = {
         id: "order_branch_a",
         branchId: "branch_surat_01",
-        deliveryOtpHash: computeHmacSha256("1111", config.razorpay.webhookSecret),
+        deliveryOtpHash: computeHmacSha256("1111", TEST_OTP_SECRET),
         status: "out_for_delivery",
       };
       const outsider = { uid: "staff_b", role: "branch_staff", branchIds: ["branch_ahmedabad_01"] };
@@ -309,7 +354,7 @@ describe("Porter Logistics Service", () => {
       savedDocs["orders/order_branch_b"] = {
         id: "order_branch_b",
         branchId: "branch_surat_01",
-        deliveryOtpHash: computeHmacSha256("2222", config.razorpay.webhookSecret),
+        deliveryOtpHash: computeHmacSha256("2222", TEST_OTP_SECRET),
         status: "out_for_delivery",
       };
       const insider = { uid: "staff_a", role: "branch_staff", branchIds: ["branch_surat_01"] };

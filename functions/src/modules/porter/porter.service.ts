@@ -313,6 +313,32 @@ export async function bookPorterRider(
 }
 
 /**
+ * Deterministic parked-event doc id: same webhook retry → same doc (merge,
+ * no duplicates). Sanitizes the event/order refs and mixes in a short hash
+ * of the raw body so distinct payloads sharing a ref never collide.
+ */
+export function porterParkDocId(
+  rawEvent: unknown,
+  porterOrderId: unknown,
+  orderId: unknown,
+  rawBody: string
+): string {
+  const slug = (v: unknown, fallback: string): string => {
+    const s = String(v ?? "").replace(/[^A-Za-z0-9_-]/g, "");
+    return (s || fallback).slice(0, 48);
+  };
+  const bodyHash = crypto
+    .createHash("sha256")
+    .update(rawBody || "")
+    .digest("hex")
+    .slice(0, 12);
+  return `upe_${slug(rawEvent, "unknown")}_${slug(
+    porterOrderId || orderId,
+    "noref"
+  )}_${bodyHash}`;
+}
+
+/**
  * Handles Porter Webhook driver lifecycle events with HMAC validation and normalized events.
  */
 export async function handlePorterWebhook(
@@ -320,15 +346,20 @@ export async function handlePorterWebhook(
   signature: string,
   payload: any
 ): Promise<void> {
-  if (!config.mock.porterDispatch) {
-    const isValid = verifyPorterWebhookSignature(
-      rawBody,
-      signature,
-      config.porter.webhookSecret
-    );
-    if (!isValid) {
-      throw new Error("Invalid Porter webhook signature");
-    }
+  // Fail-closed (H-M3/C4): the single inbound webhook secret is ALWAYS
+  // verified — no mock bypass. An empty/unset secret denies (verify returns
+  // false on empty), so an empty env can never accept a forged webhook.
+  const isValid = verifyPorterWebhookSignature(
+    rawBody,
+    signature,
+    config.porter.webhookSecret
+  );
+  if (!isValid) {
+    // statusCode lets the route map auth failures to 401 (never 500-retry);
+    // the route itself is owned by B1-S1/batch-2 — this throw changes no logic.
+    const authErr: any = new Error("Invalid Porter webhook signature");
+    authErr.statusCode = 401;
+    throw authErr;
   }
 
   const rawEvent = payload.event;
@@ -336,12 +367,17 @@ export async function handlePorterWebhook(
   const porterOrderId = payload.order_id;
   const orderId = payload.request_id ? payload.request_id.replace("REQ-", "") : null;
 
+  // Parked-event idempotency keys: deterministic per (event, order
+  // reference, body hash) so a retried webhook merges into ONE parked doc
+  // instead of minting upe_<Date.now()> duplicates on every retry.
+  const parkId = porterParkDocId(rawEvent, porterOrderId, orderId, rawBody);
+
   if (!orderId && !porterOrderId) {
     console.warn("[Porter Webhook] Dropping event with no order reference:", rawEvent);
     try {
       await db
         .collection("unmatched_porter_events")
-        .doc(`upe_${Date.now()}`)
+        .doc(parkId)
         .set(
           {
             rawEvent: rawEvent || null,
@@ -382,7 +418,7 @@ export async function handlePorterWebhook(
     try {
       await db
         .collection("unmatched_porter_events")
-        .doc(`upe_${porterOrderId || orderId || Date.now()}`)
+        .doc(parkId)
         .set(
           {
             orderId: orderId || null,
@@ -569,7 +605,7 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
   // orders are still verified until they are re-verified and migrated.
   const isValid = storedHash
     ? timingSafeEqual(
-        computeHmacSha256(enteredOtp, getOtpHmacSecret(config.razorpay.webhookSecret)),
+        computeHmacSha256(enteredOtp, getOtpHmacSecret()),
         storedHash
       )
     : timingSafeEqual(enteredOtp, legacyOtp);

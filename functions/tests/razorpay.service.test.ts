@@ -28,18 +28,18 @@ describe("Razorpay Service & Signature Verification", () => {
     expect(verifyRazorpaySignature(orderId, paymentId, "", secret)).toBe(false);
   });
 
-  describe("OTP HMAC secret separation", () => {
+  describe("OTP HMAC secret separation (fail-closed)", () => {
     afterEach(() => {
       delete process.env.OTP_HMAC_SECRET;
     });
 
     it("prefers the dedicated OTP_HMAC_SECRET when set", () => {
       process.env.OTP_HMAC_SECRET = "otp_dedicated_secret";
-      expect(getOtpHmacSecret("webhook_secret")).toBe("otp_dedicated_secret");
+      expect(getOtpHmacSecret()).toBe("otp_dedicated_secret");
     });
 
-    it("falls back to the webhook secret when unset", () => {
-      expect(getOtpHmacSecret("webhook_secret")).toBe("webhook_secret");
+    it("throws instead of falling back to the webhook secret when unset", () => {
+      expect(() => getOtpHmacSecret()).toThrow(/OTP_HMAC_SECRET is unset/);
     });
   });
 });

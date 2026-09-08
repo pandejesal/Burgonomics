@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi } from "vitest";
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
@@ -120,8 +120,41 @@ import {
   handlePorterWebhook,
   verifyDeliveryOtp,
 } from "../src/modules/porter/porter.service";
+import { config } from "../src/config/env";
+import { computeHmacSha256 } from "../src/core/security";
 
 describe("End-to-End Platform Integration Flow", () => {
+  // Explicit sandbox opt-in (was auto-mock): fail-closed env defaults to
+  // live, so this lifecycle suite opts into every mock flag + test secrets.
+  const TEST_PORTER_WEBHOOK_SECRET = "test_porter_whsec_e2e_only";
+  let prevMocks = { pg: false, porter: false, petpooja: false };
+  let prevPorterSecret = "";
+  let prevOtpSecret: string | undefined;
+  beforeEach(() => {
+    prevMocks = {
+      pg: config.mock.paymentGateway,
+      porter: config.mock.porterDispatch,
+      petpooja: config.mock.petpoojaPos,
+    };
+    config.mock.paymentGateway = true;
+    config.mock.porterDispatch = true;
+    config.mock.petpoojaPos = true;
+    prevPorterSecret = config.porter.webhookSecret;
+    config.porter.webhookSecret = TEST_PORTER_WEBHOOK_SECRET;
+    prevOtpSecret = process.env.OTP_HMAC_SECRET;
+    process.env.OTP_HMAC_SECRET = "test_otp_hmac_e2e_only";
+  });
+  afterEach(() => {
+    config.mock.paymentGateway = prevMocks.pg;
+    config.mock.porterDispatch = prevMocks.porter;
+    config.mock.petpoojaPos = prevMocks.petpooja;
+    config.porter.webhookSecret = prevPorterSecret;
+    if (prevOtpSecret === undefined) delete process.env.OTP_HMAC_SECRET;
+    else process.env.OTP_HMAC_SECRET = prevOtpSecret;
+  });
+  const porterSig = (rawBody: string) =>
+    computeHmacSha256(rawBody, TEST_PORTER_WEBHOOK_SECRET);
+
   const orderId = "ord_e2e_live_flow_001";
   const branchId = "branch_ahmedabad_cg_road";
 
@@ -241,8 +274,8 @@ describe("End-to-End Platform Integration Flow", () => {
     expect(dispatchResult.status).toBe("dispatched");
     expect(savedDocs[`orders/${orderId}`].deliveryStatus).toBe("dispatched");
 
-    // 8. Porter Webhook: IN_TRANSIT
-    await handlePorterWebhook("raw", "sig", {
+    // 8. Porter Webhook: IN_TRANSIT (valid HMAC — enforced live path)
+    await handlePorterWebhook("raw", porterSig("raw"), {
       event: "IN_TRANSIT",
       request_id: `REQ-${orderId}`,
       order_id: dispatchResult.porterOrderId,
