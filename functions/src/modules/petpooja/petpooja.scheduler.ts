@@ -6,14 +6,45 @@ import { dispatchFCM } from "../notifications/fcm.service";
 
 /**
  * Hourly Cron job to sync menus from Petpooja for all active branches in parallel chunks.
+ *
+ * Paginated (B4-S1, H10/M30): the old unbounded `branches` scan loaded every
+ * outlet into memory each tick. Pages of 100 via startAfter when the
+ * datastore supports it, else one bounded page of 100. Empty ticks return
+ * immediately without fanning out any sync work (M31).
  */
 export async function syncAllBranchesPetpoojaMenu(): Promise<{
   syncedBranches: number;
 }> {
-  const branchesSnap = await db.collection("branches").where("active", "==", true).get();
+  const PAGE_SIZE = 100;
+  const branchDocs: any[] = [];
+  const baseQuery = db.collection("branches").where("active", "==", true) as any;
+
+  if (typeof baseQuery.orderBy === "function") {
+    let lastDoc: any = null;
+    for (;;) {
+      let pageQuery = baseQuery.orderBy("__name__").limit(PAGE_SIZE);
+      if (lastDoc && typeof pageQuery.startAfter === "function") {
+        pageQuery = pageQuery.startAfter(lastDoc);
+      }
+      const snap = await pageQuery.get();
+      const docs = snap.docs || [];
+      branchDocs.push(...docs);
+      if (docs.length < PAGE_SIZE) break;
+      lastDoc = docs[docs.length - 1];
+      if (!lastDoc || typeof pageQuery.startAfter !== "function") break;
+    }
+  } else {
+    const snap = await baseQuery.limit(PAGE_SIZE).get();
+    branchDocs.push(...(snap.docs || []));
+  }
+
+  // Skip empty ticks: no active branches → no sync fan-out, no writes.
+  if (branchDocs.length === 0) {
+    return { syncedBranches: 0 };
+  }
+
   let syncedBranches = 0;
 
-  const branchDocs = branchesSnap.docs;
   const CHUNK_SIZE = 4;
 
   for (let i = 0; i < branchDocs.length; i += CHUNK_SIZE) {
@@ -54,6 +85,11 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
   let retriedCount = 0;
 
   let failedCount = 0;
+
+  // Skip empty ticks: nothing pending → no claim transaction, no writes.
+  if ((pendingOrdersSnap.docs || []).length === 0) {
+    return { retriedCount, failedCount };
+  }
 
   // Claim-then-work: overlapping 5-min scheduler instances used to push the
   // same KOT twice (no lease, just a shared pending_retry flag). Claims flip

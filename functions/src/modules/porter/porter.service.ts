@@ -431,6 +431,26 @@ export async function bookPorterRider(
     { merge: true }
   );
 
+  // Server orderId mapping (B4-S1): bind the server-issued porterOrderId to
+  // our orderId so the webhook resolves through this map instead of trusting
+  // the echoed request_id. Best-effort — a map-write failure must never fail
+  // a dispatch that already succeeded.
+  try {
+    await db
+      .collection("porter_order_map")
+      .doc(String(dispatchResult.porterOrderId))
+      .set(
+        {
+          orderId,
+          branchId: order.branchId || null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+  } catch (mapErr: any) {
+    console.warn("[Porter] order-map write failed (non-blocking):", mapErr?.message || mapErr);
+  }
+
   return dispatchResult;
 }
 
@@ -461,7 +481,37 @@ export function porterParkDocId(
 }
 
 /**
+ * Freshness window for Porter webhook events (B4-S1): a stale retry arriving
+ * >15 min late must never flip a newer state backwards (e.g. a retried
+ * IN_TRANSIT overwriting DELIVERED). Events carrying no timestamp are
+ * accepted — Porter does not guarantee one — and ordered by arrival.
+ */
+export const PORTER_WEBHOOK_FRESHNESS_MS = 15 * 60 * 1000;
+const PORTER_WEBHOOK_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+function porterEventTimestampMs(payload: any): number | null {
+  const raw =
+    payload?.timestamp ?? payload?.event_time ?? payload?.eventTime ?? payload?.created_at ?? null;
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") {
+    return raw < 1e12 ? raw * 1000 : raw;
+  }
+  const ms = Date.parse(String(raw));
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
  * Handles Porter Webhook driver lifecycle events with HMAC validation and normalized events.
+ *
+ * B4-S1 bridge hardening (quote/book semantics untouched):
+ * - event-id dedup: the deterministic parkId (event + order refs + body hash)
+ *   doubles as the processed-event id. A redelivered webhook merges into the
+ *   same `porter_webhook_events` doc and is skipped — never applied twice.
+ * - server orderId mapping: the echoed `request_id` is a hint only. When the
+ *   resolved order already carries a server-issued porterOrderId that differs
+ *   from the webhook's, the event is parked (no blind flip to a wrong order).
+ * - freshness: stale timestamped events park instead of rewinding state.
+ * - unknown events park instead of touching the order (no blind merge-flip).
  */
 export async function handlePorterWebhook(
   rawBody: string,
@@ -494,6 +544,68 @@ export async function handlePorterWebhook(
   // instead of minting upe_<Date.now()> duplicates on every retry.
   const parkId = porterParkDocId(rawEvent, porterOrderId, orderId, rawBody);
 
+  // Event-id dedup: same redelivered webhook → same processed-event doc.
+  // Status-gated (not exists-gated) so datastores that materialize missing
+  // docs still proceed on first delivery and skip on true redelivery.
+  try {
+    const seenSnap = await db.collection("porter_webhook_events").doc(parkId).get();
+    if (seenSnap.data?.()?.status === "processed") {
+      console.log(`[Porter Webhook] Duplicate ${rawEvent} delivery skipped (${parkId})`);
+      return;
+    }
+  } catch {
+    // Dedup read best-effort: a failed read must not drop a live event.
+  }
+  const markProcessed = async () => {
+    try {
+      await db.collection("porter_webhook_events").doc(parkId).set(
+        {
+          rawEvent: rawEvent || null,
+          orderId: orderId || null,
+          porterOrderId: porterOrderId || null,
+          status: "processed",
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch {
+      // Best-effort: the order write below is the durable trail.
+    }
+  };
+
+  // Freshness: a stale timestamped retry must not rewind newer state.
+  const eventTs = porterEventTimestampMs(payload);
+  if (eventTs !== null) {
+    const skew = Date.now() - eventTs;
+    if (skew > PORTER_WEBHOOK_FRESHNESS_MS || skew < -PORTER_WEBHOOK_FUTURE_SKEW_MS) {
+      console.warn(`[Porter Webhook] Stale event ${rawEvent} parked (skew ${Math.round(skew / 1000)}s)`);
+      try {
+        await db
+          .collection("unmatched_porter_events")
+          .doc(parkId)
+          .set(
+            {
+              orderId: orderId || null,
+              porterOrderId: porterOrderId || null,
+              rawEvent: rawEvent || null,
+              status: "needs_review",
+              reason: "stale_event",
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        await captureErrorSnapshot({
+          source: "porter",
+          severity: "medium",
+          message: `Stale Porter event ${rawEvent || "unknown"} parked for review (no state rewind)`,
+        });
+      } catch (err) {
+        console.warn("[Porter Webhook] Failed to park stale event:", err);
+      }
+      return;
+    }
+  }
+
   if (!orderId && !porterOrderId) {
     console.warn("[Porter Webhook] Dropping event with no order reference:", rawEvent);
     try {
@@ -518,17 +630,73 @@ export async function handlePorterWebhook(
     } catch (err) {
       console.warn("[Porter Webhook] Failed to park event with no order reference:", err);
     }
+    await markProcessed();
     return;
   }
 
-  // Locate order
+  // Locate order — server mapping first, echoed hint second. `request_id`
+  // is Porter echoing OUR value back, so it is a hint, not proof. The
+  // server-side `porter_order_map` (written at book time, both mock and live
+  // paths) binds each server-issued porterOrderId to exactly one orderId. A
+  // webhook whose hint points at a DIFFERENT order than the map is parked —
+  // applying it would flip the wrong order's state.
+  const parkMismatch = async (mappedOrderId: string) => {
+    console.warn(
+      `[Porter Webhook] request_id/order_id conflict parked: map says ${mappedOrderId}, hint says ${orderId}`
+    );
+    try {
+      await db
+        .collection("unmatched_porter_events")
+        .doc(parkId)
+        .set(
+          {
+            orderId: orderId || null,
+            porterOrderId: porterOrderId || null,
+            mappedOrderId,
+            rawEvent: rawEvent || null,
+            status: "needs_review",
+            reason: "order_id_conflict",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      await captureErrorSnapshot({
+        source: "porter",
+        severity: "high",
+        message: `Porter webhook order-id conflict parked (hint ${orderId} vs mapped ${mappedOrderId}) — no state flipped`,
+      });
+    } catch (err) {
+      console.warn("[Porter Webhook] Failed to park conflicted event:", err);
+    }
+    await markProcessed();
+  };
+
   let orderRef: admin.firestore.DocumentReference | null = null;
-  if (orderId) {
-    orderRef = db.collection("orders").doc(orderId);
-  } else {
-    const q = await db.collection("orders").where("porterOrderId", "==", porterOrderId).limit(1).get();
-    if (!q.empty) {
-      orderRef = q.docs[0].ref;
+  if (porterOrderId) {
+    try {
+      const mapSnap = await db.collection("porter_order_map").doc(String(porterOrderId)).get();
+      const mapped = mapSnap.data?.();
+      const mappedOrderId =
+        mapped && typeof mapped.orderId === "string" && mapped.orderId ? mapped.orderId : null;
+      if (mappedOrderId) {
+        if (orderId && orderId !== mappedOrderId) {
+          await parkMismatch(mappedOrderId);
+          return;
+        }
+        orderRef = db.collection("orders").doc(mappedOrderId);
+      }
+    } catch {
+      // Map read best-effort — fall through to the hint/query paths below.
+    }
+  }
+  if (!orderRef) {
+    if (orderId) {
+      orderRef = db.collection("orders").doc(orderId);
+    } else {
+      const q = await db.collection("orders").where("porterOrderId", "==", porterOrderId).limit(1).get();
+      if (!q.empty) {
+        orderRef = q.docs[0].ref;
+      }
     }
   }
 
@@ -560,10 +728,51 @@ export async function handlePorterWebhook(
     } catch (err) {
       console.warn("[Porter Webhook] Failed to park unmatched order event:", err);
     }
+    await markProcessed();
     return;
   }
 
   const driverDetails = payload.driver_details || payload.driver || payload.rider || {};
+
+  // Unknown events park — never blind merge-flip an order on an event we do
+  // not understand (a renamed upstream event used to write a bare
+  // porterWebhookEvent touch, masking the gap).
+  const KNOWN_PORTER_EVENTS = new Set([
+    "DRIVER_ALLOCATED",
+    "ARRIVED_AT_PICKUP",
+    "STARTED_DELIVERY",
+    "DELIVERED",
+    "RIDER_CANCELLED",
+    "NO_RIDERS_FOUND",
+  ]);
+  if (!KNOWN_PORTER_EVENTS.has(event)) {
+    console.warn(`[Porter Webhook] Unknown event parked: ${rawEvent}`);
+    try {
+      await db
+        .collection("unmatched_porter_events")
+        .doc(parkId)
+        .set(
+          {
+            orderId: orderId || null,
+            porterOrderId: porterOrderId || null,
+            rawEvent: rawEvent || null,
+            status: "needs_review",
+            reason: "unknown_event",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      await captureErrorSnapshot({
+        source: "porter",
+        severity: "medium",
+        message: `Unknown Porter event ${rawEvent || "unknown"} parked for review — order untouched`,
+      });
+    } catch (err) {
+      console.warn("[Porter Webhook] Failed to park unknown event:", err);
+    }
+    await markProcessed();
+    return;
+  }
 
   const updateData: Record<string, any> = {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -627,6 +836,7 @@ export async function handlePorterWebhook(
   }
 
   await orderRef.set(updateData, { merge: true });
+  await markProcessed();
 
   // Branch alert: without it nobody knows to hit /porter/rebook and the
   // order rots. Customer push rides the existing status-change trigger.
@@ -873,141 +1083,172 @@ export async function pollActivePorterOrdersWorker(): Promise<{
   const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
   const now = Date.now();
 
-  for (const doc of activeOrdersSnap.docs) {
+  // Stale-only fan-out: orders with fresh webhook updates are skipped without
+  // any fetch (M31 cost discipline preserved from the serial version).
+  const staleDocs = (activeOrdersSnap.docs || []).filter((doc: any) => {
+    const order = doc.data();
+    if (!order?.porterOrderId) return false;
+    const lastUpdated = order.updatedAt?.toMillis ? order.updatedAt.toMillis() : 0;
+    return now - lastUpdated >= FIFTEEN_MINUTES_MS;
+  });
+
+  // Skip empty ticks: nothing stale → no fetches, no writes.
+  if (staleDocs.length === 0) {
+    return { polledCount, updatedCount };
+  }
+
+  const pollOne = async (doc: any): Promise<"updated" | "polled"> => {
     const order = doc.data();
     const porterOrderId = order.porterOrderId;
-    if (!porterOrderId) continue;
-
     const lastUpdated = order.updatedAt?.toMillis ? order.updatedAt.toMillis() : 0;
     const timeSinceUpdate = now - lastUpdated;
 
-    // Only poll if no updates received for > 15 minutes
-    if (timeSinceUpdate >= FIFTEEN_MINUTES_MS) {
-      polledCount++;
-      // Dead-letter accounting: unbounded polling during a Porter outage
-      // re-GETs stale orders forever. After MAX_POLLS failures (or 2h
-      // staleness) the order moves to needs_review with a branch alert.
-      const MAX_FAILED_POLLS = 12;
-      const STALE_MS = 2 * 60 * 60 * 1000;
-      const failCount = Number(order.porterPollCount || 0) + 1;
-      const recordPollFailure = async (reason: string) => {
-        if (failCount >= MAX_FAILED_POLLS || timeSinceUpdate >= STALE_MS) {
-          await doc.ref.set(
-            {
-              deliveryStatus: "needs_review",
-              needsRebook: true,
-              porterPollCount: failCount,
-              porterLastPollError: reason,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-          const { captureErrorSnapshot } = await import("../../core/errors");
-          await captureErrorSnapshot({
-            source: "porter",
-            severity: "high",
-            message: `Porter tracking dark for order ${doc.id} (${failCount} failed polls) — needs manual review/rebook`,
-            orderId: doc.id,
-            branchId: order.branchId,
-          });
-          const branchId = order.branchId;
-          if (typeof branchId === "string" && branchId) {
-            try {
-              const { dispatchFCM } = await import("../notifications/fcm.service");
-              await dispatchFCM({
-                topic: `branch_${branchId}_orders`,
-                title: "Delivery tracking lost — review needed",
-                body: `Order #${doc.id.substring(0, 6)} has no courier updates. Check Porter or rebook.`,
-                data: { type: "porter_tracking_lost", orderId: doc.id, needsRebook: "true" },
-              });
-            } catch {
-              // Alert best-effort; snapshot above is the durable trail.
-            }
+    // Dead-letter accounting: unbounded polling during a Porter outage
+    // re-GETs stale orders forever. After MAX_POLLS failures (or 2h
+    // staleness) the order moves to needs_review with a branch alert.
+    const MAX_FAILED_POLLS = 12;
+    const STALE_MS = 2 * 60 * 60 * 1000;
+    const failCount = Number(order.porterPollCount || 0) + 1;
+    const recordPollFailure = async (reason: string) => {
+      if (failCount >= MAX_FAILED_POLLS || timeSinceUpdate >= STALE_MS) {
+        await doc.ref.set(
+          {
+            deliveryStatus: "needs_review",
+            needsRebook: true,
+            porterPollCount: failCount,
+            porterLastPollError: reason,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        const { captureErrorSnapshot } = await import("../../core/errors");
+        await captureErrorSnapshot({
+          source: "porter",
+          severity: "high",
+          message: `Porter tracking dark for order ${doc.id} (${failCount} failed polls) — needs manual review/rebook`,
+          orderId: doc.id,
+          branchId: order.branchId,
+        });
+        const branchId = order.branchId;
+        if (typeof branchId === "string" && branchId) {
+          try {
+            const { dispatchFCM } = await import("../notifications/fcm.service");
+            await dispatchFCM({
+              topic: `branch_${branchId}_orders`,
+              title: "Delivery tracking lost — review needed",
+              body: `Order #${doc.id.substring(0, 6)} has no courier updates. Check Porter or rebook.`,
+              data: { type: "porter_tracking_lost", orderId: doc.id, needsRebook: "true" },
+            });
+          } catch {
+            // Alert best-effort; snapshot above is the durable trail.
           }
-        } else {
-          await doc.ref.set(
-            {
-              porterPollCount: failCount,
-              porterLastPollError: reason,
-              lastPolledAt: admin.firestore.FieldValue.serverTimestamp(),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
         }
-      };
-      try {
-        if (config.mock.porterDispatch) {
-          // Advance mock order if in transit > 20 mins
-          if (timeSinceUpdate >= 20 * 60 * 1000) {
-            await doc.ref.set(
-              {
-                status: {
-                  code: "OUT_FOR_DELIVERY",
-                  label: "Out for delivery",
-                  kind: "in_progress",
-                  terminal: false,
-                },
-                deliveryStatus: "in_transit",
-                lastPolledAt: admin.firestore.FieldValue.serverTimestamp(),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true }
-            );
-            updatedCount++;
-          }
-        } else if (config.porter.apiKey) {
-          const response = await fetch(`${config.porter.baseUrl}/v1/orders/${porterOrderId}`, {
-            headers: {
-              "x-api-key": config.porter.apiKey,
-              "Content-Type": "application/json",
-            },
-          });
-
-          if (response.ok) {
-            // Successful poll resets the dead-letter counter.
-            const data = await response.json();
-            const normalized = normalizePorterEvent(data.status || data.event);
-            const driver = data.driver_details || data.driver || {};
-
-            const updatePayload: Record<string, any> = {
-              lastPolledAt: admin.firestore.FieldValue.serverTimestamp(),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            };
-
-            if (driver.name) updatePayload.riderName = driver.name;
-            if (driver.phone) updatePayload.riderPhone = driver.phone;
-            if (driver.vehicle_number) updatePayload.riderVehicleNumber = driver.vehicle_number;
-
-            if (normalized === "STARTED_DELIVERY") {
-              updatePayload.status = {
+      } else {
+        await doc.ref.set(
+          {
+            porterPollCount: failCount,
+            porterLastPollError: reason,
+            lastPolledAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+    };
+    try {
+      if (config.mock.porterDispatch) {
+        // Advance mock order if in transit > 20 mins
+        if (timeSinceUpdate >= 20 * 60 * 1000) {
+          await doc.ref.set(
+            {
+              status: {
                 code: "OUT_FOR_DELIVERY",
                 label: "Out for delivery",
                 kind: "in_progress",
                 terminal: false,
-              };
-              updatePayload.deliveryStatus = "in_transit";
-            } else if (normalized === "DELIVERED") {
-              updatePayload.status = {
-                code: "DELIVERED",
-                label: "Delivered",
-                kind: "completed",
-                terminal: true,
-              };
-              updatePayload.deliveryStatus = "delivered";
-            }
-
-            updatePayload.porterPollCount = 0;
-            updatePayload.porterLastPollError = null;
-            await doc.ref.set(updatePayload, { merge: true });
-            updatedCount++;
-          } else {
-            await recordPollFailure(`Porter API HTTP ${response.status}`);
-          }
+              },
+              deliveryStatus: "in_transit",
+              lastPolledAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          return "updated";
         }
-      } catch (err: any) {
-        console.warn(`[Porter Polling Worker] Failed to poll order ${doc.id}: ${err.message}`);
-        await recordPollFailure(err?.message || "poll exception").catch(() => undefined);
+        return "polled";
+      } else if (config.porter.apiKey) {
+        const response = await fetch(`${config.porter.baseUrl}/v1/orders/${porterOrderId}`, {
+          headers: {
+            "x-api-key": config.porter.apiKey,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (response.ok) {
+          // Successful poll resets the dead-letter counter.
+          const data = await response.json();
+          const normalized = normalizePorterEvent(data.status || data.event);
+          const driver = data.driver_details || data.driver || {};
+
+          const updatePayload: Record<string, any> = {
+            lastPolledAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+
+          if (driver.name) updatePayload.riderName = driver.name;
+          if (driver.phone) updatePayload.riderPhone = driver.phone;
+          if (driver.vehicle_number) updatePayload.riderVehicleNumber = driver.vehicle_number;
+
+          if (normalized === "STARTED_DELIVERY") {
+            updatePayload.status = {
+              code: "OUT_FOR_DELIVERY",
+              label: "Out for delivery",
+              kind: "in_progress",
+              terminal: false,
+            };
+            updatePayload.deliveryStatus = "in_transit";
+          } else if (normalized === "DELIVERED") {
+            updatePayload.status = {
+              code: "DELIVERED",
+              label: "Delivered",
+              kind: "completed",
+              terminal: true,
+            };
+            updatePayload.deliveryStatus = "delivered";
+          }
+
+          updatePayload.porterPollCount = 0;
+          updatePayload.porterLastPollError = null;
+          await doc.ref.set(updatePayload, { merge: true });
+          return "updated";
+        } else {
+          await recordPollFailure(`Porter API HTTP ${response.status}`);
+          return "polled";
+        }
+      }
+      return "polled";
+    } catch (err: any) {
+      console.warn(`[Porter Polling Worker] Failed to poll order ${doc.id}: ${err.message}`);
+      await recordPollFailure(err?.message || "poll exception").catch(() => undefined);
+      return "polled";
+    }
+  };
+
+  // Concurrent fetch (B4-S1, M32): the serial loop did up to 25 blocking
+  // GETs per 5-min tick — one slow Porter response stalled the rest. Bounded
+  // chunks of 5 keep latency flat without hammering the courier API. One bad
+  // order still never aborts the rest (allSettled per chunk).
+  const POLL_CHUNK_SIZE = 5;
+  for (let i = 0; i < staleDocs.length; i += POLL_CHUNK_SIZE) {
+    const chunk = staleDocs.slice(i, i + POLL_CHUNK_SIZE);
+    const results = await Promise.allSettled(chunk.map((doc: any) => pollOne(doc)));
+    for (const res of results) {
+      if (res.status === "fulfilled") {
+        polledCount++;
+        if (res.value === "updated") updatedCount++;
+      } else {
+        polledCount++;
+        console.warn("[Porter Polling Worker] chunk item threw, continuing batch:", res.reason);
       }
     }
   }

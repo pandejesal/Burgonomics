@@ -127,7 +127,18 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
   const items = (menuData.items || []) as PetpoojaMenuItem[];
   const categories = menuData.categories || [];
 
-  const batch = db.batch();
+  // Firestore batches cap at 500 writes — a >500-SKU catalog in one batch
+  // silently drops the tail (H10/M30). Commit in ≤500-item chunks.
+  const MENU_SYNC_BATCH_LIMIT = 500;
+  let batch = db.batch();
+  let writesInBatch = 0;
+  const commitChunk = async () => {
+    if (writesInBatch > 0) {
+      await batch.commit();
+      batch = db.batch();
+      writesInBatch = 0;
+    }
+  };
 
   for (const item of items) {
     // Doc id is branch-scoped: the same Petpooja itemid exists in every
@@ -162,9 +173,13 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
     };
 
     batch.set(productRef, productPayload, { merge: true });
+    writesInBatch++;
+    if (writesInBatch >= MENU_SYNC_BATCH_LIMIT) {
+      await commitChunk();
+    }
   }
 
-  await batch.commit();
+  await commitChunk();
 
   await db.collection("branches").doc(branchId).set(
     {

@@ -262,7 +262,17 @@ app.post("/payments/verifyPayment", requireAuth, validateBody(verifyPaymentSchem
     const result = await verifyPayment(req.body);
     res.status(200).json(result);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || "Payment verification failed" });
+    // B4-S1 (B2-S1 follow-up): the service throws statusCode-aware errors
+    // (202 transfer-in-progress retry, 401 forged signature, 404 ghost order,
+    // 409 money-mismatch, 503 gateway-unknown) — honor them instead of
+    // flattening everything to 400 (a 202-as-400 stops the client retrying).
+    const code = (err as any)?.statusCode;
+    if ((code === 202 || code === 503) && (err as any)?.retryAfterMs) {
+      res.setHeader("Retry-After", String(Math.ceil((err as any).retryAfterMs / 1000)));
+    }
+    res
+      .status([202, 400, 401, 404, 409, 422, 502, 503].includes(code) ? code : 400)
+      .json({ error: err.message || "Payment verification failed" });
   }
 });
 

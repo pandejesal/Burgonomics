@@ -132,18 +132,17 @@ export async function resolveBranchIdForRestId(restId: string): Promise<string |
   if (!restId) return null;
   try {
     const col = db.collection("branches") as any;
-    // Preferred indexed query; fall back to a bounded scan on datastores
-    // without query support.
-    let docs: any[] = [];
-    if (typeof col.where === "function") {
-      const snap = await col.where("petpoojaStoreId", "==", restId).limit(1).get();
-      docs = snap.docs || [];
-    } else if (typeof col.get === "function") {
-      const snap = await col.limit(100).get().catch(() => col.get());
-      docs = (snap.docs || []).filter(
-        (d: any) => d.data?.()?.petpoojaStoreId === restId
-      );
+    // Indexed query ONLY (single-field petpoojaStoreId == restId, limit 1).
+    // The old bounded full-scan fallback read up to 100 branch docs per
+    // webhook on datastores without query support (H10/M30 cost + latency) —
+    // removed in B4-S1. Unlinked outlets resolve to null and callers skip
+    // loudly (menu webhook) or stage an orphan doc (86ing) instead.
+    if (typeof col.where !== "function") {
+      console.warn(`[Petpooja] branch reverse-lookup skipped for rest ${restId}: no indexed query support`);
+      return null;
     }
+    const snap = await col.where("petpoojaStoreId", "==", restId).limit(1).get();
+    const docs = snap.docs || [];
     if (docs.length > 0) return docs[0].id;
   } catch (err) {
     console.warn(`[Petpooja] branch reverse-lookup failed for rest ${restId}:`, err);
