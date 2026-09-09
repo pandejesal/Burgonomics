@@ -164,6 +164,12 @@ export const escalateTicketSchema = z.object({
   escalatedByName: z.string().trim().min(1).max(120).optional(),
 });
 
+// MOP-S1 (B5-S1 follow-up): mark-read intake. Empty body marks the whole
+// unread inbox; explicit ids mark only those (capped at 200, service-side).
+export const markReadSchema = z.object({
+  notificationIds: z.array(z.string().min(1).max(256)).max(200).optional(),
+});
+
 // Franchise lead intake: customerId MUST equal the caller UID (rules bind it
 // too) — kills victim-id stamping at both layers (M14 follow-up).
 export const franchiseLeadSchema = z.object({

@@ -58,7 +58,7 @@ import {
   escalateTicket,
 } from "./modules/tickets/tickets.service";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
-import { dispatchFCM } from "./modules/notifications/fcm.service";
+import { dispatchFCM, markNotificationsRead } from "./modules/notifications/fcm.service";
 import {
   setUserCustomClaims,
   assignUserRole,
@@ -83,6 +83,7 @@ import {
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
   adjustCoinsSchema,
+  markReadSchema,
 } from "./core/validation";
 
 // Enforce live production keys check on deployment
@@ -158,6 +159,7 @@ app.use(
     "/notifications/dispatch",
     "/notifications/subscribe",
     "/notifications/unsubscribe",
+    "/notifications/markRead",
     "/notifications/registerToken",
   ],
   sensitiveLimiter
@@ -197,6 +199,7 @@ app.use(
     "/notifications/dispatch",
     "/notifications/subscribe",
     "/notifications/unsubscribe",
+    "/notifications/markRead",
     "/notifications/registerToken",
     "/auth/setClaims",
     "/auth/assignRole",
@@ -504,7 +507,7 @@ app.post(
 app.post("/tickets/create", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const customerId = req.user?.uid || req.body.customerId;
-    const result = await createTicket({ ...req.body, customerId });
+    const result = await createTicket({ ...req.body, customerId, caller: req.user });
     res.status(200).json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to create support ticket" });
@@ -515,7 +518,7 @@ app.post("/tickets/message", requireAuth, async (req: AuthenticatedRequest, res)
   try {
     const senderId = req.user?.uid || req.body.senderId;
     const senderRole = req.user?.role || req.body.senderRole || "customer";
-    const result = await addTicketMessage({ ...req.body, senderId, senderRole });
+    const result = await addTicketMessage({ ...req.body, senderId, senderRole, caller: req.user });
     res.status(200).json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to add message" });
@@ -529,7 +532,7 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const resolvedBy = req.user?.uid || req.body.resolvedBy;
-      const result = await resolveTicket({ ...req.body, resolvedBy });
+      const result = await resolveTicket({ ...req.body, resolvedBy, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to resolve ticket" });
@@ -544,7 +547,7 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const escalatedBy = req.user?.uid || req.body.escalatedBy;
-      const result = await escalateTicket({ ...req.body, escalatedBy });
+      const result = await escalateTicket({ ...req.body, escalatedBy, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to escalate ticket" });
@@ -719,6 +722,25 @@ app.post("/notifications/unsubscribe", requireAuth, async (req: AuthenticatedReq
     res.status(200).json({ success: failures === 0, unsubscribed: clean, failures });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to unsubscribe topics" });
+  }
+});
+
+// MOP-S1 (B5-S1 follow-up 1): server-owned read receipts. Clients can flip
+// read/readAt/updatedAt directly under the rules field mask, but only the
+// server can clear the device badge (silent badge-0 push) in the same call —
+// one endpoint for inbox + badge instead of a lingering badge.
+app.post("/notifications/markRead", requireAuth, validateBody(markReadSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const { notificationIds } = req.body as { notificationIds?: string[] };
+    const markedRead = await markNotificationsRead(uid, notificationIds);
+    res.status(200).json({ success: true, markedRead });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to mark notifications read" });
   }
 });
 

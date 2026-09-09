@@ -133,6 +133,7 @@ import {
 import { dispatchFCM, markNotificationsRead } from "../src/modules/notifications/fcm.service";
 import { pushToCustomer, getUnreadCount } from "../src/modules/notifications/fcmClient";
 import { toUserSafeMessage, USER_SAFE_ERROR_COPY } from "../src/core/errors";
+import { markReadSchema } from "../src/core/validation";
 
 const { store, sentTopic, multicastCalls } = hoisted;
 
@@ -331,6 +332,49 @@ describe("staff-only transitions + reply honesty", () => {
       })
     ).rejects.toMatchObject({ code: "TICKET_MESSAGE_EMPTY" });
   });
+
+  // MOP-S1 (B5-S1 follow-up 2): the /tickets/* routes now pass req.user as
+  // caller — these prove the binding the wiring activates.
+  it("binds create identity to the verified caller, ignoring body customerId", async () => {
+    const t: any = await createTicket({
+      customerId: "victim_uid",
+      customerName: "Asha",
+      branchId: "b1",
+      category: "general_inquiry",
+      subject: "Need help with order",
+      description: "details here",
+      caller: { uid: "real_uid" },
+    });
+    expect(t.customerId).toBe("real_uid");
+    expect(store[`support_tickets/${t.id}`].customerId).toBe("real_uid");
+  });
+
+  it("binds resolve/escalate actor to the verified caller, ignoring body ids", async () => {
+    store["support_tickets/tk_bind"] = { ticketNumber: "TICK-B", customerId: "c1" };
+    const res: any = await resolveTicket({
+      ticketId: "tk_bind",
+      resolvedBy: "impostor",
+      resolvedByName: "Impostor",
+      action: "explanation",
+      notes: "done",
+      caller: { uid: "staff_7", role: "support" },
+    });
+    expect(res.resolution.resolvedBy).toBe("staff_7");
+  });
+});
+
+describe("markRead route intake (MOP-S1)", () => {
+  it("accepts empty body (whole-inbox mark) and a bounded id list", () => {
+    expect(markReadSchema.safeParse({}).success).toBe(true);
+    expect(markReadSchema.safeParse({ notificationIds: ["a", "b"] }).success).toBe(true);
+  });
+
+  it("rejects non-array ids and lists over 200", () => {
+    expect(markReadSchema.safeParse({ notificationIds: "a" }).success).toBe(false);
+    expect(
+      markReadSchema.safeParse({ notificationIds: Array.from({ length: 201 }, (_, i) => `n${i}`) }).success
+    ).toBe(false);
+  });
 });
 
 describe("ticket spam guards (M14 follow-up)", () => {
@@ -382,6 +426,23 @@ describe("badge set/clear (H18)", () => {
     expect(last.apns.payload.aps.badge).toBe(3);
     // Inbox doc written with truncated body
     expect(store["users/u2/notifications/n1"].read).toBe(false);
+  });
+
+  it("markNotificationsRead with explicit ids marks only those (route ids? path)", async () => {
+    store["users/u5"] = { fcmTokens: [] };
+    store["users/u5/notifications/a"] = { read: false };
+    store["users/u5/notifications/b"] = { read: false };
+    const n = await markNotificationsRead("u5", ["a"]);
+    expect(n).toBe(1);
+    expect(store["users/u5/notifications/a"].read).toBe(true);
+    expect(store["users/u5/notifications/b"].read).toBe(false);
+  });
+
+  it("markNotificationsRead returns 0 when nothing is unread", async () => {
+    store["users/u6"] = { fcmTokens: [] };
+    store["users/u6/notifications/a"] = { read: true };
+    expect(await markNotificationsRead("u6")).toBe(0);
+    expect(await markNotificationsRead("u6", [])).toBe(0);
   });
 
   it("markNotificationsRead flips inbox + pushes silent badge-0", async () => {

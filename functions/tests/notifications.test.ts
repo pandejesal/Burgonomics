@@ -112,8 +112,7 @@ describe("Prompt 19: Backend FCM Push Notifications & Acoustic Audio Payloads", 
       expect(message.data?.ticketId).toBe("tkt_555");
     });
 
-    it("keeps refund/veg/ETA claims backend-backed", () => {
-      const base = { id: "o1", orderNumber: "BG-1", fulfillmentType: "delivery" };
+    it("keeps refund/veg/ETA claims backend-backed", () => {      const base = { id: "o1", orderNumber: "BG-1", fulfillmentType: "delivery" };
       // No flags => generic honest copy, no invented ETA/refund/veg.
       const cancelled = buildCustomerOrderUpdateMessage("t", base, "CANCELLED");
       expect(cancelled.notification?.body).toContain("No money was charged");
@@ -131,6 +130,19 @@ describe("Prompt 19: Backend FCM Push Notifications & Acoustic Audio Payloads", 
       expect(refunded.notification?.body).toContain("refund has been initiated");
       const veg = buildCustomerOrderUpdateMessage("t", { ...base, allVeg: true }, "DELIVERED");
       expect(veg.notification?.body).toContain("veg");
+    });
+
+    // MOP-S1 (B5-S1 follow-up 3): PLACED/CONFIRMED carry no unbacked
+    // kitchen/POS receipt claim — the KOT push can fail into pending_retry
+    // after this copy is already on the lock screen.
+    it("PLACED/CONFIRMED carry no unbacked kitchen-grill POS-ack claim", () => {
+      const base = { id: "o1", orderNumber: "BG-1", fulfillmentType: "delivery" };
+      for (const status of ["PLACED", "CONFIRMED"]) {
+        const msg = buildCustomerOrderUpdateMessage("t", base, status);
+        expect(msg.notification?.body).not.toContain("kitchen grill");
+        expect(msg.notification?.body).not.toContain("Sent directly");
+        expect(msg.notification?.body).toContain("BG-1");
+      }
     });
   });
 

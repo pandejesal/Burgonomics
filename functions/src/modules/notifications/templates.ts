@@ -144,12 +144,16 @@ export const STATUS_MESSAGES: Record<
 > = {
   PLACED: {
     title: "🍔 Order Confirmed!",
-    body: (o) => `We've received your order #${o.orderNumber}. Sent directly to our kitchen grill!`,
+    // MOP-S1 (B5-S1 pattern): the old "Sent directly to our kitchen grill"
+    // claimed POS/kitchen receipt with no backend field behind it — the KOT
+    // push can fail into pending_retry (webhookHandler) after this copy is
+    // already on the lock screen. Claim removed, not reworded.
+    body: (o) => `We've received your order #${o.orderNumber}. Open the app to track it live.`,
     sound: "default",
   },
   CONFIRMED: {
     title: "🍔 Order Confirmed!",
-    body: (o) => `We've received your order #${o.orderNumber}. Sent directly to our kitchen grill!`,
+    body: (o) => `We've received your order #${o.orderNumber}. Open the app to track it live.`,
     sound: "default",
   },
   ACCEPTED: {
