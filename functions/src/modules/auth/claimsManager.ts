@@ -100,14 +100,27 @@ export interface SetClaimsResult {
 /**
  * Sets custom user claims in Firebase Auth, revokes existing refresh tokens to force
  * immediate client token re-issuance, and synchronizes the user profile in Firestore.
+ *
+ * B3-S1 (H-M20/M15): the caller-role assert lives INSIDE this setter, not just
+ * in the route's requireRole() middleware. A miswired route (optionalAuth, a
+ * missing requireRole, an over-broad role list) must still deny: a non-brand
+ * caller — or no caller at all — throws before any claim is minted.
+ * Internal callers (assignUserRole/revokeUserRole) pass through the same
+ * already-checked caller; there is no trusted bypass path.
  */
-export async function setUserCustomClaims(input: {
-  uid?: string;
-  targetUid?: string;
-  role: string;
-  branchIds?: string[];
-  cityIds?: string[];
-}): Promise<SetClaimsResult> {
+export async function setUserCustomClaims(
+  input: {
+    uid?: string;
+    targetUid?: string;
+    role: string;
+    branchIds?: string[];
+    cityIds?: string[];
+  },
+  caller?: admin.auth.DecodedIdToken | { role?: string; isBrandAdmin?: boolean } | null
+): Promise<SetClaimsResult> {
+  // In-function authz: deny first, even if the HTTP route was miswired.
+  assertCallerCanAssignRole(caller ?? null);
+
   const targetUid = input.targetUid || input.uid;
   if (!targetUid) {
     throw new Error("Target UID is required to set custom claims.");
@@ -195,13 +208,17 @@ export async function assignUserRole(
   // 2. Validate payload
   const parsed = AssignRoleSchema.parse(input);
 
-  // 3. Set custom claims and sync Firestore
-  return setUserCustomClaims({
-    targetUid: parsed.targetUid,
-    role: parsed.role,
-    branchIds: parsed.branchIds,
-    cityIds: parsed.cityIds,
-  });
+  // 3. Set custom claims and sync Firestore (caller passes through: the
+  // setter re-asserts, so revoking the route check alone never opens a hole).
+  return setUserCustomClaims(
+    {
+      targetUid: parsed.targetUid,
+      role: parsed.role,
+      branchIds: parsed.branchIds,
+      cityIds: parsed.cityIds,
+    },
+    callerClaims ?? null
+  );
 }
 
 /**
@@ -217,10 +234,13 @@ export async function revokeUserRole(
     throw new Error("Target UID is required for role revocation.");
   }
 
-  return setUserCustomClaims({
-    targetUid,
-    role: "customer",
-    branchIds: [],
-    cityIds: [],
-  });
+  return setUserCustomClaims(
+    {
+      targetUid,
+      role: "customer",
+      branchIds: [],
+      cityIds: [],
+    },
+    callerClaims ?? null
+  );
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { auth, db } from "../../core/firebase";
 import * as admin from "firebase-admin";
+import { computeHmacSha256, timingSafeEqual } from "../../core/security";
 
 export const AddressSchema = z.object({
   id: z.string().optional(),
@@ -26,6 +27,11 @@ export const MigrateGuestSchema = z.object({
   email: z.string().optional(),
   name: z.string().optional(),
   addresses: z.array(AddressSchema).optional().default([]),
+  // Signed guest-ownership proof (HMAC-SHA256 hex over the session id, see
+  // mintGuestOwnershipProof). Optional during the client rollout (batch 5):
+  // when present it MUST verify; when absent only guest-owned docs relink
+  // (identified users' docs are never stolen — the guest-relink guard below).
+  guestProof: z.string().optional(),
 });
 
 export type MigrateGuestInput = z.infer<typeof MigrateGuestSchema>;
@@ -39,7 +45,85 @@ export interface MigrationResult {
   cartMigrated: boolean;
   welcomeBonusAwarded: boolean;
   bonusCoins: number;
+  /** Docs that LOOKED migratable by session id but were owned by an
+   *  identified UID — left untouched (guest-relink attack denied). */
+  skippedProtectedCount: number;
   message?: string;
+}
+
+/** Least-privilege caller presented by the route (verified ID token). */
+export interface MigrationCaller {
+  uid?: string;
+  phone_number?: string;
+  email?: string;
+}
+
+/** Firestore write-batch ceiling guard: relink chunks stay ≤400 ops so a
+ *  single commit never approaches the 500-op hard limit (H10/M30). */
+export const MIGRATION_CHUNK_LIMIT = 400;
+
+/** Domain separator: the OTP HMAC secret signs many things; the label keeps
+ *  a guest proof unusable as an OTP hash and vice versa. A dedicated
+ *  GUEST_MIGRATION_SECRET is queued if rotation independence is ever needed. */
+const GUEST_PROOF_LABEL = "guest-migration|";
+
+function guestProofSecret(): string {
+  return process.env.OTP_HMAC_SECRET || "";
+}
+
+/**
+ * Mints a signed guest-ownership proof for a server-created guest session.
+ * Server-side issuer (future issuance endpoint / tests) — never minted from
+ * a caller-supplied session id on the migration path itself.
+ */
+export function mintGuestOwnershipProof(guestSessionId: string): string {
+  const secret = guestProofSecret();
+  if (!secret || !guestSessionId) {
+    throw new Error("Guest-proof issuer misconfigured — refusing to mint.");
+  }
+  return computeHmacSha256(`${GUEST_PROOF_LABEL}${guestSessionId}`, secret);
+}
+
+/**
+ * Verifies a presented guest-ownership proof with a timing-safe compare.
+ * Fail-closed: missing secret, missing proof material, or mismatch all
+ * return false (the migration path decides allow-vs-deny per rollout stage).
+ */
+export function verifyGuestOwnershipProof(
+  guestSessionId: string | undefined,
+  proof: string | undefined
+): boolean {
+  const secret = guestProofSecret();
+  if (!secret || !guestSessionId || !proof) return false;
+  const expected = computeHmacSha256(`${GUEST_PROOF_LABEL}${guestSessionId}`, secret);
+  return timingSafeEqual(expected, proof);
+}
+
+/**
+ * Guest session ids must be unguessable server tokens, not short/sequential
+ * handles an attacker can enumerate. Guessable ids are refused outright.
+ */
+export function assertUnguessableSessionId(guestSessionId: string): void {
+  if (!/^[A-Za-z0-9_-]{12,128}$/.test(guestSessionId)) {
+    throw new Error("Migration refused: guest session id is not a valid unguessable token.");
+  }
+}
+
+/**
+ * Guest-relink guard: a session id may only ever relink docs that are still
+ * guest-owned (customerId 'guest'/missing) or owned by the proven anonymous
+ * UID. Docs already owned by any OTHER (identified) UID are protected — a
+ * guessed/stale session id can never steal another user's orders or tickets.
+ */
+export function isGuestOwnedDoc(
+  data: Record<string, any> | undefined,
+  anonymousUid?: string
+): boolean {
+  if (!data) return false;
+  const owner = data.customerId ?? data.userId;
+  if (owner == null || owner === "guest") return true;
+  if (anonymousUid && owner === anonymousUid) return true;
+  return false;
 }
 
 /**
@@ -189,10 +273,29 @@ export async function awardWelcomeBonus(
  * into the permanent authenticated customer account atomically.
  */
 export async function migrateGuestAccount(
-  rawInput: unknown
+  rawInput: unknown,
+  caller?: MigrationCaller | null
 ): Promise<MigrationResult> {
   const input = MigrateGuestSchema.parse(rawInput);
-  const { guestSessionId, anonymousUid, permanentUid, phone, email, name, addresses } = input;
+  const { guestSessionId, anonymousUid, permanentUid, phone, email, name, addresses, guestProof } = input;
+
+  // In-function authn bind: the migration target must be the caller's own
+  // verified UID. Migrating INTO someone else's account is refused even if a
+  // route ever passes a caller-supplied permanentUid through unchecked.
+  if (caller?.uid && caller.uid !== permanentUid) {
+    throw new Error("Migration refused: target account does not match the authenticated caller.");
+  }
+
+  // Signed guest-ownership proof: when the client presents one it MUST
+  // verify (timing-safe). Absent-proof callers stay allowed during the
+  // batch-5 client rollout, but the guest-relink guard below still confines
+  // them to guest-owned docs only.
+  if (guestProof !== undefined && !verifyGuestOwnershipProof(guestSessionId, guestProof)) {
+    throw new Error("Migration refused: invalid guest-ownership proof.");
+  }
+  if (guestSessionId) {
+    assertUnguessableSessionId(guestSessionId);
+  }
 
   // Ownership proof for the anonymous-UID path: the source UID must be a real
   // Firebase ANONYMOUS account in this project. Claiming orders from an
@@ -215,73 +318,113 @@ export async function migrateGuestAccount(
     }
   }
 
+  // OTP-verified phone link (C7): only the ID-token-verified phone_number
+  // (Firebase OTP-minted) may key the phone bonus or overwrite the profile
+  // phone. A caller-supplied body phone that CONTRADICTS the verified number
+  // is an account-link attack signal — refuse. An unverified body phone is
+  // ignored for bonus/profile (displayed nowhere, mints nothing).
+  const verifiedPhone = normalizePhoneIN(caller?.phone_number);
+  const claimedPhone = normalizePhoneIN(phone);
+  if (claimedPhone && verifiedPhone && claimedPhone !== verifiedPhone) {
+    throw new Error("Migration refused: phone does not match the OTP-verified number.");
+  }
+
   let migratedOrdersCount = 0;
   let migratedTicketsCount = 0;
   let migratedAddressesCount = 0;
   let cartMigrated = false;
   let welcomeBonusAwarded = false;
   let bonusCoins = 0;
+  let skippedProtectedCount = 0;
 
-  const batch = db.batch();
+  type Op =
+    | { kind: "update"; ref: admin.firestore.DocumentReference; data: Record<string, any> }
+    | { kind: "set"; ref: admin.firestore.DocumentReference; data: Record<string, any>; merge: boolean }
+    | { kind: "delete"; ref: admin.firestore.DocumentReference };
+  const ops: Op[] = [];
 
-  // 1. ATOMIC ORDER RELINKING
+  // Reads the doc payload for the guest-relink guard. where() snapshots in
+  // this codebase expose data() on the doc handle; fall back to a get() when
+  // the payload is absent (real Firestore QueryDocumentSnapshot always has it).
+  async function isRelinkable(d: any): Promise<boolean> {
+    try {
+      const data = typeof d.data === "function" ? d.data() : undefined;
+      if (data !== undefined) return isGuestOwnedDoc(data, anonymousUid);
+      const snap = await d.ref.get();
+      return snap.exists ? isGuestOwnedDoc(snap.data() as any, anonymousUid) : false;
+    } catch {
+      return false;
+    }
+  }
+
+  async function collectRelink(
+    collection: string,
+    field: string,
+    value: string
+  ): Promise<admin.firestore.DocumentReference[]> {
+    const refs: admin.firestore.DocumentReference[] = [];
+    // Chunked reads: never pull an unbounded session history into one batch.
+    const snap = await db.collection(collection).where(field, "==", value).limit(MIGRATION_CHUNK_LIMIT).get();
+    for (const d of snap.docs as any[]) {
+      if (!refs.some((r) => r.path === (d.ref as any).path)) {
+        // eslint-disable-next-line no-await-in-loop
+        if (await isRelinkable(d)) refs.push(d.ref);
+        else skippedProtectedCount++;
+      }
+    }
+    return refs;
+  }
+
+  // 1. ATOMIC ORDER RELINKING (guest-owned docs only, chunked)
   const orderDocRefs: admin.firestore.DocumentReference[] = [];
 
   if (guestSessionId) {
-    const guestOrdersSnap = await db
-      .collection("orders")
-      .where("guestSessionId", "==", guestSessionId)
-      .get();
-    guestOrdersSnap.docs.forEach((d: any) => orderDocRefs.push(d.ref));
+    for (const ref of await collectRelink("orders", "guestSessionId", guestSessionId)) {
+      if (!orderDocRefs.some((r) => r.path === ref.path)) orderDocRefs.push(ref);
+    }
   }
 
   if (anonymousUid && anonymousUid !== permanentUid) {
-    const anonOrdersSnap = await db
-      .collection("orders")
-      .where("customerId", "==", anonymousUid)
-      .get();
-    anonOrdersSnap.docs.forEach((d: any) => {
-      if (!orderDocRefs.some((r) => r.path === d.ref.path)) {
-        orderDocRefs.push(d.ref);
-      }
-    });
+    for (const ref of await collectRelink("orders", "customerId", anonymousUid)) {
+      if (!orderDocRefs.some((r) => r.path === ref.path)) orderDocRefs.push(ref);
+    }
   }
 
   for (const ref of orderDocRefs) {
-    batch.update(ref, {
-      customerId: permanentUid,
-      ...(guestSessionId ? { originalGuestSessionId: guestSessionId } : {}),
-      ...(anonymousUid ? { originalCustomerId: anonymousUid } : {}),
-      migratedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ops.push({
+      kind: "update",
+      ref,
+      data: {
+        customerId: permanentUid,
+        ...(guestSessionId ? { originalGuestSessionId: guestSessionId } : {}),
+        ...(anonymousUid ? { originalCustomerId: anonymousUid } : {}),
+        migratedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
     });
     migratedOrdersCount++;
   }
 
-  // 2. ATOMIC TICKET RELINKING
+  // 2. ATOMIC TICKET RELINKING (guest-owned docs only, chunked)
   const ticketDocRefs: admin.firestore.DocumentReference[] = [];
   if (guestSessionId) {
-    const guestTicketsSnap = await db
-      .collection("tickets")
-      .where("guestSessionId", "==", guestSessionId)
-      .get();
-    guestTicketsSnap.docs.forEach((d: any) => ticketDocRefs.push(d.ref));
+    for (const ref of await collectRelink("tickets", "guestSessionId", guestSessionId)) {
+      if (!ticketDocRefs.some((r) => r.path === ref.path)) ticketDocRefs.push(ref);
+    }
   }
   if (anonymousUid && anonymousUid !== permanentUid) {
-    const anonTicketsSnap = await db
-      .collection("tickets")
-      .where("customerId", "==", anonymousUid)
-      .get();
-    anonTicketsSnap.docs.forEach((d: any) => {
-      if (!ticketDocRefs.some((r) => r.path === d.ref.path)) {
-        ticketDocRefs.push(d.ref);
-      }
-    });
+    for (const ref of await collectRelink("tickets", "customerId", anonymousUid)) {
+      if (!ticketDocRefs.some((r) => r.path === ref.path)) ticketDocRefs.push(ref);
+    }
   }
 
   for (const ref of ticketDocRefs) {
-    batch.update(ref, {
-      customerId: permanentUid,
-      migratedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ops.push({
+      kind: "update",
+      ref,
+      data: {
+        customerId: permanentUid,
+        migratedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
     });
     migratedTicketsCount++;
   }
@@ -314,18 +457,20 @@ export async function migrateGuestAccount(
 
   // 4. LOYALTY & WALLET BONUS INTEGRITY (50 Grill Coins First Order / Welcome Bonus)
   // Advisory eligibility read first (cheap early-out), then the atomic
-  // awardWelcomeBonus() create() serializes concurrent callers.
+  // awardWelcomeBonus() create() serializes concurrent callers. The ledger is
+  // keyed by the OTP-VERIFIED phone only — an unverified body phone mints
+  // nothing (falls back to the once-per-UID key, still idempotent).
   const WELCOME_BONUS_COINS = 50;
-  const eligibility = await verifyBonusEligibility(phone, permanentUid);
+  const eligibility = await verifyBonusEligibility(verifiedPhone ?? undefined, permanentUid);
 
   if (eligibility.eligible) {
-    bonusCoins = await awardWelcomeBonus(permanentUid, phone, WELCOME_BONUS_COINS);
+    bonusCoins = await awardWelcomeBonus(permanentUid, verifiedPhone ?? undefined, WELCOME_BONUS_COINS);
     welcomeBonusAwarded = bonusCoins > 0;
   }
 
-  // 5. UPDATE PERMANENT USER PROFILE
+  // 5. UPDATE PERMANENT USER PROFILE (phone = verified only)
   const userUpdates: Record<string, any> = {
-    ...(phone ? { phone } : {}),
+    ...(verifiedPhone ? { phone: verifiedPhone } : {}),
     ...(email ? { email } : {}),
     ...(name ? { name } : {}),
     addresses: dedupedAddresses,
@@ -337,7 +482,7 @@ export async function migrateGuestAccount(
     userUpdates.grillCoins = admin.firestore.FieldValue.increment(WELCOME_BONUS_COINS);
   }
 
-  batch.set(permanentUserRef, userUpdates, { merge: true });
+  ops.push({ kind: "set", ref: permanentUserRef, data: userUpdates, merge: true });
 
   // 6. GUEST CART MIGRATION
   const guestCartId = guestSessionId ? `guest_${guestSessionId}` : anonymousUid ? `anon_${anonymousUid}` : null;
@@ -348,23 +493,35 @@ export async function migrateGuestAccount(
       const guestCartData = guestCartSnap.data();
       if (guestCartData && guestCartData.items && guestCartData.items.length > 0) {
         const userCartRef = db.collection("carts").doc(permanentUid);
-        batch.set(
-          userCartRef,
-          {
+        ops.push({
+          kind: "set",
+          ref: userCartRef,
+          data: {
             ...guestCartData,
             customerId: permanentUid,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
-          { merge: true }
-        );
-        batch.delete(guestCartRef);
+          merge: true,
+        });
+        ops.push({ kind: "delete", ref: guestCartRef });
         cartMigrated = true;
       }
     }
   }
 
-  // Commit all changes in a single atomic transaction/batch
-  await batch.commit();
+  // Commit in ≤400-op chunks: one unbounded session must never overflow the
+  // 500-op Firestore batch ceiling (reads above were already limit-capped).
+  for (let i = 0; i < ops.length; i += MIGRATION_CHUNK_LIMIT) {
+    const chunk = ops.slice(i, i + MIGRATION_CHUNK_LIMIT);
+    const batch = db.batch();
+    for (const op of chunk) {
+      if (op.kind === "update") batch.update(op.ref, op.data);
+      else if (op.kind === "set") batch.set(op.ref, op.data, { merge: op.merge });
+      else batch.delete(op.ref);
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await batch.commit();
+  }
 
   return {
     success: true,
@@ -375,6 +532,7 @@ export async function migrateGuestAccount(
     cartMigrated,
     welcomeBonusAwarded,
     bonusCoins,
+    skippedProtectedCount,
     message: "Guest session successfully migrated to authenticated account.",
   };
 }

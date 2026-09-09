@@ -93,6 +93,19 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 
+// B3-S1 (M15/M31): tighter per-route ceiling on money/auth sensitive
+// endpoints — verify/quote/auth/FCM. Runs UNDER the global limiter, so these
+// routes cap at 60/15min/IP even when the global budget is unexhausted.
+// Quote stays usable for real checkouts (a handful of calls per order) while
+// brute-force/bonus-probing loops hit 429 fast.
+const sensitiveLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 60, // limit each IP to 60 sensitive requests per windowMs
+  message: { error: "Too many sensitive requests from this IP, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const app = express();
 
 // Whitelisted CORS origins (Strict 60-30-10 & Production Security)
@@ -126,6 +139,25 @@ app.use(
 );
 
 app.use(limiter);
+
+// Per-route sensitive limiter (auth/FCM + money verify/quote only — other
+// index.ts sections belong to other batches and are untouched).
+app.use(
+  [
+    "/payments/verifyPayment",
+    "/porter/quote",
+    "/auth/setClaims",
+    "/auth/assignRole",
+    "/auth/revokeRole",
+    "/auth/migrateGuest",
+    "/auth/verifyBonusEligibility",
+    "/notifications/dispatch",
+    "/notifications/subscribe",
+    "/notifications/unsubscribe",
+    "/notifications/registerToken",
+  ],
+  sensitiveLimiter
+);
 
 app.use(
   express.json({
@@ -221,7 +253,11 @@ app.post("/payments/createPaymentOrder", optionalAuth, validateBody(createPaymen
   }
 });
 
-app.post("/payments/verifyPayment", optionalAuth, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
+// B3-S1 (H-M20/M15): verifyPayment requires auth — anonymous verification
+// let anyone confirm/probe payment state with a guessed order id. Guests
+// complete createPaymentOrder first (still optionalAuth), then verify as the
+// authenticated owner the order was created for.
+app.post("/payments/verifyPayment", requireAuth, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const result = await verifyPayment(req.body);
     res.status(200).json(result);
@@ -325,7 +361,11 @@ app.post(
 // 3. PORTER DELIVERY ROUTES
 // ==========================================
 
-app.post("/porter/quote", optionalAuth, validateBody(porterQuoteSchema), async (req: AuthenticatedRequest, res) => {
+// B3-S1 (M15): quote requires auth — anonymous fare probing fed the
+// fail-open rate-card fallback (H-R19, now fail-closed) and scraping.
+// Staff/customer callers both carry Firebase IDs; schedulers use the service
+// directly, never this route.
+app.post("/porter/quote", requireAuth, validateBody(porterQuoteSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const quote = await getDeliveryQuote(req.body);
     res.status(200).json(quote);
@@ -674,10 +714,13 @@ app.post(
   requireRole(["brand_owner", "developer"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const result = await setUserCustomClaims(req.body);
+      // B3-S1: caller passes through — the setter re-asserts in-function, so
+      // a miswired route (dropped requireRole) still denies non-brand callers.
+      const result = await setUserCustomClaims(req.body, req.user ?? null);
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to set custom claims" });
+      const status = err.message?.includes("Permission denied") || err.message?.includes("Caller authorization") ? 403 : 500;
+      res.status(status).json({ error: err.message || "Failed to set custom claims" });
     }
   }
 );
@@ -721,12 +764,22 @@ app.post(
         res.status(400).json({ error: "Missing authenticated customer UID" });
         return;
       }
-      const result = await migrateGuestAccount({
-        ...req.body,
-        permanentUid,
-        phone: req.body.phone || (req.user as any)?.phone_number,
-        email: req.body.email || (req.user as any)?.email,
-      });
+      // B3-S1 (C7): verified caller binds the target UID + OTP-verified
+      // phone inside migrateGuestAccount (body phones that contradict the
+      // token are refused; unverified phones mint no bonus).
+      const result = await migrateGuestAccount(
+        {
+          ...req.body,
+          permanentUid,
+          phone: req.body.phone || (req.user as any)?.phone_number,
+          email: req.body.email || (req.user as any)?.email,
+        },
+        {
+          uid: req.user?.uid,
+          phone_number: (req.user as any)?.phone_number,
+          email: (req.user as any)?.email,
+        }
+      );
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to migrate guest session" });
@@ -739,7 +792,10 @@ app.post(
   requireAuth,
   async (req: AuthenticatedRequest, res) => {
     try {
-      const phone = req.body.phone || (req.user as any)?.phone_number;
+      // B3-S1: token-verified phone first — eligibility for an unverified
+      // body phone must never read "eligible" for the phone ledger when the
+      // migration itself would key the bonus by UID instead.
+      const phone = (req.user as any)?.phone_number || req.body.phone;
       const uid = req.user?.uid || req.body.uid;
       const result = await verifyBonusEligibility(phone, uid);
       res.status(200).json(result);

@@ -20,6 +20,11 @@ export {
   awardWelcomeBonus,
   normalizePhoneIN,
   areAddressesDuplicate,
+  mintGuestOwnershipProof,
+  verifyGuestOwnershipProof,
+  assertUnguessableSessionId,
+  isGuestOwnedDoc,
+  MIGRATION_CHUNK_LIMIT,
 } from "./guestMigration";
-export type { MigratableAddress, MigrateGuestInput, MigrationResult } from "./guestMigration";
+export type { MigratableAddress, MigrateGuestInput, MigrationResult, MigrationCaller } from "./guestMigration";
 export { cleanupExpiredGuestSessionsWorker, onUserDeletedCleanup } from "./triggers";

@@ -129,12 +129,15 @@ describe("Auth Module — Claims Manager & Privilege Escalation Prevention", () 
   describe("3. Custom Claims Injection & Refresh Token Invalidation", () => {
     it("provisions custom claims, revokes refresh tokens, and updates Firestore", async () => {
       const targetUid = "usr_staff_surat_01";
-      const result = await setUserCustomClaims({
-        targetUid,
-        role: "branch_staff",
-        branchIds: ["branch_surat_01"],
-        cityIds: ["Surat"],
-      });
+      const result = await setUserCustomClaims(
+        {
+          targetUid,
+          role: "branch_staff",
+          branchIds: ["branch_surat_01"],
+          cityIds: ["Surat"],
+        },
+        { role: "brand_owner", isBrandAdmin: true } as any
+      );
 
       expect(result.success).toBe(true);
       expect(result.role).toBe("branch_staff");
@@ -159,10 +162,13 @@ describe("Auth Module — Claims Manager & Privilege Escalation Prevention", () 
 
     it("provisions full brand administrator privileges for brand_owner and developer", async () => {
       const targetUid = "usr_founder_01";
-      await setUserCustomClaims({
-        targetUid,
-        role: "brand_owner",
-      });
+      await setUserCustomClaims(
+        {
+          targetUid,
+          role: "brand_owner",
+        },
+        { role: "developer", isBrandAdmin: true } as any
+      );
 
       expect(customClaimsRecord[targetUid].isBrandAdmin).toBe(true);
       expect(customClaimsRecord[targetUid].isStaff).toBe(true);
@@ -220,6 +226,53 @@ describe("Auth Module — Claims Manager & Privilege Escalation Prevention", () 
         branchIds: ["branch_surat_01"],
       });
       expect(savedDocs[`admins/${targetUid}`]?.role).toBe("branch_owner");
+    });
+  });
+
+  describe("5. In-Function Caller Assert (B3-S1: deny even if the route is miswired)", () => {
+    const brandCaller = { role: "brand_owner", isBrandAdmin: true } as any;
+
+    it("denies setUserCustomClaims for every non-brand caller role", async () => {
+      for (const role of ["customer", "branch_staff", "branch_owner", "support", "regional_manager", "driver"]) {
+        await expect(
+          setUserCustomClaims({ targetUid: "usr_victim_1", role: "branch_staff" }, { role } as any)
+        ).rejects.toThrow(/Permission denied/);
+      }
+      // Nothing minted on denial.
+      expect(customClaimsRecord["usr_victim_1"]).toBeUndefined();
+      expect(savedDocs["users/usr_victim_1"]).toBeUndefined();
+    });
+
+    it("denies setUserCustomClaims with no caller (fail-closed, not fail-open)", async () => {
+      await expect(
+        setUserCustomClaims({ targetUid: "usr_victim_2", role: "support" })
+      ).rejects.toThrow(/Caller authorization required/);
+      await expect(
+        setUserCustomClaims({ targetUid: "usr_victim_2", role: "support" }, null)
+      ).rejects.toThrow(/Caller authorization required/);
+      expect(customClaimsRecord["usr_victim_2"]).toBeUndefined();
+    });
+
+    it("denies a revoked (stale-claim customer) caller attempting to mint roles", async () => {
+      // Ex-staffer whose token still carries branch_staff but whose registry
+      // was revoked would present customer claims after refresh — either way,
+      // a non-brand caller cannot mint.
+      await expect(
+        assignUserRole({ role: "customer", isBrandAdmin: false } as any, {
+          targetUid: "usr_accomplice",
+          role: "branch_owner",
+        })
+      ).rejects.toThrow(/Permission denied/);
+      expect(customClaimsRecord["usr_accomplice"]).toBeUndefined();
+    });
+
+    it("lets a brand caller mint through the setter directly", async () => {
+      const result = await setUserCustomClaims(
+        { targetUid: "usr_direct_1", role: "support" },
+        brandCaller
+      );
+      expect(result.success).toBe(true);
+      expect(customClaimsRecord["usr_direct_1"].role).toBe("support");
     });
   });
 });

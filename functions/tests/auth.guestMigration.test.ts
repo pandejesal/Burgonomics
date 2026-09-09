@@ -321,15 +321,128 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
         type: "welcome_bonus",
       };
 
-      const result = await migrateGuestAccount({
-        guestSessionId,
-        permanentUid,
-        phone,
-      });
+      // B3-S1: phone-ledger dedup keys on the OTP-VERIFIED token phone, so
+      // the caller carries it (as the route passes req.user through).
+      const result = await migrateGuestAccount(
+        {
+          guestSessionId,
+          permanentUid,
+          phone,
+        },
+        { uid: permanentUid, phone_number: phone }
+      );
 
       expect(result.success).toBe(true);
       expect(result.welcomeBonusAwarded).toBe(false);
       expect(result.bonusCoins).toBe(0);
+    });
+  });
+
+  describe("4. B3-S1 Attack Denials (guest-relink / proof / phone / target bind)", () => {
+    it("refuses to relink orders owned by an identified UID via a guessed session id", async () => {
+      const guestSessionId = "sess_guest_attacker_guess_1";
+      // Victim's real order happens to carry the guessed session stamp but is
+      // owned by an identified account — the classic guest-relink hijack.
+      savedDocs["orders/ord_victim_real"] = {
+        id: "ord_victim_real",
+        guestSessionId,
+        customerId: "usr_victim_identified",
+        total: 999,
+      };
+
+      const result = await migrateGuestAccount(
+        { guestSessionId, permanentUid: "usr_attacker_999" },
+        { uid: "usr_attacker_999" }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.migratedOrdersCount).toBe(0);
+      expect(result.skippedProtectedCount).toBe(1);
+      expect(savedDocs["orders/ord_victim_real"].customerId).toBe("usr_victim_identified");
+      expect(savedDocs["orders/ord_victim_real"].migratedAt).toBeUndefined();
+    });
+
+    it("rejects a tampered guest-ownership proof but accepts a valid one", async () => {
+      process.env.OTP_HMAC_SECRET = "test-guest-proof-secret";
+      try {
+        const { mintGuestOwnershipProof } = await import("../src/modules/auth/guestMigration");
+        const guestSessionId = "sess_guest_proofed_12345";
+        const goodProof = mintGuestOwnershipProof(guestSessionId);
+
+        savedDocs["orders/ord_proofed_1"] = {
+          id: "ord_proofed_1",
+          guestSessionId,
+          customerId: "guest",
+          total: 199,
+        };
+
+        await expect(
+          migrateGuestAccount(
+            { guestSessionId, permanentUid: "usr_proofed_user", guestProof: `${goodProof}ff` },
+            { uid: "usr_proofed_user" }
+          )
+        ).rejects.toThrow(/invalid guest-ownership proof/);
+        expect(savedDocs["orders/ord_proofed_1"].customerId).toBe("guest");
+
+        const ok = await migrateGuestAccount(
+          { guestSessionId, permanentUid: "usr_proofed_user", guestProof: goodProof },
+          { uid: "usr_proofed_user" }
+        );
+        expect(ok.migratedOrdersCount).toBe(1);
+        expect(savedDocs["orders/ord_proofed_1"].customerId).toBe("usr_proofed_user");
+      } finally {
+        delete process.env.OTP_HMAC_SECRET;
+      }
+    });
+
+    it("refuses a body phone that contradicts the OTP-verified token phone", async () => {
+      await expect(
+        migrateGuestAccount(
+          {
+            guestSessionId: "sess_guest_phone_clash_1",
+            permanentUid: "usr_clash_1",
+            phone: "+91 98250 11111",
+          },
+          { uid: "usr_clash_1", phone_number: "+91 98250 22222" }
+        )
+      ).rejects.toThrow(/does not match the OTP-verified number/);
+    });
+
+    it("refuses migration into another user's account (target != caller UID)", async () => {
+      await expect(
+        migrateGuestAccount(
+          { guestSessionId: "sess_guest_cross_acct_1", permanentUid: "usr_victim_acct" },
+          { uid: "usr_attacker_acct" }
+        )
+      ).rejects.toThrow(/does not match the authenticated caller/);
+    });
+
+    it("refuses guessable/short guest session ids outright", async () => {
+      await expect(
+        migrateGuestAccount(
+          { guestSessionId: "abc", permanentUid: "usr_short_1" },
+          { uid: "usr_short_1" }
+        )
+      ).rejects.toThrow(/not a valid unguessable token/);
+    });
+
+    it("mints the UID-keyed (not phone-keyed) bonus when the caller has no verified phone", async () => {
+      const { normalizePhoneIN } = await import("../src/modules/auth/guestMigration");
+      expect(normalizePhoneIN("+91 98250 33333")).toBe("+919825033333");
+      const result = await migrateGuestAccount(
+        {
+          guestSessionId: "sess_guest_unverified_ph_1",
+          permanentUid: "usr_unverified_ph_1",
+          phone: "+91 98250 33333", // unverified body phone: ignored
+        },
+        { uid: "usr_unverified_ph_1" }
+      );
+      expect(result.welcomeBonusAwarded).toBe(true);
+      expect(result.bonusCoins).toBe(50);
+      // No phone-ledger entry burned for an unverified number…
+      expect(savedDocs["coin_transactions/welcome_bonus_phone_919825033333"]).toBeUndefined();
+      // …and the unverified number is NOT written to the profile either.
+      expect(savedDocs["users/usr_unverified_ph_1"].phone).toBeUndefined();
     });
   });
 });

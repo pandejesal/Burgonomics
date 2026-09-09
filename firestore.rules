@@ -24,25 +24,45 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    function isAdmin() {
+    function brandRoles() {
+      return ['brand_owner', 'developer'];
+    }
+
+    function staffRoles() {
+      return ['brand_owner', 'developer', 'support', 'regional_manager', 'branch_owner', 'branch_staff'];
+    }
+
+    function hasRole(roles) {
       return isAuthenticated() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (request.auth.token != null && (request.auth.token.role in ['brand_owner', 'developer', 'support', 'regional_manager', 'branch_owner', 'branch_staff']))
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && getAdminDoc().data.role in roles) ||
+        (request.auth.token != null && (request.auth.token.role in roles))
       );
+    }
+
+    // B3-S1 (H-M4/C5): narrowed to BRAND roles only. Previously ANY
+    // admins-doc holder (branch_staff/support/regional) passed isAdmin(),
+    // leaking cross-branch chats, the payment ledger, and customer profiles.
+    // Branch/support access now flows ONLY via isStaff()/ownsBranch() on
+    // paths that explicitly grant it — never via isAdmin(). NOTE: a legacy
+    // admins doc WITHOUT a role field no longer passes (fail-closed); the
+    // claims setter mirrors role into the doc on every assignment.
+    function isAdmin() {
+      return hasRole(brandRoles());
+    }
+
+    // Non-brand operators (support/regional/branch). Usable ONLY where a
+    // path explicitly grants operator access (e.g. branch announcements);
+    // customer PII and money ledgers stay brand-only via isAdmin().
+    function isStaff() {
+      return hasRole(staffRoles());
     }
 
     function isBrandOwner() {
-      return isAdmin() && (
-        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && getAdminDoc().data.role in ['brand_owner', 'developer']) ||
-        (request.auth.token != null && (request.auth.token.role in ['brand_owner', 'developer']))
-      );
+      return isAdmin();
     }
 
     function isBranchOwner() {
-      return isAdmin() && (
-        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && getAdminDoc().data.role in ['branch_owner', 'branch_staff']) ||
-        (request.auth.token != null && (request.auth.token.role in ['branch_owner', 'branch_staff']))
-      );
+      return hasRole(['branch_owner', 'branch_staff']);
     }
 
     function ownsBranch(branchId) {
@@ -90,7 +110,10 @@ service cloud.firestore {
       match /notifications/{notifId} {
         allow read: if isUser(userId) || isAdmin();
         allow create: if false; // server-only via Admin SDK (fcm.service.ts)
-        allow update, delete: if isUser(userId);
+        // B3-S1 field mask: read-receipts only; server owns body/priority.
+        allow update: if isUser(userId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt', 'updatedAt']);
+        allow delete: if isUser(userId);
       }
 
       match /orders/{orderId} {
@@ -232,16 +255,23 @@ match /petpooja_webhook_logs/{docId} {
     }
 
     // Branch launch announcements (partner useBranches broadcastLaunchAlert addDoc)
+    // B3-S1: operator-writable (branch owners broadcast for their outlets),
+    // still closed to customers/anonymous. Reads stay public (announcements).
     match /branch_announcements/{docId} {
       allow read: if true;
-      allow create: if isAdmin();
-      allow update, delete: if isAdmin();
+      allow create: if isStaff();
+      allow update, delete: if isStaff();
     }
 
     // =========================================================================
     // SUPPORT TICKETING (support_tickets & tickets)
     // =========================================================================
 
+    // B3-S1 (H-M17/H13): owner direct UPDATE is blocked — status/priority/
+    // assignedTo/resolution are staff-only and the tickets.service.ts
+    // transitions own every mutation via Admin SDK. Owner writes flow through
+    // POST /tickets/* (functions), never through a client update that could
+    // escalate/resolve its own ticket.
     match /support_tickets/{ticketId} {
       allow read: if isBrandOwner() || (
         isBranchOwner() && ownsBranch(resource.data.branchId)
@@ -254,8 +284,6 @@ match /petpooja_webhook_logs/{docId} {
         && request.resource.data.branchId.size() > 0;
       allow update: if isBrandOwner() || (
         isBranchOwner() && ownsBranch(resource.data.branchId)
-      ) || (
-        isAuthenticated() && resource.data.customerId == request.auth.uid
       );
       allow delete: if false;
     }
@@ -272,8 +300,6 @@ match /petpooja_webhook_logs/{docId} {
         && request.resource.data.branchId.size() > 0;
       allow update: if isBrandOwner() || (
         isBranchOwner() && ownsBranch(resource.data.branchId)
-      ) || (
-        isAuthenticated() && resource.data.customerId == request.auth.uid
       );
       allow delete: if false;
     }
@@ -385,18 +411,26 @@ match /petpooja_webhook_logs/{docId} {
       allow write: if isBrandOwner();
     }
 
-    // Admin session tracking (partner adminAuthService/login) + session listing
+    // Admin session tracking + session listing.
+    // B3-S1 (H-R20): sessions are SERVER-minted only (Admin SDK bypasses
+    // rules). Client self-mint let any authenticated user fabricate a staff
+    // session doc. Partner adminAuthService's client-side session write must
+    // move to a server mint (queued to batch 4Z/5); reads are unaffected.
     match /admins/{uid}/sessions/{sessionId} {
       allow read: if isUser(uid) || isBrandOwner();
-      allow create, update: if isUser(uid);
-      allow delete: if false;
+      allow create, update, delete: if false;
     }
 
     // Top-level notifications (partner useNotifications reads/updates own by userId)
+    // B3-S1 (batch-1 queued field mask): owner updates are read-receipts
+    // ONLY — body/userId/priority rewrites are server-owned via dispatchFCM.
     match /notifications/{notifId} {
       allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow create: if false; // server-only (no direct-client writer)
-      allow update: if isBrandOwner() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow update: if isBrandOwner() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt', 'updatedAt'])
+      );
       allow delete: if isBrandOwner();
     }
 
@@ -414,18 +448,28 @@ match /petpooja_webhook_logs/{docId} {
     // FRANCHISE LEADS & COUPONS (India franchise pipeline + promo validation)
     // =========================================================================
 
+    // B3-S1 (M14): franchise creates bind customerId==uid (no victim-id
+    // stamping / spam-as-someone-else); updates keep the bind immutable.
     match /franchise_leads/{leadId} {
       allow read: if isBrandOwner() || isBranchOwner();
-      allow create: if isAuthenticated();
-      allow update: if isBrandOwner() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      allow create: if isAuthenticated()
+        && request.resource.data.customerId == request.auth.uid;
+      allow update: if isBrandOwner() || (
+        isAuthenticated() && resource.data.customerId == request.auth.uid
+        && request.resource.data.customerId == request.auth.uid
+      );
       allow delete: if isBrandOwner();
     }
 
     // Partner app uses 'franchise_inquiries' (useFranchiseLeads) — mirror franchise_leads
     match /franchise_inquiries/{leadId} {
       allow read: if isBrandOwner() || isBranchOwner();
-      allow create: if isAuthenticated();
-      allow update: if isBrandOwner() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      allow create: if isAuthenticated()
+        && request.resource.data.customerId == request.auth.uid;
+      allow update: if isBrandOwner() || (
+        isAuthenticated() && resource.data.customerId == request.auth.uid
+        && request.resource.data.customerId == request.auth.uid
+      );
       allow delete: if isBrandOwner();
     }
 
