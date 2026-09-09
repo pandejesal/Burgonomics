@@ -1,7 +1,92 @@
 import { db } from "../../core/firebase";
-import { captureErrorSnapshot } from "../../core/errors";
+import { captureErrorSnapshot, serviceError } from "../../core/errors";
+import { truncatePushText } from "../notifications/templates";
 import { autoRefund } from "../payments/razorpay.service";
 import * as admin from "firebase-admin";
+
+/**
+ * B5-S1 server-side transition guard. Routes carry requireRole(...), and the
+ * locked firestore.rules block ALL client updates to support_tickets — but a
+ * miswired route must still deny inside the function (B3-S1 claimsManager
+ * pattern). Callers pass the verified req.user as `caller`; when present its
+ * role MUST be staff. Omitted caller = legacy route path (still guarded by
+ * route requireRole + rules); the handoff carries the one-line route change
+ * to pass req.user through.
+ */
+export type TicketCaller = { uid?: string; role?: string } | null | undefined;
+const STAFF_ROLES = new Set([
+  "brand_owner",
+  "developer",
+  "support",
+  "regional_manager",
+  "branch_owner",
+  "branch_staff",
+]);
+
+function assertStaff(caller: TicketCaller, action: string): void {
+  if (!caller) return; // route-level requireRole + rules remain the backstop
+  if (!caller.role || !STAFF_ROLES.has(caller.role)) {
+    throw serviceError("TICKET_FORBIDDEN", `Forbidden: role ${caller.role || "none"} cannot ${action}`, 403);
+  }
+}
+
+// Spam/abuse backstops (M14 follow-up; rules bind customerId==uid, routes
+// throttle per-IP — this is the per-customer server-side ceiling).
+const TICKET_CREATE_WINDOW_MS = 10 * 60 * 1000;
+const TICKET_CREATE_MAX_PER_WINDOW = 3;
+const TICKET_MAX_OPEN_PER_CUSTOMER = 10;
+
+function timestampMillis(value: any): number | null {
+  if (value == null) return null;
+  if (typeof value?.toMillis === "function") {
+    const ms = value.toMillis();
+    return typeof ms === "number" ? ms : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+async function assertTicketSpamGuards(customerId: string): Promise<void> {
+  try {
+    const col = db.collection("support_tickets") as any;
+    if (typeof col.where !== "function") return; // non-Firestore harness
+    const snap = await col.where("customerId", "==", customerId).limit(25).get();
+    const docs = snap?.docs || [];
+    const now = Date.now();
+    let recent = 0;
+    let open = 0;
+    for (const d of docs) {
+      const t = typeof d.data === "function" ? d.data() : {};
+      const createdMs = timestampMillis(t.createdAt);
+      if (createdMs != null && now - createdMs < TICKET_CREATE_WINDOW_MS) recent++;
+      if (t.status === "open" || t.status === "in_progress" || t.status === "escalated") open++;
+    }
+    if (recent >= TICKET_CREATE_MAX_PER_WINDOW) {
+      throw serviceError(
+        "TICKET_RATE_LIMITED",
+        `Ticket spam guard: customer ${customerId} created ${recent} tickets in 10m`,
+        429
+      );
+    }
+    if (open >= TICKET_MAX_OPEN_PER_CUSTOMER) {
+      throw serviceError(
+        "TICKET_TOO_MANY_OPEN",
+        `Ticket spam guard: customer ${customerId} holds ${open} open tickets`,
+        429
+      );
+    }
+  } catch (err: any) {
+    if (err?.code === "TICKET_RATE_LIMITED" || err?.code === "TICKET_TOO_MANY_OPEN") throw err;
+    // Guard telemetry failed (Firestore blip): warn and proceed — the guard
+    // is abuse mitigation, and failing ticket intake closed here would drop
+    // genuine distress tickets on an infra wobble.
+    console.warn("[Tickets] Spam-guard query failed (proceeding):", err?.message || err);
+  }
+}
 
 export type TicketCategory =
   | "wrong_item"
@@ -53,6 +138,8 @@ export interface ResolveTicketInput {
   amount?: number;
   couponCode?: string;
   notes: string;
+  /** Verified caller (req.user). Binds identity + asserts staff in-function. */
+  caller?: TicketCaller;
 }
 
 export interface EscalateTicketInput {
@@ -61,6 +148,8 @@ export interface EscalateTicketInput {
   reason: string;
   escalatedBy: string;
   escalatedByName: string;
+  /** Verified caller (req.user). Binds identity + asserts staff in-function. */
+  caller?: TicketCaller;
 }
 
 /**
@@ -74,25 +163,48 @@ function generateTicketNumber(): string {
 
 /**
  * Creates a support ticket with auto-assignment to the branch.
+ *
+ * B5-S1 honesty + abuse rules:
+ * - customerId is server-bound to caller.uid when a verified caller is
+ *   present (kills victim-id stamping); subject/description are length-capped.
+ * - Explicit priority is HONORED (an "urgent" is never downgraded to "high");
+ *   the category default applies only when priority is unspecified.
+ * - Per-customer spam guards (burst + open-cap) run before the write.
  */
-export async function createTicket(input: CreateTicketInput) {
+export async function createTicket(input: CreateTicketInput & { caller?: TicketCaller }) {
+  const customerId = input.caller?.uid || input.customerId;
+  if (!customerId) {
+    throw serviceError("TICKET_INVALID_INPUT", "Ticket create: missing customerId", 400);
+  }
+  const subject = String(input.subject || "").trim();
+  const description = String(input.description || "").trim();
+  if (subject.length < 4 || subject.length > 120 || description.length < 1 || description.length > 2000) {
+    throw serviceError("TICKET_INVALID_INPUT", "Ticket create: subject/description length invalid", 400);
+  }
+
+  await assertTicketSpamGuards(customerId);
+
   const ticketId = `tkt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const ticketNumber = generateTicketNumber();
   const now = new Date().toISOString();
 
-  // If priority not specified, derive from category
+  // Honest priority: explicit caller choice wins. The old code forced
+  // payment_issue/wrong_item to "high" AFTER applying input.priority, so an
+  // explicit "urgent" was silently DOWNGRADED and born-urgent tickets never
+  // paged anyone.
   let priority: TicketPriority = input.priority || "medium";
-  if (input.category === "payment_issue" || input.category === "wrong_item") {
+  if (!input.priority && (input.category === "payment_issue" || input.category === "wrong_item")) {
     priority = "high";
   }
 
   const initialTimeline: TicketTimelineEvent[] = [
     {
       action: "ticket_created",
-      actorId: input.customerId,
+      actorId: customerId,
       actorName: input.customerName || "Customer",
       actorRole: "customer",
-      message: `Ticket raised: ${input.subject}`,
+      // Timeline stores the subject for staff; it NEVER goes to push bodies.
+      message: `Ticket raised: ${subject}`,
       timestamp: now,
     },
   ];
@@ -100,7 +212,7 @@ export async function createTicket(input: CreateTicketInput) {
   const ticketData = {
     id: ticketId,
     ticketNumber,
-    customerId: input.customerId,
+    customerId,
     customerName: input.customerName,
     customerPhone: input.customerPhone || "",
     orderId: input.orderId || null,
@@ -108,8 +220,8 @@ export async function createTicket(input: CreateTicketInput) {
     category: input.category,
     priority,
     status: "open" as TicketStatus,
-    subject: input.subject,
-    description: input.description,
+    subject,
+    description,
     attachments: input.attachments || [],
     assignedTo: {
       tier: "branch" as TicketTier,
@@ -129,6 +241,11 @@ export async function createTicket(input: CreateTicketInput) {
 
 /**
  * Adds a message or reply to a support ticket thread.
+ *
+ * B5-S1 reply honesty: sender identity/role are server-derived from the
+ * verified caller when present — a body-supplied senderRole can no longer
+ * flip a customer reply into a staff reply (or vice versa). Empty/overlong
+ * text is rejected, never silently stored.
  */
 export async function addTicketMessage(params: {
   ticketId: string;
@@ -136,8 +253,21 @@ export async function addTicketMessage(params: {
   senderName: string;
   senderRole: string;
   text: string;
+  caller?: TicketCaller;
 }) {
-  const { ticketId, senderId, senderName, senderRole, text } = params;
+  const { ticketId, senderName, text, caller } = params;
+  const senderId = caller?.uid || params.senderId;
+  const senderRole = caller?.role || params.senderRole;
+  if (!ticketId || !senderId) {
+    throw serviceError("TICKET_INVALID_INPUT", "Ticket message: missing ticketId/senderId", 400);
+  }
+  const cleanText = String(text || "").trim();
+  if (cleanText.length < 1) {
+    throw serviceError("TICKET_MESSAGE_EMPTY", "Ticket message: empty text", 400);
+  }
+  if (cleanText.length > 2000) {
+    throw serviceError("TICKET_INVALID_INPUT", "Ticket message: text over 2000 chars", 400);
+  }
   const ticketRef = db.collection("support_tickets").doc(ticketId);
 
   const event: TicketTimelineEvent = {
@@ -145,7 +275,7 @@ export async function addTicketMessage(params: {
     actorId: senderId,
     actorName: senderName,
     actorRole: senderRole,
-    message: text,
+    message: cleanText,
     timestamp: new Date().toISOString(),
   };
 
@@ -164,11 +294,14 @@ export async function addTicketMessage(params: {
  */
 export async function resolveTicket(input: ResolveTicketInput) {
   const { ticketId, resolvedBy, resolvedByName, action, amount, couponCode, notes } = input;
+  // Staff-only transition, enforced server-side even if the route miswires.
+  assertStaff(input.caller, "resolve tickets");
+  const actorId = input.caller?.uid || resolvedBy;
   const ticketRef = db.collection("support_tickets").doc(ticketId);
   const ticketSnap = await ticketRef.get();
 
   if (!ticketSnap.exists) {
-    throw new Error(`Ticket ${ticketId} not found`);
+    throw serviceError("TICKET_NOT_FOUND", `Ticket ${ticketId} not found`, 404);
   }
 
   const ticket = ticketSnap.data()!;
@@ -180,17 +313,29 @@ export async function resolveTicket(input: ResolveTicketInput) {
   // customer never got money, and the closed ticket removed all recourse.
   if (action === "full_refund" || action === "partial_refund") {
     if (!ticket.orderId) {
-      throw new Error("Cannot refund: ticket has no linked order (guest ticket — refund via Razorpay dashboard).");
+      throw serviceError(
+        "TICKET_REFUND_NO_ORDER",
+        "Cannot refund: ticket has no linked order (guest ticket — refund via Razorpay dashboard).",
+        400
+      );
     }
     const orderSnap = await db.collection("orders").doc(ticket.orderId).get();
     if (!orderSnap.exists) {
-      throw new Error(`Cannot refund: linked order ${ticket.orderId} not found.`);
+      throw serviceError(
+        "TICKET_NOT_FOUND",
+        `Cannot refund: linked order ${ticket.orderId} not found.`,
+        404
+      );
     }
     const order = orderSnap.data()!;
     const razorpayPaymentId =
       order.payment?.razorpayPaymentId || ticket.diagnostics?.razorpayPaymentId;
     if (!razorpayPaymentId) {
-      throw new Error("Cannot refund: no captured Razorpay payment found for this order (COD or unpaid).");
+      throw serviceError(
+        "TICKET_REFUND_NO_PAYMENT",
+        "Cannot refund: no captured Razorpay payment found for this order (COD or unpaid).",
+        400
+      );
     }
     refundResult = await autoRefund({
       orderId: ticket.orderId,
@@ -219,7 +364,7 @@ export async function resolveTicket(input: ResolveTicketInput) {
     amount: amount || 0,
     couponCode: couponCode || null,
     refundResult,
-    resolvedBy,
+    resolvedBy: actorId,
     resolvedByName,
     notes,
     resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -227,7 +372,7 @@ export async function resolveTicket(input: ResolveTicketInput) {
 
   const event: TicketTimelineEvent = {
     action: "ticket_resolved",
-    actorId: resolvedBy,
+    actorId,
     actorName: resolvedByName,
     actorRole: "staff",
     message: `Resolved with ${action.replace("_", " ")}: ${notes}`,
@@ -243,13 +388,18 @@ export async function resolveTicket(input: ResolveTicketInput) {
   });
 
   // Customers never learned their ticket closed. Best-effort push (never
-  // blocks resolution).
+  // blocks resolution). B5-S1: PII-free + honest — generic copy, ticket IDs
+  // in data only, refund named only when money actually moved (H17/H33).
   try {
     const { pushToCustomer } = await import("../notifications/fcmClient");
     await pushToCustomer(
       ticket.customerId,
-      "✅ Support ticket resolved",
-      `Ticket ${ticket.ticketNumber || ticketId} is resolved${refundResult ? " with a refund" : ""}. Thanks for your patience!`,
+      "Support ticket resolved",
+      truncatePushText(
+        refundResult
+          ? `Ticket ${ticket.ticketNumber || ticketId} is resolved with a refund. Thanks for your patience!`
+          : `Ticket ${ticket.ticketNumber || ticketId} is resolved. Thanks for your patience!`
+      ),
       { type: "ticket_resolved", ticketId }
     );
   } catch {
@@ -264,11 +414,14 @@ export async function resolveTicket(input: ResolveTicketInput) {
  */
 export async function escalateTicket(input: EscalateTicketInput) {
   const { ticketId, targetTier, reason, escalatedBy, escalatedByName } = input;
+  // Staff-only transition, enforced server-side even if the route miswires.
+  assertStaff(input.caller, "escalate tickets");
+  const actorId = input.caller?.uid || escalatedBy;
   const ticketRef = db.collection("support_tickets").doc(ticketId);
   const ticketSnap = await ticketRef.get();
 
   if (!ticketSnap.exists) {
-    throw new Error(`Ticket ${ticketId} not found`);
+    throw serviceError("TICKET_NOT_FOUND", `Ticket ${ticketId} not found`, 404);
   }
 
   const ticket = ticketSnap.data()!;
@@ -290,8 +443,8 @@ export async function escalateTicket(input: EscalateTicketInput) {
       context: {
         ticketId,
         ticketNumber: ticket.ticketNumber,
-        subject: ticket.subject,
-        description: ticket.description,
+        // No free-text subject/description here (H17): reporters paste PII
+        // into them and snapshots are staff-visible. Fetch via ticketId.
         escalatedBy: escalatedByName,
       },
     });
@@ -299,7 +452,7 @@ export async function escalateTicket(input: EscalateTicketInput) {
 
   const event: TicketTimelineEvent = {
     action: `escalated_to_${targetTier}`,
-    actorId: escalatedBy,
+    actorId,
     actorName: escalatedByName,
     actorRole: "staff",
     message: `Escalated to ${targetTier.replace("_", " ")}: ${reason}`,

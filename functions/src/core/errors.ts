@@ -91,6 +91,54 @@ export async function captureErrorSnapshot(
 }
 
 /**
+ * B5-S1 (H36) user-safe error copy map: technical detail (gateway ids, raw
+ * provider text, stack hints) is logs-only. Routes expose ONLY these strings
+ * via toUserSafeMessage() — never err.message from money/auth/dispatch paths.
+ */
+export const USER_SAFE_ERROR_COPY: Record<string, string> = {
+  // Tickets
+  TICKET_NOT_FOUND: "Support ticket not found. Please refresh and try again.",
+  TICKET_REFUND_NO_ORDER: "This ticket has no linked order, so an automatic refund is not possible. Our team will help you another way.",
+  TICKET_REFUND_NO_PAYMENT: "No online payment was captured for this order, so there is nothing to refund automatically. Our team will help you another way.",
+  TICKET_REFUND_FAILED: "The refund could not be processed right now. Your ticket stays open and our team will retry shortly.",
+  TICKET_RATE_LIMITED: "You are raising tickets too quickly. Please wait a few minutes and try again.",
+  TICKET_TOO_MANY_OPEN: "You already have several open tickets. Please wait for an update on those first.",
+  TICKET_INVALID_INPUT: "Some ticket details look invalid. Please check the form and try again.",
+  TICKET_FORBIDDEN: "You do not have permission to perform this ticket action.",
+  TICKET_MESSAGE_EMPTY: "Your reply is empty. Please write a message first.",
+  // Notifications
+  NOTIFY_BAD_TOKEN: "Push registration failed. Please reopen the app and allow notifications.",
+  NOTIFY_SEND_FAILED: "Notification could not be delivered, but your request was saved.",
+  // Generic fallbacks
+  BAD_REQUEST: "Something in the request looks invalid. Please check and try again.",
+  UNAUTHORIZED: "Please sign in again to continue.",
+  FORBIDDEN: "You do not have permission to do that.",
+  RATE_LIMITED: "Too many attempts. Please wait a bit and try again.",
+  INTERNAL: "Something went wrong on our side. Please try again in a bit.",
+};
+
+/**
+ * Coded service error: carries a stable user-safe code + HTTP status.
+ * Services throw these; routes map code -> USER_SAFE_ERROR_COPY for clients
+ * while the technical message stays in logs/snapshots only.
+ */
+export function serviceError(code: keyof typeof USER_SAFE_ERROR_COPY | string, technical: string, statusCode: number): Error & { code: string; statusCode: number } {
+  const err = new Error(technical) as Error & { code: string; statusCode: number };
+  err.code = code;
+  err.statusCode = statusCode;
+  return err;
+}
+
+/** Resolve any thrown error to its user-safe client string (H36). */
+export function toUserSafeMessage(err: any): string {
+  const code = err?.code;
+  if (typeof code === "string" && USER_SAFE_ERROR_COPY[code]) {
+    return USER_SAFE_ERROR_COPY[code];
+  }
+  return USER_SAFE_ERROR_COPY.INTERNAL;
+}
+
+/**
  * Dispatches P0 developer alerts to Slack and/or Discord webhooks with PII redaction.
  */
 async function dispatchDeveloperAlert(

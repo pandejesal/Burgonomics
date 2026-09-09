@@ -24,8 +24,8 @@ describe("Prompt 19: Backend FCM Push Notifications & Acoustic Audio Payloads", 
       // Topic routing
       expect(message.topic).toBe("branch_branch_andheri_west_orders");
 
-      // Notification content
-      expect(message.notification?.title).toBe("🚨 NEW KOT RECEIVED!");
+      // Notification content (B5-S1: plain-case KOT, no caps/emoji)
+      expect(message.notification?.title).toBe("New KOT received");
       expect(message.notification?.body).toContain("Order #BG-8821 (TAKEAWAY [Table 04]) - ₹499");
 
       // Android High Priority & orders channel (must exist on device)
@@ -35,14 +35,15 @@ describe("Prompt 19: Backend FCM Push Notifications & Acoustic Audio Payloads", 
       expect(message.android?.notification?.priority).toBe("max");
       expect(message.android?.notification?.defaultVibrateTimings).toBe(true);
 
-      // iOS APNs Critical Alert & Sound
+      // iOS APNs Critical Alert & Sound (shared parity helper, no per-user badge on KOT)
       expect(message.apns?.headers?.["apns-priority"]).toBe("10");
       expect(message.apns?.payload?.aps?.sound).toBe("default");
-      expect(message.apns?.payload?.aps?.badge).toBe(1);
+      expect(message.apns?.payload?.aps?.badge).toBeUndefined();
       expect(message.apns?.payload?.aps?.contentAvailable).toBe(true);
 
-      // WebPush High Urgency & KDS Action Button
+      // WebPush High Urgency & KDS Action Button (same copy as Android/iOS)
       expect(message.webpush?.headers?.Urgency).toBe("high");
+      expect(message.webpush?.notification?.title).toBe("New KOT received");
       expect(message.webpush?.notification?.actions).toEqual([
         { action: "view_kot", title: "View KDS" },
       ]);
@@ -93,20 +94,43 @@ describe("Prompt 19: Backend FCM Push Notifications & Acoustic Audio Payloads", 
   });
 
   describe("3. Support Ticket Escalation Alerts", () => {
-    it("routes ticket alert to branch tickets topic", () => {
+    it("routes ticket alert to branch tickets topic with PII-free body", () => {
       const branchId = "surat_adajan";
       const ticket = {
         id: "tkt_555",
         ticketNumber: "TK-092",
-        subject: "Missing extra dip",
+        subject: "Missing extra dip, my phone is 9876543210",
         priority: "urgent",
       };
 
       const message = buildTicketAlertMessage(branchId, ticket);
       expect(message.topic).toBe("branch_surat_adajan_tickets");
-      expect(message.notification?.title).toContain("Ticket Escalation (URGENT)");
-      expect(message.notification?.body).toBe("Ticket #TK-092: Missing extra dip");
+      expect(message.notification?.body).not.toContain("Missing extra dip");
+      expect(message.notification?.body).not.toContain("9876543210");
+      expect(message.notification?.body?.length).toBeLessThanOrEqual(120);
       expect(message.data?.type).toBe("TICKET_ESCALATION");
+      expect(message.data?.ticketId).toBe("tkt_555");
+    });
+
+    it("keeps refund/veg/ETA claims backend-backed", () => {
+      const base = { id: "o1", orderNumber: "BG-1", fulfillmentType: "delivery" };
+      // No flags => generic honest copy, no invented ETA/refund/veg.
+      const cancelled = buildCustomerOrderUpdateMessage("t", base, "CANCELLED");
+      expect(cancelled.notification?.body).toContain("No money was charged");
+      expect(cancelled.notification?.body).not.toContain("refund has been initiated");
+      const delivered = buildCustomerOrderUpdateMessage("t", base, "DELIVERED");
+      expect(delivered.notification?.body).not.toContain("veg");
+      const enRoute = buildCustomerOrderUpdateMessage("t", base, "OUT_FOR_DELIVERY");
+      expect(enRoute.notification?.body).not.toMatch(/~\d+ mins/);
+      // Flags present => specific copy allowed.
+      const refunded = buildCustomerOrderUpdateMessage(
+        "t",
+        { ...base, refundInitiated: true },
+        "CANCELLED"
+      );
+      expect(refunded.notification?.body).toContain("refund has been initiated");
+      const veg = buildCustomerOrderUpdateMessage("t", { ...base, allVeg: true }, "DELIVERED");
+      expect(veg.notification?.body).toContain("veg");
     });
   });
 

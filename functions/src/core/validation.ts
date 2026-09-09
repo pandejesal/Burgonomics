@@ -111,6 +111,69 @@ export const adjustCoinsSchema = z.object({
   notes: z.string().max(500).optional(),
 });
 
+// ---------------------------------------------------------------------------
+// B5-S1 support tickets + franchise leads (spam/abuse guards live in the
+// service; these schemas enforce shape + length at the route boundary so
+// unbounded free-text never reaches Firestore or a lock-screen push body).
+// ---------------------------------------------------------------------------
+
+const ticketCategorySchema = z.enum([
+  "wrong_item",
+  "late_delivery",
+  "food_quality",
+  "payment_issue",
+  "app_bug",
+  "general_inquiry",
+]);
+
+export const createTicketSchema = z.object({
+  customerId: z.string().min(1).max(128).optional(),
+  customerName: z.string().trim().min(1).max(120),
+  customerPhone: z.string().trim().max(20).optional(),
+  orderId: z.string().min(1).max(128).optional(),
+  branchId: z.string().min(1).max(128),
+  category: ticketCategorySchema,
+  priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+  subject: z.string().trim().min(4).max(120),
+  description: z.string().trim().min(1).max(2000),
+  attachments: z.array(z.string().url().max(500)).max(5).optional(),
+});
+
+export const ticketMessageSchema = z.object({
+  ticketId: nonEmptyString,
+  senderId: z.string().min(1).max(128).optional(),
+  senderName: z.string().trim().min(1).max(120).optional(),
+  text: z.string().trim().min(1).max(2000),
+});
+
+export const resolveTicketSchema = z.object({
+  ticketId: nonEmptyString,
+  resolvedBy: z.string().min(1).max(128).optional(),
+  resolvedByName: z.string().trim().min(1).max(120).optional(),
+  action: z.enum(["full_refund", "partial_refund", "discount_coupon", "loyalty_credit", "explanation"]),
+  amount: z.number().finite().min(0).max(100000).optional(),
+  couponCode: z.string().trim().min(1).max(64).optional(),
+  notes: z.string().trim().min(1).max(2000),
+});
+
+export const escalateTicketSchema = z.object({
+  ticketId: nonEmptyString,
+  targetTier: z.enum(["brand_support", "developer_team"]),
+  reason: z.string().trim().min(3).max(1000),
+  escalatedBy: z.string().min(1).max(128).optional(),
+  escalatedByName: z.string().trim().min(1).max(120).optional(),
+});
+
+// Franchise lead intake: customerId MUST equal the caller UID (rules bind it
+// too) — kills victim-id stamping at both layers (M14 follow-up).
+export const franchiseLeadSchema = z.object({
+  customerId: nonEmptyString,
+  name: z.string().trim().min(1).max(120),
+  phone: z.string().trim().min(6).max(20),
+  city: z.string().trim().min(1).max(120),
+  message: z.string().trim().max(2000).optional(),
+});
+
 export function validateBody<T>(schema: z.ZodType<T>) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const parsed = schema.safeParse(req.body);

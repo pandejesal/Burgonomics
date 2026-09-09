@@ -54,6 +54,8 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
 
     // Customer order confirmation (PLACED) — previously only the kitchen was
     // notified on create; customers heard nothing until the first status bump.
+    // B5-S1: only backend-backed copy leaves this trigger (eta/partner from
+    // the doc; veg/refund flags only when the doc actually carries them).
     const customerId = order.customerId || order.userId || order.customer?.id;
     try {
       if (customerId && typeof db.collection === "function") {
@@ -69,6 +71,9 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
               storeName: order.store?.name || "Burgonomics",
               etaMinutes: order.etaMinutes,
               deliveryPartnerName: order.deliveryPartner?.name,
+              allVeg: order.allVeg === true ? true : undefined,
+              refundInitiated: order.refundStatus === "refunded" || order.refundStatus === "INITIATED" ? true : undefined,
+              paymentMethod: order.payment?.method,
             },
             "PLACED"
           );
@@ -152,6 +157,12 @@ export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
               storeName: after.store?.name || "Burgonomics",
               etaMinutes: after.etaMinutes || after.deliveryPartner?.etaMinutes,
               deliveryPartnerName: after.deliveryPartner?.name,
+              allVeg: after.allVeg === true ? true : undefined,
+              refundInitiated:
+                after.refundStatus === "refunded" || after.refundStatus === "INITIATED"
+                  ? true
+                  : undefined,
+              paymentMethod: after.payment?.method,
             },
             afterStatusCode
           );
@@ -204,10 +215,11 @@ export const onTicketCreatedUrgentTrigger = onDocumentCreated(
 
     try {
       const branchId = ticket.branchId || "global";
+      // B5-S1 (H17): the free-text subject stays in Firestore only — the
+      // builder renders generic copy with IDs in data.
       const message = buildTicketAlertMessage(branchId, {
         id: ticketId,
         ticketNumber: ticket.ticketNumber || ticketId.substring(0, 6),
-        subject: ticket.subject || "Order Issue",
         priority: ticket.priority,
       });
       await sendFcmMessage(message);
@@ -245,7 +257,6 @@ export const onTicketEscalatedNotificationTrigger = onDocumentUpdated(
       const message = buildTicketAlertMessage(branchId, {
         id: ticketId,
         ticketNumber: after.ticketNumber || ticketId.substring(0, 6),
-        subject: after.subject || "Order Issue",
         priority: after.priority,
       });
 

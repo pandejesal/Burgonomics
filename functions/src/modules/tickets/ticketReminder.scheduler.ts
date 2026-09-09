@@ -1,5 +1,6 @@
 import { db, messaging } from "../../core/firebase";
 import * as admin from "firebase-admin";
+import { truncatePushText, buildParityExtras } from "../notifications/templates";
 
 export type TicketEscalationTier = "branch" | "brand_support" | "developer_team";
 
@@ -74,17 +75,25 @@ async function publishTicketAlert(params: {
   const { ticket, ticketId, title, body, dataType } = params;
   const branchId = ticket?.branchId;
   const attempts: Array<Promise<unknown>> = [];
+  // PII-free generic copy only (H17) + server truncate backstop (~120ch).
+  const safeBody = truncatePushText(body);
+
+  if (!messaging || typeof messaging.send !== "function") {
+    console.warn("[Ticket Escalator] FCM messaging unavailable — alert logged only:", title);
+    return;
+  }
 
   attempts.push(
     messaging.send({
       topic: ESCALATED_TOPIC,
-      notification: { title, body },
+      notification: { title, body: safeBody },
       data: {
         type: dataType,
         ticketId,
         ticketNumber: ticket?.ticketNumber || "",
       },
       android: { priority: "high" },
+      ...buildParityExtras(title, safeBody),
     })
   );
 
@@ -94,13 +103,14 @@ async function publishTicketAlert(params: {
     attempts.push(
       messaging.send({
         topic: `branch_${branchId}_tickets`,
-        notification: { title, body },
+        notification: { title, body: safeBody },
         data: {
           type: dataType,
           ticketId,
           ticketNumber: ticket?.ticketNumber || "",
         },
         android: { priority: "high" },
+        ...buildParityExtras(title, safeBody),
       })
     );
   }
@@ -170,7 +180,7 @@ export async function checkTicketInactivityReminders(): Promise<{
         publishTicketAlert({
           ticket: ticketSnapshot,
           ticketId,
-          title: `🚨 Escalated: ${ticketSnapshot?.ticketNumber || ticketId}`,
+          title: `Escalated: ${ticketSnapshot?.ticketNumber || ticketId}`,
           // No free-text subject on the push (PII paste risk) — branch-first.
           body: `Ticket auto-escalated to ${tierLabel} for lack of activity — open Tickets to view.`,
           dataType: "ticket_escalated",
@@ -197,7 +207,7 @@ export async function checkTicketInactivityReminders(): Promise<{
         publishTicketAlert({
           ticket: ticketSnapshot,
           ticketId,
-          title: `⚠️ Unresolved Ticket Alert (${ticketSnapshot?.ticketNumber || ticketId})`,
+          title: `Unresolved ticket alert (${ticketSnapshot?.ticketNumber || ticketId})`,
           body: `Customer ticket open for over 60 mins — please attend immediately.`,
           dataType: "ticket_reminder",
         })
