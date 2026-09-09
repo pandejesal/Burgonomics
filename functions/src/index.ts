@@ -3,7 +3,11 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 // v2/identity has no user-delete trigger — v1 auth.user().onDelete is the
 // only Auth deletion hook. (beforeUserCreated/SignedIn are create/sign-in only.)
 import * as functionsV1 from "firebase-functions/v1";
-import * as admin from "firebase-admin";
+// B6-S1 (M19): subpath import — index.ts only needs FieldValue. Pulling the
+// full `firebase-admin` barrel here added it to the monolith cold-start graph
+// a second time (core/firebase.ts already owns the full init).
+import { FieldValue } from "firebase-admin/firestore";
+import * as logger from "firebase-functions/logger";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -225,7 +229,7 @@ app.get("/config/app", async (_req, res) => {
     });
   } catch (err: any) {
     // Config unreadable: stay permissive (clients proceed), log server-side.
-    console.warn("[Config] app_config/native read failed, serving permissive defaults:", err?.message || err);
+    logger.warn("[Config] app_config/native read failed, serving permissive defaults:", err?.message || err);
     res.status(200).json({
       iosMin: "0.0.0",
       androidMin: "0.0.0",
@@ -609,7 +613,7 @@ app.post("/notifications/registerToken", requireAuth, async (req: AuthenticatedR
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     await db
       .collection("device_tokens")
       .doc(token)
@@ -621,7 +625,7 @@ app.post("/notifications/registerToken", requireAuth, async (req: AuthenticatedR
       .collection("users")
       .doc(uid)
       .set(
-        { fcmTokens: admin.firestore.FieldValue.arrayUnion(token), updatedAt: now },
+        { fcmTokens: FieldValue.arrayUnion(token), updatedAt: now },
         { merge: true }
       );
     res.status(200).json({ success: true });
@@ -832,6 +836,14 @@ export const api = onRequest(
 // 6. CLOUD SCHEDULERS
 // ==========================================
 
+// B6-S1 (M17/M31): bounded start jitter for the high-frequency workers. Three
+// */5 schedulers (+ the */15 ticket worker, which coincides with them every
+// 15 min) otherwise fire on the same second and hit Firestore as one burst.
+// Same work, delayed 0–10s — no tick is skipped, no query changed.
+async function schedulerJitter(maxMs = 10000): Promise<void> {
+  await new Promise((r) => setTimeout(r, Math.floor(Math.random() * (maxMs + 1))));
+}
+
 export const hourlyPetpoojaMenuSync = onSchedule(
   {
     region: REGION,
@@ -840,7 +852,7 @@ export const hourlyPetpoojaMenuSync = onSchedule(
   },
   async () => {
     const result = await syncAllBranchesPetpoojaMenu();
-    console.log(`[Hourly Sync] Processed ${result.syncedBranches} branches`);
+    logger.log(`[Hourly Sync] Processed ${result.syncedBranches} branches`);
   }
 );
 
@@ -851,8 +863,9 @@ export const retryPetpoojaOrders = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
+    await schedulerJitter();
     const result = await retryPendingPetpoojaOrdersWorker();
-    console.log(`[Retry Worker] Retried ${result.retriedCount} KOT orders`);
+    logger.log(`[Retry Worker] Retried ${result.retriedCount} KOT orders`);
   }
 );
 
@@ -863,8 +876,9 @@ export const retryRouteTransfers = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
+    await schedulerJitter();
     const result = await retryPendingRouteTransfersWorker();
-    console.log(`[Route Transfer Retry Worker] Retried ${result.retriedCount} transfers`);
+    logger.log(`[Route Transfer Retry Worker] Retried ${result.retriedCount} transfers`);
   }
 );
 
@@ -875,8 +889,9 @@ export const ticketInactivityReminder = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
+    await schedulerJitter();
     const result = await checkTicketInactivityReminders();
-    console.log(`[Ticket Inactivity Worker] Sent ${result.remindedCount} reminders`);
+    logger.log(`[Ticket Inactivity Worker] Sent ${result.remindedCount} reminders`);
   }
 );
 
@@ -887,8 +902,9 @@ export const pollActivePorterDeliveries = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
+    await schedulerJitter();
     const result = await pollActivePorterOrdersWorker();
-    console.log(
+    logger.log(
       `[Porter Polling Worker] Polled ${result.polledCount} orders, updated ${result.updatedCount} orders`
     );
   }
@@ -902,7 +918,7 @@ export const cleanupExpiredGuestSessions = onSchedule(
   },
   async () => {
     const result = await cleanupExpiredGuestSessionsWorker();
-    console.log(`[Guest Cleanup Worker] Purged ${result.cleanedCartsCount} expired guest carts`);
+    logger.log(`[Guest Cleanup Worker] Purged ${result.cleanedCartsCount} expired guest carts`);
   }
 );
 
@@ -917,7 +933,7 @@ export const onAuthUserDeletedCleanup = functionsV1
   .auth.user()
   .onDelete(async (deletedUser) => {
     const ok = await onUserDeletedCleanup(deletedUser.uid);
-    console.log(`[Auth Cleanup] User deletion cleanup ${ok ? "done" : "FAILED"}`);
+    logger.log(`[Auth Cleanup] User deletion cleanup ${ok ? "done" : "FAILED"}`);
   });
 
 export {

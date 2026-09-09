@@ -1,5 +1,6 @@
 import { db, messaging } from "../../core/firebase";
 import * as admin from "firebase-admin";
+import * as logger from "firebase-functions/logger";
 import { truncatePushText, buildParityExtras } from "../notifications/templates";
 
 export type TicketEscalationTier = "branch" | "brand_support" | "developer_team";
@@ -79,7 +80,7 @@ async function publishTicketAlert(params: {
   const safeBody = truncatePushText(body);
 
   if (!messaging || typeof messaging.send !== "function") {
-    console.warn("[Ticket Escalator] FCM messaging unavailable — alert logged only:", title);
+    logger.warn("[Ticket Escalator] FCM messaging unavailable — alert logged only:", title);
     return;
   }
 
@@ -229,12 +230,12 @@ export async function checkTicketInactivityReminders(): Promise<{
     const results = await Promise.allSettled(alertJobs.map((job) => job()));
     const failed = results.filter((r) => r.status === "rejected").length;
     if (failed > 0) {
-      console.warn(`[Ticket Escalator] ${failed}/${alertJobs.length} alert sends failed (writes already committed).`);
+      logger.warn(`[Ticket Escalator] ${failed}/${alertJobs.length} alert sends failed (writes already committed).`);
     }
   }
 
   if (escalationEvents.length > 0) {
-    console.log(
+    logger.log(
       `[Ticket Escalator] Auto-escalated ${escalationEvents.length} ticket(s): ${escalationEvents
         .map((e) => e.targetTier)
         .join(", ")}`

@@ -16,7 +16,7 @@
  * paginated (400/page, 50 pages default; --max-pages N to raise).
  */
 import * as admin from "firebase-admin";
-import { runOrderBackfill } from "../modules/maintenance/orderBackfill";
+import { runOrderBackfill } from "./orderBackfill";
 
 function parseArgs(argv: string[]) {
   const args = { apply: false, maxPages: 50 };

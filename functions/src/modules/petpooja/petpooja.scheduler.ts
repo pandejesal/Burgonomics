@@ -1,5 +1,6 @@
 ﻿import { db } from "../../core/firebase";
 import * as admin from "firebase-admin";
+import * as logger from "firebase-functions/logger";
 import { syncPetpoojaMenu } from "./menuSyncWebhook";
 import { pushOrderToPetpooja } from "./orderPush";
 import { dispatchFCM } from "../notifications/fcm.service";
@@ -59,7 +60,7 @@ export async function syncAllBranchesPetpoojaMenu(): Promise<{
       if (res.status === "fulfilled") {
         syncedBranches++;
       } else {
-        console.error(`[Petpooja Menu Scheduler] Failed for branch ${doc.id}:`, res.reason);
+        logger.error(`[Petpooja Menu Scheduler] Failed for branch ${doc.id}:`, res.reason);
       }
     }
   }
@@ -133,7 +134,7 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
       });
       claimedDocs.push(...claimed);
     } catch (err: any) {
-      console.warn("[Petpooja Retry Worker] claim transaction failed, skipping tick:", err?.message || err);
+      logger.warn("[Petpooja Retry Worker] claim transaction failed, skipping tick:", err?.message || err);
       return { retriedCount, failedCount };
     }
   } else {
@@ -155,7 +156,7 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
       } else {
         failedCount++;
         if (res.status === "rejected") {
-          console.warn(
+          logger.warn(
             `[Petpooja Retry Worker] Order ${chunk[j].id} threw, continuing batch:`,
             res.reason?.message || res.reason
           );
@@ -198,13 +199,13 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
               data: { type: "kot_sync_failed", orderId: doc.id },
             });
           } catch (fcmErr: any) {
-            console.warn("[Petpooja Retry Worker] KOT-failed branch alert failed:", fcmErr?.message || fcmErr);
+            logger.warn("[Petpooja Retry Worker] KOT-failed branch alert failed:", fcmErr?.message || fcmErr);
           }
         }
         failedCount++;
       }
     } catch (err: any) {
-      console.warn("[Petpooja Retry Worker] dead-letter pass failed:", err?.message || err);
+      logger.warn("[Petpooja Retry Worker] dead-letter pass failed:", err?.message || err);
     }
   }
 

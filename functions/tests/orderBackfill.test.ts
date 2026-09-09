@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { planOrderBackfill, runOrderBackfill } from "../src/modules/maintenance/orderBackfill";
+import { planOrderBackfill, runOrderBackfill } from "../../scripts/backfill/orderBackfill";
 
 describe("orderBackfill planner", () => {
   it("fills all missing mirrors from userId/placedAt/store link", () => {

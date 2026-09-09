@@ -1,21 +1,47 @@
 # 100% Genuine Shoot Photo Processing Script for Burgonomics
 # Uses ONLY the authentic photos from ULTRA FINAL MENU PICS (Zero AI generated images)
+#
+# B6-S1 hygiene: worktree-relative defaults (no hardcoded machine paths).
+# Original absolute locations kept as fallback examples below.
+#   Old $baseRaw: c:\Users\DELL\Desktop\Burgonomics\ULTRA FINAL MENU PICS\ULTRA FINAL MENU PICS
+#   Old $targets: c:\Users\DELL\Desktop\Burgonomics\burgonomics-foundation-core\public\images\menu
+#                 c:\Users\DELL\Desktop\Burgonomics\burgonomics-partner\public\images\menu
+param(
+    [string]$BaseRaw = (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'ULTRA FINAL MENU PICS\ULTRA FINAL MENU PICS'),
+    [string[]]$Targets = @(
+        (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'burgonomics-foundation-core\public\images\menu'),
+        (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'burgonomics-partner\public\images\menu')
+    )
+)
 Add-Type -AssemblyName System.Drawing
 
-$baseRaw = "c:\Users\DELL\Desktop\Burgonomics\ULTRA FINAL MENU PICS\ULTRA FINAL MENU PICS"
-$targets = @(
-    "c:\Users\DELL\Desktop\Burgonomics\burgonomics-foundation-core\public\images\menu",
-    "c:\Users\DELL\Desktop\Burgonomics\burgonomics-partner\public\images\menu"
-)
+$baseRaw = $BaseRaw
+$targets = $Targets
 
-# Helper function to resize and save image
+# B6-S1 (L13/M39): shared-photo ledger. One genuine photo reused across SKUs
+# is FLAGGED at the end (visual-dishonesty risk) — never silently remapped.
+$script:sourceDestMap = @{}
+
+function Register-Photo-Use {
+    param([string]$sourcePath, [string]$destLabel)
+    if (-not $script:sourceDestMap.ContainsKey($sourcePath)) {
+        $script:sourceDestMap[$sourcePath] = @()
+    }
+    $script:sourceDestMap[$sourcePath] += $destLabel
+}
+
+# Helper function to resize and save image (multi-size srcset variant).
+# Always emits the compat file at the exact $fileName ($maxDimension, so every
+# existing menu reference keeps working) plus one `-<size>` suffixed file per
+# extra entry in $Sizes (e.g. hero-burger.jpg + hero-burger-400.jpg).
 function Resize-And-Save-Image {
     param(
         [string]$sourcePath,
         [string]$subFolder,
         [string]$fileName,
         [int]$maxDimension = 800,
-        [long]$quality = 85L
+        [long]$quality = 85L,
+        [int[]]$Sizes = @(400)
     )
 
     if (-not (Test-Path $sourcePath)) {
@@ -28,24 +54,33 @@ function Resize-And-Save-Image {
         if (-not (Test-Path $folderPath)) {
             New-Item -ItemType Directory -Path $folderPath -Force | Out-Null
         }
-        $destPath = Join-Path $folderPath $fileName
+        $sizesToEmit = @($maxDimension) + @($Sizes | Where-Object { $_ -ne $maxDimension } | Sort-Object -Unique)
+        foreach ($size in $sizesToEmit) {
+            if ($size -eq $maxDimension) {
+                $destFileName = $fileName
+            } else {
+                $stem = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                $sfx = [System.IO.Path]::GetExtension($fileName)
+                $destFileName = "$stem-$size$sfx"
+            }
+            $destPath = Join-Path $folderPath $destFileName
 
         try {
             $srcImg = [System.Drawing.Image]::FromFile($sourcePath)
-            
+
             $width = $srcImg.Width
             $height = $srcImg.Height
-            
+
             # Calculate aspect-ratio preserved dimensions
             if ($width -gt $height) {
-                if ($width -gt $maxDimension) {
-                    $height = [int]($height * ($maxDimension / $width))
-                    $width = $maxDimension
+                if ($width -gt $size) {
+                    $height = [int]($height * ($size / $width))
+                    $width = $size
                 }
             } else {
-                if ($height -gt $maxDimension) {
-                    $width = [int]($width * ($maxDimension / $height))
-                    $height = $maxDimension
+                if ($height -gt $size) {
+                    $width = [int]($width * ($size / $height))
+                    $height = $size
                 }
             }
 
@@ -59,7 +94,7 @@ function Resize-And-Save-Image {
             $rect = New-Object System.Drawing.Rectangle(0, 0, $width, $height)
             $graphics.DrawImage($srcImg, $rect)
 
-            $ext = [System.IO.Path]::GetExtension($fileName).ToLower()
+            $ext = [System.IO.Path]::GetExtension($destFileName).ToLower()
             if ($ext -eq ".png") {
                 $destBmp.Save($destPath, [System.Drawing.Imaging.ImageFormat]::Png)
             } else {
@@ -74,9 +109,11 @@ function Resize-And-Save-Image {
             $destBmp.Dispose()
             $srcImg.Dispose()
 
-            Write-Host "Processed: $subFolder/$fileName" -ForegroundColor Green
+            Register-Photo-Use $sourcePath "$subFolder/$destFileName"
+            Write-Host "Processed: $subFolder/$destFileName" -ForegroundColor Green
         } catch {
             Write-Host "Error processing $sourcePath -> $destPath : $_" -ForegroundColor Red
+        }
         }
     }
 }
@@ -177,11 +214,24 @@ Resize-And-Save-Image "$baseRaw\Meals\Red Hot meal.jpg" "combos" "red-hot-meal.j
 Resize-And-Save-Image "$baseRaw\Meals\Strawberry shake + Veggie loaded burger.png" "combos" "strawberry-shake-veggie-combo.jpg"
 
 # 14. Banners (100% Genuine Shoot)
-Resize-And-Save-Image "$baseRaw\MYOB.png" "banners" "myob-banner.png" 1200
+Resize-And-Save-Image "$baseRaw\MYOB.png" "banners" "myob-banner.png" 1200 -Sizes @(400, 800)
 Resize-And-Save-Image "$baseRaw\MYOB.png" "banners" "myob.png" 800
-Resize-And-Save-Image "$baseRaw\Meals\big bang meal.JPG" "banners" "big-bang-meal-banner.jpg" 1200
-Resize-And-Save-Image "$baseRaw\Meals\hero meal.JPG" "banners" "hero-meal-banner.jpg" 1200
-Resize-And-Save-Image "$baseRaw\Classic Burgers\Hero burgr.jpg" "banners" "hero-burger-banner.jpg" 1200
-Resize-And-Save-Image "$baseRaw\Fries\Peri peri fries.JPG" "banners" "peri-peri-fries-banner.jpg" 1200
+Resize-And-Save-Image "$baseRaw\Meals\big bang meal.JPG" "banners" "big-bang-meal-banner.jpg" 1200 -Sizes @(400, 800)
+Resize-And-Save-Image "$baseRaw\Meals\hero meal.JPG" "banners" "hero-meal-banner.jpg" 1200 -Sizes @(400, 800)
+Resize-And-Save-Image "$baseRaw\Classic Burgers\Hero burgr.jpg" "banners" "hero-burger-banner.jpg" 1200 -Sizes @(400, 800)
+Resize-And-Save-Image "$baseRaw\Fries\Peri peri fries.JPG" "banners" "peri-peri-fries-banner.jpg" 1200 -Sizes @(400, 800)
 
 Write-Host "100% Genuine shoot photos successfully processed!" -ForegroundColor Cyan
+
+# Shared-photo report: one source feeding N SKUs (e.g. MOMOS.JPG x6) is honest
+# reuse of genuine shoot photos, but downstream menus must not present them as
+# distinct dishes. Flagged here for menu-data owners — not remapped.
+$shared = $script:sourceDestMap.GetEnumerator() | Where-Object { $_.Value.Count -gt 1 } | Sort-Object { $_.Value.Count } -Descending
+if ($shared) {
+    Write-Warning "Shared photo across SKUs detected (flagged, not changed):"
+    foreach ($entry in $shared) {
+        Write-Warning ("  {0} x{1}: {2}" -f (Split-Path $entry.Key -Leaf), $entry.Value.Count, ($entry.Value -join ', '))
+    }
+} else {
+    Write-Host "No shared-photo reuse detected." -ForegroundColor Cyan
+}
