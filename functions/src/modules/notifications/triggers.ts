@@ -1,7 +1,7 @@
 import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { db } from "../../core/firebase";
 import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlertMessage } from "./templates";
-import { sendFcmMessage, sendMulticastFcm } from "./fcmClient";
+import { sendFcmMessage, sendMulticastFcm, writeCustomerInboxDoc } from "./fcmClient";
 import { captureErrorSnapshot } from "../../core/errors";
 
 const REGION = "asia-south1";
@@ -37,8 +37,20 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
         tableNumber: order.tableNumber,
       });
 
-      await sendFcmMessage(kotMessage);
-      console.log(`[onOrderCreatedTrigger] Dispatched acoustic KOT alert to branch_${branchId}_orders`);
+      const sent = await sendFcmMessage(kotMessage);
+      if (sent) {
+        console.log(`[onOrderCreatedTrigger] Dispatched acoustic KOT alert to branch_${branchId}_orders`);
+      } else {
+        // Loop 5: kitchen got no acoustic alert — snapshot so ops can
+        // investigate / re-push; never pretend the chime went out.
+        await captureErrorSnapshot({
+          source: "notifications",
+          severity: "high",
+          message: `KOT push for order ${orderId} returned false (no transport or mock) — kitchen may be silent`,
+          orderId,
+          branchId,
+        });
+      }
     } catch (err: any) {
       // KDS-blind kitchen: snapshot LOUD with order+branch refs (was console-only).
       console.error("[onOrderCreatedTrigger] Failed to dispatch KOT notification:", err?.message || err);
@@ -86,7 +98,21 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
               apns: confirmMessage.apns,
             },
             customerId
-          );
+          ).then(async (result) => {
+            // Loop 5: push-or-nothing left customers silent — fall back to
+            // the in-app inbox when FCM delivers zero.
+            if (result.successCount === 0) {
+              const n = confirmMessage.notification;
+              if (n && n.title && n.body) {
+                await writeCustomerInboxDoc(
+                  customerId,
+                  n.title,
+                  n.body,
+                  confirmMessage.data as Record<string, string>
+                );
+              }
+            }
+          });
         }
       }
     } catch (err: any) {
@@ -176,7 +202,20 @@ export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
               apns: updateMessage.apns,
             },
             customerId
-          );
+          ).then(async (result) => {
+            // Loop 5: inbox fallback — see PLACED path above.
+            if (result.successCount === 0) {
+              const n = updateMessage.notification;
+              if (n && n.title && n.body) {
+                await writeCustomerInboxDoc(
+                  customerId,
+                  n.title,
+                  n.body,
+                  updateMessage.data as Record<string, string>
+                );
+              }
+            }
+          });
         }
       }
     } catch (err: any) {

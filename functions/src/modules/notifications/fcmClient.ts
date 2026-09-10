@@ -58,7 +58,9 @@ export async function sendFcmMessage(message: admin.messaging.Message): Promise<
       await withTimeout(messaging.send(message));
       return true;
     }
-    return true;
+    // Loop 5: no transport = not sent. The old `return true` here claimed
+    // delivery while sending nothing (fake success on notify paths).
+    return false;
   } catch (error: any) {
     console.warn("[FCM] Error sending message (non-blocking fallback):", error?.message || error);
     return false;
@@ -139,9 +141,11 @@ export async function sendMulticastFcm(
       return { successCount, failureCount, prunedTokens };
     }
 
+    // Loop 5: no transport = nothing delivered. Report all-failed so callers
+    // (dashboards, retry logic) never celebrate an unsent fan-out.
     return {
-      successCount: tokens.length,
-      failureCount: 0,
+      successCount: 0,
+      failureCount: tokens.length,
       prunedTokens: [],
     };
   } catch (error: any) {
@@ -155,6 +159,41 @@ export async function sendMulticastFcm(
 }
 
 /**
+ * Best-effort inbox fallback: persists a notification doc so push-or-nothing
+ * paths (Loop 5) still reach the customer in the in-app tray when FCM
+ * delivers zero. Never throws into callers.
+ */
+export async function writeCustomerInboxDoc(
+  customerId: string | undefined,
+  title: string,
+  body: string,
+  data: Record<string, string> = {}
+): Promise<boolean> {
+  try {
+    if (!customerId || !db || typeof db.collection !== "function") return false;
+    const notifId = `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    await db
+      .collection("users")
+      .doc(customerId)
+      .collection("notifications")
+      .doc(notifId)
+      .set({
+        id: notifId,
+        title,
+        message: truncatePushText(body),
+        type: data?.type || "system",
+        targetId: data?.targetId || null,
+        read: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    return true;
+  } catch (err: any) {
+    console.warn("[FCM] Inbox fallback write failed (non-blocking):", err?.message || err);
+    return false;
+  }
+}
+
+/**
  * Best-effort customer push by users/{uid} fcmTokens. Non-blocking by design:
  * notification loss must never fail the calling flow (payment/refund/ticket).
  *
@@ -162,6 +201,10 @@ export async function sendMulticastFcm(
  * (H18), and every push carries shared apns+webpush parity (H34) so iOS/web
  * render the same copy as Android. Callers pass display copy only — free-text
  * subject/names/phones must never reach `body` (H17).
+ *
+ * Loop 5: when multicast delivers zero, the message is persisted to the
+ * recipient inbox (same fallback contract as dispatchFCM) instead of
+ * vanishing silently.
  */
 export async function pushToCustomer(
   customerId: string | undefined,
@@ -176,8 +219,12 @@ export async function pushToCustomer(
     const badge = typeof opts.badge === "number" ? opts.badge : await getUnreadCount(customerId);
     const userDoc = await db.collection("users").doc(customerId).get();
     const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
-    if (fcmTokens.length === 0) return;
-    await sendMulticastFcm(
+    if (fcmTokens.length === 0) {
+      // No push target at all — inbox is the only channel.
+      await writeCustomerInboxDoc(customerId, title, body, data);
+      return;
+    }
+    const result = await sendMulticastFcm(
       fcmTokens,
       {
         notification: { title, body: safeBody },
@@ -190,6 +237,9 @@ export async function pushToCustomer(
       },
       customerId
     );
+    if (result.successCount === 0) {
+      await writeCustomerInboxDoc(customerId, title, body, data);
+    }
   } catch (err: any) {
     console.warn("[FCM] Customer push failed (non-blocking):", err?.message || err);
   }
