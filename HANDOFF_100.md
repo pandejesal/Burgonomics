@@ -63,3 +63,10 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Audited all 8 `.data()!` sites in functions: every one guarded by an
   exists-check with park/throw/return (86ing parks unknown orders).
 - No source changes. No commit.
+### 2026-09-11 — price lock fail-honest + functions tree green (core/functions)
+- `CartRepository.validateAndRefreshPriceLock`: menu-fetch failure silently
+  renewed the lock on stale prices (banner promised unverified lock). Now
+  leaves expired + returns reverify message. Only caller ignores result —
+  no flow breaks; online payments reprice server-side regardless.
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+- Functions tree (incl. concurrent lane's uncommitted hunks): tsc + 234 green.
