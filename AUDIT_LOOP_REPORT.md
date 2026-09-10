@@ -10,7 +10,7 @@
 - [x] 8 mock-deadcode-census
 - [x] 9 perf-native-parity
 - [x] 10 logging-pii-secrets
-- [ ] 11 a11y-ux-deadends
+- [x] 11 a11y-ux-deadends
 - [ ] 12 adversarial-final-matrix
 ## Carryover (queued product calls, newest last)
 - Loop 1/4 → product: porter.service.ts:556/:571 best-effort dedup/markProcessed — loop 4 verdict: keep best-effort (reprocessing rewrites tracking state idempotently; dropping loses live dispatch state). Product call if dispatch side effects ever become non-idempotent.
@@ -21,6 +21,17 @@
 - Loop 6 → product: prod_unlinked_* quarantine (reader audit first); combo component-level POS 86ing; core client availability guards (server covers online; cash covered by P0).
 - Loop 8 → product/loop-12: mock-as-live-path purge — partner admin simulate toggles/seeded fallbacks + default-mock Petpooja gateway; core MOCK-booted stores/home/orders, rzp_test_mock keyId + simulated_signature, fabricated tracking rider, uncond dev-advance. Full catalog in Loop 8 record; loop 12 to re-attack.
 ## Records
+### Loop 11 — a11y-ux-deadends — 2026-09-10 19:45 UTC — result: fixed 4
+- Fixed: core checkout + payment double-submit race — handlePlaceOrder/startPayment relied on async state; rapid double-tap double-fired order creation/payment. Sync ref guards, released on all failure paths / terminal statuses. Core commit 2313579 LOCAL.
+- Fixed: partner partial-refund money input placeholder-only — added aria-label. Same commit below.
+- Fixed: partner Porter dispatch single-tap paid booking — now ConfirmDialog with fare estimate; CTA to min-h-44px. Same commit below.
+- Fixed: partner push deep links dead on-device — action handler now routes allowlisted data.deepLink in-app (isSafeDeepLink + toInAppPath; no native rebuild). Partner commit 56d126d LOCAL (diverged).
+- Verified-holding: core empty states all carry recovery (Try Again/Change store/Browse menu); menu images correctly alt="" (name via aria-labels); checkout offline gate + geofence NaN guard + loyalty clamp; partner dead buttons zero, disabled states honest, offline banners with role=alert, live regions everywhere, rider/cancel labels associated; tel: full numbers justified.
+- Queued: money CTA 44px bumps (cancel modal, AdminRefunds approve/reject, ticket submit); Clear-filters buttons on filter-empty views; rider phone entry validation (isSafeTelNumber exists, apply at submit); heavier native deep-link registration (intent-filter/CFBundleURLTypes/appUrlOpen) if cold-start links needed.
+- Dismissed: SafeImage alt, FileProvider, firebase placeholder (prior loops).
+- Lanes: partner lane delivered; core lane junk x2 (covered by direct verification + fixes above).
+- Gates: core tsc clean, 38/221 green. partner typecheck clean, 30/151 green.
+- Pushes: core 2313579 + partner 56d126d LOCAL (diverged); root report pushed.
 ### Loop 10 — logging-pii-secrets — 2026-09-10 19:30 UTC — result: fixed 2
 - Fixed: functions porter.service.ts:98 — quote-failure logged whole err object (could embed request config/keys or customer fields); now err?.message. Root commit b1782f0 (pushed).
 - Fixed: partner KDSOrderCard:111-115 — full customer phone on shared kitchen wall screen; now last-5 masked, full number kept in tel: href (tap-to-call preserved). Partner commit 4105c3a LOCAL (diverged).
