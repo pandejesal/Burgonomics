@@ -1,0 +1,16 @@
+Audit both apps in C:\Users\DELL\Desktop\Burgonomics:
+1. burgonomics-foundation-core - main app (React/Capacitor, Firebase, Android/iOS)
+2. burgonomics-partner - partner app (React/Capacitor, Firebase, Android/iOS)
+
+For each app, audit:
+- Architecture & code quality (src/, components, state management)
+- Third-party integrations: Firebase (Auth, Firestore, Functions, Storage), Capacitor plugins, any payment gateways, analytics, push notifications
+- API layer: Firebase Functions (functions/), REST endpoints, GraphQL if any, error handling, rate limiting
+- Security: Firestore rules, API keys in .env, secrets management, authentication flows
+- Build configs: capacitor.config.ts, vite.config.ts, android/, ios/, build scripts
+- Store readiness: Play Store (Android) - signing, permissions, target SDK, bundle; App Store (iOS) - provisioning, entitlements, privacy manifest, App Transport Security
+- Testing: unit tests, e2e, test coverage
+- Documentation: README, AGENTS.md, store submission guides
+- CI/CD: GitHub Actions, Netlify, any deployment pipelines
+
+Output: structured report per app with PASS/FAIL/WARNING per category, specific issues found, and remediation priorities.

@@ -13,7 +13,7 @@ import * as admin from "firebase-admin";
  * route requireRole + rules); the handoff carries the one-line route change
  * to pass req.user through.
  */
-export type TicketCaller = { uid?: string; role?: string } | null | undefined;
+export type TicketCaller = { uid?: string; role?: string; branchIds?: string[] } | null | undefined;
 const STAFF_ROLES = new Set([
   "brand_owner",
   "developer",
@@ -270,6 +270,38 @@ export async function addTicketMessage(params: {
   }
   const ticketRef = db.collection("support_tickets").doc(ticketId);
 
+  // Visibility (Loop 57/58 adversarial finding): identity is already bound
+  // above (caller.uid wins over body), but binding alone doesn't check
+  // VISIBILITY — any authed customer could still write to anyone's ticket.
+  const ticketSnap = await ticketRef.get();
+  if (!ticketSnap.exists) {
+    throw serviceError("TICKET_NOT_FOUND", `Ticket ${ticketId} not found`, 404);
+  }
+  const ticket = ticketSnap.data() as any;
+  if (caller && caller.uid) {
+    if (!caller.role || !STAFF_ROLES.has(caller.role)) {
+      if (ticket.customerId !== caller.uid) {
+        throw serviceError(
+          "TICKET_FORBIDDEN",
+          "Forbidden: customers may only message their own tickets",
+          403
+        );
+      }
+    } else if (
+      caller.role !== "brand_owner" &&
+      caller.role !== "developer" &&
+      Array.isArray(caller.branchIds) &&
+      caller.branchIds.length > 0 &&
+      !caller.branchIds.includes(ticket.branchId)
+    ) {
+      throw serviceError(
+        "TICKET_FORBIDDEN",
+        "Forbidden: ticket is outside your assigned branches",
+        403
+      );
+    }
+  }
+
   const event: TicketTimelineEvent = {
     action: "message_added",
     actorId: senderId,
@@ -307,6 +339,17 @@ export async function resolveTicket(input: ResolveTicketInput) {
   const ticket = ticketSnap.data()!;
   let refundResult: any = null;
 
+  // Double-refund guard (Loop 57 adversarial finding): a resolved/closed
+  // ticket must never resolve again. The second pass would re-fire autoRefund
+  // (caller-distinct idempotency keys per call) and double-pay the customer.
+  if (ticket.status === "resolved" || ticket.status === "closed") {
+    throw serviceError(
+      "TICKET_ALREADY_RESOLVED",
+      `Ticket ${ticketId} is already ${ticket.status} — reopen it before resolving again.`,
+      409
+    );
+  }
+
   // 1. If full or partial refund, trigger payment autoRefund with Route split reversal.
   // Fail LOUD when no captured payment exists: the old code left refundResult
   // null and still closed the ticket as resolved — staff saw success, the
@@ -328,6 +371,9 @@ export async function resolveTicket(input: ResolveTicketInput) {
       );
     }
     const order = orderSnap.data()!;
+    // NOTE: second-charge protection lives in autoRefund itself
+    // (ALREADY_REFUNDED 409 + same-amount idempotent replay); the
+    // ticket-status guard above stops re-resolution of this ticket.
     const razorpayPaymentId =
       order.payment?.razorpayPaymentId || ticket.diagnostics?.razorpayPaymentId;
     if (!razorpayPaymentId) {

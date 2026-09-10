@@ -122,7 +122,7 @@ cd functions && npm install
 # 2. Type check (0 errors)
 npx tsc --noEmit
 
-# 3. Run test suite (86 tests passing across 13 test suites)
+# 3. Run test suite (230 tests passing across 23 test suites)
 npm test
 
 # 4. Build TypeScript bundle (output: dist/index.js)
@@ -134,21 +134,31 @@ npm run serve
 ```
 
 ### Test Suite Verification Matrix
-- `tests/auth.claims.test.ts` (10 tests)
-- `tests/auth.guestMigration.test.ts` (8 tests)
-- `tests/porter.service.test.ts` (12 tests)
+- `tests/auth.claims.test.ts` (15 tests)
+- `tests/auth.guestMigration.test.ts` (17 tests)
+- `tests/batch4.bridge.test.ts` (4 tests)
+- `tests/customerCoins.test.ts` (5 tests)
+- `tests/e2e.flow.test.ts` (5 tests)
+- `tests/env.failclosed.test.ts` (6 tests)
+- `tests/fcm.notifications.test.ts` (5 tests)
+- `tests/notifications.test.ts` (9 tests)
+- `tests/orderBackfill.test.ts` (7 tests)
+- `tests/paymentSignature.test.ts` (2 tests)
+- `tests/payments.route-splits.test.ts` (10 tests)
 - `tests/petpooja.service.test.ts` (12 tests)
-- `tests/payments.route-splits.test.ts` (7 tests)
-- `tests/pricing.engine.test.ts` (5 tests)
-- `tests/razorpay.service.test.ts` (3 tests)
+- `tests/porter.service.test.ts` (22 tests)
+- `tests/pricing.engine.test.ts` (11 tests)
+- `tests/pricing.parity.test.ts` (24 tests)
+- `tests/razorpay.service.test.ts` (17 tests)
+- `tests/routeValidation.test.ts` (3 tests)
 - `tests/ticketReminder.escalator.test.ts` (10 tests)
-- `tests/tickets.service.test.ts` (2 tests)
-- `tests/notifications.test.ts` (7 tests)
-- `tests/fcm.notifications.test.ts` (4 tests)
+- `tests/tickets.notify.test.ts` (22 tests)
+- `tests/tickets.service.test.ts` (13 tests)
+- `tests/webhook.reject.test.ts` (3 tests)
+- `tests/webhook.replay.test.ts` (4 tests)
 - `tests/webhooks.idempotency.test.ts` (4 tests)
-- `tests/e2e.flow.test.ts` (2 tests)
 
-**Total**: **86 Tests Passing** | **100% Green**
+**Total**: **230 Tests Passing** | **100% Green**
 
 ### Production Deployment
 See [`RELEASE_AND_INTEGRATION_GUIDE.md`](file:///c:/Users/DELL/Desktop/Burgonomics/RELEASE_AND_INTEGRATION_GUIDE.md) for full deployment instructions:

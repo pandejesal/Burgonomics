@@ -4,7 +4,41 @@
 
 ---
 
+## [2.6.1] — 2026-09-09 (Quality Loop 20/20 Complete, 602 Tests Gate & Full Sweep Verification)
+
+### Fixed & Verified
+- **Monorepo Test Suite Expansion (602 Total Tests Passed, 91 Suites)**:
+  - **Functions Backend**: 230 / 230 tests across 23 test suites (`auth`, `porter`, `petpooja`, `payments`, `tickets` + ticket-authz + ticket-notify, `notifications`, `e2e.flow`, `pricing.parity`, `customerCoins`, `orderBackfill`, `paymentSignature`, `webhook.replay/reject`, `webhooks.idempotency`, `fcm.notifications`, `routeValidation`, `env.failclosed`, `batch4.bridge`).
+  - **Partner POS App**: 151 / 151 tests across 30 test suites (`kds`, `thermal-kot`, `porter-logistics`, `rbac`, `analytics`, `orders`, `tickets`, `settings`, `dashboard`, `order-detail`, `delivery-queue`).
+  - **Customer App**: 221 / 221 tests (+18 Firestore rules) across 38 test suites (`pricing`, `cart-fulfillment`, `bogo`, `coupons`, `geofencing`, `parity`, `reconcile`, `payments`, `auth`, `support`, `benchmarks`).
+- **Upstream MOP-S1/B-Series Merged**: fail-closed env (no mock literals), B3-S1 authz model, B4-S1 bridge hardening, B5-S1 ticket honesty + spam guards, B6-S1 perf/hygiene — merged with doc counts and ticket guards, conflicts resolved keeping both sides.
+- **Loop 57/58 Adversarial Findings Closed**: resolveTicket double-resolution guard (409) layered over autoRefund idempotency, addTicketMessage claims-derived authz with ticket visibility checks, pinned by tests.
+- **Quality Loop 20/20 Campaign Completed** (Loops 1-20: swallowed errors, Firestore rules, money paths, notifications, menu pipeline, auth/RBAC, performance, UX dead-ends, test quality, docs/config drift, indexes, logging, accessibility, resilience, type safety, secrets, notification topics, dead code, Capacitor parity, final verification).
+- **UI Sweep 10-Iteration Campaign Closed** (B1-B11 ban list, zero regressions verified across core/partner at mobile 390x844 and tablet 768x1024).
+- **Repository Hygiene**: Stale Netlify legacy archived (`_archive/netlify-legacy`), Petpooja barrel consolidation, 4 dead files removed, old codebase improvement report archived.
+
+---
+
+## [2.6.0] — 2026-09-01 (Store Publication Readiness, 404 Tests Gate & Live Gateway Hardening)
+
+### Added & Verified
+- **Master Release & Integration Guide (`RELEASE_AND_INTEGRATION_GUIDE.md`)**:
+  - Full end-to-end technical specifications for Petpooja POS (V2.1.0) and Porter Logistics v1 live vs. mock operations.
+  - Complete App Store Connect (iOS) and Google Play Console (Android) publishing workflows, review credentials, graphics dimensions, and Data Safety declarations.
+- **Monorepo Test Suite Expansion (404 Total Tests Passed)**:
+  - **Functions Backend**: 86 / 86 tests passed across 13 test suites (`auth`, `porter`, `petpooja`, `payments`, `tickets`, `notifications`, `e2e.flow`).
+  - **Partner POS App**: 118 / 118 tests passed across 22 test suites (`kds`, `thermal-kot`, `porter-logistics`, `rbac`, `analytics`, `orders`).
+  - **Customer App**: 200 / 200 tests passed across 33 test suites (`pricing`, `cart-fulfillment`, `bogo`, `coupons`, `geofencing`, `parity`, `reconcile`).
+- **Gateway & Security Gap Closures (R6–R22)**:
+  - Implemented fail-closed Porter quote validation, strict JSON error handling, branch delivery radius geofencing pre-check, and cryptographic delivery OTP verification.
+  - Aligned Petpooja order push to standard nested `orderinfo` schema with `clientOrderID` deduplication and per-branch `restId` resolution.
+  - Hardened Razorpay authoritative webhook handling with idempotent Route transfer locks, captured pre-checks, and caller-distinct refund keys.
+  - Locked Firestore `coupons` to server-only writes and auth-gated `petpooja_offers`.
+
+---
+
 ## [2.5.3] — 2026-08-29 (Zero-Mock Audit, Partner POS Bridge & Client Handover Package)
+
 
 ### Fixed & Enhanced
 - **Partner POS Backend Bridge (`partnerFunctionsApi.ts`)**:

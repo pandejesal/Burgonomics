@@ -50,7 +50,7 @@ firebase deploy --only storage
 | Environment Variable | Target | Description |
 |---|---|---|
 | `VITE_FIREBASE_API_KEY` | Client App | Firebase Web Client API Key |
-| `VITE_FIREBASE_PROJECT_ID` | Client App | Firebase Project ID (`burgonomics-app`) |
+| `VITE_FIREBASE_PROJECT_ID` | Client App | Firebase Project ID (`burgonomics-7faa8`) |
 | `RAZORPAY_KEY_ID` | Functions / Client | Razorpay Public Key |
 | `RAZORPAY_KEY_SECRET` | Secret Manager | Razorpay Secret Key for HMAC & Route API |
 | `PETPOOJA_APP_KEY` | Secret Manager | Petpooja API Key |

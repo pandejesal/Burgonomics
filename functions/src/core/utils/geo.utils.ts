@@ -48,3 +48,38 @@ export function calculatePorterFare(distanceKm: number): number {
 export function estimatePickupMinutes(): number {
   return 8;
 }
+
+/**
+ * Verifies whether a destination coordinate is within the branch's serviced delivery radius.
+ * Defaults to 8.0 km if branch servicedRadiusKm is not configured.
+ */
+export function checkBranchDeliveryServiceability(
+  branchLat: number,
+  branchLng: number,
+  dropLat: number,
+  dropLng: number,
+  servicedRadiusKm = 8.0
+): {
+  isServiced: boolean;
+  distanceKm: number;
+  servicedRadiusKm: number;
+  reason?: string;
+} {
+  const distanceKm = calculateHaversineDistanceKm(branchLat, branchLng, dropLat, dropLng);
+  const maxRadius = servicedRadiusKm > 0 ? servicedRadiusKm : 8.0;
+
+  if (distanceKm > maxRadius) {
+    return {
+      isServiced: false,
+      distanceKm,
+      servicedRadiusKm: maxRadius,
+      reason: `Location is ${distanceKm}km away, which exceeds the ${maxRadius}km branch delivery zone.`,
+    };
+  }
+
+  return {
+    isServiced: true,
+    distanceKm,
+    servicedRadiusKm: maxRadius,
+  };
+}

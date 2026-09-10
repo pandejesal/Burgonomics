@@ -54,3 +54,5 @@ Identify your current goal and open the designated Stage Contract:
 - [demo_presentation_script.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/demo_presentation_script.md) — Executive presentation & slide-by-slide demo walkthrough.
 - [changelog.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/changelog.md) — Version history, SemVer releases, and sprint logs.
 - [known_issues.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/known_issues.md) — Resolved defects, active roadmap, and operational status.
+- [RELEASE_AND_INTEGRATION_GUIDE.md](file:///c:/Users/DELL/Desktop/Burgonomics/RELEASE_AND_INTEGRATION_GUIDE.md) — Master guide for Petpooja & Porter live gateways and store publication.
+

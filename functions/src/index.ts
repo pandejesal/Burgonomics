@@ -3,11 +3,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 // v2/identity has no user-delete trigger — v1 auth.user().onDelete is the
 // only Auth deletion hook. (beforeUserCreated/SignedIn are create/sign-in only.)
 import * as functionsV1 from "firebase-functions/v1";
-// B6-S1 (M19): subpath import — index.ts only needs FieldValue. Pulling the
-// full `firebase-admin` barrel here added it to the monolith cold-start graph
-// a second time (core/firebase.ts already owns the full init).
-import { FieldValue } from "firebase-admin/firestore";
-import * as logger from "firebase-functions/logger";
+import * as admin from "firebase-admin";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -58,7 +54,7 @@ import {
   escalateTicket,
 } from "./modules/tickets/tickets.service";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
-import { dispatchFCM, markNotificationsRead } from "./modules/notifications/fcm.service";
+import { dispatchFCM } from "./modules/notifications/fcm.service";
 import {
   setUserCustomClaims,
   assignUserRole,
@@ -83,7 +79,6 @@ import {
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
   adjustCoinsSchema,
-  markReadSchema,
 } from "./core/validation";
 
 // Enforce live production keys check on deployment
@@ -94,19 +89,6 @@ const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
   message: { error: "Too many requests from this IP, please try again later" },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// B3-S1 (M15/M31): tighter per-route ceiling on money/auth sensitive
-// endpoints — verify/quote/auth/FCM. Runs UNDER the global limiter, so these
-// routes cap at 60/15min/IP even when the global budget is unexhausted.
-// Quote stays usable for real checkouts (a handful of calls per order) while
-// brute-force/bonus-probing loops hit 429 fast.
-const sensitiveLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 60, // limit each IP to 60 sensitive requests per windowMs
-  message: { error: "Too many sensitive requests from this IP, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -145,26 +127,6 @@ app.use(
 
 app.use(limiter);
 
-// Per-route sensitive limiter (auth/FCM + money verify/quote only — other
-// index.ts sections belong to other batches and are untouched).
-app.use(
-  [
-    "/payments/verifyPayment",
-    "/porter/quote",
-    "/auth/setClaims",
-    "/auth/assignRole",
-    "/auth/revokeRole",
-    "/auth/migrateGuest",
-    "/auth/verifyBonusEligibility",
-    "/notifications/dispatch",
-    "/notifications/subscribe",
-    "/notifications/unsubscribe",
-    "/notifications/markRead",
-    "/notifications/registerToken",
-  ],
-  sensitiveLimiter
-);
-
 app.use(
   express.json({
     limit: "2mb",
@@ -199,7 +161,6 @@ app.use(
     "/notifications/dispatch",
     "/notifications/subscribe",
     "/notifications/unsubscribe",
-    "/notifications/markRead",
     "/notifications/registerToken",
     "/auth/setClaims",
     "/auth/assignRole",
@@ -232,7 +193,7 @@ app.get("/config/app", async (_req, res) => {
     });
   } catch (err: any) {
     // Config unreadable: stay permissive (clients proceed), log server-side.
-    logger.warn("[Config] app_config/native read failed, serving permissive defaults:", err?.message || err);
+    console.warn("[Config] app_config/native read failed, serving permissive defaults:", err?.message || err);
     res.status(200).json({
       iosMin: "0.0.0",
       androidMin: "0.0.0",
@@ -260,26 +221,12 @@ app.post("/payments/createPaymentOrder", optionalAuth, validateBody(createPaymen
   }
 });
 
-// B3-S1 (H-M20/M15): verifyPayment requires auth — anonymous verification
-// let anyone confirm/probe payment state with a guessed order id. Guests
-// complete createPaymentOrder first (still optionalAuth), then verify as the
-// authenticated owner the order was created for.
-app.post("/payments/verifyPayment", requireAuth, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
+app.post("/payments/verifyPayment", optionalAuth, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const result = await verifyPayment(req.body);
     res.status(200).json(result);
   } catch (err: any) {
-    // B4-S1 (B2-S1 follow-up): the service throws statusCode-aware errors
-    // (202 transfer-in-progress retry, 401 forged signature, 404 ghost order,
-    // 409 money-mismatch, 503 gateway-unknown) — honor them instead of
-    // flattening everything to 400 (a 202-as-400 stops the client retrying).
-    const code = (err as any)?.statusCode;
-    if ((code === 202 || code === 503) && (err as any)?.retryAfterMs) {
-      res.setHeader("Retry-After", String(Math.ceil((err as any).retryAfterMs / 1000)));
-    }
-    res
-      .status([202, 400, 401, 404, 409, 422, 502, 503].includes(code) ? code : 400)
-      .json({ error: err.message || "Payment verification failed" });
+    res.status(400).json({ error: err.message || "Payment verification failed" });
   }
 });
 
@@ -378,11 +325,7 @@ app.post(
 // 3. PORTER DELIVERY ROUTES
 // ==========================================
 
-// B3-S1 (M15): quote requires auth — anonymous fare probing fed the
-// fail-open rate-card fallback (H-R19, now fail-closed) and scraping.
-// Staff/customer callers both carry Firebase IDs; schedulers use the service
-// directly, never this route.
-app.post("/porter/quote", requireAuth, validateBody(porterQuoteSchema), async (req: AuthenticatedRequest, res) => {
+app.post("/porter/quote", optionalAuth, validateBody(porterQuoteSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const quote = await getDeliveryQuote(req.body);
     res.status(200).json(quote);
@@ -406,17 +349,7 @@ app.post(
       );
       res.status(200).json(result);
     } catch (err: any) {
-      // B2-S1: honor service statusCodes (202 retry, 404/409/422 dispatch
-      // guards) — staffErrorStatus only maps auth prefixes, so pass through
-      // known codes and fall back to it otherwise.
-      const code = (err as any)?.statusCode;
-      res
-        .status(
-          [202, 400, 401, 403, 404, 409, 422].includes(code)
-            ? code
-            : staffErrorStatus(err, 500)
-        )
-        .json({ error: err.message || "Failed to dispatch Porter rider" });
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to dispatch Porter rider" });
     }
   }
 );
@@ -436,15 +369,7 @@ app.post(
       );
       res.status(200).json(result);
     } catch (err: any) {
-      // B2-S1: same statusCode-aware mapping as /porter/book (202/409/422).
-      const code = (err as any)?.statusCode;
-      res
-        .status(
-          [202, 400, 401, 403, 404, 409, 422].includes(code)
-            ? code
-            : staffErrorStatus(err, 500)
-        )
-        .json({ error: err.message || "Failed to re-book Porter rider" });
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to re-book Porter rider" });
     }
   }
 );
@@ -460,9 +385,7 @@ app.post("/porter/webhook", async (req, res) => {
     await handlePorterWebhook(rawBody, signature, req.body);
     res.status(200).json({ status: "success" });
   } catch (err: any) {
-    // B2-S1 (H-M3/C4): the service throws 401-ready auth errors (batch-1) —
-    // map them to 401 (never 500-retry a forged webhook into a retry loop).
-    res.status((err as any)?.statusCode || 500).json({ error: err.message || "Porter webhook failed" });
+    res.status(500).json({ error: err.message || "Porter webhook failed" });
   }
 });
 
@@ -507,7 +430,7 @@ app.post(
 app.post("/tickets/create", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const customerId = req.user?.uid || req.body.customerId;
-    const result = await createTicket({ ...req.body, customerId, caller: req.user });
+    const result = await createTicket({ ...req.body, customerId });
     res.status(200).json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to create support ticket" });
@@ -516,9 +439,19 @@ app.post("/tickets/create", requireAuth, async (req: AuthenticatedRequest, res) 
 
 app.post("/tickets/message", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    // Role is derived from auth claims ONLY. The old req.body.senderRole
+    // fallback let any authed caller post as any role to any ticket
+    // (Loop 57/58 adversarial finding) — the service enforces visibility.
     const senderId = req.user?.uid || req.body.senderId;
-    const senderRole = req.user?.role || req.body.senderRole || "customer";
-    const result = await addTicketMessage({ ...req.body, senderId, senderRole, caller: req.user });
+    const senderRole = (req.user as any)?.role || "customer";
+    const caller = req.user
+      ? {
+          uid: req.user.uid,
+          role: (req.user as any)?.role as string | undefined,
+          branchIds: (req.user as any)?.branchIds as string[] | undefined,
+        }
+      : undefined;
+    const result = await addTicketMessage({ ...req.body, senderId, senderRole, caller });
     res.status(200).json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to add message" });
@@ -532,7 +465,7 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const resolvedBy = req.user?.uid || req.body.resolvedBy;
-      const result = await resolveTicket({ ...req.body, resolvedBy, caller: req.user });
+      const result = await resolveTicket({ ...req.body, resolvedBy });
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to resolve ticket" });
@@ -547,7 +480,7 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const escalatedBy = req.user?.uid || req.body.escalatedBy;
-      const result = await escalateTicket({ ...req.body, escalatedBy, caller: req.user });
+      const result = await escalateTicket({ ...req.body, escalatedBy });
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to escalate ticket" });
@@ -616,7 +549,7 @@ app.post("/notifications/registerToken", requireAuth, async (req: AuthenticatedR
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const now = FieldValue.serverTimestamp();
+    const now = admin.firestore.FieldValue.serverTimestamp();
     await db
       .collection("device_tokens")
       .doc(token)
@@ -628,7 +561,7 @@ app.post("/notifications/registerToken", requireAuth, async (req: AuthenticatedR
       .collection("users")
       .doc(uid)
       .set(
-        { fcmTokens: FieldValue.arrayUnion(token), updatedAt: now },
+        { fcmTokens: admin.firestore.FieldValue.arrayUnion(token), updatedAt: now },
         { merge: true }
       );
     res.status(200).json({ success: true });
@@ -725,38 +658,16 @@ app.post("/notifications/unsubscribe", requireAuth, async (req: AuthenticatedReq
   }
 });
 
-// MOP-S1 (B5-S1 follow-up 1): server-owned read receipts. Clients can flip
-// read/readAt/updatedAt directly under the rules field mask, but only the
-// server can clear the device badge (silent badge-0 push) in the same call —
-// one endpoint for inbox + badge instead of a lingering badge.
-app.post("/notifications/markRead", requireAuth, validateBody(markReadSchema), async (req: AuthenticatedRequest, res) => {
-  try {
-    const uid = req.user?.uid;
-    if (!uid) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    const { notificationIds } = req.body as { notificationIds?: string[] };
-    const markedRead = await markNotificationsRead(uid, notificationIds);
-    res.status(200).json({ success: true, markedRead });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to mark notifications read" });
-  }
-});
-
 app.post(
   "/auth/setClaims",
   requireAuth,
   requireRole(["brand_owner", "developer"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      // B3-S1: caller passes through — the setter re-asserts in-function, so
-      // a miswired route (dropped requireRole) still denies non-brand callers.
-      const result = await setUserCustomClaims(req.body, req.user ?? null);
+      const result = await setUserCustomClaims(req.body);
       res.status(200).json(result);
     } catch (err: any) {
-      const status = err.message?.includes("Permission denied") || err.message?.includes("Caller authorization") ? 403 : 500;
-      res.status(status).json({ error: err.message || "Failed to set custom claims" });
+      res.status(500).json({ error: err.message || "Failed to set custom claims" });
     }
   }
 );
@@ -800,22 +711,12 @@ app.post(
         res.status(400).json({ error: "Missing authenticated customer UID" });
         return;
       }
-      // B3-S1 (C7): verified caller binds the target UID + OTP-verified
-      // phone inside migrateGuestAccount (body phones that contradict the
-      // token are refused; unverified phones mint no bonus).
-      const result = await migrateGuestAccount(
-        {
-          ...req.body,
-          permanentUid,
-          phone: req.body.phone || (req.user as any)?.phone_number,
-          email: req.body.email || (req.user as any)?.email,
-        },
-        {
-          uid: req.user?.uid,
-          phone_number: (req.user as any)?.phone_number,
-          email: (req.user as any)?.email,
-        }
-      );
+      const result = await migrateGuestAccount({
+        ...req.body,
+        permanentUid,
+        phone: req.body.phone || (req.user as any)?.phone_number,
+        email: req.body.email || (req.user as any)?.email,
+      });
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to migrate guest session" });
@@ -828,10 +729,7 @@ app.post(
   requireAuth,
   async (req: AuthenticatedRequest, res) => {
     try {
-      // B3-S1: token-verified phone first — eligibility for an unverified
-      // body phone must never read "eligible" for the phone ledger when the
-      // migration itself would key the bonus by UID instead.
-      const phone = (req.user as any)?.phone_number || req.body.phone;
+      const phone = req.body.phone || (req.user as any)?.phone_number;
       const uid = req.user?.uid || req.body.uid;
       const result = await verifyBonusEligibility(phone, uid);
       res.status(200).json(result);
@@ -858,14 +756,6 @@ export const api = onRequest(
 // 6. CLOUD SCHEDULERS
 // ==========================================
 
-// B6-S1 (M17/M31): bounded start jitter for the high-frequency workers. Three
-// */5 schedulers (+ the */15 ticket worker, which coincides with them every
-// 15 min) otherwise fire on the same second and hit Firestore as one burst.
-// Same work, delayed 0–10s — no tick is skipped, no query changed.
-async function schedulerJitter(maxMs = 10000): Promise<void> {
-  await new Promise((r) => setTimeout(r, Math.floor(Math.random() * (maxMs + 1))));
-}
-
 export const hourlyPetpoojaMenuSync = onSchedule(
   {
     region: REGION,
@@ -874,7 +764,7 @@ export const hourlyPetpoojaMenuSync = onSchedule(
   },
   async () => {
     const result = await syncAllBranchesPetpoojaMenu();
-    logger.log(`[Hourly Sync] Processed ${result.syncedBranches} branches`);
+    console.log(`[Hourly Sync] Processed ${result.syncedBranches} branches`);
   }
 );
 
@@ -885,9 +775,8 @@ export const retryPetpoojaOrders = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    await schedulerJitter();
     const result = await retryPendingPetpoojaOrdersWorker();
-    logger.log(`[Retry Worker] Retried ${result.retriedCount} KOT orders`);
+    console.log(`[Retry Worker] Retried ${result.retriedCount} KOT orders`);
   }
 );
 
@@ -898,9 +787,8 @@ export const retryRouteTransfers = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    await schedulerJitter();
     const result = await retryPendingRouteTransfersWorker();
-    logger.log(`[Route Transfer Retry Worker] Retried ${result.retriedCount} transfers`);
+    console.log(`[Route Transfer Retry Worker] Retried ${result.retriedCount} transfers`);
   }
 );
 
@@ -911,9 +799,8 @@ export const ticketInactivityReminder = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    await schedulerJitter();
     const result = await checkTicketInactivityReminders();
-    logger.log(`[Ticket Inactivity Worker] Sent ${result.remindedCount} reminders`);
+    console.log(`[Ticket Inactivity Worker] Sent ${result.remindedCount} reminders`);
   }
 );
 
@@ -924,9 +811,8 @@ export const pollActivePorterDeliveries = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    await schedulerJitter();
     const result = await pollActivePorterOrdersWorker();
-    logger.log(
+    console.log(
       `[Porter Polling Worker] Polled ${result.polledCount} orders, updated ${result.updatedCount} orders`
     );
   }
@@ -940,7 +826,7 @@ export const cleanupExpiredGuestSessions = onSchedule(
   },
   async () => {
     const result = await cleanupExpiredGuestSessionsWorker();
-    logger.log(`[Guest Cleanup Worker] Purged ${result.cleanedCartsCount} expired guest carts`);
+    console.log(`[Guest Cleanup Worker] Purged ${result.cleanedCartsCount} expired guest carts`);
   }
 );
 
@@ -955,7 +841,7 @@ export const onAuthUserDeletedCleanup = functionsV1
   .auth.user()
   .onDelete(async (deletedUser) => {
     const ok = await onUserDeletedCleanup(deletedUser.uid);
-    logger.log(`[Auth Cleanup] User deletion cleanup ${ok ? "done" : "FAILED"}`);
+    console.log(`[Auth Cleanup] User deletion cleanup ${ok ? "done" : "FAILED"}`);
   });
 
 export {

@@ -62,13 +62,15 @@ Burgonomics is architected as two dedicated applications backed by a single auth
 
 | Document | Description | Link |
 |---|---|---|
+| **Release, Integration & Store Guide** | Authoritative guide for Petpooja & Porter live operations, App Store/Play Store publication, and production deployment. | [RELEASE_AND_INTEGRATION_GUIDE.md](file:///c:/Users/DELL/Desktop/Burgonomics/RELEASE_AND_INTEGRATION_GUIDE.md) |
 | **Client Handover & API Keys** | Master 4-day handover timeline, copy-paste `.env` templates, and vendor webhook registration URLs. | [CLIENT_HANDOVER_AND_KEYS.md](file:///c:/Users/DELL/Desktop/Burgonomics/CLIENT_HANDOVER_AND_KEYS.md) |
 | **Store Submission Guide** | Apple App Store & Google Play metadata, reviewer test credentials, and Xcode/Gradle build instructions. | [STORE_SUBMISSION_GUIDE.md](file:///c:/Users/DELL/Desktop/Burgonomics/STORE_SUBMISSION_GUIDE.md) |
-| **Next Steps & Deployment** | Step-by-step Firebase deployment prompt, hosting targets, and post-deploy smoke commands. | [NEXT_STEPS_PROMPT.md](file:///c:/Users/DELL/Desktop/Burgonomics/NEXT_STEPS_PROMPT.md) |
+| **Production Runbook (Next Steps & Deployment)** | Step-by-step Firebase deployment, hosting targets, and post-deploy smoke commands. | [PRODUCTION_RUNBOOK.md](file:///c:/Users/DELL/Desktop/Burgonomics/PRODUCTION_RUNBOOK.md) |
 | **ICM Task Router (Layer 1)** | Workspace stage matrix and Layer 3 specifications index. | [CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/CONTEXT.md) |
 | **Global Agent Rules (Layer 0)** | Strict 60-30-10 design system tokens and workspace protocols. | [GEMINI.md](file:///c:/Users/DELL/Desktop/Burgonomics/GEMINI.md) |
-| **Changelog & Release Notes** | SemVer release history from v1.0.0 to v2.5.3 (RC1). | [references/changelog.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/changelog.md) |
+| **Changelog & Release Notes** | SemVer release history from v1.0.0 to v2.6.1 (Release Candidate). | [references/changelog.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/changelog.md) |
 | **Active Roadmap & Issues** | Resolved defects and active operational watchlist. | [references/known_issues.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/known_issues.md) |
+| **Quality Loop Campaign Archive** | Closed 20/20-loop hardening record (loops 1-60) + UI sweep ban log. | [_archive/QUALITY_LOOP.md](file:///c:/Users/DELL/Desktop/Burgonomics/_archive/QUALITY_LOOP.md) |
 
 ---
 
@@ -76,9 +78,10 @@ Burgonomics is architected as two dedicated applications backed by a single auth
 
 | Subsystem | Directory | Typecheck | Test Suite Status | Build Status |
 |---|---|---|---|---|
-| **Backend Functions** | `functions/` | ✅ `tsc --noEmit` (0 errors) | ✅ **27 tests passed** (Porter, Petpooja, E2E flow, Pricing, Tickets, Razorpay) | ✅ `dist/index.js` |
-| **Customer App** | `burgonomics-foundation-core/` | ✅ `tsc --noEmit` (0 errors) | ✅ **74 tests passed** (Pricing, Cart 3-way, Parity, Porter, Reconcile, 611k ops/sec stress benchmark) | ✅ `dist/mobile/` |
-| **Partner POS App** | `burgonomics-partner/` | ✅ `tsc --noEmit` (0 errors) | ✅ All components & benchmarks verified | ✅ `dist/` |
+| **Backend Functions** | `functions/` | ✅ `tsc --noEmit` (0 errors) | ✅ **230 tests passed** across 23 test suites (Porter, Petpooja, E2E flow, Pricing, Tickets + authz + notify, Razorpay, Auth, Payments, Webhooks, Notifications, Escalator, Env fail-closed) | ✅ `dist/index.js` |
+| **Customer App** | `burgonomics-foundation-core/` | ✅ `tsc --noEmit` (0 errors) | ✅ **221 tests passed** across 38 test suites (Pricing, Cart 3-way, BOGO, Parity, Porter, Reconcile, Auth, Payments, Support, Benchmarks) | ✅ `dist/mobile/` |
+| **Partner POS App** | `burgonomics-partner/` | ✅ `tsc --noEmit` (0 errors) | ✅ **151 tests passed** across 30 test suites (KDS, Thermal KOT, Porter logistics, RBAC, Analytics, Tickets, Orders, Settings) | ✅ `dist/` |
+| **Total Monorepo Suite** | **Monorepo** | ✅ **0 Type Errors** | ✅ **602 Passed Tests** (100% Green) | ✅ **Release Ready** |
 
 ---
 
@@ -110,11 +113,14 @@ cd functions && npm run serve
 
 ### 3. Run Test Suites
 ```bash
-# Run all backend unit tests
+# Run all backend unit tests (145 tests)
 cd functions && npm test
 
-# Run all customer app tests
+# Run all customer app tests (221 tests)
 cd ../burgonomics-foundation-core && npm test
+
+# Run all partner POS tests (151 tests)
+cd ../burgonomics-partner && npm test
 ```
 
 ### 4. Deploy to Firebase (`burgonomics-7faa8`)
@@ -137,3 +143,4 @@ npx firebase-tools deploy --only hosting --project burgonomics-7faa8
 
 - **Customer App**: Phone `+91 99999 99999` | Fixed OTP: `123456`
 - **Partner App**: Email `reviewer@burgonomics.com` | Password: `Burgonomics@2026`
+
