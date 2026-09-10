@@ -95,12 +95,31 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               ? data.claimedAt
               : 0;
         return Date.now() - claimedMs < CLAIM_TTL_MS;
-      } catch {
-        return true;
+      } catch (leaseErr) {
+        // Lease unreadable: we cannot prove a prior attempt completed.
+        // Fail LOUD (500 → Razorpay retries) — the old `return true`
+        // 200-acked the delivery and silently dropped real money.
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Webhook idempotency lease unreadable for event ${eventId} — retry requested`,
+        }).catch(() => undefined);
+        throw leaseErr;
       }
     }
   };
-  if (await alreadyClaimed()) {
+  let claimed: boolean;
+  try {
+    claimed = await alreadyClaimed();
+  } catch (leaseErr: any) {
+    console.warn(
+      "[Razorpay Webhook] idempotency lease unavailable — 500 so Razorpay retries:",
+      leaseErr?.message || leaseErr
+    );
+    res.status(500).json({ error: "Idempotency check unavailable" });
+    return;
+  }
+  if (claimed) {
     res.status(200).json({ status: "already_processed" });
     return;
   }
