@@ -95,7 +95,9 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
         };
       }
     } catch (err: any) {
-      console.warn("[Porter Quote] Failed live quote, falling back to standard rate card:", err);
+      // Loop 10: log the message only — a whole client/API error object can
+      // embed request config (keys) or customer fields; never print it raw.
+      console.warn("[Porter Quote] Failed live quote, falling back to standard rate card:", err?.message || err);
     }
   }
 
