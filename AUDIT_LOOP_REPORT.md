@@ -4,7 +4,7 @@
 - [x] 2 rules-queries-indexes
 - [x] 3 money-paths
 - [x] 4 webhooks
-- [ ] 5 notifications
+- [x] 5 notifications
 - [ ] 6 menu-pipeline
 - [ ] 7 auth-rbac-session
 - [ ] 8 mock-deadcode-census
@@ -15,9 +15,19 @@
 ## Carryover (queued product calls, newest last)
 - Loop 1/4 → product: porter.service.ts:556/:571 best-effort dedup/markProcessed — loop 4 verdict: keep best-effort (reprocessing rewrites tracking state idempotently; dropping loses live dispatch state). Product call if dispatch side effects ever become non-idempotent.
 - Loop 1 → Loop 7: partner authStore.ts:207/223 cached-claims fallthrough, adminAuthService.ts:136 resolve(null) — session strictness call.
-- Loop 2 → Loop 5: core updateNotificationPreferences + partner link/unlink user-token direct device_tokens writes still denied — needs server prefs/link endpoint (product call).
+- Loop 2/5 → product: core updateNotificationPreferences + partner link/unlink user-token direct device_tokens writes still denied (loop-5 core lane re-confirmed) — needs server prefs/link endpoint. Gate: core inbox ok-stubs must be replaced before server inbox ships.
 - Loop 3 → product: F4 cumulative-refund ledger, coupon per-user usage ledger + mint endpoint, core loyalty server-debit, partner cancel-modal label, adminPaymentsService mock-PENDING replace (processManualRefund deleted loop 4; rest of service still mock-adjacent), discrepancy single-path, bill recompute-and-flag.
 ## Records
+### Loop 5 — notifications — 2026-09-10 22:07 UTC — result: fixed 5
+- Fixed: functions fcmClient.ts sendFcmMessage — returned true with no transport (nothing sent, success claimed); now false. Multicast no-transport branch reported successCount=all; now 0/all-failed. Callers ignore the values (fire-and-forget in try/catch), so no flow breaks. Root commit 3729d15 (pushed).
+- Fixed: push-or-nothing gap — pushToCustomer + triggers PLACED/status paths never wrote inbox. New writeCustomerInboxDoc fallback: zero-token or zero-delivered sends persist to users/{uid}/notifications (same contract as dispatchFCM). Same commit.
+- Fixed: KOT acoustic alert logged "Dispatched" unconditionally — now snapshots high-severity when send returns false (silent kitchen is ops-visible). Amended into same commit.
+- Fixed: partner broadcast wrote a branch_announcements doc nothing consumed while header promised "push notification to all N subscribers" (plus fabricated `|| 142` fallback count). Now fans out for real via new partnerFunctionsApi.broadcastToTopic → POST /notifications/dispatch (auth + brand roles, honest {success}); failure throws loud with role=alert banner, record stays as audit trail; count fallback honest (?? 0). Partner commit 6176ade LOCAL (branch diverged, no push).
+- Dismissed (verified): test-only early-true branches (test-gated); dispatchFCM `pushDelivered || inboxWritten` (inbox write is real, not mock); PII contract in templates (generic copy, IDs in data; kitchen-topic amount is operational need); topic mgmt absent from notifications module; partner push registration already server-side (loop 2), token truncation in logs, deeplink sanitizer present; PetpoojaWebhooksPage log-viewer only.
+- Queued (product calls, carried): core link/unlink/prefs direct device_tokens writes need server link/prefs endpoint (Loop-2 carryover re-confirmed still true); core inbox ok-stubs dormant (refresh() never called — gate: fix before server inbox ships or stub wipes real tray); partner notification-permission denied-state UX (not audited — lane failed, surface thin).
+- Lanes: partner lane died mid-run (final was a raw tool call, zero findings) — self-audited instead (broadcast find above + registration/PII verification). Core lane delivered.
+- Gates: functions tsc clean, 23 files/233 tests green. partner typecheck clean, 30 files/151 tests green (one intermediate red: my broadcastToTopic patch ate a brace — caught by typecheck, fixed, regreened).
+- Pushes: root 3729d15 + report pushed. Partner 6176ade LOCAL (diverged tree); push after sync.
 ### Loop 4 — webhooks — 2026-09-10 21:05 UTC — result: fixed 4
 - Fixed: functions webhookHandler.ts — payment.captured/order.paid CONFIRM path now fetches the order first: ghost orderId refuses CONFIRM (parks confirm_ghost_order), captured-vs-priced mismatch refuses CONFIRM (parks confirm_amount_mismatch); legacy docs without pricing keep the old path. Still 200 + claim completion (money is real, no retry). Root commit a4b24b1 (pushed).
 - Fixed: functions razorpay.service.ts F2 — payment-intent record is now a create() CLAIM: claim-race loser reuses the winner's order (reused:true), corrupt/unreadable winner fails closed 503 (retry same key). Loser's gateway order strands unpaid (expires, never charged). New e2e test (corrupt winner → 503) + create() added to e2e mock. Same commit.
