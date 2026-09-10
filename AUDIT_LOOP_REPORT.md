@@ -5,7 +5,7 @@
 - [x] 3 money-paths
 - [x] 4 webhooks
 - [x] 5 notifications
-- [ ] 6 menu-pipeline
+- [x] 6 menu-pipeline
 - [ ] 7 auth-rbac-session
 - [ ] 8 mock-deadcode-census
 - [ ] 9 perf-native-parity
@@ -17,7 +17,23 @@
 - Loop 1 → Loop 7: partner authStore.ts:207/223 cached-claims fallthrough, adminAuthService.ts:136 resolve(null) — session strictness call.
 - Loop 2/5 → product: core updateNotificationPreferences + partner link/unlink user-token direct device_tokens writes still denied (loop-5 core lane re-confirmed) — needs server prefs/link endpoint. Gate: core inbox ok-stubs must be replaced before server inbox ships.
 - Loop 3 → product: F4 cumulative-refund ledger, coupon per-user usage ledger + mint endpoint, core loyalty server-debit, partner cancel-modal label, adminPaymentsService mock-PENDING replace (processManualRefund deleted loop 4; rest of service still mock-adjacent), discrepancy single-path, bill recompute-and-flag.
+- Loop 6 → Loop 7 (P0 security): client-written cash-order totals need server verify endpoint + rules hardening (evidence in Loop 6 record).
+- Loop 6 → product: prod_unlinked_* quarantine (reader audit first); combo component-level POS 86ing; core client availability guards (server covers online; cash covered by P0).
 ## Records
+### Loop 6 — menu-pipeline — 2026-09-10 22:28 UTC — result: fixed 7
+- Fixed: functions menuSyncWebhook — unlinked/failed-lookup branches synced the WRONG outlet's menu (rest_id fell back to internal branchId). Now throws fail-closed in live mode (mock keeps lenient canned path); scheduler (allSettled) + route (500) tolerate it. Test updated to seed linked outlet + new refusal test. Root commit 474f16a (pushed).
+- Fixed: functions item86ingSync pushItemStock — same wrong-outlet fallback, worse: a wrong-but-valid rest SUCCEEDS remotely (unlike KOT, which Petpooja rejects). Now refuses (false) unlinked in live mode. Same commit.
+- Fixed: functions item86ingSync — malformed 86ing webhook (no item_id) logged-and-dropped silently; now snapshots medium + returns (no retry storm on never-valid payload). Same commit.
+- Fixed: functions menuSyncWebhook ghost-SKU tombstone pass — discontinued SKUs stayed live/orderable forever. Live-only, empty-feed-guarded: absent feed SKUs flip inStock:false + ghostRetired (never delete); combos/local-only docs untouched; snapshot on retire count. Same commit.
+- Fixed: partner MenuPage handleConfirm86 — success toast fired unconditionally after catch (failure showed success on top); now early-return + success-only toast. Partner commit 26b6772 LOCAL (branch diverged, no push).
+- Fixed: partner 86 POS-sync honesty — pushStock now returns boolean; markItem86 returns {posSynced}; toast claims "& POS" only when confirmed, else "POS sync pending". Deleted dead useMenu.toggleAvailability (zero callers, false "reconciled by retry worker" comment) + unused imports. Same commit.
+- Fixed: partner combos stamped fabricated petpoojaItemId (unknown to POS — collision could 86 an unrelated item); new combos omit it, pushStock skips isCombo docs (app-only 86). Same commit.
+- Downgraded with evidence (verify-before-fix): orderPush resID fallback (unknown rest → Petpooja rejects → pending_retry + snapshot + dead-letter; "try anyway, fail loud" is correct); KOT no-phone/total-0 pushes (already snapshot medium; blocking would break dine-in/pickup); scheduler processing-strand (stale-claim TTL reaps in ~10 min + pushOrder internal catch); PetpoojaStatusBadge default + Header fallback (single caller always passes branchId — latent only); mock syncPetpoojaMenuForBranch deprecated-collection writes (mock-mode only, flag-gated; loop-8 census).
+- Queued P0 security (loop-7/auth territory, too checkout-critical to rush): client-written cash-order totals — OrderRepository.createFromCurrentContext writes cart-engine totals straight to orders docs; rules allow create on customerId-match only. Needs server cash-verify endpoint + client wiring. Evidence: core OrderRepository.ts:168-182, ordersService.ts:187 (direct Firestore), firestore.rules:137-140.
+- Queued product: prod_unlinked_* quarantine (needs reader audit before moving collections); combo component-level POS 86ing; core 86-in-price-lock/add-guard/reorder-dead-guard (all covered server-side for online payments; cash flow covered by the P0 above).
+- Dismissed (verified): image fallbacks (null, no backfill); batch ≤500 chunking; rest→branch resolution; stock-ack forms; retry dead-letter main path; combo/restId stamping on server docs; unknown-order parking; menu→cart price consistency (client); benchmark/fee test literals (stale-spec noise); client priceDelta (server reprices online).
+- Gates: functions tsc clean, 23 files/234 tests green (incl. new refusal test; one intermediate red: bulk test needed linked-outlet seed — updated to new contract). partner typecheck clean, 30 files/151 tests green. No core changes → no core gates.
+- Pushes: root 474f16a + report pushed. Partner 26b6772 LOCAL (diverged tree); push after sync.
 ### Loop 5 — notifications — 2026-09-10 22:07 UTC — result: fixed 5
 - Fixed: functions fcmClient.ts sendFcmMessage — returned true with no transport (nothing sent, success claimed); now false. Multicast no-transport branch reported successCount=all; now 0/all-failed. Callers ignore the values (fire-and-forget in try/catch), so no flow breaks. Root commit 3729d15 (pushed).
 - Fixed: push-or-nothing gap — pushToCustomer + triggers PLACED/status paths never wrote inbox. New writeCustomerInboxDoc fallback: zero-token or zero-delivered sends persist to users/{uid}/notifications (same contract as dispatchFCM). Same commit.
