@@ -6,7 +6,7 @@
 - [x] 4 webhooks
 - [x] 5 notifications
 - [x] 6 menu-pipeline
-- [ ] 7 auth-rbac-session
+- [x] 7 auth-rbac-session
 - [ ] 8 mock-deadcode-census
 - [ ] 9 perf-native-parity
 - [ ] 10 logging-pii-secrets
@@ -14,12 +14,23 @@
 - [ ] 12 adversarial-final-matrix
 ## Carryover (queued product calls, newest last)
 - Loop 1/4 → product: porter.service.ts:556/:571 best-effort dedup/markProcessed — loop 4 verdict: keep best-effort (reprocessing rewrites tracking state idempotently; dropping loses live dispatch state). Product call if dispatch side effects ever become non-idempotent.
-- Loop 1 → Loop 7: partner authStore.ts:207/223 cached-claims fallthrough, adminAuthService.ts:136 resolve(null) — session strictness call.
+- Loop 1 → Loop 7: DONE — authStore cached-claims fallthrough dismissed (client UX only, server enforces; offline yields no session); adminAuthService resolve(null)s are fail-closed, plus restore path now role-validated (loop 7 fix e34cf90).
 - Loop 2/5 → product: core updateNotificationPreferences + partner link/unlink user-token direct device_tokens writes still denied (loop-5 core lane re-confirmed) — needs server prefs/link endpoint. Gate: core inbox ok-stubs must be replaced before server inbox ships.
 - Loop 3 → product: F4 cumulative-refund ledger, coupon per-user usage ledger + mint endpoint, core loyalty server-debit, partner cancel-modal label, adminPaymentsService mock-PENDING replace (processManualRefund deleted loop 4; rest of service still mock-adjacent), discrepancy single-path, bill recompute-and-flag.
-- Loop 6 → Loop 7 (P0 security): client-written cash-order totals need server verify endpoint + rules hardening (evidence in Loop 6 record).
+- Loop 6 → Loop 7 (P0 security): RE-CONFIRMED loop 7 (OrderRepository.ts:125,168-182 → ordersService.ts:234,262-276 → rules:137-140 identity-only; cash CASH_PENDING trusts fully) — still needs server verify endpoint + rules hardening.
 - Loop 6 → product: prod_unlinked_* quarantine (reader audit first); combo component-level POS 86ing; core client availability guards (server covers online; cash covered by P0).
 ## Records
+### Loop 7 — auth-rbac-session — 2026-09-10 19:00 UTC — result: fixed 2
+- Fixed: partner adminAuthService.checkAuthState — restore path granted a working session (with default admin.system/stores/orders permissions) for admins/{uid} docs with missing/unrecognized roles that login() denies. Now shares KNOWN_ADMIN_ROLES, resolves null fail-closed, permissions [] unless explicit. Partner commit e34cf90 LOCAL (branch diverged, no push).
+- Fixed: core useCustomerTickets — prod users with empty localStorage saw a fabricated RESOLVED ticket (TKT-84920) with fake "Credited 100 Loyalty Points" manager response. Seed now import.meta.env.DEV-only (matches partner convention); exact-signature purge (tkt_001/TKT-84920) cleans already-seeded browsers — no collision (real ids tkt_Date.now). Core commit 51a7403 LOCAL (branch diverged, no push).
+- Verified-holding (no fix): functions requireAuth (401, revocation-checked) + requireRole (401/403, admins-doc fallback); addTicketMessage customer-own-only + staff branch scoping; resolveTicket assertStaff + branch scoping + amount guards (concurrent lane's uncommitted hunks); OTP staff-only route + 3-attempt/15-min lockout + deliveryOtp* rules mask; orders/tickets read IDOR backstopped by rules (orders 131-135, tickets 280-284/315-319, ownsBranch real — cross-branch getDoc denies); partner ProtectedRoute default-deny (spinner → /login → routePolicy); authStore cached-claims fallthrough is client UX only (offline yields no session, server requireRole enforces); login/OTP no bypass (empty PIN roster fails closed); list queries branch-scoped; core guest migration (no cross-user merge path), token handling fail-closed, device_tokens still denied-by-rules (product call stands).
+- Dismissed (rules backstop): partner useOrder/useTicket unscoped detail reads — Firestore denies cross-branch, client guard would be UX-only, below fix bar.
+- Queued P0 (unchanged, needs server endpoint — too big + functions owned by concurrent lane): buyer-settable cash-order totals — core lane re-confirmed exact chain (OrderRepository.ts:125,168-182 → ordersService.ts:234,262-276 → rules:137-140 identity-only). Cash path trusts fully (CASH_PENDING). Needs server pricing validation / function-minted orders + rules hardening.
+- Queued product: reconciliation Title-Case role gate ("Developer"/"Finance") never opens for snake_case roles — dead gate, fail-closed; normalizing would GRANT money-action authority, needs product decision. Note: all mutate handlers already check canPerformReconciliation; ledger-read scoping is product call.
+- Observation for concurrent lane (their files, not touched): partner useTicket.updateTicket writes resolutionAction/refundAmount directly — now denied by the new Loop-7 rules mask (fail-closed direction) but the catch swallows → silent no-op; addMessage timeline writes OK for branch-scoped staff. Functions-side Loop-7 hunks (rules allowlists, caller passthrough, branch scoping, loyalty bound) reviewed, look correct, left for their commit.
+- Lanes: first partner lane returned junk (re-dispatched pinned to absolute paths, delivered); functions lane returned junk ("8362") — covered by direct self-verification above, no re-dispatch needed.
+- Gates: partner typecheck clean, 30 files/151 tests green. core tsc clean, 38 files/221 tests green. No functions changes → no functions gates.
+- Pushes: partner e34cf90 + core 51a7403 LOCAL (diverged trees); push after sync. Root report commit to follow (pushed, master in sync).
 ### Loop 6 — menu-pipeline — 2026-09-10 22:28 UTC — result: fixed 7
 - Fixed: functions menuSyncWebhook — unlinked/failed-lookup branches synced the WRONG outlet's menu (rest_id fell back to internal branchId). Now throws fail-closed in live mode (mock keeps lenient canned path); scheduler (allSettled) + route (500) tolerate it. Test updated to seed linked outlet + new refusal test. Root commit 474f16a (pushed).
 - Fixed: functions item86ingSync pushItemStock — same wrong-outlet fallback, worse: a wrong-but-valid rest SUCCEEDS remotely (unlike KOT, which Petpooja rejects). Now refuses (false) unlinked in live mode. Same commit.
