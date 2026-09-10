@@ -55,3 +55,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - `notificationsService` + `pushNotifications`: registration logged 10-char
   token prefixes. Now `tokenLength` only — zero token material in logs.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — rules-mask regression check + data() audit (no-op)
+- Verified the loop-7 rules mask did NOT break partner ticket flows: all
+  money actions route via server `resolveTicket` with honest banners;
+  direct `updateTicket` writes carry only status/resolution/assignedToTier
+  (mask-compatible), `addMessage` writes timeline only. Loop-7 observation closed.
+- Audited all 8 `.data()!` sites in functions: every one guarded by an
+  exists-check with park/throw/return (86ing parks unknown orders).
+- No source changes. No commit.
