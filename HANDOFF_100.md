@@ -41,3 +41,7 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
   `isSafeTelNumber` + 10-digit minimum at submit with `role=alert` inline
   error (clears on edit), `aria-invalid` on the input.
 - Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
+### 2026-09-11 — money CTA 44px targets (partner)
+- Cancel confirm, AdminRefunds reject/approve/retry, ticket execute buttons:
+  additive `min-h-[44px]` only, no layout logic change.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
