@@ -51,3 +51,7 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
   (OrdersPage: channel/status/search; TicketsPage: tier/category/search).
   `MenuPage` filter-empty resets search + category inline.
 - Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
+### 2026-09-11 — FCM token material out of logs (core)
+- `notificationsService` + `pushNotifications`: registration logged 10-char
+  token prefixes. Now `tokenLength` only — zero token material in logs.
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
