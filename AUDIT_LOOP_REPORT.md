@@ -11,7 +11,7 @@
 - [x] 9 perf-native-parity
 - [x] 10 logging-pii-secrets
 - [x] 11 a11y-ux-deadends
-- [ ] 12 adversarial-final-matrix
+- [x] 12 adversarial-final-matrix
 ## Carryover (queued product calls, newest last)
 - Loop 1/4 → product: porter.service.ts:556/:571 best-effort dedup/markProcessed — loop 4 verdict: keep best-effort (reprocessing rewrites tracking state idempotently; dropping loses live dispatch state). Product call if dispatch side effects ever become non-idempotent.
 - Loop 1 → Loop 7: DONE — authStore cached-claims fallthrough dismissed (client UX only, server enforces; offline yields no session); adminAuthService resolve(null)s are fail-closed, plus restore path now role-validated (loop 7 fix e34cf90).
@@ -21,6 +21,14 @@
 - Loop 6 → product: prod_unlinked_* quarantine (reader audit first); combo component-level POS 86ing; core client availability guards (server covers online; cash covered by P0).
 - Loop 8 → product/loop-12: mock-as-live-path purge — partner admin simulate toggles/seeded fallbacks + default-mock Petpooja gateway; core MOCK-booted stores/home/orders, rzp_test_mock keyId + simulated_signature, fabricated tracking rider, uncond dev-advance. Full catalog in Loop 8 record; loop 12 to re-attack.
 ## Records
+### Loop 12 — adversarial-final-matrix — 2026-09-10 20:00 UTC — result: all attacks hold, full matrix green
+- Loop-3 re-attacks (all HOLD): double-submit (client ref guards loop 11 + intent create() CLAIM razorpay.service.ts:189); forged signature (timingSafeEqual, security.ts:6-68); ghost order (confirm_ghost_order park, webhookHandler.ts:199); concurrent transfer (claim TTL takeover, routeTransfers.ts:188-218); zero total (400 guards, pricing.engine.ts:100-108); partial-refund amount guard holds.
+- Loop-7 re-attacks (all HOLD): role bypass denied (KNOWN_ADMIN_ROLES login+restore, committed); ProtectedRoute default-deny; resolve/escalate assertStaff + branch scoping; OTP staff-only + 3-attempt lockout + rules mask; IDOR denied by rules (suite tests 14/17 green); mock seed DEV-gated; double-submit refs committed.
+- FULL gate matrix: functions tsc clean + 234/234 + build clean; partner typecheck + 151/151 + build clean; core tsc + 221/221 + build clean; rules 18/18 green under emulator. Total 606 tests, 91 suites, 0 failures.
+- Docs: README counts updated (230→234, 602→606); changelog [2.6.2] appended.
+- Lanes: none needed (direct verification; all prior lanes' work committed or recorded).
+- Pushes: root report + README + changelog pushed. Partner/core commits remain LOCAL (diverged; push after sync).
+- FINAL LEDGER: 12/12 loops green. Fixed across campaign: loop 1×2, loop 2×5, loop 3×4, loop 4×4, loop 5×5, loop 6×7, loop 7×2, loop 8×5 deletions, loop 9×0, loop 10×2, loop 11×4, loop 12×0. Queued product/server calls carry in report (P0 cash pricing endpoint, mock purge, server aggregation, iOS entitlement, reconciliation roles).
 ### Loop 11 — a11y-ux-deadends — 2026-09-10 19:45 UTC — result: fixed 4
 - Fixed: core checkout + payment double-submit race — handlePlaceOrder/startPayment relied on async state; rapid double-tap double-fired order creation/payment. Sync ref guards, released on all failure paths / terminal statuses. Core commit 2313579 LOCAL.
 - Fixed: partner partial-refund money input placeholder-only — added aria-label. Same commit below.
