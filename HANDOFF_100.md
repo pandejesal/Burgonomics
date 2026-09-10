@@ -45,3 +45,9 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Cancel confirm, AdminRefunds reject/approve/retry, ticket execute buttons:
   additive `min-h-[44px]` only, no layout logic change.
 - Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
+### 2026-09-11 — Clear-filters recovery (partner)
+- `OrderTableList` + `TicketQueueTable`: optional `onClearFilters` prop with
+  recovery button in filter-empty views, wired to page filter setters
+  (OrdersPage: channel/status/search; TicketsPage: tier/category/search).
+  `MenuPage` filter-empty resets search + category inline.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
