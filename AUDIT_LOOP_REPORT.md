@@ -1,7 +1,7 @@
 # Audit Loop Report — started 2026-09-10
 ## Progress
 - [x] 1 swallowed-errors
-- [ ] 2 rules-queries-indexes
+- [x] 2 rules-queries-indexes
 - [ ] 3 money-paths
 - [ ] 4 webhooks
 - [ ] 5 notifications
@@ -15,7 +15,18 @@
 ## Carryover (queued product calls, newest last)
 - Loop 1 → Loop 4: porter.service.ts:556/:571 best-effort dedup/markProcessed — fail-closed vs best-effort call.
 - Loop 1 → Loop 7: partner authStore.ts:207/223 cached-claims fallthrough, adminAuthService.ts:136 resolve(null) — session strictness call.
+- Loop 2 → Loop 5: core updateNotificationPreferences + partner link/unlink user-token direct device_tokens writes still denied — needs server prefs/link endpoint (product call).
 ## Records
+### Loop 2 — rules-queries-indexes — 2026-09-10 13:20 UTC — result: fixed 5
+- Fixed: core scripts/test-rules.mjs — added --hookTimeout=120000 (cold JVM init exceeds vitest 10s default; suite previously failed with 18 skipped). NOTE: first suspected a JBR path bug — byte-level od check proved the path was correct (JS double-backslash = single literal). No JBR change made. Core commit fe31ee9.
+- Fixed: core notificationsService.ts registerDeviceToken — client setDoc to device_tokens denied by rules (server-owned), push never registered. Now POSTs server /notifications/registerToken with ID-token Bearer. Core commit 825a6e0. tsc clean, 221/221 green.
+- Fixed: partner pushNotifications.ts — same denied device_tokens write → now via new partnerFunctionsApi.registerDeviceToken. Partner commit 7e761bc.
+- Fixed: partner adminAuthService.ts login — setDoc admins/{uid}/sessions denied by rules (create:false) propagated as login failure. Now best-effort try/catch, login continues (server mint queued batch 4Z/5). Same commit.
+- Fixed: partner useTickets.ts buildConstraints — status filter unshifted before orderBy(createdAt); pushed after so composite index (status,branchId,createdAt) applies. Same commit.
+- Gates: rules suite 18/18 green under emulator (Java 21 JBR). functions untouched this loop. partner typecheck clean, 151/151 green. core 221/221 green.
+- Dismissed: functions missing rule paths (payment_intents, porter_order_map, porter_webhook_events, carts, coin_transactions, app_config) — Admin SDK bypasses rules; harmless unless clients adopt them (flagged for loop 8 census). functions index shapes all covered incl branches(active,__name__). core petpooja log reads denied for non-admin — PetpoojaTab is demo/superadmin surface (loop 6/11 to confirm audience). core orders userId-only query — coverage gap not denial (client sorts in memory). partner adminOrdersService collectionGroup(orders) + admin dashboard queries — denied reads for non-brand roles are RBAC-correct per rules (money ledgers brand-only); dashboard return-[] swallows already dismissed in loop 1. core offline (no persistence) — architecture call, not fix-bar.
+- Queued: porter duplicate-dispatch + partner cached-claims items already carried (loop 1). Partner push prefs updateNotificationPreferences still direct-writes device_tokens (denied) — same family, needs server prefs endpoint (product call) → carry to Loop 5.
+- Pushes: root report commit pushed. Core + partner commits left LOCAL — both branches diverged with other lanes' active work (core main behind 7, partner branch behind 6 + dirty UI-sweep tree); merge refused to avoid tangling. Next loop to push after sync.
 ### Loop 1 — swallowed-errors — 2026-09-10 12:30 UTC — result: fixed 2
 - Fixed: functions/src/modules/payments/webhookHandler.ts:98-125 — idempotency lease-read failure returned true → 200 already_processed (silent money drop). Now snapshots high-severity + throws → 500 so Razorpay retries. Root commit 7f28af8.
 - Fixed: burgonomics-partner/src/features/orders/components/OrderCancelRefundModal.tsx:32,60-70,171-178 — cancel/refund failure was console-only, modal gave zero feedback on money path. Now sets submitError + role=alert banner. Partner commit 9d903e6 (branch feat/partner-device-smoke).
