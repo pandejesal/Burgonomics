@@ -3,7 +3,7 @@
 - [x] 1 swallowed-errors
 - [x] 2 rules-queries-indexes
 - [x] 3 money-paths
-- [ ] 4 webhooks
+- [x] 4 webhooks
 - [ ] 5 notifications
 - [ ] 6 menu-pipeline
 - [ ] 7 auth-rbac-session
@@ -13,12 +13,21 @@
 - [ ] 11 a11y-ux-deadends
 - [ ] 12 adversarial-final-matrix
 ## Carryover (queued product calls, newest last)
-- Loop 1 → Loop 4: porter.service.ts:556/:571 best-effort dedup/markProcessed — fail-closed vs best-effort call.
+- Loop 1/4 → product: porter.service.ts:556/:571 best-effort dedup/markProcessed — loop 4 verdict: keep best-effort (reprocessing rewrites tracking state idempotently; dropping loses live dispatch state). Product call if dispatch side effects ever become non-idempotent.
 - Loop 1 → Loop 7: partner authStore.ts:207/223 cached-claims fallthrough, adminAuthService.ts:136 resolve(null) — session strictness call.
 - Loop 2 → Loop 5: core updateNotificationPreferences + partner link/unlink user-token direct device_tokens writes still denied — needs server prefs/link endpoint (product call).
-- Loop 3 → Loop 4: F2 payment-intent race, F5 webhook binding (webhooks fuzz may cover both).
-- Loop 3 → product: F4 cumulative-refund ledger, coupon per-user usage ledger + mint endpoint, core loyalty server-debit, partner cancel-modal label, adminPaymentsService mock-PENDING replace, discrepancy single-path, bill recompute-and-flag.
+- Loop 3 → product: F4 cumulative-refund ledger, coupon per-user usage ledger + mint endpoint, core loyalty server-debit, partner cancel-modal label, adminPaymentsService mock-PENDING replace (processManualRefund deleted loop 4; rest of service still mock-adjacent), discrepancy single-path, bill recompute-and-flag.
 ## Records
+### Loop 4 — webhooks — 2026-09-10 21:05 UTC — result: fixed 4
+- Fixed: functions webhookHandler.ts — payment.captured/order.paid CONFIRM path now fetches the order first: ghost orderId refuses CONFIRM (parks confirm_ghost_order), captured-vs-priced mismatch refuses CONFIRM (parks confirm_amount_mismatch); legacy docs without pricing keep the old path. Still 200 + claim completion (money is real, no retry). Root commit a4b24b1 (pushed).
+- Fixed: functions razorpay.service.ts F2 — payment-intent record is now a create() CLAIM: claim-race loser reuses the winner's order (reused:true), corrupt/unreadable winner fails closed 503 (retry same key). Loser's gateway order strands unpaid (expires, never charged). New e2e test (corrupt winner → 503) + create() added to e2e mock. Same commit.
+- Fixed: partner AdminReconciliationPage — handleRecheckDiscrepancy had no RBAC gate (resolve did); same Developer/Finance gate added. Discrepancy ledger card now labeled Simulation (mock store "Force Settle" settles nothing real). Partner commit 466190b LOCAL (branch diverged, no push).
+- Fixed: partner adminPaymentsService.processManualRefund DELETED (zero callers — verified by repo-wide grep): client-side unvalidated PENDING money-doc creator with swallowed errors; real refunds go through server autoRefund. Unused setDoc import removed. Same commit.
+- Downgraded/queued: Porter dedup-read/markProcessed best-effort stays best-effort deliberately — webhook reprocessing rewrites tracking state idempotently; flipping to drop-on-read-failure would lose live dispatch state. Kept as Loop-1 product call (fail-closed vs best-effort for dispatch side effects).
+- Dismissed (verified in code): Razorpay HMAC + missing-secret 401, event-id required, 15-min freshness, create()-claim + lease-takeover, unmatched_* parking (verified lines 1-129, 296-314); Porter HMAC fail-closed + deterministic park ids + freshness parking + map-vs-hint mismatch parking; Petpooja verifyPetpoojaAuth (single inbound secret, timing-safe, unset denies, no body fallback, both routes gated); Petpooja normalizer fuzz — null→unknown, numerics, case/space, objects→unknown, unknown→no status write (fetch-then-act, ghost parked, cancel→guarded autoRefund with INITIATED only on success); partner PetpoojaWebhooksPage log-viewer only; core has NO webhook surface (zero inbound handlers, push only notifies).
+- Lanes: first functions lane returned junk (searched wrong scope, 25s, zero files) — re-dispatched pinned to exact paths, delivered real findings. No-repeat rule held: report checkbox drove everything.
+- Gates: functions tsc clean, 23 files/233 tests green (incl. new race test). partner typecheck clean, 30 files/151 tests green.
+- Pushes: root a4b24b1 + report pushed to origin/master. Partner 466190b LOCAL (diverged tree); push after sync.
 ### Loop 3 — money-paths — 2026-09-10 20:55 UTC — result: fixed 4
 - Fixed: functions razorpay.service.ts:361 — verify path dropped live capturedAmountPaise, bypassing Route over-transfer guard; now passed as 6th arg (first attempt used 5th slot = preResolvedAccountId, caught by tsc, corrected). Root commit cafbc51 (pushed).
 - Fixed: partner TicketDetailPage.tsx:101-144 — refund/goodwill handler only did direct Firestore status flip while banners claimed "processed with Route reversal" (autoRefund never fired; worse, the flip tripped the server double-refund guard, removing recourse). Now routes via new partnerFunctionsApi.resolveTicket → POST /tickets/resolve; success only on server proof (refund id shown), failures leave ticket open with role=alert banner; guest-ticket coins blocked loud; coupon records honestly (no mint endpoint). Partner commit 9859203 LOCAL (branch diverged, no push).
