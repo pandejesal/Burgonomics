@@ -358,7 +358,7 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     pricingSplit &&
     pricingSplit.branchTransferPaise > 0
   ) {
-    const attempt = await attemptRouteTransfer(razorpayPaymentId, branchId, pricingSplit, orderId);
+    const attempt = await attemptRouteTransfer(razorpayPaymentId, branchId, pricingSplit, orderId, undefined, capturedAmountPaise);
 
     if (attempt.ok && attempt.result) {
       transferResult = attempt.result;

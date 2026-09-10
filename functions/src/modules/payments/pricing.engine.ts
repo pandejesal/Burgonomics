@@ -47,13 +47,15 @@ export function computeItemUnitPrice(item: PricingLineItem): number {
 
   if (Array.isArray(item.customizations)) {
     for (const c of item.customizations) {
-      unitPrice += Number(c.price) || 0;
+      // Loop 3: addon deltas are never negative — a tampered client item
+      // must not discount via negative customizations (use coupons).
+      unitPrice += Math.max(0, Number(c.price) || 0);
     }
   }
 
   if (Array.isArray(item.modifiers)) {
     for (const m of item.modifiers) {
-      unitPrice += Number(m.priceDelta) || 0;
+      unitPrice += Math.max(0, Number(m.priceDelta) || 0);
     }
   }
 
@@ -71,12 +73,12 @@ function applyCatalogBasePrice(item: PricingLineItem, catalogPrice: number): num
   let base = catalogPrice;
   if (Array.isArray(item.customizations)) {
     for (const c of item.customizations) {
-      base += Number(c.price) || 0;
+      base += Math.max(0, Number(c.price) || 0);
     }
   }
   if (Array.isArray(item.modifiers)) {
     for (const m of item.modifiers) {
-      base += Number(m.priceDelta) || 0;
+      base += Math.max(0, Number(m.priceDelta) || 0);
     }
   }
   return Math.max(0, base);
