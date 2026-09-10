@@ -9,7 +9,7 @@
 - [x] 7 auth-rbac-session
 - [x] 8 mock-deadcode-census
 - [x] 9 perf-native-parity
-- [ ] 10 logging-pii-secrets
+- [x] 10 logging-pii-secrets
 - [ ] 11 a11y-ux-deadends
 - [ ] 12 adversarial-final-matrix
 ## Carryover (queued product calls, newest last)
@@ -21,6 +21,15 @@
 - Loop 6 → product: prod_unlinked_* quarantine (reader audit first); combo component-level POS 86ing; core client availability guards (server covers online; cash covered by P0).
 - Loop 8 → product/loop-12: mock-as-live-path purge — partner admin simulate toggles/seeded fallbacks + default-mock Petpooja gateway; core MOCK-booted stores/home/orders, rzp_test_mock keyId + simulated_signature, fabricated tracking rider, uncond dev-advance. Full catalog in Loop 8 record; loop 12 to re-attack.
 ## Records
+### Loop 10 — logging-pii-secrets — 2026-09-10 19:30 UTC — result: fixed 2
+- Fixed: functions porter.service.ts:98 — quote-failure logged whole err object (could embed request config/keys or customer fields); now err?.message. Root commit b1782f0 (pushed).
+- Fixed: partner KDSOrderCard:111-115 — full customer phone on shared kitchen wall screen; now last-5 masked, full number kept in tel: href (tap-to-call preserved). Partner commit 4105c3a LOCAL (diverged).
+- Verified-holding: snapshot boundary masked (DPDP maskIdentifier, forbidden context keys dropped, pay_ ids scrubbed, alerts on masked copy); Porter phones API-only; FCM logs token-count only; rawEvent is event-name string (not body); CORS whitelist intact (prod hosts + capacitor, localhost dev-only); no private keys in any src; both apps WebView hardened (https scheme, no mixed content, debugging off, no cleartext, allowBackup false iOS-side); core OTP audit masked; partner token discipline (never even truncated in push path); netlify chat-body file is legacy do-not-deploy (dismissed).
+- Queued: orders-list + admin-payments full phones (operational need? + verify CSV export excludes phone); logger warn/error prod-console by design (redaction helper); chat push body (if legacy ever revives); profile self-view masking (low); FCM token-prefix drop (optional); ?platform=/?simulate= gating behind !isProd (low exploit: security gates use Capacitor native check, not the param); generateMockJwt dead export; mock-rider fixture numbers (env-gated mock path).
+- Dismissed: tel: links with full numbers (tap-to-call justified); partner FileProvider without consumer (harmless); core firebase apiKey placeholder (redacted, non-functional).
+- Lanes: functions lane junk, redo delivered; partner + core lanes delivered.
+- Gates: functions tsc clean, 23/234 green. partner typecheck clean, 30/151 green. No core changes → no core gates.
+- Pushes: root b1782f0 + report pushed. Partner 4105c3a LOCAL (diverged); push after sync.
 ### Loop 9 — perf-native-parity — 2026-09-10 19:20 UTC — result: no-op with evidence (no fix-bar items; queued 12)
 - functions (self-verified; first lane junk, redo empty): pricing.engine authoritative catalog read already batched (db.getAll + sequential-shim fallback), branch config cached (BRANCH_CACHE_TTL_MS) + fired parallel with coupon read, total-outage fail-closed 503 with snapshot. .limit present in every scheduler (petpooja.scheduler 3x, ticketReminder, escalationScheduler, porter 3x, webhookHandler, routeTransfers, fcm). No unbounded scans, no fix-bar N+1. DISMISS.
 - Partner unbounded reads (queue — capping truncates aggregates/KDS-visible sets, needs server aggregation): dashboardService.fetchOrders:90-111 collectionGroup no-limit + full-scan fallback; adminOrdersService.subscribeToLiveOrders:26-40 onSnapshot no-limit (history fn has limit); useTickets:83-98 dual-collection no-limit; useAnalytics:172-185 year scan; markAllAsRead:64-72 N updateDocs (WriteBatch-able, perf-only, below bar). Small-volume no-limit (branches/catalog/single-customer) queued as defensive limits. KDS 15s poll + per-card 1s timers + dashboard 10-15s refetch chains queued (stagger/backoff/jitter).
