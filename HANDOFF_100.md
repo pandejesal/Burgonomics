@@ -70,3 +70,9 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
   no flow breaks; online payments reprice server-side regardless.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 - Functions tree (incl. concurrent lane's uncommitted hunks): tsc + 234 green.
+### 2026-09-11 — cancel memory-fallback upheld, fix reverted (core)
+- Attempted: revert memory-cancel when Firestore persist fails (stale-terminal
+  divergence). Reverted: `payments-flow.test.ts` enshrines memory-fallback as
+  the tested contract (CANCEL-PRE-DELIVERY + CANCEL-TERMINAL-REJECT broke).
+  Memory fallback is by design; divergence window narrow; no UI callers of
+  repository.cancelOrder yet. Dismissed with evidence. Working tree clean.
