@@ -2,7 +2,7 @@
 ## Progress
 - [x] 1 swallowed-errors
 - [x] 2 rules-queries-indexes
-- [ ] 3 money-paths
+- [x] 3 money-paths
 - [ ] 4 webhooks
 - [ ] 5 notifications
 - [ ] 6 menu-pipeline
@@ -16,7 +16,18 @@
 - Loop 1 → Loop 4: porter.service.ts:556/:571 best-effort dedup/markProcessed — fail-closed vs best-effort call.
 - Loop 1 → Loop 7: partner authStore.ts:207/223 cached-claims fallthrough, adminAuthService.ts:136 resolve(null) — session strictness call.
 - Loop 2 → Loop 5: core updateNotificationPreferences + partner link/unlink user-token direct device_tokens writes still denied — needs server prefs/link endpoint (product call).
+- Loop 3 → Loop 4: F2 payment-intent race, F5 webhook binding (webhooks fuzz may cover both).
+- Loop 3 → product: F4 cumulative-refund ledger, coupon per-user usage ledger + mint endpoint, core loyalty server-debit, partner cancel-modal label, adminPaymentsService mock-PENDING replace, discrepancy single-path, bill recompute-and-flag.
 ## Records
+### Loop 3 — money-paths — 2026-09-10 20:55 UTC — result: fixed 4
+- Fixed: functions razorpay.service.ts:361 — verify path dropped live capturedAmountPaise, bypassing Route over-transfer guard; now passed as 6th arg (first attempt used 5th slot = preResolvedAccountId, caught by tsc, corrected). Root commit cafbc51 (pushed).
+- Fixed: partner TicketDetailPage.tsx:101-144 — refund/goodwill handler only did direct Firestore status flip while banners claimed "processed with Route reversal" (autoRefund never fired; worse, the flip tripped the server double-refund guard, removing recourse). Now routes via new partnerFunctionsApi.resolveTicket → POST /tickets/resolve; success only on server proof (refund id shown), failures leave ticket open with role=alert banner; guest-ticket coins blocked loud; coupon records honestly (no mint endpoint). Partner commit 9859203 LOCAL (branch diverged, no push).
+- Fixed: functions tickets.service.ts:357-367 — partial_refund with amount 0/omitted fell through to FULL gateway refund (reverse_all without amount). New TICKET_REFUND_AMOUNT_REQUIRED 400 guard. LEFT UNCOMMITTED: file carries another lane's hunks (dotted-payment shape, loyalty bound) + tests — do not commit without that lane.
+- Fixed: addon/modifier deltas clamped >= 0 in functions pricing.engine.ts (computeItemUnitPrice, applyCatalogBasePrice) + core pricingEngine.ts:92,101 — tampered negative addons could discount the server total. Core commit 8f06b25 LOCAL (branch diverged, no push).
+- Gates: functions tsc clean, 23 files/232 tests green. core tsc clean, 38 files/221 tests green. partner typecheck clean, 30 files/151 tests green. Earlier env.failclosed timeout + petpooja-gateway failures both flaky under load — pass on idle rerun, not code regressions.
+- Dismissed: coupon clamp (0,100] + subtotal cap, 20% loyalty redeem cap (authoritative engine), zero-total 400, HMAC/ghost-order/transfer-claim/webhook-replay guards all verified in code; core client-amount-to-gateway (server reprices from items+couponCode via calculateOrderPricing, gateway amount from server pricing — "display-only" enforced by construction); partner refundValidation caps + Grill Coins 1..5000 bounds verified wired.
+- Queued: F2 payment-intent check-then-act race (needs transaction/create claim); F4 single-refund-per-order blocks legit multi-partials (needs cumulative ledger — product call); F5 webhook CONFIRMED with no amount/order binding (low exploit, HMAC-gated); coupon per-user usage ledger (server checks active/expiry/branch/min but no usage count); core loyalty localStorage-only debit (server must own cap+debit); partner cancel-modal "instant refund" label overstatement, adminPaymentsService mock-PENDING + unvalidated amountPaise, discrepancy dual-path (mock vs service), bill no-recompute/note.
+- Pushes: root cafbc51 pushed to origin/master. Core + partner commits LOCAL (diverged + dirty trees); next loop pushes after sync.
 ### Loop 2 — rules-queries-indexes — 2026-09-10 13:20 UTC — result: fixed 5
 - Fixed: core scripts/test-rules.mjs — added --hookTimeout=120000 (cold JVM init exceeds vitest 10s default; suite previously failed with 18 skipped). NOTE: first suspected a JBR path bug — byte-level od check proved the path was correct (JS double-backslash = single literal). No JBR change made. Core commit fe31ee9.
 - Fixed: core notificationsService.ts registerDeviceToken — client setDoc to device_tokens denied by rules (server-owned), push never registered. Now POSTs server /notifications/registerToken with ID-token Bearer. Core commit 825a6e0. tsc clean, 221/221 green.
