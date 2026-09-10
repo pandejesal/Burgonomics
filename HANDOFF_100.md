@@ -63,6 +63,13 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Audited all 8 `.data()!` sites in functions: every one guarded by an
   exists-check with park/throw/return (86ing parks unknown orders).
 - No source changes. No commit.
+### 2026-09-11 — CSV exports verified phone-free (partner, no-op)
+- `AdminRefundsPage:185-198` refunds ledger CSV: ID/payment/order/customer
+  NAME/store/amount/reason/status/processedBy/timestamp — no phone column.
+- `AdminPaymentsPage:91-113` payments export: txn ID/order/customer
+  NAME/store/amount/status/gateway/date — no phone. Closes the loop-10
+  queued export-verify item.
+- No source changes. Handoff only.
 ### 2026-09-11 — price lock fail-honest + functions tree green (core/functions)
 - `CartRepository.validateAndRefreshPriceLock`: menu-fetch failure silently
   renewed the lock on stale prices (banner promised unverified lock). Now
