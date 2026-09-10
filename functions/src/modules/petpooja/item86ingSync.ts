@@ -38,6 +38,17 @@ export function normalizePetpoojaStatus(rawStatus: any): string {
  */
 export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
   const { rest_id, item_id, in_stock } = payload;
+  if (!item_id) {
+    // Loop 6: a malformed 86ing payload (no item_id) used to log-and-drop —
+    // silent stock-toggle loss. Snapshot loud so ops sees it; return (no
+    // throw — the payload will never become valid on retry).
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: "Petpooja 86ing webhook arrived without item_id — stock toggle dropped, manual review required",
+    });
+    return;
+  }
   const inStockBool = in_stock === 1 || in_stock === "1" || in_stock === true;
 
   if (item_id) {
@@ -79,13 +90,35 @@ export async function pushItemStockToPetpooja(
   }
 
   try {
-    let restId: string = branchId;
-    try {
-      const branchSnap = await db.collection("branches").doc(branchId).get();
-      const b = branchSnap.data() as any;
-      if (b?.petpoojaStoreId) restId = b.petpoojaStoreId;
-    } catch {
-      // branch lookup failure — proceed with branchId as restId
+    // Loop 6: outlet binding is strict in live mode — the old fallback sent
+    // our internal branchId as rest_id, and unlike KOT pushes (rejected on
+    // unknown rest), a stock toggle against a wrong-but-valid outlet
+    // SUCCEEDS remotely and 86s someone else's item silently. Mock mode
+    // keeps the lenient path (no outlet queried).
+    let restId: string;
+    if (config.mock.petpoojaPos) {
+      try {
+        const branchSnap = await db.collection("branches").doc(branchId).get();
+        restId = (branchSnap.data() as any)?.petpoojaStoreId || branchId;
+      } catch {
+        restId = branchId;
+      }
+    } else {
+      let linked: string | null = null;
+      try {
+        const branchSnap = await db.collection("branches").doc(branchId).get();
+        linked = (branchSnap.data() as any)?.petpoojaStoreId || null;
+      } catch (err: any) {
+        console.warn(`[Petpooja Stock Push] Branch lookup failed for ${branchId}:`, err?.message || err);
+        return false;
+      }
+      if (!linked) {
+        console.warn(
+          `[Petpooja Stock Push] Branch ${branchId} has no linked outlet — refusing wrong-outlet toggle (link per Runbook §5)`
+        );
+        return false;
+      }
+      restId = linked;
     }
 
     const petpoojaConfig = getPetpoojaConfig();

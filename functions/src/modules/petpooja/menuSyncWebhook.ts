@@ -31,14 +31,37 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
   categoriesCount: number;
 }> {
   // Resolve the Petpooja restID for this branch (ops links outlets via
-  // branches/{id}.petpoojaStoreId — Runbook §5). Falls back to branchId.
-  let restId: string = branchId;
+  // branches/{id}.petpoojaStoreId — Runbook §5). Loop 6: FAIL CLOSED on
+  // unlinked branches or failed lookups — the old fallback sent our internal
+  // branchId as rest_id and wrote the WRONG outlet's menu into this branch's
+  // prod_<branch>_* docs. The scheduler (allSettled) and the route (500)
+  // both tolerate the throw; unlinked branches sync nothing until ops links
+  // them.
+  let restId: string;
+  if (config.mock.petpoojaPos) {
+    // Mock mode serves canned menu data (no outlet queried) — the strict
+    // outlet binding below applies to live mode only.
+    try {
+      const branchSnap = await db.collection("branches").doc(branchId).get();
+      restId = (branchSnap.data() as any)?.petpoojaStoreId || branchId;
+    } catch {
+      restId = branchId;
+    }
+  } else
   try {
     const branchSnap = await db.collection("branches").doc(branchId).get();
     const b = branchSnap.data() as any;
-    if (b?.petpoojaStoreId) restId = b.petpoojaStoreId;
-  } catch {
-    // branch lookup failure — proceed with branchId as restId
+    if (!b?.petpoojaStoreId) {
+      throw new Error(
+        `Branch ${branchId} has no linked Petpooja outlet (petpoojaStoreId) — refusing menu sync (ops must link it per Runbook §5)`
+      );
+    }
+    restId = b.petpoojaStoreId;
+  } catch (err: any) {
+    if (err?.message?.includes("no linked Petpooja outlet")) throw err;
+    throw new Error(
+      `Branch lookup failed for menu sync of ${branchId} — refusing to sync with an untrusted rest_id: ${err?.message || err}`
+    );
   }
 
   let menuData: any;
@@ -180,6 +203,54 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
   }
 
   await commitChunk();
+
+  // Loop 6: tombstone pass — SKUs absent from the POS feed otherwise stay
+  // live/orderable forever (ghost catalog → kitchen can't fulfill → refunds).
+  // Live mode only (mock feeds are canned subsets; retiring around them would
+  // wipe test catalogs). Never DELETE: flip inStock:false + ghostRetired so a
+  // bad feed is recoverable. Local-only docs (combos / no petpoojaItemId) are
+  // never touched. Skipped entirely on an empty feed (API glitch must not
+  // retire the whole catalog).
+  if (!config.mock.petpoojaPos && items.length > 0) {
+    try {
+      const feedIds = new Set(items.map((i) => String((i as PetpoojaMenuItem).itemid)));
+      const existingSnap = await db
+        .collection("products")
+        .where("branchId", "==", branchId)
+        .limit(1000)
+        .get();
+      let retired = 0;
+      for (const d of existingSnap.docs || []) {
+        const dd = (d.data() as any) || {};
+        if (dd.isCombo) continue;
+        const pid = dd.petpoojaItemId ? String(dd.petpoojaItemId) : null;
+        if (!pid) continue;
+        if (!feedIds.has(pid) && dd.inStock !== false) {
+          await d.ref.set(
+            {
+              inStock: false,
+              ghostRetired: true,
+              ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          retired++;
+        }
+      }
+      if (retired > 0) {
+        const { captureErrorSnapshot } = await import("../../core/errors");
+        await captureErrorSnapshot({
+          source: "petpooja",
+          severity: "medium",
+          message: `Menu sync retired ${retired} ghost SKU(s) for branch ${branchId} (absent from POS feed, flipped out-of-stock — not deleted)`,
+          branchId,
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[Petpooja Menu Sync] Ghost-SKU tombstone pass failed for ${branchId}:`, err?.message || err);
+    }
+  }
 
   await db.collection("branches").doc(branchId).set(
     {

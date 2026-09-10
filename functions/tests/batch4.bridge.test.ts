@@ -122,6 +122,8 @@ describe("B4-S1 bridge gates", () => {
 
   it("chunks a >500-SKU menu into multiple ≤500-write batches", async () => {
     config.mock.petpoojaPos = false;
+    // Loop 6 contract: live sync requires a linked outlet.
+    savedDocs["branches/branch_bulk_1"] = { petpoojaStoreId: "rest_bulk_1" };
     const items = Array.from({ length: 1200 }, (_, i) => ({
       itemid: `sku_${i}`,
       itemname: `Item ${i}`,
@@ -140,6 +142,16 @@ describe("B4-S1 bridge gates", () => {
     expect(result.itemCount).toBe(1200);
     // 1200 SKUs at ≤500 writes/batch → at least 3 commits (never 1).
     expect(counters.batchCommits).toBeGreaterThanOrEqual(3);
+  });
+
+  it("refuses live sync for an unlinked branch instead of pulling the wrong outlet", async () => {
+    config.mock.petpoojaPos = false;
+    (global as any).fetch = vi.fn(async () => {
+      throw new Error("must not be called — sync refuses before fetch");
+    });
+    await expect(syncPetpoojaMenu("branch_unlinked_9")).rejects.toThrow(
+      /no linked Petpooja outlet/
+    );
   });
 
   it("skips a redelivered Porter webhook via event-id dedup (single order write)", async () => {
