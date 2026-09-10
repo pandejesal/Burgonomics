@@ -7,7 +7,7 @@
 - [x] 5 notifications
 - [x] 6 menu-pipeline
 - [x] 7 auth-rbac-session
-- [ ] 8 mock-deadcode-census
+- [x] 8 mock-deadcode-census
 - [ ] 9 perf-native-parity
 - [ ] 10 logging-pii-secrets
 - [ ] 11 a11y-ux-deadends
@@ -19,7 +19,16 @@
 - Loop 3 → product: F4 cumulative-refund ledger, coupon per-user usage ledger + mint endpoint, core loyalty server-debit, partner cancel-modal label, adminPaymentsService mock-PENDING replace (processManualRefund deleted loop 4; rest of service still mock-adjacent), discrepancy single-path, bill recompute-and-flag.
 - Loop 6 → Loop 7 (P0 security): RE-CONFIRMED loop 7 (OrderRepository.ts:125,168-182 → ordersService.ts:234,262-276 → rules:137-140 identity-only; cash CASH_PENDING trusts fully) — still needs server verify endpoint + rules hardening.
 - Loop 6 → product: prod_unlinked_* quarantine (reader audit first); combo component-level POS 86ing; core client availability guards (server covers online; cash covered by P0).
+- Loop 8 → product/loop-12: mock-as-live-path purge — partner admin simulate toggles/seeded fallbacks + default-mock Petpooja gateway; core MOCK-booted stores/home/orders, rzp_test_mock keyId + simulated_signature, fabricated tracking rider, uncond dev-advance. Full catalog in Loop 8 record; loop 12 to re-attack.
 ## Records
+### Loop 8 — mock-deadcode-census — 2026-09-10 19:05 UTC — result: census, deleted 5 zero-ref items
+- Deleted (import-search verified zero refs, all green): partner MOCK_USER_COORDS (def-only) + mockPetpoojaGateway singleton (factory news class directly; barrel export unused) — commit d0579d8 LOCAL. Core MOCK_USER_COORDS (def-only) + stressTest.ts + edgeCaseAudit.ts whole files (465 lines, absent from barrel) — commit 9e81054 LOCAL.
+- functions census: 0 PROD-LEAK, 0 DELETE — all mock branches env-gated (config.mock.* explicit MOCK_*=true + assertProductionKeys FATAL in prod); 1 TODO (guestMigration.ts) noted.
+- Partner PROD-LEAK catalog (census-only, NO source changes): dashboardService fallbackStores renders MOCK_STORES on empty/catch; useFranchiseLeads seed apps with PII-like names/phones; AdminCustomerProfilePage mock BUR- rows; AdminPaymentHealth simulate-latency toggle; marketing "Simulate Real Trigger" writes fake journey + invented-name toast; analytics hardcoded 45.8%/simulated labels; AdminCustomers activeToday=total*0.4; Petpooja default-mock gateway without VITE_PETPOOJA_ENABLED (env-flag by design); Settings Dev-Diagnostics ungated button (Mock rzp_order + Sandbox banner); System tabs simulated OTP/Prometheus/EXPLAIN. → queued product (mock-purge pass; loop 12 to re-attack).
+- Core PROD-LEAK catalog (census-only, NO source changes): storeStore boots on MOCK_STORES; storesService.byId uncond MOCK fallback (list() is DEV-gated); homeService serves MOCK_* unconditionally; ordersService mock persistence IS the live path; razorpay index hardcodes rzp_test_mock keyId + simulated_signature; usePorterLiveTracking fabricated rider (name/phone/plate) + sample-track URL; track route passes handleDevAdvanceStatus unconditionally; ?platform=/?simulate= URL spoof; mockJwt client trust gate in prod (generateMockJwt test-only OK). Static/low: MOCK_FAQS/CHANNELS/CATEGORIES, favorites/settings latency mocks, cart chk_ token local checks. → queued product (server-backed replacements; loop 12 to re-attack).
+- Zero TODO/FIXME/HACK (XXX hits are masked-PII placeholders).
+- Gates: partner typecheck clean, 30/151 green. core tsc clean, 38/221 green. No functions changes → no functions gates.
+- Pushes: partner d0579d8 + core 9e81054 LOCAL (diverged); root report pushed.
 ### Loop 7 — auth-rbac-session — 2026-09-10 19:00 UTC — result: fixed 2
 - Fixed: partner adminAuthService.checkAuthState — restore path granted a working session (with default admin.system/stores/orders permissions) for admins/{uid} docs with missing/unrecognized roles that login() denies. Now shares KNOWN_ADMIN_ROLES, resolves null fail-closed, permissions [] unless explicit. Partner commit e34cf90 LOCAL (branch diverged, no push).
 - Fixed: core useCustomerTickets — prod users with empty localStorage saw a fabricated RESOLVED ticket (TKT-84920) with fake "Credited 100 Loyalty Points" manager response. Seed now import.meta.env.DEV-only (matches partner convention); exact-signature purge (tkt_001/TKT-84920) cleans already-seeded browsers — no collision (real ids tkt_Date.now). Core commit 51a7403 LOCAL (branch diverged, no push).
