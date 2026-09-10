@@ -8,7 +8,7 @@
 
 ### Fixed & Verified
 - **12-Loop Audit Campaign Closed** (all checkboxes green): swallowed errors, rules/queries/indexes, money paths, webhooks, notifications, menu pipeline, auth/RBAC/session, mock-deadcode census (5 zero-ref deletions), perf/native parity (no-op, 12 queued), logging/PII/secrets (quote-log message-only, KDS phone masked), a11y/UX dead-ends (double-submit guards, refund label, dispatch confirm, deep-link routing), adversarial re-review (all Loop-3/Loop-7 attacks hold).
-- **Monorepo Test Suite (606 Total Tests Passed, 91 Suites, 0 Failures)**: functions 234/234 (23 suites), partner 151/151 (30 suites), core 221/221 (38 suites), Firestore rules 18/18 green under emulator. All three builds clean.
+- **Monorepo Test Suite (606 Total Tests Passed, 91 Suites, 0 Failures)**: functions 234/234 (23 suites), partner 151/151 (30 suites), core 221/221 (38 suites), Firestore rules 20/20 green under emulator. All three builds clean.
 - **Queued (product/server calls, carried in AUDIT_LOOP_REPORT.md)**: cash-order server pricing endpoint (P0), mock-as-live-path purge, server aggregation for dashboards, query limits, iOS entitlement + keystore verify, reconciliation role normalization.
 
 ## [2.6.1] — 2026-09-09 (Quality Loop 20/20 Complete, 602 Tests Gate & Full Sweep Verification)

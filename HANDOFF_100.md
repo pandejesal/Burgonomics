@@ -70,6 +70,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
   NAME/store/amount/status/gateway/date — no phone. Closes the loop-10
   queued export-verify item.
 - No source changes. Handoff only.
+### 2026-09-11 — ticket mask pinned with rules tests 19-20 (core)
+- Open question: does the staff update mask accept dotted `assignedTo.tier`
+  writes (partner escalate flows depend on it)? Pinned with emulator tests:
+  19 ALLOWED (affectedKeys top-level), 20 refundAmount DENIED. Suite 20/20.
+- Gates: rules 20/20 green. Core commit 28022c3 LOCAL (diverged).
 ### 2026-09-11 — price lock fail-honest + functions tree green (core/functions)
 - `CartRepository.validateAndRefreshPriceLock`: menu-fetch failure silently
   renewed the lock on stale prices (banner promised unverified lock). Now
