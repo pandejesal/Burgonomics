@@ -34,3 +34,10 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
   dispatch path (`handleDispatchPorterRider`) had no confirm (card path fixed
   loop 11). Now ConfirmDialog with fare/ETA + min-h-44px CTA.
 - Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
+### 2026-09-11 — rider phone entry validation (partner)
+- `burgonomics-partner/src/features/delivery/components/RiderAssignmentModal.tsx`:
+  custom rider phone was `type=tel` + `required` only — the `+91 ` stub and
+  short numbers entered dispatch records and `tel:` links. Now
+  `isSafeTelNumber` + 10-digit minimum at submit with `role=alert` inline
+  error (clears on edit), `aria-invalid` on the input.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
