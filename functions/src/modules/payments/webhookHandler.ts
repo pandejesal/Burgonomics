@@ -165,6 +165,65 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       }
 
       if (orderId) {
+        // Loop 4: bind BEFORE confirming. Fetch the order first: a typo'd or
+        // deleted id must not be resurrected as a partial CONFIRMED doc by the
+        // merge-set below, and an under-captured / wrong-order payment must
+        // not confirm + fire KOT. Mismatches park visibly; still 200 (money
+        // is real — Razorpay must not retry it, ops reconciles).
+        const orderRef = db.collection("orders").doc(orderId);
+        const orderSnap = await orderRef.get();
+        const orderData = (orderSnap.exists ? orderSnap.data() : undefined) as any;
+        const storedTotal = Number(orderData?.pricing?.grandTotal);
+        const storedPaise =
+          Number.isFinite(storedTotal) && storedTotal > 0 ? Math.round(storedTotal * 100) : null;
+        const capturedPaise =
+          typeof paymentEntity?.amount === "number" ? paymentEntity.amount : null;
+        if (!orderSnap.exists) {
+          await captureErrorSnapshot({
+            source: "payments",
+            severity: "high",
+            message: `Webhook ${event} names unknown order ${orderId} (payment ${razorpayPaymentId || "unknown"}) — refusing ghost CONFIRM, parked for review`,
+            orderId,
+            razorpayPaymentId: razorpayPaymentId || undefined,
+          });
+          await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
+            {
+              eventId,
+              event,
+              razorpayPaymentId: razorpayPaymentId || paymentEntity?.id || "unknown",
+              amount: capturedPaise !== null ? capturedPaise / 100 : null,
+              currency: paymentEntity?.currency || "INR",
+              claimedOrderId: orderId,
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+              status: "needs_review",
+              reason: "confirm_ghost_order",
+            },
+            { merge: true }
+          );
+        } else if (storedPaise !== null && capturedPaise !== null && capturedPaise !== storedPaise) {
+          await captureErrorSnapshot({
+            source: "payments",
+            severity: "high",
+            message: `Webhook ${event} amount mismatch for order ${orderId}: captured ${capturedPaise} paise vs priced ${storedPaise} — refusing CONFIRM, parked for review`,
+            orderId,
+            razorpayPaymentId: razorpayPaymentId || undefined,
+          });
+          await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
+            {
+              eventId,
+              event,
+              razorpayPaymentId: razorpayPaymentId || paymentEntity?.id || "unknown",
+              amount: capturedPaise / 100,
+              currency: paymentEntity?.currency || "INR",
+              claimedOrderId: orderId,
+              expectedAmount: storedPaise / 100,
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+              status: "needs_review",
+              reason: "confirm_amount_mismatch",
+            },
+            { merge: true }
+          );
+        } else {
         await db.collection("orders").doc(orderId).set(
           {
             paymentStatus: "completed",
@@ -203,6 +262,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         } catch (err) {
           console.warn(`[Razorpay Webhook] KOT push queued for order ${orderId}:`, err);
         }
+        } // end Loop-4 bound-CONFIRM else (ghost/mismatch parked above)
       }
     } else if (event === "payment.failed") {
       const paymentEntity = payload.payload?.payment?.entity;

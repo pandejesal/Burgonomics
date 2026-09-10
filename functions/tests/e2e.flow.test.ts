@@ -7,6 +7,15 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
     collection: (colName: string) => ({
       doc: (docId: string) => ({
         id: docId,
+        create: vi.fn(async (data: any) => {
+          const p = `${colName}/${docId}`;
+          if (savedDocs[p]) {
+            const err: any = new Error("Document already exists");
+            err.code = 6;
+            throw err;
+          }
+          savedDocs[p] = data;
+        }),
         set: vi.fn(async (data: any) => {
           savedDocs[`${colName}/${docId}`] = {
             ...(savedDocs[`${colName}/${docId}`] || {}),
@@ -335,6 +344,25 @@ describe("End-to-End Platform Integration Flow", () => {
     });
     expect(second.razorpayOrderId).toBe(first.razorpayOrderId);
     expect((second as any).reused).toBe(true);
+  });
+
+  it("fails closed with 503 when the claim-race winner doc is corrupt", async () => {
+    // Loop 4 (F2): read-hit falls through on a corrupt winner, the claim
+    // loses (create throws 6), and the winner re-read is still corrupt —
+    // the checkout must 503 (retry same key), never mint a second order.
+    savedDocs["payment_intents/chk_race_corrupt_001"] = {
+      razorpayOrderId: "",
+      amountPaise: "garbage",
+    };
+    await expect(
+      createPaymentOrder({
+        items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+        branchId: "branch_ahmedabad_cg_road",
+        orderType: "takeaway",
+        customerId: "cust_race",
+        idempotencyKey: "chk_race_corrupt_001",
+      })
+    ).rejects.toMatchObject({ statusCode: 503 });
   });
 
   it("rejects unresolvable branch instead of pricing blind", async () => {

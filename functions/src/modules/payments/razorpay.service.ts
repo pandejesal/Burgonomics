@@ -168,21 +168,73 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   }
 
   if (params.idempotencyKey && db && typeof db.collection === "function") {
+    const intentRef = db.collection("payment_intents").doc(params.idempotencyKey);
+    const intentDoc = {
+      razorpayOrderId,
+      amountPaise,
+      receipt,
+      pricing,
+      orderId: params.orderId || null,
+      customerId: params.customerId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
     try {
-      await db.collection("payment_intents").doc(params.idempotencyKey).set(
-        {
-          razorpayOrderId,
-          amountPaise,
-          receipt,
-          pricing,
-          orderId: params.orderId || null,
-          customerId: params.customerId,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      console.warn("[Payments] idempotency store failed (non-blocking):", err);
+      // Loop 4 (F2): CLAIM, not blind write. Concurrent same-key checkouts
+      // both miss the read above and both POST to Razorpay — the loser's
+      // gateway order strands (expires unpaid, never charged). create()
+      // throws when the winner already claimed, so exactly one order is
+      // ever handed out per key. Datastores without create() keep the old
+      // merge-set path.
+      if (intentRef && typeof intentRef.create === "function") {
+        await intentRef.create(intentDoc);
+      } else {
+        await intentRef.set(intentDoc, { merge: true });
+      }
+    } catch (err: any) {
+      const alreadyClaimed =
+        err?.code === 6 || /already exists|ALREADY_EXISTS/i.test(err?.message || "");
+      if (!alreadyClaimed) {
+        console.warn("[Payments] idempotency store failed (non-blocking):", err?.message || err);
+      } else {
+        // Lost the claim race — reuse the winner's order (same shape as the
+        // read-hit path above). A corrupt winner doc fails closed to 503:
+        // the client retries the SAME key and converges on the winner.
+        try {
+          const winnerSnap = await intentRef.get();
+          const winner = (winnerSnap.exists ? (winnerSnap.data() as any) : undefined) as any;
+          const winnerPaise = winner?.amountPaise;
+          if (
+            typeof winner?.razorpayOrderId === "string" &&
+            winner.razorpayOrderId.length > 0 &&
+            typeof winnerPaise === "number" &&
+            Number.isFinite(winnerPaise) &&
+            winnerPaise > 0
+          ) {
+            return {
+              razorpayOrderId: winner.razorpayOrderId,
+              amountPaise: winner.amountPaise,
+              amountRupees: winner.amountPaise / 100,
+              currency: "INR",
+              receipt: winner.receipt,
+              pricing: winner.pricing,
+              keyId: getRazorpayKeyId(),
+              reused: true as const,
+            };
+          }
+        } catch {
+          // Fall through to 503 below.
+        }
+        console.warn("[Payments] idempotency claim lost with unreadable winner — refusing fresh order (retry same key)");
+        const { captureErrorSnapshot } = await import("../../core/errors");
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: "payment-intent claim race lost and winner unreadable — refused fresh order, client must retry same key",
+        });
+        const refused: any = new Error("Payment service is temporarily unavailable — please retry checkout (you will not be charged twice).");
+        refused.statusCode = 503;
+        throw refused;
+      }
     }
   }
 
