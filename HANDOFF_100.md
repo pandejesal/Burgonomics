@@ -81,6 +81,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — honest invoice + escaping (core)
+- `InvoiceDownloadButton`: tax invoice printed the fabricated fallback
+  phone → em-dash when missing; all interpolated strings HTML-escaped
+  (invoices get saved/shared). Scope clean (1 file).
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — reorder cross-store guard (core)
 - `useReorderItems`: cross-store lines counted as added, then silently
   rejected per-line by the single-store cart rule (wrong cart + fake
