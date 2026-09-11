@@ -25,7 +25,8 @@
 - [x] 23 (2026-09-11 — marketing seed stats zeroed, 171 green)
 - [x] 24 (2026-09-11 — health-page fabrication fix, 172 green)
 - [x] 25 (2026-09-11 — reconciliation live, 246 + 175 green)
-- [ ] 26-120
+- [x] 26 (2026-09-11 — payments-page honesty, 175 green)
+- [ ] 27-120
 ## Carryover (queued product calls, newest last)
 - Customer push broadcast endpoint with token fan-out (Loop 22: page keeps
   honest local drafts until it lands). POST /porter/cancel (Loop 17).
@@ -358,3 +359,13 @@
 - Gates: functions 246 tests (243 + 3 new) + build clean. Partner typecheck
   + 175 tests (172 + 3 new) + build clean.
 - Commits: root PUSHED (endpoint + tests); partner fc03d33 LOCAL (diverged).
+### Loop 26 — 2026-09-11 12:25 UTC — fixed 2 (payments-page honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — faked security decision + faked sync): payment
+  details "retry verification" flipped a local flag + "Signature validation
+  succeeded" with no signature path (fail-closed loud now); payments list
+  "force sync" ran a "Mocked for UI feel" timer (now reports live-listener
+  state). Refund modal verified already-honest.
+- Gates: partner typecheck clean + 175 tests + build clean (copy-only).
+  NOTE: commit shows line-ending stat churn again (content verified).
+- Commits: partner b13eccb LOCAL (diverged, push after sync).
