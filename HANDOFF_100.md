@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — sandbox smoke tab DEV-only (partner)
+- `DevDiagnosticsModal`: "Run Sandbox Smoke Test" printed canned success
+  lines (KOT printed, driver allocated, refund reversed) with zero backend
+  calls, reachable from prod Settings. Tab + panel now `import.meta.env.DEV`;
+  health/gateway/snapshot tabs unaffected.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — fabricated fallback rider removed (core)
 - `usePorterLiveTracking`: stage 3 with no rider showed fake name/phone/plate
   + `porter.in/track/sample` URL. Now undefined (card's "Assigning Courier"
