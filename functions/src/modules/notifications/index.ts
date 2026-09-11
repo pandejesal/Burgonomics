@@ -5,6 +5,8 @@
  * handlers consumed by `src/index.ts`.
  */
 export { dispatchFCM } from "./fcm.service";
+export { filterSubscribableTopics, MAX_TOPICS_PER_CALL } from "./topics";
+export type { TopicCaller } from "./topics";
 export {
   onOrderCreatedNotificationTrigger,
   onOrderStatusChangedNotificationTrigger,

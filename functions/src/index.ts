@@ -55,6 +55,7 @@ import {
 } from "./modules/tickets/tickets.service";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
+import { filterSubscribableTopics } from "./modules/notifications/topics";
 import {
   setUserCustomClaims,
   assignUserRole,
@@ -602,18 +603,9 @@ app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedReque
     const role = (req.user as any)?.role as string | undefined;
     const isBrandAdmin =
       (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
-    const isStaff = !!role && role !== "customer";
-    const clean = [...new Set(topics)]
-      .filter((t) => {
-        if (/^branch_[A-Za-z0-9_-]+_(orders|tickets)$/.test(t)) return true;
-        if (t === "regional_managers") {
-          return role === "regional_manager" || isBrandAdmin || role === "support";
-        }
-        if (t === "superadmins") return isBrandAdmin;
-        if (t === "tickets_escalated") return isStaff;
-        return false;
-      })
-      .slice(0, 12);
+    // Loop 4/120: branch operational topics are staff-only (customers could
+    // attach any branch's KOT/ticket pushes to their own token).
+    const clean = filterSubscribableTopics(topics, { role, isBrandAdmin });
     if (clean.length === 0) {
       res.status(400).json({ error: "no subscribable branch topics" });
       return;
@@ -648,23 +640,21 @@ app.post("/notifications/unsubscribe", requireAuth, async (req: AuthenticatedReq
     const role = (req.user as any)?.role as string | undefined;
     const isBrandAdmin =
       (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
-    const isStaff = !!role && role !== "customer";
-    const clean = [...new Set(topics)]
-      .filter((t) => {
-        if (/^branch_[A-Za-z0-9_-]+_(orders|tickets)$/.test(t)) return true;
-        if (t === "regional_managers") {
-          return role === "regional_manager" || isBrandAdmin || role === "support";
-        }
-        if (t === "superadmins") return isBrandAdmin;
-        if (t === "tickets_escalated") return isStaff;
-        return false;
-      })
-      .slice(0, 12);
+    // Loop 4/120: same staff-only branch-topic filter as subscribe, plus the
+    // token-ownership check subscribe already had (unsubscribing someone
+    // else's token must 403, not silently detach their kitchen alerts).
+    const clean = filterSubscribableTopics(topics, { role, isBrandAdmin });
     if (clean.length === 0) {
       res.status(400).json({ error: "no unsubscribable topics" });
       return;
     }
-    const { messaging } = await import("./core/firebase");
+    const { db, messaging } = await import("./core/firebase");
+    const tokenDoc = await db.collection("device_tokens").doc(token).get();
+    const ownerId = tokenDoc.exists ? (tokenDoc.data() as any)?.userId : undefined;
+    if (ownerId && ownerId !== req.user?.uid) {
+      res.status(403).json({ error: "token belongs to a different user" });
+      return;
+    }
     const results = await Promise.all(
       clean.map((topic) => messaging.unsubscribeFromTopic(token, topic))
     );
