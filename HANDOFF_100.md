@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — honest no-branch toast (partner)
+- `StoreOperatingToggle`: no-branch path toasted success while persisting
+  nothing (component state, lost on unmount). Now loud error.
+- NOTE: file was untracked (another lane's new file); commit includes its
+  full content. Gates green on the combined result.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — no fabricated Route account ids (partner)
 - `createBranch` minted `acc_Rzp_<timestamp>` + lead conversion pre-filled
   random `acc_Rzp` ids → royalty splits aimed at nonexistent accounts.
