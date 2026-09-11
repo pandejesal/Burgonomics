@@ -7,11 +7,11 @@
 - [x] 5 (2026-09-11 — refund fake-success fix, 155 green)
 - [x] 6 (2026-09-11 — store directory honesty, 158 green)
 - [x] 7 (2026-09-11 — disposition endpoint, 243 + 159 green)
-- [ ] 8-120
+- [x] 8 (2026-09-11 — settings fake-success fix, 162 green)
+- [ ] 9-120
 ## Carryover (queued product calls, newest last)
-- Loop 6: AdminSettingsPage GST/delivery-fee/support-phone Save persists
-  nothing (local useState + timed success toast); needs app_settings wiring or
-  honest-label decision. Also core home-mock backend (Loop 1).
+- Core home-mock backend (Loop 1) + checkout wiring for partner_settings
+  (Loop 8: values persist, nothing reads them yet).
 ## Baseline divergence (noted Loop 1 Step 0)
 - root `master`: in sync with origin/master
 - core `main`: ahead 29, behind 7 vs origin/main — DIVERGED, LOCAL commits only, never force-push
@@ -125,3 +125,16 @@
 - Gates: functions tsc + 243 tests (240 + 3 new) + build clean. Partner
   typecheck + 159 tests (158 + 1 new) + build clean.
 - Commits: root PUSHED (endpoint + tests); partner 2e7edda LOCAL (diverged).
+### Loop 8 — 2026-09-11 08:20 UTC — fixed 1 (settings fake-success) / workers down
+- Workers: foreground smoke probe HUNG 120s (no fast error this time).
+  Tries 12/20. Endpoint still unusable.
+- Fixed (partner, meets bar — fake success + false copy): AdminSettingsPage
+  Save showed "committed to Cloud SQL successfully!" while persisting nothing
+  (local useState + 1200ms timer); subtitle claimed instant checkout effect;
+  helpdesk default was a fake "+91 11 99999 88888". Fix: real persist to
+  app_settings/partner_settings (setDoc merge, brand-only per rules, loud
+  errors) + load on mount + mergePartnerSettings sanitizer + blank-phone
+  rejection + truthful subtitle/success copy. Checkout wiring stays QUEUED
+  (neither app reads app_settings live yet).
+- Gates: partner typecheck clean + 162 tests (159 + 3 new) + build clean.
+- Commits: partner 17a1d8e LOCAL (diverged, push after sync).
