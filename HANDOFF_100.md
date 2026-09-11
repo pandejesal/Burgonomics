@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — threat-sim toggle DEV-only (partner)
+- `AdminPaymentHealthPage`: "Simulate Gateway Latency Spikes" flipped
+  circuit-breaker state + fake latency with zero backend calls. Gated.
+- NOTE: commit b5bdfc2 also swept another lane's listener-cleanup hunk in
+  the same file (direct import + unsubscribe). Functionally fine, tangled.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — real active-today metric (partner)
 - `AdminCustomersPage`: "active today" was `total*0.4` fiction. Now counts
   profiles with `lastOrderDate` in the last 24h (missing/unparseable skip).
