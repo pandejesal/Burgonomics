@@ -30,7 +30,8 @@
 - [x] 28 (2026-09-11 — offers-board honesty, 175 green)
 - [x] 29 (2026-09-11 — segment-count honesty, 175 green)
 - [x] 30 (2026-09-11 — system-tab fantasy fix, 175 green)
-- [ ] 31-120
+- [x] 31 (2026-09-11 — dead sim switch gated, 175 green)
+- [ ] 32-120
 ## Carryover (queued product calls, newest last)
 - Per-service probes for DB/Petpooja/Razorpay (Loop 30: tab shows
   Unmonitored + real API liveness only). Wire partner offers/coupons boards
@@ -411,3 +412,13 @@
   truthful copy; KPI sims labeled; fantasy stack names corrected.
 - Gates: partner typecheck clean + 175 tests + build clean.
 - Commits: partner 9165f85 LOCAL (diverged, push after sync).
+### Loop 31 — 2026-09-11 13:30 UTC — fixed 1 (dead sim switch) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Dismissed with evidence: sandbox API console self-declares simulated;
+  queues page gateway-driven + standby-labeled; orders list live with honest
+  stream errors; promo errors surface with role=alert; triggers wired.
+- Fixed (partner, checklist — dead control): orders-page "Order Generator"
+  switch flipped a label + spinner while generating nothing. DEV-gated per
+  established sim-tooling pattern.
+- Gates: partner typecheck clean + 175 tests + build clean.
+- Commits: partner 1c5e478 LOCAL (diverged, push after sync).
