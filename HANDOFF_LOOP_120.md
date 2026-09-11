@@ -12,7 +12,8 @@
 - [x] 10 (2026-09-11 — demo prod-gate, 223 green)
 - [x] 11 (2026-09-11 — store read bounds, 225 green)
 - [x] 12 (2026-09-11 — OTP bypass closed, 24/24 + 165 green)
-- [ ] 13-120
+- [x] 13 (2026-09-11 — dead worker cleanup, 243 green)
+- [ ] 14-120
 ## Carryover (queued product calls, newest last)
 - Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -206,3 +207,15 @@
   Partner typecheck + 165 tests + build clean.
 - Commits: root 1a41e00 PUSHED (rules); core c014963 LOCAL; partner 5e6d0ea
   LOCAL (both diverged, push after sync).
+### Loop 13 — 2026-09-11 09:45 UTC — cleanup 1 (dead ticket workers) / workers down
+- Workers: background probe failed again, same opencode-zen UnknownError
+  (err_0c932a1b). Tries 17/20.
+- Dismissed with evidence: payment idempotency (intent docs + claim-then-work);
+  OTP resend cooldown; rules mirrors byte-identical + deploy target correct.
+- Cleanup (functions, checklist — dead code, zero refs verified):
+  runTicketEscalationCheck (134 lines) + runTicketReminderCron (75 lines) were
+  never scheduled, routed, or tested — superseded by the scheduled
+  checkTicketInactivityReminders (self-contained escalation + reminders).
+  notificationDispatcher KEPT (pure router + dispatch fns are tested).
+- Gates: functions tsc clean + 243 tests + build clean.
+- Commits: root PUSHED (deletion).
