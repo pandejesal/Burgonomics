@@ -602,7 +602,7 @@ export async function handlePorterWebhook(
           message: `Stale Porter event ${rawEvent || "unknown"} parked for review (no state rewind)`,
         });
       } catch (err) {
-        console.warn("[Porter Webhook] Failed to park stale event:", err);
+        console.warn("[Porter Webhook] Failed to park stale event:", (err as any)?.message || err);
       }
       return;
     }
@@ -630,7 +630,7 @@ export async function handlePorterWebhook(
         message: "Porter webhook with no order reference parked for review",
       });
     } catch (err) {
-      console.warn("[Porter Webhook] Failed to park event with no order reference:", err);
+      console.warn("[Porter Webhook] Failed to park event with no order reference:", (err as any)?.message || err);
     }
     await markProcessed();
     return;

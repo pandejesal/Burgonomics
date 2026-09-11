@@ -32,7 +32,7 @@ export async function cleanupExpiredGuestSessionsWorker(): Promise<{
       await batch.commit();
     }
   } catch (err) {
-    console.warn("[Auth Cleanup Worker] Error cleaning expired guest sessions:", err);
+    console.warn("[Auth Cleanup Worker] Error cleaning expired guest sessions:", (err as any)?.message || err);
   }
 
   return { cleanedCartsCount };
@@ -90,7 +90,7 @@ export async function onUserDeletedCleanup(uid: string): Promise<boolean> {
     await batch.commit();
     return true;
   } catch (err) {
-    console.warn(`[Auth Cleanup] Error cleaning up deleted user ${uid}:`, err);
+    console.warn(`[Auth Cleanup] Error cleaning up deleted user ${uid}:`, (err as any)?.message || err);
     return false;
   }
 }

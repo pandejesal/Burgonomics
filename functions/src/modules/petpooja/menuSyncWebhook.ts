@@ -283,7 +283,7 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
       source: "menuSyncWebhook",
     });
   } catch (err) {
-    console.warn("[Petpooja] sync log persist failed (non-blocking):", err);
+    console.warn("[Petpooja] sync log persist failed (non-blocking):", (err as any)?.message || err);
   }
 
   return {

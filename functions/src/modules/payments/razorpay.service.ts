@@ -49,7 +49,7 @@ async function resolveBranchId(params: CreateOrderParams): Promise<string> {
       const linked = snap.exists ? (snap.data() as any)?.partnerBranchId : undefined;
       if (typeof linked === "string" && linked) return linked;
     } catch (err) {
-      console.warn("[Payments] store→branch resolution failed:", err);
+      console.warn("[Payments] store→branch resolution failed:", (err as any)?.message || err);
     }
   }
   throw new Error("Branch could not be resolved for this store. Link the outlet first.");

@@ -178,7 +178,7 @@ export async function resolveBranchIdForRestId(restId: string): Promise<string |
     const docs = snap.docs || [];
     if (docs.length > 0) return docs[0].id;
   } catch (err) {
-    console.warn(`[Petpooja] branch reverse-lookup failed for rest ${restId}:`, err);
+    console.warn(`[Petpooja] branch reverse-lookup failed for rest ${restId}:`, (err as any)?.message || err);
   }
   return null;
 }
@@ -213,7 +213,7 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
         orderId,
       });
     } catch (err) {
-      console.warn(`[Petpooja Webhook] Failed to park unknown order ${orderId}:`, err);
+      console.warn(`[Petpooja Webhook] Failed to park unknown order ${orderId}:`, (err as any)?.message || err);
     }
     return;
   }
@@ -256,7 +256,7 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
         });
         updateData["payment.refundStatus"] = "INITIATED";
       } catch (err) {
-        console.error(`Auto-refund failed on Petpooja cancel for ${orderId}:`, err);
+        console.error(`Auto-refund failed on Petpooja cancel for ${orderId}:`, (err as any)?.message || err);
       }
     }
   }

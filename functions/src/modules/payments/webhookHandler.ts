@@ -260,7 +260,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             );
           }
         } catch (err) {
-          console.warn(`[Razorpay Webhook] KOT push queued for order ${orderId}:`, err);
+          console.warn(`[Razorpay Webhook] KOT push queued for order ${orderId}:`, (err as any)?.message || err);
         }
         } // end Loop-4 bound-CONFIRM else (ghost/mismatch parked above)
       }

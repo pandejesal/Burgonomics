@@ -134,7 +134,7 @@ export async function dispatchFCM(params: FCMDispatchParams): Promise<boolean> {
       pushDelivered = true;
     }
   } catch (err) {
-    console.warn("[FCM] Failed to send push message (non-blocking for app):", err);
+    console.warn("[FCM] Failed to send push message (non-blocking for app):", (err as any)?.message || err);
   }
 
   // Write to recipient's in-app notification collection if provided
