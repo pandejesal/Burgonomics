@@ -65,6 +65,14 @@ export const disposeRefundSchema = z.object({
   reason: nonEmptyString,
 });
 
+// Loop 25/120: discrepancy resolution. Resolution label + optional note are
+// recorded server-side; unresolved rows are the ops review queue.
+export const resolveDiscrepancySchema = z.object({
+  discrepancyId: nonEmptyString,
+  resolution: nonEmptyString,
+  note: z.string().max(500).optional(),
+});
+
 export const pushOrderSchema = z.object({
   orderId: nonEmptyString,
 });

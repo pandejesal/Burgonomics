@@ -28,6 +28,7 @@ import {
 } from "./modules/payments/razorpay.service";
 import { handleRazorpayWebhook } from "./modules/payments/webhookHandler";
 import { disposeRefundRequest } from "./modules/payments/refundRequests";
+import { resolveDiscrepancy } from "./modules/payments/discrepancies";
 import {
   syncPetpoojaMenu,
   handlePetpoojaStockWebhook,
@@ -74,6 +75,7 @@ import {
   verifyPaymentSchema,
   refundSchema,
   disposeRefundSchema,
+  resolveDiscrepancySchema,
   pushOrderSchema,
   syncMenuSchema,
   pushStockSchema,
@@ -150,6 +152,7 @@ app.use(
     "/payments/verifyPayment",
     "/payments/refund",
     "/refunds/dispose",
+    "/discrepancies/resolve",
     "/petpooja/syncMenu",
     "/petpooja/pushOrder",
     "/petpooja/pushStock",
@@ -267,6 +270,26 @@ app.post(
     } catch (err: any) {
       const status = err.statusCode === 404 || err.statusCode === 409 ? err.statusCode : 500;
       res.status(status).json({ error: err.message || "Failed to dispose refund request" });
+    }
+  }
+);
+
+// Loop 25/120: discrepancy resolution. Staff-only, validated, fail-closed
+// 404/409 from the service. Resolving parks the ops review row as resolved
+// with an attributed record — never a local-only clear.
+app.post(
+  "/discrepancies/resolve",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "support", "branch_owner", "branch_staff"]),
+  validateBody(resolveDiscrepancySchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const decidedBy = req.user?.email || req.user?.uid || "staff";
+      const result = await resolveDiscrepancy({ ...req.body, decidedBy });
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status = err.statusCode === 404 || err.statusCode === 409 ? err.statusCode : 500;
+      res.status(status).json({ error: err.message || "Failed to resolve discrepancy" });
     }
   }
 );
