@@ -23,7 +23,8 @@
 - [x] 21 (2026-09-11 — loyalty fake-saves fix, 171 green)
 - [x] 22 (2026-09-11 — push-page fabrication fix, 171 green)
 - [x] 23 (2026-09-11 — marketing seed stats zeroed, 171 green)
-- [ ] 24-120
+- [x] 24 (2026-09-11 — health-page fabrication fix, 172 green)
+- [ ] 25-120
 ## Carryover (queued product calls, newest last)
 - Customer push broadcast endpoint with token fan-out (Loop 22: page keeps
   honest local drafts until it lands). POST /porter/cancel (Loop 17).
@@ -335,3 +336,13 @@
   Simulate-trigger path verified DEV-gated already.
 - Gates: partner typecheck clean + 171 tests + build clean (data-only).
 - Commits: partner 61e1a61 LOCAL (diverged, push after sync).
+### Loop 24 — 2026-09-11 11:55 UTC — fixed 1 (health-page fabrication) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — health page that cries healthy in an outage):
+  latency was fabricated (210 + random*40) after a timer, and "flush queues"
+  zeroed a live counter while rows stayed UNRESOLVED. Fix: real /health probe
+  via new partnerFunctionsApi.checkApiHealth (measured ms, loud outage);
+  flush re-reports the live count with resolution directions. Simulate toggle
+  verified DEV-gated already.
+- Gates: partner typecheck clean + 172 tests (171 + 1 new) + build clean.
+- Commits: partner 9306a05 LOCAL (diverged, push after sync).
