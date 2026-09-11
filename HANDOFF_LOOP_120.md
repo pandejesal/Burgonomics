@@ -35,7 +35,8 @@
 - [x] 33 (2026-09-11 — ticket resolution money, 248 + 175 green)
 - [x] 34 (2026-09-11 — geofence fake-pass fix, 234 green)
 - [x] 35 (2026-09-11 — ticket cross-user leak fix, 236 green)
-- [ ] 36-120
+- [x] 36 (2026-09-11 — address cross-user leak fix, 238 green)
+- [ ] 37-120
 ## Carryover (queued product calls, newest last)
 - Server-side delivery-zone enforcement (Loop 34: client geofence only;
   payment intent carries no address coords). Per-service probes (Loop 30).
@@ -467,3 +468,12 @@
   legacy key; legacy key never migrates into a signed-in scope.
 - Gates: core tsc clean + 236 tests (234 + 2 new) + build clean.
 - Commits: core cda08ab LOCAL (diverged, push after sync).
+### Loop 36 — 2026-09-11 14:40 UTC — fixed 1 (address cross-user leak) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — DPDP cross-user PII leak): saved addresses
+  (contact names/phones + home locations) persisted under one global key and
+  survived logout. Fix: per-user key namespacing + reset/rehydrate on
+  identity change; guests keep legacy key; never migrates across users
+  (mid-checkout sign-in drops guest rows — documented trade-off).
+- Gates: core tsc clean + 238 tests (236 + 2 new) + build clean.
+- Commits: core 82d9e75 LOCAL (diverged, push after sync).
