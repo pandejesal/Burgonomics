@@ -51,7 +51,8 @@
 - [x] 49 (2026-09-11 — fallback-branch stamping fix, 179 green)
 - [x] 50 (2026-09-11 — DPDP erasure endpoint, 252 + 238 green)
 - [x] 51 (2026-09-11 — fabricated analytics fix, 179 green)
-- [ ] 52-120
+- [x] 52 (2026-09-11 — sim-path hardening, 179 green)
+- [ ] 53-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -650,3 +651,12 @@
   bounded (branches 100, orders 2000); hardcoded fallback outlets removed.
 - Gates: partner typecheck clean + 179 tests + build clean.
 - Commits: partner 8881cc5 LOCAL (diverged, push after sync).
+### Loop 52 — 2026-09-11 18:20 UTC — hardening 1 (sim paths) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Hardened (partner, defense-in-depth): simulateAutomationTrigger fabricates
+  "Delivered" history under real customer names (button DEV-gated, method
+  was not) — method now refuses outside dev. Also replaced my own
+  Math.random() row-id fallback in the reconciliation mapper with
+  deterministic ids. Per-file diffs verified mine-only pre-commit.
+- Gates: partner typecheck clean + 179 tests + build clean.
+- Commits: partner aa9d7ad LOCAL (diverged, push after sync).
