@@ -81,6 +81,10 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — dead AddressSelectorSheet deleted (core)
+- 169 lines, zero references outside its barrel line. File + export
+  removed. Scope clean.
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — product-page pricing review (no-op, core)
 - Option/combo deltas computed client-side, but cart lines are display-only:
   server pricing engine clamps addon deltas >= 0 and reprices authoritatively
