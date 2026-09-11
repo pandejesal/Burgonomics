@@ -81,6 +81,15 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — walk-in counter orders can't save (queued, partner)
+- `ManualOrderCreateModal` writes client-computed totals +
+  `paymentStatus:'completed'`/`petpoojaSyncStatus:'synced'`/`kotPrinted:true`
+  with `customerId:'cust_walkin'` and NO `userId` stamp → current rules
+  (create requires customerId/userId == uid) DENY it. Fail-closed (safe)
+  but the feature is dead + hardcoded `branch_surat_01`/city fallbacks.
+  NOT hot-fixed open: needs a server counter-order endpoint (same family
+  as the P0 cash endpoint). Queued as product.
+- No source changes. Handoff only.
 ### 2026-09-11 — no mock default store (core)
 - `storeStore` booted with `MOCK_STORES[0]` as the ACTIVE store (persisted),
   so checkout could run against a fake outlet. Initial null + persist v3
