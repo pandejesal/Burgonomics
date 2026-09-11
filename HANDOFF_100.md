@@ -81,6 +81,10 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — dead BestsellerCarousel deleted (core)
+- 149 lines, zero references (similarly-named `BestSellerCard` is the live
+  one). Barrel line removed. Scope clean (2 files).
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — gateway fetch timeouts (functions)
 - 6 raw fetch sites (Porter quote/create/track, Petpooja stock/menu/order)
   could hang until platform timeout (billed overrun, scheduler stall).
