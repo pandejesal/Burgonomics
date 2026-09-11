@@ -146,6 +146,12 @@ export async function checkTicketInactivityReminders(): Promise<{
   const batch = db.batch();
   let batchedWrites = 0;
   const alertJobs: Array<() => Promise<unknown>> = [];
+  // Loop: reminder "sent" flags must only land when their alert actually
+  // went out. The old code committed the flag in the pre-batch, so a failed
+  // (or crashed-after-commit) send was never retried — silent escalation.
+  // Escalation status flips stay pre-committed (time-based truth); reminder
+  // flags ride a follow-up batch keyed to fulfilled sends.
+  const reminderFlagRefs: Array<{ ref: any; jobIndex: number }> = [];
 
   for (const doc of snapshot.docs) {
     const ticket = doc.data();
@@ -204,6 +210,7 @@ export async function checkTicketInactivityReminders(): Promise<{
     if (branchTierAgedToRemind) {
       const ticketSnapshot = ticket;
       const ticketId = doc.id;
+      reminderFlagRefs.push({ ref: doc.ref, jobIndex: alertJobs.length });
       alertJobs.push(() =>
         publishTicketAlert({
           ticket: ticketSnapshot,
@@ -214,13 +221,6 @@ export async function checkTicketInactivityReminders(): Promise<{
         })
       );
 
-      batch.update(doc.ref, {
-        branchReminderSent: true,
-        lastActivityAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      batchedWrites++;
-
       remindedCount++;
     }
   }
@@ -229,8 +229,24 @@ export async function checkTicketInactivityReminders(): Promise<{
   if (alertJobs.length > 0) {
     const results = await Promise.allSettled(alertJobs.map((job) => job()));
     const failed = results.filter((r) => r.status === "rejected").length;
+    // Flag only the reminders that actually went out — failed sends retry
+    // on the next tick instead of going silent.
+    const flagBatch = db.batch();
+    let flagWrites = 0;
+    results.forEach((r, i) => {
+      if (r.status !== "fulfilled") return;
+      const pending = reminderFlagRefs.find((p) => p.jobIndex === i);
+      if (!pending) return;
+      flagBatch.update(pending.ref, {
+        branchReminderSent: true,
+        lastActivityAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      flagWrites++;
+    });
+    if (flagWrites > 0) await flagBatch.commit();
     if (failed > 0) {
-      logger.warn(`[Ticket Escalator] ${failed}/${alertJobs.length} alert sends failed (writes already committed).`);
+      logger.warn(`[Ticket Escalator] ${failed}/${alertJobs.length} alert sends failed (flags withheld for retry).`);
     }
   }
 
