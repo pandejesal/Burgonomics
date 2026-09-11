@@ -19,7 +19,8 @@
 - [x] 17 (2026-09-11 — cancel honesty, 168 green)
 - [x] 18 (2026-09-11 — tracking-link guard, 230 green)
 - [x] 19 (2026-09-11 — dial safety + fake courier + SLA copy, 232 green)
-- [ ] 20-120
+- [x] 20 (2026-09-11 — mailto fixture guard, 234 green)
+- [ ] 21-120
 ## Carryover (queued product calls, newest last)
 - POST /porter/cancel with provider cancel + fee handling (Loop 17: KDS
   cancel only flips the board; live bookings need separate cancellation).
@@ -294,3 +295,11 @@
   (was untracked on disk).
 - Gates: core tsc clean + 232 tests (230 + 2 new tel cases) + build clean.
 - Commits: core 4930ef3 LOCAL (diverged, push after sync).
+### Loop 20 — 2026-09-11 11:10 UTC — fixed 1 (mailto fixture guard) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — bounce-bound contact link): support ChannelRow
+  rendered the fixture "support@burgonomics.example" as a tappable mailto.
+  Fix: isSafeEmail (shape + fixture-domain rejection) gating the email
+  branch, same pattern as Loop 19 tel: guards.
+- Gates: core tsc clean + 234 tests (232 + 2 new) + build clean.
+- Commits: core 0be520a LOCAL (diverged, push after sync).
