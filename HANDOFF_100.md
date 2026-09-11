@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — version enforcement unwired (queued product, core)
+- `/force-update` + `/maintenance` routes exist but NOTHING navigates to
+  them; nothing reads `minimumAppVersion`/`maintenance` from `/config/app`.
+  Stale/broken clients are never gated. Needs a client boot check + UX —
+  feature work, not a fix. Queued.
+- No source changes. Handoff only.
 ### 2026-09-11 — online-detection review (no-op, core)
 - `useOnlineStatus` mounted at root + home/menu: browser online/offline
   events AND Capacitor Network listener, synchronous sync on mount (no
