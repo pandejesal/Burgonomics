@@ -34,7 +34,8 @@
 - [x] 32 (2026-09-11 — order-board money/sync fix, 175 green)
 - [x] 33 (2026-09-11 — ticket resolution money, 248 + 175 green)
 - [x] 34 (2026-09-11 — geofence fake-pass fix, 234 green)
-- [ ] 35-120
+- [x] 35 (2026-09-11 — ticket cross-user leak fix, 236 green)
+- [ ] 36-120
 ## Carryover (queued product calls, newest last)
 - Server-side delivery-zone enforcement (Loop 34: client geofence only;
   payment intent carries no address coords). Per-service probes (Loop 30).
@@ -457,3 +458,12 @@
   zone enforcement (payment intent carries no address coords).
 - Gates: core tsc clean + 234 tests + build clean.
 - Commits: core ccd3107 LOCAL (diverged, push after sync).
+### Loop 35 — 2026-09-11 14:25 UTC — fixed 1 (ticket cross-user leak) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — DPDP cross-user PII leak): ticket drafts (issue
+  descriptions) persisted under one global key and survived logout, so a
+  second user on a shared device read the first user's drafts. Fix: scope
+  storage key per user id with reload on identity change; guests keep the
+  legacy key; legacy key never migrates into a signed-in scope.
+- Gates: core tsc clean + 236 tests (234 + 2 new) + build clean.
+- Commits: core cda08ab LOCAL (diverged, push after sync).
