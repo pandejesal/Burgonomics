@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — 6 more dead components deleted (core)
+- `CategoryTabs`, `CustomizationPicker`, `MenuItemCard`,
+  `FulfillmentSelector`, `HeroBanners`, `FranchiseBanner` (~490 lines):
+  zero references outside barrels (two not even barrelled). Files +
+  barrel lines removed. Scope clean.
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — 4 dead checkout components deleted (core)
 - `TakeawayPanel`, `DineInPanel`, `NotesEditor`, `CheckoutSection` (292
   lines): zero references outside the barrel, superseded by
