@@ -13,7 +13,8 @@
 - [x] 11 (2026-09-11 — store read bounds, 225 green)
 - [x] 12 (2026-09-11 — OTP bypass closed, 24/24 + 165 green)
 - [x] 13 (2026-09-11 — dead worker cleanup, 243 green)
-- [ ] 14-120
+- [x] 14 (2026-09-11 — coupon preview honesty, 228 green)
+- [ ] 15-120
 ## Carryover (queued product calls, newest last)
 - Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -219,3 +220,13 @@
   notificationDispatcher KEPT (pure router + dispatch fns are tested).
 - Gates: functions tsc clean + 243 tests + build clean.
 - Commits: root PUSHED (deletion).
+### Loop 14 — 2026-09-11 09:55 UTC — fixed 1 (coupon preview honesty) / workers down
+- Workers: background probe returned empty output (no SMOKE_OK, no error
+  JSON — likely killed at the 90s timeout). Tries 18/20. Still unusable.
+- Fixed (core, meets bar — preview promised savings the server refuses):
+  offersService.apply() skipped status AND expiry checks (validateCoupon
+  skipped expiry) while the server pricing engine enforces active + unexpired
+  + branch + min. Fix: checkOfferLiveness() gate (active + unexpired,
+  mirroring server semantics) wired into both validateCoupon and apply.
+- Gates: core tsc clean + 228 tests (225 + 3 new) + build clean.
+- Commits: core 48a8faf LOCAL (diverged, push after sync).
