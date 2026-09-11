@@ -27,6 +27,7 @@ import {
   retryPendingRouteTransfersWorker,
 } from "./modules/payments/razorpay.service";
 import { handleRazorpayWebhook } from "./modules/payments/webhookHandler";
+import { disposeRefundRequest } from "./modules/payments/refundRequests";
 import {
   syncPetpoojaMenu,
   handlePetpoojaStockWebhook,
@@ -72,6 +73,7 @@ import {
   createPaymentOrderSchema,
   verifyPaymentSchema,
   refundSchema,
+  disposeRefundSchema,
   pushOrderSchema,
   syncMenuSchema,
   pushStockSchema,
@@ -147,6 +149,7 @@ app.use(
     "/payments/createPaymentOrder",
     "/payments/verifyPayment",
     "/payments/refund",
+    "/refunds/dispose",
     "/petpooja/syncMenu",
     "/petpooja/pushOrder",
     "/petpooja/pushStock",
@@ -247,6 +250,26 @@ app.post(
 );
 
 app.post("/payments/webhook", handleRazorpayWebhook);
+
+// Loop 7/120: refund-request disposition (reject path). Staff-only, validated
+// (reason required), fail-closed 404/409 from the service. Approval never
+// flows through here — money release is POST /payments/refund only.
+app.post(
+  "/refunds/dispose",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "support", "branch_owner", "branch_staff"]),
+  validateBody(disposeRefundSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const decidedBy = req.user?.email || req.user?.uid || "staff";
+      const result = await disposeRefundRequest({ ...req.body, decidedBy });
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status = err.statusCode === 404 || err.statusCode === 409 ? err.statusCode : 500;
+      res.status(status).json({ error: err.message || "Failed to dispose refund request" });
+    }
+  }
+);
 
 // ==========================================
 // 2. PETPOOJA POS ROUTES

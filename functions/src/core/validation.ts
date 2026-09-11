@@ -58,6 +58,13 @@ export const refundSchema = z.object({
   reason: z.string().optional(),
 });
 
+// Loop 7/120: refund-request disposition (reject path). Reason is REQUIRED —
+// a rejection without a recorded reason is a silent decision.
+export const disposeRefundSchema = z.object({
+  refundId: nonEmptyString,
+  reason: nonEmptyString,
+});
+
 export const pushOrderSchema = z.object({
   orderId: nonEmptyString,
 });
