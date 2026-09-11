@@ -54,7 +54,8 @@
 - [x] 52 (2026-09-11 — sim-path hardening, 179 green)
 - [x] 53 (2026-09-11 — fake password change fix, 179 green)
 - [x] 54 (2026-09-11 — audit-log honesty, 179 green)
-- [ ] 55-120
+- [x] 55 (2026-09-11 — ticket silent paths fix, 179 green)
+- [ ] 56-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -681,3 +682,11 @@
   QUEUED: server audit writer (carryover). Clean 1-line commit.
 - Gates: partner typecheck clean + 179 tests + build clean.
 - Commits: partner 52cf74f LOCAL (diverged, push after sync).
+### Loop 55 — 2026-09-11 18:55 UTC — fixed 1 (ticket silent paths) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — silent failures): ticket raise left the modal
+  hanging silently on failure; quick-escalate reported nothing either way.
+  Fix: loud success/failure toasts on both (failure keeps modal open).
+  Clean 26-line diff, verified mine-only pre-commit.
+- Gates: partner typecheck clean + 179 tests + build clean.
+- Commits: partner 683fde7 LOCAL (diverged, push after sync).
