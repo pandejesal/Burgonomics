@@ -16,9 +16,12 @@
 - [x] 14 (2026-09-11 — coupon preview honesty, 228 green)
 - [x] 15 (2026-09-11 — live gauges + orders bound, 167 green)
 - [x] 16 (2026-09-11 — KDS fake dispatch fix, 168 green)
-- [ ] 17-120
+- [x] 17 (2026-09-11 — cancel honesty, 168 green)
+- [ ] 18-120
 ## Carryover (queued product calls, newest last)
-- Core home-mock backend (Loop 1) + checkout wiring for partner_settings
+- POST /porter/cancel with provider cancel + fee handling (Loop 17: KDS
+  cancel only flips the board; live bookings need separate cancellation).
+  Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
   block/campaign/coupon actions all local; server adjustCoins exists).
 ## Baseline divergence (noted Loop 1 Step 0)
@@ -255,3 +258,14 @@
   servers return marked [TEST] riders, so both modes stay honest.
 - Gates: partner typecheck clean + 168 tests (167 + 1 new) + build clean.
 - Commits: partner 35f7998 LOCAL (diverged, push after sync).
+### Loop 17 — 2026-09-11 10:30 UTC — fixed 1 (cancel honesty) / direct-only
+- Workers: pin exhausted (20/20) — no probes; direct-only until key refresh.
+- Fixed (partner, meets bar — dangling-booking hazard): KDS cancelPorter
+  flipped status to ready + "dispatch cancelled" toast while any live courier
+  booking stayed active (no server cancel endpoint exists). Fix: when the
+  order carries a porterOrderId, warn loud that the booking was NOT
+  auto-cancelled (cancel with provider / re-dispatch); plain-board reverts
+  keep the info toast. QUEUED: POST /porter/cancel (carryover).
+- Gates: partner typecheck clean + 168 tests + build clean (copy-only change,
+  full suite green).
+- Commits: partner cda0567 LOCAL (diverged, push after sync).
