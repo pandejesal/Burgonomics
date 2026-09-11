@@ -81,6 +81,14 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — regression sweep, all fixes intact (no-op)
+- Re-verified every loop fix against concurrent-lane edits: platform gate,
+  byId gate, stepper gate, razorpay key, support copy, store v3, refund
+  label, dispatch/cancel confirms, deep-link router, KDS mask, rider phone
+  validation, franchise DEV-gate, analytics honesty, message-only backend
+  logs (porter 4x, 86ing 3x, webhook 1x), ticket rules tests 19-20,
+  price-lock fail-honest. All present, none reverted.
+- No source changes. Handoff only.
 ### 2026-09-11 — honest support surface (core)
 - Ticket toast promised a 15-min manager response nothing fulfills → honest
   on-device copy; `branch_cg_road` default stamped tickets to a wrong outlet
