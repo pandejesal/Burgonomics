@@ -10,7 +10,8 @@
 - [x] 8 (2026-09-11 — settings fake-success fix, 162 green)
 - [x] 9 (2026-09-11 — CRM attribution honesty, 165 green)
 - [x] 10 (2026-09-11 — demo prod-gate, 223 green)
-- [ ] 11-120
+- [x] 11 (2026-09-11 — store read bounds, 225 green)
+- [ ] 12-120
 ## Carryover (queued product calls, newest last)
 - Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -174,3 +175,19 @@
   env module with importOriginal instead.
 - Gates: core tsc clean + 223 tests (221 + 2 new) + build clean.
 - Commits: core 2060b3b LOCAL (diverged, push after sync).
+### Loop 11 — 2026-09-11 09:05 UTC — fixed 1 (store read bounds) / workers down
+- Workers: background probe failed again, same opencode-zen UnknownError
+  (err_a8a1e994). Tries 15/20.
+- Dismissed with evidence: PII logging absent (all 3 codebases); Porter card
+  already confirm-guarded; GST 5% consistent across server/core/UI; deep-link
+  allowlist + sanitizer verified live; OTP 3-attempt lockout; core menu reads
+  live Firestore; mock KOT push failures leave honest Pending status for the
+  server retry worker.
+- Fixed (core, checklist — unbounded queries): storesService pulled whole
+  `stores` + `admin_stores` collections unbounded. Now limit(100) both, with
+  bounds tests (empty-backend fallback stays DEV-gated).
+- Test lesson: client-SDK firebase mocks need importOriginal merge (named
+  exports like getFirestore), and vi.mock matches the resolved module — use
+  the relative specifier, not the @ alias.
+- Gates: core tsc clean + 225 tests (223 + 2 new) + build clean.
+- Commits: core 7e1c929 LOCAL (diverged, push after sync).
