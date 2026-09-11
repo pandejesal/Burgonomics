@@ -57,6 +57,7 @@ import {
 } from "./modules/tickets/tickets.service";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
+import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
 import {
   setUserCustomClaims,
@@ -169,6 +170,7 @@ app.use(
     "/notifications/subscribe",
     "/notifications/unsubscribe",
     "/notifications/registerToken",
+    "/notifications/unregisterToken",
     "/auth/setClaims",
     "/auth/assignRole",
     "/auth/revokeRole",
@@ -631,6 +633,23 @@ app.post("/notifications/registerToken", requireAuth, async (req: AuthenticatedR
     res.status(200).json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to register token" });
+  }
+});
+
+// Device detach on logout (Loop 37/120): deletes the token identity and
+// scrubs every fan-out list via Admin SDK. RequireAuth (call pre-signout).
+// Unknown tokens succeed — logout must never fail on already-clean state.
+app.post("/notifications/unregisterToken", requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { token } = req.body as { token?: string };
+    if (!token || typeof token !== "string" || token.length < 10 || token.length > 500) {
+      res.status(400).json({ error: "valid token is required" });
+      return;
+    }
+    const result = await unregisterDeviceToken({ token, uid: req.user?.uid });
+    res.status(200).json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to unregister token" });
   }
 });
 
