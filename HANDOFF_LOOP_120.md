@@ -33,12 +33,14 @@
 - [x] 31 (2026-09-11 — dead sim switch gated, 175 green)
 - [x] 32 (2026-09-11 — order-board money/sync fix, 175 green)
 - [x] 33 (2026-09-11 — ticket resolution money, 248 + 175 green)
-- [ ] 34-120
+- [x] 34 (2026-09-11 — geofence fake-pass fix, 234 green)
+- [ ] 35-120
 ## Carryover (queued product calls, newest last)
-- Per-service probes for DB/Petpooja/Razorpay (Loop 30: tab shows
-  Unmonitored + real API liveness only). Wire partner offers/coupons boards
-  to the server coupons collection (Loop 28). Consolidate /admin/menu
-  (Loop 27). Customer push broadcast endpoint (Loop 22).
+- Server-side delivery-zone enforcement (Loop 34: client geofence only;
+  payment intent carries no address coords). Per-service probes (Loop 30).
+  Wire partner offers/coupons boards to the server coupons collection
+  (Loop 28). Consolidate /admin/menu (Loop 27). Customer push broadcast
+  endpoint (Loop 22).
   POST /porter/cancel with provider cancel + fee handling (Loop 17).
   Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -447,3 +449,11 @@
 - Gates: functions tsc + 248 tests (246 + 2 new) + build clean. Partner
   typecheck + 175 tests + build clean.
 - Commits: root 9df1d1d PUSHED; partner a180d65 LOCAL (diverged).
+### Loop 34 — 2026-09-11 14:10 UTC — fixed 1 (geofence fake-pass) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — zone bypass): coord-less delivery addresses got a
+  fabricated nearby point (store + 0.015) that auto-passed the geofence.
+  Fix: fail-closed re-pin block instead of a fake pass. QUEUED: server-side
+  zone enforcement (payment intent carries no address coords).
+- Gates: core tsc clean + 234 tests + build clean.
+- Commits: core ccd3107 LOCAL (diverged, push after sync).
