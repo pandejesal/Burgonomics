@@ -81,6 +81,15 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — chat impersonation nuance queued (partner, no-op)
+- `chatService.sendMessage`: `senderId`/`senderName` are caller-supplied;
+  rules gate thread participation (tests 17-18) but don't bind
+  `senderId == request.auth.uid` — a legit participant could post as another
+  participant. No money/auth impact; needs a rules change (concurrent lane
+  owns the file). Queued as hardening.
+- Verified holding: thread/message reads+writes participant-gated; queries
+  bounded (30/50); thread create requires self-in-participants.
+- No source changes. Handoff only.
 ### 2026-09-11 — coins adjustment path review (no-op, functions)
 - `adjustCustomerCoins`: zod ±5000 + reason, requireAuth + role gate,
   caller-bound, atomic transaction (balance+ledger), branch scope via
