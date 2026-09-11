@@ -81,6 +81,13 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — full health-check matrix green (all repos)
+- Post-campaign regression run: functions tsc + 234/234, partner
+  typecheck + 151/151, core tsc + 221/221. Zero failures despite heavy
+  concurrent-lane activity in all three trees.
+- Cash-always-offered reviewed: no per-store cash-disable capability exists
+  in the model; fulfillment modes already gated. Dismissed.
+- No source changes. Handoff only.
 ### 2026-09-11 — table number required, no fake Table 01 (core+partner)
 - Dine-in orders sailed through with empty table while KDS asserted
   "Table 01" (food misrouted). Checkout gate + required label (core);
