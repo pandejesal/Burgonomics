@@ -48,7 +48,8 @@
 - [x] 46 (2026-09-11 — partner push leak fix, 179 green)
 - [x] 47 (2026-09-11 — franchise PII black hole fix, 238 green)
 - [x] 48 (2026-09-11 — split franchise pipeline fix, 238 green)
-- [ ] 49-120
+- [x] 49 (2026-09-11 — fallback-branch stamping fix, 179 green)
+- [ ] 50-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -609,3 +610,17 @@
   status check pre-edit; clean 7-line diff.
 - Gates: core tsc clean + 238 tests + build clean.
 - Commits: core c285ae5 LOCAL (diverged, push after sync).
+### Loop 49 — 2026-09-11 17:10 UTC — fixed 1 (fallback-branch stamping) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — wrong-branch data integrity): five hardcoded
+  branch fallbacks stamped Surat/Delhi/cg_road context onto orders, tickets,
+  dashboards, and manager views for operators without branch assignment.
+  Fix: fail-closed loud blocks (modal/ticket create), null-unfiltered views,
+  real operator branch passed through. KOT fake-sync flags removed from
+  manual orders (pending until real push).
+- PROCESS FLAG (repeat of Loop 43): RaiseTicketModal carried uncommitted
+  concurrent-lane work (presets/tiers) under my hunks — swept into 11f6f53,
+  nothing lost, gates green, other lane please verify. Other 4 files are
+  mine-only (verified per-file diffs).
+- Gates: partner typecheck clean + 179 tests + build clean.
+- Commits: partner 11f6f53 LOCAL (diverged, push after sync).
