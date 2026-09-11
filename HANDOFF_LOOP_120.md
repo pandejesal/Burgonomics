@@ -50,7 +50,8 @@
 - [x] 48 (2026-09-11 — split franchise pipeline fix, 238 green)
 - [x] 49 (2026-09-11 — fallback-branch stamping fix, 179 green)
 - [x] 50 (2026-09-11 — DPDP erasure endpoint, 252 + 238 green)
-- [ ] 51-120
+- [x] 51 (2026-09-11 — fabricated analytics fix, 179 green)
+- [ ] 52-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -638,3 +639,14 @@
 - Gates: functions tsc + 252 tests (250 + 2 new) + build clean. Core tsc +
   238 tests + build clean.
 - Commits: root PUSHED (c8045e3); core a64e118 LOCAL (diverged).
+### Loop 51 — 2026-09-11 18:05 UTC — fixed 1 (fabricated analytics) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fabricated analytics as measured): revenue
+  charts, top items, branch splits, hourly heat, fulfillment shares, and
+  logistics margins were fixed percentages/randomized seeds rendered as
+  measured data. Fix: all aggregate real order docs (daily buckets, item
+  rollups, branch grouping with honest account states, channel counts,
+  hourly buckets, real delivery fees); unknowns are zero/empty; reads
+  bounded (branches 100, orders 2000); hardcoded fallback outlets removed.
+- Gates: partner typecheck clean + 179 tests + build clean.
+- Commits: partner 8881cc5 LOCAL (diverged, push after sync).
