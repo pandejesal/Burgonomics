@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — tracking server refresh (core, follows timer clamp)
+- Removing timer-completion left a staleness gap: tracking read memory-only,
+  so server-delivered orders would show pre-terminal forever. `getTracking`
+  now refreshes the doc each poll (ownership-checked, best-effort).
+  Scope clean (1 file).
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — timer never auto-completes orders (core)
 - `tickOrder` advanced order status to DELIVERED/COMPLETED by elapsed time
   with no backend event — faked handover, removed recourse. Now holds
