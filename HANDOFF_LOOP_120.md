@@ -14,7 +14,8 @@
 - [x] 12 (2026-09-11 — OTP bypass closed, 24/24 + 165 green)
 - [x] 13 (2026-09-11 — dead worker cleanup, 243 green)
 - [x] 14 (2026-09-11 — coupon preview honesty, 228 green)
-- [ ] 15-120
+- [x] 15 (2026-09-11 — live gauges + orders bound, 167 green)
+- [ ] 16-120
 ## Carryover (queued product calls, newest last)
 - Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -230,3 +231,14 @@
   mirroring server semantics) wired into both validateCoupon and apply.
 - Gates: core tsc clean + 228 tests (225 + 3 new) + build clean.
 - Commits: core 48a8faf LOCAL (diverged, push after sync).
+### Loop 15 — 2026-09-11 10:05 UTC — fixed 2 (live gauges + orders bound) / workers down
+- Workers: background probe returned empty again (90s timeout kill, no
+  SMOKE_OK). Tries 19/20 — one left on the pin.
+- Fixed (partner, meets bar — stuck gauges hiding backlogs + unbounded
+  reads): Live Operations "Payment/Petpooja Pending" metrics were hardcoded
+  to 0; fetchOrders pulled the whole orders collection (collectionGroup +
+  root fallback) unbounded. Fix: count real unmatched_payments /
+  unmatched_petpooja_orders docs (bounded 100, loud warn on deny) and bound
+  orders reads at 1000.
+- Gates: partner typecheck clean + 167 tests (165 + 2 new) + build clean.
+- Commits: partner 1db5150 LOCAL (diverged, push after sync).
