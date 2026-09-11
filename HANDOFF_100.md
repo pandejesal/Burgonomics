@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — demo telemetry + ETAs + inbox fallback (no-op)
+- `simulationMode` settable only via unmounted DebugPanel; demo store is
+  telemetry otherwise. Takeaway ETAs store-driven + conditional. Functions
+  inbox fallback (`writeCustomerInboxDoc`) wired on zero-token/zero-delivery
+  paths. All dismissed.
+- No source changes. Handoff only.
 ### 2026-09-11 — staff seed roster DEV-only (partner)
 - `useUsers`: empty/denied collection showed 6 fake staff (names/phones/PIN
   hashes). Prod returns []. Verified hashes never authenticate (PIN sessions
