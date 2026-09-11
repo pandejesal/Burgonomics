@@ -3,9 +3,11 @@
 - [x] 1 (2026-09-11 — workers-down, home-mock queued, tsc green)
 - [x] 2 (2026-09-11 — rules dead-block fix, 22/22 gates)
 - [x] 3 (2026-09-11 — partner store honesty, 154 green)
-- [ ] 4-120
+- [x] 4 (2026-09-11 — FCM topic authz, 240 green)
+- [ ] 5-120
 ## Carryover (queued product calls, newest last)
-- (none yet — seeded from HANDOFF_100 if still open; checked Loop 1)
+- Loop 5: server endpoint for refund-request DISPOSITION (reject path has no
+  API; page fails loud until it lands). Also core home-mock backend (Loop 1).
 ## Baseline divergence (noted Loop 1 Step 0)
 - root `master`: in sync with origin/master
 - core `main`: ahead 29, behind 7 vs origin/main — DIVERGED, LOCAL commits only, never force-push
@@ -73,3 +75,16 @@
 - Gates: functions tsc clean + 24 files/240 tests green (23/234 + 6 new
   fcm.topics) + build clean.
 - Commits: root PUSHED (fix + tests). Handoff pushed below.
+### Loop 5 — 2026-09-11 07:00 UTC — fixed 1 (refund fake-success) / workers down
+- Workers: smoke probe failed again, same opencode-zen UnknownError. Tries 9/20.
+- Fixed (partner, meets bar — fake money movement): AdminRefundsPage approve /
+  retry mutated LOCAL paymentStorage seeds + toast.success while Razorpay +
+  Firestore stayed untouched (live list comes from Firestore listener, so the
+  row never even changed). Approve + retry now POST /payments/refund via new
+  partnerFunctionsApi.releaseRefund (staff-only, server-idempotent); failures
+  toast loud with dialog kept open; isReleasing blocks double-submit. Reject
+  has NO server endpoint → honest fail-closed loud toast, nothing recorded.
+  QUEUED: disposition endpoint (carryover).
+- Gates: partner typecheck clean + 31 files/155 tests green (+1 gateway test)
+  + build clean.
+- Commits: partner bc77d03 LOCAL (diverged, push after sync).
