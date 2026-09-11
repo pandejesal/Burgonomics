@@ -81,6 +81,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — ratings honesty review (no-op, core)
+- Order ratings persist on-device with "saved on this device" copy (no
+  thank-the-store theater); terminal detection uses terminal/kind/code
+  triple (robust to unknown codes). Dismissed.
+- No source changes. Handoff only.
 ### 2026-09-11 — tree state check (no-op)
 - Root working tree still carries the concurrent lane's uncommitted hunks
   (rules, index.ts, tickets.service.ts + tests — 146/10). Untouched.
