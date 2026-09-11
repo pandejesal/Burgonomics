@@ -27,10 +27,12 @@
 - [x] 25 (2026-09-11 — reconciliation live, 246 + 175 green)
 - [x] 26 (2026-09-11 — payments-page honesty, 175 green)
 - [x] 27 (2026-09-11 — fixture menu honesty, 175 green)
-- [ ] 28-120
+- [x] 28 (2026-09-11 — offers-board honesty, 175 green)
+- [ ] 29-120
 ## Carryover (queued product calls, newest last)
-- Consolidate /admin/menu fixture page into live MenuPage (Loop 27: labeled
-  demo for now). Customer push broadcast endpoint (Loop 22).
+- Wire partner offers/coupons boards to the server coupons collection
+  (Loop 28: local drafts never reach checkout). Consolidate /admin/menu
+  (Loop 27). Customer push broadcast endpoint (Loop 22).
   POST /porter/cancel with provider cancel + fee handling (Loop 17).
   Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -380,3 +382,12 @@
   QUEUED: route consolidation (carryover).
 - Gates: partner typecheck clean + 175 tests + build clean (copy-only).
 - Commits: partner 63b9fff LOCAL (diverged, push after sync).
+### Loop 28 — 2026-09-11 12:55 UTC — fixed 1 (offers-board honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — mock presented as live): offers board showed
+  "Active Live Offers" + delete warning claiming instant strip from
+  checkouts, while all CRUD hits localStorage drafts the server never reads.
+  Fix: "Active Draft Offers" + not-synced subtext + truthful delete warning.
+  QUEUED: wiring boards to the server coupons collection (carryover).
+- Gates: partner typecheck clean + 175 tests + build clean (copy-only).
+- Commits: partner a4e74be LOCAL (diverged, push after sync).
