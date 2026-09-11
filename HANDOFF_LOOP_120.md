@@ -47,7 +47,8 @@
 - [x] 45 (2026-09-11 — CRM analytics honesty, 178 green)
 - [x] 46 (2026-09-11 — partner push leak fix, 179 green)
 - [x] 47 (2026-09-11 — franchise PII black hole fix, 238 green)
-- [ ] 48-120
+- [x] 48 (2026-09-11 — split franchise pipeline fix, 238 green)
+- [ ] 49-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -600,3 +601,11 @@
   committed whole as new blob 67a8d7b; mounting decision stays queued.
 - Gates: core tsc clean + 238 tests + build clean.
 - Commits: core 67a8d7b LOCAL (diverged, push after sync).
+### Loop 48 — 2026-09-11 16:55 UTC — fixed 1 (split franchise pipeline) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — two truths): Loop 47 wired enquiries to
+  franchise_leads, but staff watch franchise_inquiries — leads would land
+  unseen. Fix: write the watched collection (rules bind verified). Per-file
+  status check pre-edit; clean 7-line diff.
+- Gates: core tsc clean + 238 tests + build clean.
+- Commits: core c285ae5 LOCAL (diverged, push after sync).
