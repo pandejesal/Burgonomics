@@ -39,7 +39,8 @@
 - [x] 37 (2026-09-11 — push cross-user leak fix, 250 + 238 green)
 - [x] 38 (2026-09-11 — dead preference sync cleanup, 238 green)
 - [x] 39 (2026-09-11 — CRM seed leak + bound, 178 green)
-- [ ] 40-120
+- [x] 40 (2026-09-11 — directory empty/error states, 178 green)
+- [ ] 41-120
 ## Carryover (queued product calls, newest last)
 - Server-side delivery-zone enforcement (Loop 34: client geofence only;
   payment intent carries no address coords). Per-service probes (Loop 30).
@@ -509,3 +510,12 @@
   limit(500) (single-field order, no composite index needed).
 - Gates: partner typecheck clean + 178 tests (175 + 3 new) + build clean.
 - Commits: partner c154c67 LOCAL (diverged, push after sync).
+### Loop 40 — 2026-09-11 15:40 UTC — fixed 1 (directory empty/error states) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, checklist — empty/error states with recovery): the customer
+  directory rendered a confident "no match" empty for every failure mode
+  (query errors, role-denied reads that return empty). Fix: loud error banner
+  with recovery directions + empty state naming role-visibility. NOTE:
+  CustomerTable.tsx committed as new blob (was untracked on disk).
+- Gates: partner typecheck clean + 178 tests + build clean.
+- Commits: partner 3a7d868 LOCAL (diverged, push after sync).
