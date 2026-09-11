@@ -43,7 +43,8 @@
 - [x] 41 (2026-09-11 — green-board verification, all suites green)
 - [x] 42 (2026-09-11 — invoice compliance, 238 + 178 green)
 - [x] 43 (2026-09-11 — staff-mutation silence fix, 178 green)
-- [ ] 44-120
+- [x] 44 (2026-09-11 — demo-payments disclosure, 238 green)
+- [ ] 45-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -558,3 +559,13 @@
   BEFORE editing anything, every loop.
 - Gates: partner typecheck clean + 178 tests + build clean.
 - Commits: partner e97dde7 LOCAL (diverged, push after sync).
+### Loop 44 — 2026-09-11 16:25 UTC — fixed 1 (demo-payments disclosure) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — silent simulate-to-fail): without a live Razorpay
+  key, online payments fake success then fail server verification with no
+  on-screen explanation. Fix: honest demo-payments banner on the payment
+  page when not in live_test mode. (Mid-loop scare: a patch briefly deleted
+  the Loop 11 re-entry guard — reverted immediately, verified byte-identical
+  restore; clean 13-line commit after per-file status check.)
+- Gates: core tsc clean + 238 tests + build clean.
+- Commits: core 819d4c2 LOCAL (diverged, push after sync).
