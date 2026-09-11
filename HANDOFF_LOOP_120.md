@@ -44,7 +44,8 @@
 - [x] 42 (2026-09-11 — invoice compliance, 238 + 178 green)
 - [x] 43 (2026-09-11 — staff-mutation silence fix, 178 green)
 - [x] 44 (2026-09-11 — demo-payments disclosure, 238 green)
-- [ ] 45-120
+- [x] 45 (2026-09-11 — CRM analytics honesty, 178 green)
+- [ ] 46-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -569,3 +570,12 @@
   restore; clean 13-line commit after per-file status check.)
 - Gates: core tsc clean + 238 tests + build clean.
 - Commits: core 819d4c2 LOCAL (diverged, push after sync).
+### Loop 45 — 2026-09-11 16:40 UTC — fixed 1 (CRM analytics honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — analytics over seeds presented as intelligence):
+  CRM analytics console + customer dossier presented seed-directory
+  computations as live intelligence. Fix: honest seed-directory labeling
+  (live directory stays queued). Per-file status checks done pre-edit —
+  clean 2-line commit, no sweep-in.
+- Gates: partner typecheck clean + 178 tests + build clean (copy-only).
+- Commits: partner 4377c42 LOCAL (diverged, push after sync).
