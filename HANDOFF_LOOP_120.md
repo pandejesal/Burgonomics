@@ -42,7 +42,8 @@
 - [x] 40 (2026-09-11 — directory empty/error states, 178 green)
 - [x] 41 (2026-09-11 — green-board verification, all suites green)
 - [x] 42 (2026-09-11 — invoice compliance, 238 + 178 green)
-- [ ] 43-120
+- [x] 43 (2026-09-11 — staff-mutation silence fix, 178 green)
+- [ ] 44-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -543,3 +544,17 @@
 - Gates: core tsc + 238 tests + build clean. Partner typecheck + 178 tests
   + build clean.
 - Commits: core f8e9770 LOCAL; partner 2a7d9a3 LOCAL (both diverged).
+### Loop 43 — 2026-09-11 16:10 UTC — fixed 1 (staff-mutation silence) + PROCESS FLAG / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — silent failures): staff invite/edit/revoke all
+  failed silently against rules (hung modal, phantom revoke that refetched
+  back to life). Fix: revoke denial rejects loudly; all three handlers toast
+  loud errors; users reads limit(500). QUEUED: server staff-invite endpoint
+  (client cannot mint roles by rules design).
+- PROCESS FLAG: my commit e97dde7 swept in UNCOMMITTED concurrent-lane work
+  on UsersPage.tsx (247-line diff vs my ~40 lines of hunks). Nothing lost,
+  gates green, but misattributed — other lane please verify e97dde7's
+  non-loop hunks. New rule: `git status` + per-file `git diff --stat`
+  BEFORE editing anything, every loop.
+- Gates: partner typecheck clean + 178 tests + build clean.
+- Commits: partner e97dde7 LOCAL (diverged, push after sync).
