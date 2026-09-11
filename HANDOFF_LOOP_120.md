@@ -8,10 +8,12 @@
 - [x] 6 (2026-09-11 — store directory honesty, 158 green)
 - [x] 7 (2026-09-11 — disposition endpoint, 243 + 159 green)
 - [x] 8 (2026-09-11 — settings fake-success fix, 162 green)
-- [ ] 9-120
+- [x] 9 (2026-09-11 — CRM attribution honesty, 165 green)
+- [ ] 10-120
 ## Carryover (queued product calls, newest last)
 - Core home-mock backend (Loop 1) + checkout wiring for partner_settings
-  (Loop 8: values persist, nothing reads them yet).
+  (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
+  block/campaign/coupon actions all local; server adjustCoins exists).
 ## Baseline divergence (noted Loop 1 Step 0)
 - root `master`: in sync with origin/master
 - core `main`: ahead 29, behind 7 vs origin/main — DIVERGED, LOCAL commits only, never force-push
@@ -138,3 +140,19 @@
   (neither app reads app_settings live yet).
 - Gates: partner typecheck clean + 162 tests (159 + 3 new) + build clean.
 - Commits: partner 17a1d8e LOCAL (diverged, push after sync).
+### Loop 9 — 2026-09-11 08:35 UTC — fixed 1 (CRM attribution honesty) / workers down
+- Workers: background probe failed again, same opencode-zen UnknownError
+  (err_d487ac0d). Tries 13/20.
+- Compliance sweep (all dismissed with evidence): Android permissions map to
+  real features, no cleartext/debuggable flags, targetSdk 36 both apps,
+  location + push use proper OS permission flows, iOS PrivacyInfo manifests
+  present with required-reason APIs + tracking false.
+- Fixed (partner, meets bar — false audit attribution + mock presented as
+  live): CRM loyalty/block/campaign/coupon/note actions stamped hardcoded
+  "Super Admin (Jesal Pande)" for ANY operator (9 live call sites across
+  directory + profile pages). Fix: actorLabelFor(admin.fullName, role) helper
+  + "Local directory" badge on the CRM page + "cryptographically signing"
+  toast corrected. No live customers source exists in partner (verified) —
+  full server wiring QUEUED (carryover).
+- Gates: partner typecheck clean + 165 tests (162 + 3 new) + build clean.
+- Commits: partner b466452 LOCAL (diverged, push after sync).
