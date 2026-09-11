@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — failure-injection reachability (no-op, core)
+- `shouldSimulate()` gates stock/order/petpooja/payment failures. Verified:
+  `errorSims` defaults all false, persisted but settable only via DebugPanel
+  (unmounted, `isDebugAllowed`-gated); zero setters elsewhere in src.
+  Unreachable in prod. Dismissed.
+- No source changes. Handoff only.
 ### 2026-09-11 — regression sweep, all fixes intact (no-op)
 - Re-verified every loop fix against concurrent-lane edits: platform gate,
   byId gate, stepper gate, razorpay key, support copy, store v3, refund
