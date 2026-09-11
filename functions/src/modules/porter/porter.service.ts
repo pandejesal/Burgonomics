@@ -67,7 +67,9 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
   if (!config.mock.porterDispatch && config.porter.apiKey) {
     try {
       const response = await fetch(`${config.porter.baseUrl}/v1/orders/quote`, {
-        method: "POST",
+              method: "POST",
+              // Loop: hung gateway held the function until platform timeout.
+              signal: AbortSignal.timeout(15_000),
         headers: {
           "Content-Type": "application/json",
           "x-api-key": config.porter.apiKey,
@@ -357,7 +359,9 @@ export async function bookPorterRider(
       };
 
       const response = await fetch(`${config.porter.baseUrl}/v1/orders/create`, {
-        method: "POST",
+              method: "POST",
+              // Loop: hung gateway held the function until platform timeout.
+              signal: AbortSignal.timeout(15_000),
         headers: {
           "Content-Type": "application/json",
           "x-api-key": config.porter.apiKey,
@@ -1180,6 +1184,8 @@ export async function pollActivePorterOrdersWorker(): Promise<{
         return "polled";
       } else if (config.porter.apiKey) {
         const response = await fetch(`${config.porter.baseUrl}/v1/orders/${porterOrderId}`, {
+        // Loop: hung gateway held the function until platform timeout.
+        signal: AbortSignal.timeout(15_000),
           headers: {
             "x-api-key": config.porter.apiKey,
             "Content-Type": "application/json",

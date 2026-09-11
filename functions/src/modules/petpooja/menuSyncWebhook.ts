@@ -121,7 +121,9 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
     try {
       const petpoojaConfig = getPetpoojaConfig();
       const response = await fetch(petpoojaConfig.menuUrl, {
-        method: "POST",
+              method: "POST",
+              // Loop: hung gateway held the function until platform timeout.
+              signal: AbortSignal.timeout(15_000),
         headers: {
           "Content-Type": "application/json",
           Content_key: petpoojaConfig.appKey,
