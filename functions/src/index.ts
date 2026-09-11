@@ -56,6 +56,7 @@ import {
   escalateTicket,
 } from "./modules/tickets/tickets.service";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
+import { deleteUserAccount } from "./modules/auth/accountDeletion";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
@@ -176,6 +177,7 @@ app.use(
     "/auth/revokeRole",
     "/auth/migrateGuest",
     "/auth/verifyBonusEligibility",
+    "/auth/deleteAccount",
   ],
   requireAppCheck
 );
@@ -809,6 +811,31 @@ app.post(
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to verify bonus eligibility" });
+    }
+  }
+);
+
+// Account erasure (Loop 50/120 — DPDP right): deletes the caller's own Auth
+// user ONLY (uid from verified token, never the body) after explicit
+// confirmation. The deletion trigger scrubs carts/admins/PII.
+app.post(
+  "/auth/deleteAccount",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.body?.confirm !== true) {
+        res.status(400).json({ error: "Account deletion requires explicit confirmation." });
+        return;
+      }
+      const uid = req.user?.uid;
+      if (!uid) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+      const result = await deleteUserAccount(uid);
+      res.status(200).json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to delete account" });
     }
   }
 );
