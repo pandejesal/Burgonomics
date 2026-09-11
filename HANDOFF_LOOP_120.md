@@ -36,7 +36,8 @@
 - [x] 34 (2026-09-11 — geofence fake-pass fix, 234 green)
 - [x] 35 (2026-09-11 — ticket cross-user leak fix, 236 green)
 - [x] 36 (2026-09-11 — address cross-user leak fix, 238 green)
-- [ ] 37-120
+- [x] 37 (2026-09-11 — push cross-user leak fix, 250 + 238 green)
+- [ ] 38-120
 ## Carryover (queued product calls, newest last)
 - Server-side delivery-zone enforcement (Loop 34: client geofence only;
   payment intent carries no address coords). Per-service probes (Loop 30).
@@ -477,3 +478,14 @@
   (mid-checkout sign-in drops guest rows — documented trade-off).
 - Gates: core tsc clean + 238 tests (236 + 2 new) + build clean.
 - Commits: core 82d9e75 LOCAL (diverged, push after sync).
+### Loop 37 — 2026-09-11 14:55 UTC — fixed 1 (push cross-user leak) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (functions + core, meets bar — DPDP cross-user push leak): logout
+  unlink wrote device_tokens directly, which rules ALWAYS deny — logged-out
+  devices kept token identity + fan-out membership. Fix: POST
+  /notifications/unregisterToken (requireAuth, Admin SDK deletes token doc +
+  scrubs all fan-out lists, idempotent); client calls pre-signout with the
+  rules-allowed fan-out removal as fallback. Logout never fails on cleanup.
+- Gates: functions tsc + 250 tests (248 + 2 new) + build clean. Core tsc +
+  238 tests + build clean.
+- Commits: root PUSHED (endpoint + tests); core 1d372f6 LOCAL (diverged).
