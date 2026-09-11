@@ -6,13 +6,12 @@
 - [x] 4 (2026-09-11 — FCM topic authz, 240 green)
 - [x] 5 (2026-09-11 — refund fake-success fix, 155 green)
 - [x] 6 (2026-09-11 — store directory honesty, 158 green)
-- [ ] 7-120
+- [x] 7 (2026-09-11 — disposition endpoint, 243 + 159 green)
+- [ ] 8-120
 ## Carryover (queued product calls, newest last)
-- Loop 5: server endpoint for refund-request DISPOSITION (reject path has no
-  API; page fails loud until it lands). Also core home-mock backend (Loop 1).
 - Loop 6: AdminSettingsPage GST/delivery-fee/support-phone Save persists
   nothing (local useState + timed success toast); needs app_settings wiring or
-  honest-label decision. Same class: check other admin pages for toast-only saves.
+  honest-label decision. Also core home-mock backend (Loop 1).
 ## Baseline divergence (noted Loop 1 Step 0)
 - root `master`: in sync with origin/master
 - core `main`: ahead 29, behind 7 vs origin/main — DIVERGED, LOCAL commits only, never force-push
@@ -112,3 +111,17 @@
   tests; one caught the placeholder passing digit-check, validator tightened)
   + build clean.
 - Commits: partner 7904a1e LOCAL (diverged, push after sync).
+### Loop 7 — 2026-09-11 08:05 UTC — fixed 1 (disposition endpoint, closes Loop 5 carryover) / workers down
+- Workers: smoke probe failed again, same opencode-zen UnknownError
+  (err_7cdb5969). Key not refreshed (same 2 pooled creds). Tries 11/20.
+- Fixed (functions + partner): built POST /refunds/dispose — staff-only +
+  AppCheck + zod schema (reason required); disposeRefundRequest 404s missing
+  requests and 409s non-PENDING rows, records REJECTED + disposition
+  (reason/decider/timestamp) via Admin SDK. Partner reject dialog now calls it
+  via partnerFunctionsApi.disposeRefund (loud error, dialog stays open).
+  Approval still flows only through autoRefund by construction.
+- Lesson: firebase-admin vitest mocks need BOTH `default` and top-level named
+  exports for `import * as admin` (named-only access throws at collect).
+- Gates: functions tsc + 243 tests (240 + 3 new) + build clean. Partner
+  typecheck + 159 tests (158 + 1 new) + build clean.
+- Commits: root PUSHED (endpoint + tests); partner 2e7edda LOCAL (diverged).
