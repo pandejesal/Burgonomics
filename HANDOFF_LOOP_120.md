@@ -38,7 +38,8 @@
 - [x] 36 (2026-09-11 — address cross-user leak fix, 238 green)
 - [x] 37 (2026-09-11 — push cross-user leak fix, 250 + 238 green)
 - [x] 38 (2026-09-11 — dead preference sync cleanup, 238 green)
-- [ ] 39-120
+- [x] 39 (2026-09-11 — CRM seed leak + bound, 178 green)
+- [ ] 40-120
 ## Carryover (queued product calls, newest last)
 - Server-side delivery-zone enforcement (Loop 34: client geofence only;
   payment intent carries no address coords). Per-service probes (Loop 30).
@@ -499,3 +500,12 @@
   documented as source of truth. Callers untouched.
 - Gates: core tsc clean + 238 tests + build clean.
 - Commits: core 90ee6ac LOCAL (diverged, push after sync).
+### Loop 39 — 2026-09-11 15:25 UTC — fixed 1 (CRM seed leak + bound) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fake PII as live rows + unbounded read):
+  useCustomers filled an EMPTY prod collection with fake people
+  (names/phones/emails/home addresses) and pulled customers unbounded.
+  Fix: seeds DEV-gated via pinned shouldSeedDirectory gate; reads
+  limit(500) (single-field order, no composite index needed).
+- Gates: partner typecheck clean + 178 tests (175 + 3 new) + build clean.
+- Commits: partner c154c67 LOCAL (diverged, push after sync).
