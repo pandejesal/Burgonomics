@@ -53,13 +53,15 @@
 - [x] 51 (2026-09-11 — fabricated analytics fix, 179 green)
 - [x] 52 (2026-09-11 — sim-path hardening, 179 green)
 - [x] 53 (2026-09-11 — fake password change fix, 179 green)
-- [ ] 54-120
+- [x] 54 (2026-09-11 — audit-log honesty, 179 green)
+- [ ] 55-120
 ## Carryover (queued product calls, newest last)
-- Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
-  carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
-  Per-service probes (Loop 30). Wire partner offers/coupons boards to the
-  server coupons collection (Loop 28). Consolidate /admin/menu (Loop 27).
-  Customer push broadcast endpoint (Loop 22).
+- Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
+  only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
+  Server-side delivery-zone enforcement (Loop 34). Per-service probes
+  (Loop 30). Wire partner offers/coupons boards to the server coupons
+  collection (Loop 28). Consolidate /admin/menu (Loop 27). Customer push
+  broadcast endpoint (Loop 22).
   POST /porter/cancel with provider cancel + fee handling (Loop 17).
   Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -671,3 +673,11 @@
 - Gates: partner typecheck clean + 179 tests + build clean. Per-file diff
   verified mine-only pre-commit.
 - Commits: partner 0428b1f LOCAL (diverged, push after sync).
+### Loop 54 — 2026-09-11 18:50 UTC — fixed 1 (audit-log honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — sample log presented as security registry):
+  dev audit page showed fixture entries as the security log while no server
+  writer exists for admin_audit_logs. Fix: honest sample-only labeling.
+  QUEUED: server audit writer (carryover). Clean 1-line commit.
+- Gates: partner typecheck clean + 179 tests + build clean.
+- Commits: partner 52cf74f LOCAL (diverged, push after sync).
