@@ -81,6 +81,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — drop overclaiming queue toasts (partner)
+- `PetpoojaQueuesPage`: wrapper toasted "Triggering/Success" around
+  callbacks that honestly report no-op states. Removed; callbacks speak.
+  Scope clean (1 file).
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — honest settings save (partner)
 - `SystemSettingsTab`: save alert() claimed persisted + broadcast to
   production workers while saving nothing (local state only). Honest
