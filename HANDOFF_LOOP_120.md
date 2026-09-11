@@ -1,7 +1,8 @@
 # HANDOFF_LOOP_120 — started 2026-09-11
 ## Progress (check each completed loop)
 - [x] 1 (2026-09-11 — workers-down, home-mock queued, tsc green)
-- [ ] 2-120
+- [x] 2 (2026-09-11 — rules dead-block fix, 22/22 gates)
+- [ ] 3-120
 ## Carryover (queued product calls, newest last)
 - (none yet — seeded from HANDOFF_100 if still open; checked Loop 1)
 ## Baseline divergence (noted Loop 1 Step 0)
@@ -42,3 +43,19 @@
   LOCAL + partner 5422d25 LOCAL (both diverged — push after sync, never force).
   NOTE: core/partner commits show whole-file line-ending stat churn vs their
   HEADs; content verified byte-identical to root fix.
+### Loop 3 — 2026-09-11 06:40 UTC — fixed 1 (partner store honesty) / workers down
+- Workers: smoke probe failed again, same opencode-zen UnknownError. Tries 7/20.
+- Fixed (partner, meets bar — mock data reachable in prod): `getStores`
+  served INITIAL_RICH_STORES fixtures silently when admin_stores empty/unreadable
+  (dashboardService.ts:616), rendered as live in StoreOverview with hash-fabricated
+  "Today's Sales" figures, POS LINK / Cache HIT badges, no demo label anywhere.
+  Fix: `StoreResponse.isDemoFallback` flag (types/index.ts) set on fallback rows;
+  UNBOUNDED `getDocs(collection(admin_stores))` bounded with limit(100);
+  StoreOverview "Demo store" badge + "Demo metrics" caption under card figures.
+- Dismissed: simulateOrder sample names/items (useOrders.ts:436+) — DEV-gated
+  with loud throw, unreachable in prod. Petpooja gateway factory mock default —
+  explicit env-flagged pattern (VITE_PETPOOJA_ENABLED), product posture, QUEUE-adjacent.
+- Gates: partner typecheck clean + 31 files/154 tests green (30/151 + 3 new
+  store-overview-honesty) + build clean.
+- Commits: partner LOCAL (diverged, push after sync). NOTE pre-existing
+  `M src/types/index.ts` in partner tree left untouched (not mine).
