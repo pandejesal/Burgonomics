@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — gateway fetch timeouts (functions)
+- 6 raw fetch sites (Porter quote/create/track, Petpooja stock/menu/order)
+  could hang until platform timeout (billed overrun, scheduler stall).
+  `AbortSignal.timeout(15s)` on each (Node 20). FCM already had its own.
+  Deletion lines verified as re-added method lines. Scope clean (4 files).
+- Gates: functions tsc + 234 green. Root commit (pushed).
 ### 2026-09-11 — dead OtpInput deleted (core)
 - 99 lines, zero references (auth flow uses inline inputs; no barrel
   entry). Scope clean (1 file).
