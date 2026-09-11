@@ -9,7 +9,8 @@
 - [x] 7 (2026-09-11 — disposition endpoint, 243 + 159 green)
 - [x] 8 (2026-09-11 — settings fake-success fix, 162 green)
 - [x] 9 (2026-09-11 — CRM attribution honesty, 165 green)
-- [ ] 10-120
+- [x] 10 (2026-09-11 — demo prod-gate, 223 green)
+- [ ] 11-120
 ## Carryover (queued product calls, newest last)
 - Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -156,3 +157,20 @@
   full server wiring QUEUED (carryover).
 - Gates: partner typecheck clean + 165 tests (162 + 3 new) + build clean.
 - Commits: partner b466452 LOCAL (diverged, push after sync).
+### Loop 10 — 2026-09-11 08:50 UTC — fixed 1 (demo prod-gate) / workers down
+- Workers: background probe failed again, same opencode-zen UnknownError
+  (err_06699bee). Tries 14/20.
+- Dismissed with evidence: schedulers all bounded (20/25/40/100, paginated
+  menu sync) with claim-then-work overlap guards; compliance items from the
+  Loop 9 sweep hold.
+- Fixed (core, meets bar — mock/sabotage paths reachable in prod):
+  demoStore simulation flags (simulationMode, errorSims, petpoojaSimulate)
+  persist in localStorage shared with prod builds on-device, and readers
+  (ordersService, razorpayAdapter, mockGateway, routes) applied them
+  ungated — a QA-toggled device would serve mocks + simulated payment/order
+  failures in prod. Fix: setters refuse + persist merge strips flags on
+  prod rehydrate + shouldSimulate/isSimulationMode hard-off in prod.
+- Test lesson: vi.stubEnv cannot reach Vite-baked import.meta.env — mock the
+  env module with importOriginal instead.
+- Gates: core tsc clean + 223 tests (221 + 2 new) + build clean.
+- Commits: core 2060b3b LOCAL (diverged, push after sync).
