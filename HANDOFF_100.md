@@ -75,6 +75,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
   webhook KOT push, 86ing x3, menu sync, porter x2) now log `err.message`.
   Whole client/API error objects can embed keys or customer fields.
 - Gates: functions tsc + 234 green. Root commit (pushed).
+### 2026-09-11 — tracking honesty fixes (core)
+- Track route: sandbox "Advance Stage" button faked Delivered locally (no
+  server write) in prod — now `import.meta.env.DEV`-gated.
+- Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
+  fabricated number. Call buttons render only with a real store phone.
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — cancel-booking confirm (partner)
 - `PorterDispatchCard`: single-tap "Cancel Porter / Re-assign" killed live
   courier bookings. Now destructive ConfirmDialog + min-h-44px CTA.
