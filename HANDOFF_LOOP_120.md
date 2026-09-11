@@ -32,7 +32,8 @@
 - [x] 30 (2026-09-11 — system-tab fantasy fix, 175 green)
 - [x] 31 (2026-09-11 — dead sim switch gated, 175 green)
 - [x] 32 (2026-09-11 — order-board money/sync fix, 175 green)
-- [ ] 33-120
+- [x] 33 (2026-09-11 — ticket resolution money, 248 + 175 green)
+- [ ] 34-120
 ## Carryover (queued product calls, newest last)
 - Per-service probes for DB/Petpooja/Razorpay (Loop 30: tab shows
   Unmonitored + real API liveness only). Wire partner offers/coupons boards
@@ -434,3 +435,15 @@
   (One tsc catch mid-loop: missing sonner import — fixed, gates re-greened.)
 - Gates: partner typecheck clean + 175 tests + build clean.
 - Commits: partner 912db22 LOCAL (diverged, push after sync).
+### Loop 33 — 2026-09-11 13:55 UTC — fixed 1 (ticket resolution money) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (functions + partner, meets bar — false money records): ticket
+  resolutions wrote "(Credited X Grill Coins)" / refunds via text-only
+  direct writes with no money movement; server resolveTicket even resolved
+  guest tickets as credited while skipping the credit. Fix: TicketsPage
+  routes all resolutions through server resolveTicket (loyalty/refund/
+  explanation mapping, guest+amount pre-checks, loud failures, ticket stays
+  open); server fail-closed 400s on missing customer/amount.
+- Gates: functions tsc + 248 tests (246 + 2 new) + build clean. Partner
+  typecheck + 175 tests + build clean.
+- Commits: root 9df1d1d PUSHED; partner a180d65 LOCAL (diverged).
