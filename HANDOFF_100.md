@@ -81,6 +81,14 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — guest-migration adversarial review (no-op)
+- Re-attacked the migration path end-to-end: route has requireAuth +
+  AppCheck; `migrateGuestAccount` binds target to caller UID, verifies
+  HMAC proof timing-safe, refuses guessable session ids, requires the
+  source UID be a real project-anonymous account (order-hijack refused),
+  refuses contradicting body phones, confines relink to guest-owned docs,
+  chunks at 400. Secret missing → mint throws / verify false. All HOLD.
+- No source changes. Handoff only.
 ### 2026-09-11 — sandbox smoke tab DEV-only (partner)
 - `DevDiagnosticsModal`: "Run Sandbox Smoke Test" printed canned success
   lines (KOT printed, driver allocated, refund reversed) with zero backend
