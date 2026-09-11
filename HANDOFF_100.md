@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — tree state check (no-op)
+- Root working tree still carries the concurrent lane's uncommitted hunks
+  (rules, index.ts, tickets.service.ts + tests — 146/10). Untouched.
+  DashboardPage verified live (`useOrders`, no mocks). Partner ahead 30+,
+  core ahead 20+ — all commits stay LOCAL per rule.
+- No source changes. Handoff only.
 ### 2026-09-11 — KOT timer + handoff integrity (no-op)
 - `KOTTimerBadge`: per-card 1s interval has cleanup, timestamp parsing
   defensive (NaN → now). Per-card cadence stays queued perf work.
