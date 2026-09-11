@@ -81,6 +81,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — logs page review (no-op, partner)
+- `PetpoojaLogsPage`: reads via gateway (mock/live per env flag — queued
+  design item), 10s refetch is bounded, CSV export builds + downloads real
+  filtered rows. No fake actions. Dismissed.
+- No source changes. Handoff only.
 ### 2026-09-11 — demo telemetry + ETAs + inbox fallback (no-op)
 - `simulationMode` settable only via unmounted DebugPanel; demo store is
   telemetry otherwise. Takeaway ETAs store-driven + conditional. Functions
