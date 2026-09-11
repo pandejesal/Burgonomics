@@ -81,6 +81,10 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — real active-today metric (partner)
+- `AdminCustomersPage`: "active today" was `total*0.4` fiction. Now counts
+  profiles with `lastOrderDate` in the last 24h (missing/unparseable skip).
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — franchise seed leads DEV-only (partner)
 - `useFranchiseLeads`: empty/denied collection returned 4 realistic fake
   leads (names/phones/emails) staff might call or email. Prod returns [].
