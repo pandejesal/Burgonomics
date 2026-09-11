@@ -22,7 +22,8 @@
 - [x] 20 (2026-09-11 — mailto fixture guard, 234 green)
 - [x] 21 (2026-09-11 — loyalty fake-saves fix, 171 green)
 - [x] 22 (2026-09-11 — push-page fabrication fix, 171 green)
-- [ ] 23-120
+- [x] 23 (2026-09-11 — marketing seed stats zeroed, 171 green)
+- [ ] 24-120
 ## Carryover (queued product calls, newest last)
 - Customer push broadcast endpoint with token fan-out (Loop 22: page keeps
   honest local drafts until it lands). POST /porter/cancel (Loop 17).
@@ -324,3 +325,13 @@
   customer broadcast endpoint (carryover).
 - Gates: partner typecheck clean + 171 tests + build clean (copy/state-only).
 - Commits: partner 4c00015 LOCAL (diverged, push after sync).
+### Loop 23 — 2026-09-11 11:45 UTC — fixed 1 (marketing seed stats) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fabricated analytics): campaign seeds carried
+  funnel stats (2450/580/1540/890 sent, CTRs, revenues), AB metrics with a
+  declared "winner: B", and automation trigger/conversion counts — all
+  rendered as real analytics. Fix: zeroed all seed stats (tables already
+  render zeros honestly as "Not yet sent"), removed the fabricated winner.
+  Simulate-trigger path verified DEV-gated already.
+- Gates: partner typecheck clean + 171 tests + build clean (data-only).
+- Commits: partner 61e1a61 LOCAL (diverged, push after sync).
