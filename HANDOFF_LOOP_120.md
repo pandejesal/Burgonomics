@@ -29,10 +29,12 @@
 - [x] 27 (2026-09-11 — fixture menu honesty, 175 green)
 - [x] 28 (2026-09-11 — offers-board honesty, 175 green)
 - [x] 29 (2026-09-11 — segment-count honesty, 175 green)
-- [ ] 30-120
+- [x] 30 (2026-09-11 — system-tab fantasy fix, 175 green)
+- [ ] 31-120
 ## Carryover (queued product calls, newest last)
-- Wire partner offers/coupons boards to the server coupons collection
-  (Loop 28: local drafts never reach checkout). Consolidate /admin/menu
+- Per-service probes for DB/Petpooja/Razorpay (Loop 30: tab shows
+  Unmonitored + real API liveness only). Wire partner offers/coupons boards
+  to the server coupons collection (Loop 28). Consolidate /admin/menu
   (Loop 27). Customer push broadcast endpoint (Loop 22).
   POST /porter/cancel with provider cancel + fee handling (Loop 17).
   Core home-mock backend (Loop 1) + checkout wiring for partner_settings
@@ -399,3 +401,13 @@
   the local seed directory. Fix: "Seed Match Preview" + "Seed Matches".
 - Gates: partner typecheck clean + 175 tests + build clean (copy-only).
 - Commits: partner 664cbbd LOCAL (diverged, push after sync).
+### Loop 30 — 2026-09-11 13:15 UTC — fixed 1 (system-tab fantasy) / direct-only
+- Workers: pin exhausted — no probes; direct-only. QUARTER MARK: 30/120.
+- Fixed (partner, meets bar — monitoring that blinded ops): system tab showed
+  random-walk CPU/RAM/sessions/latency as live telemetry plus five "healthy"
+  services (PostgreSQL! Redis!) from an endpoint that never existed (fetch
+  failed silently, defaults stayed healthy). Fix: real /health probe driving
+  API reachability + measured latency; per-service rows Unmonitored with
+  truthful copy; KPI sims labeled; fantasy stack names corrected.
+- Gates: partner typecheck clean + 175 tests + build clean.
+- Commits: partner 9165f85 LOCAL (diverged, push after sync).
