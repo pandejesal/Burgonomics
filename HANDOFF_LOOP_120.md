@@ -24,7 +24,8 @@
 - [x] 22 (2026-09-11 — push-page fabrication fix, 171 green)
 - [x] 23 (2026-09-11 — marketing seed stats zeroed, 171 green)
 - [x] 24 (2026-09-11 — health-page fabrication fix, 172 green)
-- [ ] 25-120
+- [x] 25 (2026-09-11 — reconciliation live, 246 + 175 green)
+- [ ] 26-120
 ## Carryover (queued product calls, newest last)
 - Customer push broadcast endpoint with token fan-out (Loop 22: page keeps
   honest local drafts until it lands). POST /porter/cancel (Loop 17).
@@ -346,3 +347,14 @@
   verified DEV-gated already.
 - Gates: partner typecheck clean + 172 tests (171 + 1 new) + build clean.
 - Commits: partner 9306a05 LOCAL (diverged, push after sync).
+### Loop 25 — 2026-09-11 12:10 UTC — fixed 1 (reconciliation live) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (functions + partner, meets bar — ops reviewed fixtures while real
+  parked discrepancies sat unread): built POST /discrepancies/resolve
+  (staff-only + AppCheck + schema, 404/409 fail-closed, attributed record);
+  page now subscribes the live payment_discrepancies queue via a reason→type
+  mapper; resolve/recheck/scan all truthful; duplicates card labeled demo;
+  removed the dead rules-denied direct-write resolver.
+- Gates: functions 246 tests (243 + 3 new) + build clean. Partner typecheck
+  + 175 tests (172 + 3 new) + build clean.
+- Commits: root PUSHED (endpoint + tests); partner fc03d33 LOCAL (diverged).
