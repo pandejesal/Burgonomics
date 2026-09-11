@@ -26,10 +26,12 @@
 - [x] 24 (2026-09-11 — health-page fabrication fix, 172 green)
 - [x] 25 (2026-09-11 — reconciliation live, 246 + 175 green)
 - [x] 26 (2026-09-11 — payments-page honesty, 175 green)
-- [ ] 27-120
+- [x] 27 (2026-09-11 — fixture menu honesty, 175 green)
+- [ ] 28-120
 ## Carryover (queued product calls, newest last)
-- Customer push broadcast endpoint with token fan-out (Loop 22: page keeps
-  honest local drafts until it lands). POST /porter/cancel (Loop 17).
+- Consolidate /admin/menu fixture page into live MenuPage (Loop 27: labeled
+  demo for now). Customer push broadcast endpoint (Loop 22).
+  POST /porter/cancel with provider cancel + fee handling (Loop 17).
   Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
   block/campaign/coupon actions all local; server adjustCoins exists).
@@ -369,3 +371,12 @@
 - Gates: partner typecheck clean + 175 tests + build clean (copy-only).
   NOTE: commit shows line-ending stat churn again (content verified).
 - Commits: partner b13eccb LOCAL (diverged, push after sync).
+### Loop 27 — 2026-09-11 12:40 UTC — fixed 1 (fixture menu honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — mock presented as live + dead button): the
+  /admin/menu catalog edited 5 hardcoded fixtures with "syncs instantly"
+  copy while the live inventory flow lives in MenuPage (/menu). Fix: demo
+  badge + truthful copy, dead Add button replaced with Open Live Menu link.
+  QUEUED: route consolidation (carryover).
+- Gates: partner typecheck clean + 175 tests + build clean (copy-only).
+- Commits: partner 63b9fff LOCAL (diverged, push after sync).
