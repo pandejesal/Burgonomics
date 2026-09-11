@@ -81,6 +81,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — KOT timer + handoff integrity (no-op)
+- `KOTTimerBadge`: per-card 1s interval has cleanup, timestamp parsing
+  defensive (NaN → now). Per-card cadence stays queued perf work.
+- Handoff integrity: 57 entries, tail intact, no concurrent-edit damage.
+- No source changes. Handoff only.
 ### 2026-09-11 — integrity sweep, all clean (no-op)
 - Redaction-damage sweep (post hazard): zero `***` outside the intentional
   `maskIdentifier` in errors.ts. `useNearestStore` is live (sheet + tests
