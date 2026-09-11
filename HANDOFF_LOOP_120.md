@@ -11,7 +11,8 @@
 - [x] 9 (2026-09-11 — CRM attribution honesty, 165 green)
 - [x] 10 (2026-09-11 — demo prod-gate, 223 green)
 - [x] 11 (2026-09-11 — store read bounds, 225 green)
-- [ ] 12-120
+- [x] 12 (2026-09-11 — OTP bypass closed, 24/24 + 165 green)
+- [ ] 13-120
 ## Carryover (queued product calls, newest last)
 - Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -191,3 +192,17 @@
   the relative specifier, not the @ alias.
 - Gates: core tsc clean + 225 tests (223 + 2 new) + build clean.
 - Commits: core 7e1c929 LOCAL (diverged, push after sync).
+### Loop 12 — 2026-09-11 09:30 UTC — fixed 1 (OTP bypass closed end-to-end) / workers down
+- Workers: background probe failed again, same opencode-zen UnknownError.
+  Tries 16/20 (counting this loop's background probe).
+- Fixed (meets bar — auth/proof bypass): any branch staffer could flip delivery
+  orders straight to DELIVERED via the stepper/direct write, bypassing the
+  OTP+lockout handover proof; the functional DeliveryOtpModal was never
+  mounted (dead code). Fix: OrderDetailPage routes delivery handover through
+  the OTP modal (server verifies + flips); takeaway/dine-in keep stepper;
+  rules add directDeliveredBypass() deny on staff delivery-DELIVERED writes
+  (brand owners exempt); mirrors re-synced byte-identical.
+- Gates: core rules 24/24 green (22 + tests 23 deny / 24 allow) + tsc clean.
+  Partner typecheck + 165 tests + build clean.
+- Commits: root 1a41e00 PUSHED (rules); core c014963 LOCAL; partner 5e6d0ea
+  LOCAL (both diverged, push after sync).
