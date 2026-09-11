@@ -81,6 +81,13 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — real Razorpay key into checkout (core)
+- Intent path passed bogus `rzp_test_mock` keyId which passed `isLive()`
+  and fired a REAL checkout attempt with an invalid key. Now the configured
+  publishable key, else the adapter's simulation sentinel (honest branch).
+- NOTE: commit 693f750 also swept another lane's full-file rewrite of the
+  same file (interface expansion). Combined tree green, coherent.
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — loud errors on dead flag surface (partner)
 - `SystemFeatureFlagsTab`: full CRUD against nonexistent
   `/api/v1/feature-flags` failed silently (console-only, no toasts).
