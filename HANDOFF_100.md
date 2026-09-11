@@ -81,6 +81,13 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — staff seed roster DEV-only (partner)
+- `useUsers`: empty/denied collection showed 6 fake staff (names/phones/PIN
+  hashes). Prod returns []. Verified hashes never authenticate (PIN sessions
+  roster permanently empty → always fail-closed).
+- NOTE: commit a289750 swept another lane's large useUsers rewrite. Gate
+  verified present, gates green.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — dashboard badges + offers flow (no-op)
 - `PetpoojaDashboardPage`: "Mock interface active" + 3× "Simulated" badges
   present and honest. Offers apply/remove/coupon flows guard empty cart and
