@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — no mock default store (core)
+- `storeStore` booted with `MOCK_STORES[0]` as the ACTIVE store (persisted),
+  so checkout could run against a fake outlet. Initial null + persist v3
+  migration strips `str_NNN` mock ids on upgrade; genuine picks survive.
+  Scope clean (24/5, one file).
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — real Razorpay key into checkout (core)
 - Intent path passed bogus `rzp_test_mock` keyId which passed `isLive()`
   and fired a REAL checkout attempt with an invalid key. Now the configured
