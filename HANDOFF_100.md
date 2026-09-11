@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — reminder flags on delivered alerts only (functions)
+- `ticketReminder.scheduler`: `branchReminderSent` committed BEFORE sends
+  ran — failed/crashed sends never retried (silent escalation). Flags now
+  ride a follow-up batch keyed to fulfilled sends; escalation flips stay
+  pre-committed (time-based truth). Scope clean (1 file).
+- Gates: functions tsc + 234 green. Root commit (pushed).
 ### 2026-09-11 — honest no-branch toast (partner)
 - `StoreOperatingToggle`: no-branch path toasted success while persisting
   nothing (component state, lost on unmount). Now loud error.
