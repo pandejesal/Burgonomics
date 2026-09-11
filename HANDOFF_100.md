@@ -81,6 +81,10 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — byId mock fallback DEV-only (core)
+- `storesService.byId`: prod lookup miss returned a mock store (list() was
+  already DEV-gated). Now null; callers already handle null. Scope clean.
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — simulated badges on system tabs (partner)
 - `SystemMetricsTab` (mock Prometheus counters) + `SystemDatabaseTab`
   (static EXPLAIN plans; backend is Firestore, not Postgres) presented as
