@@ -81,6 +81,13 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — cart revalidation chain review (no-op, core)
+- `validateCartMock` checks only line flags — but `validateAndRefreshPriceLock`
+  refreshes prices + stock from the live menu first when the lock is expired,
+  and `revalidateWithProducts` updates both + messages. Chain coherent;
+  server reprices online regardless. Dismissed.
+- Webhooks page re-verified: zero writes/fetches, pure log viewer. Dismissed.
+- No source changes. Handoff only.
 ### 2026-09-11 — drop overclaiming queue toasts (partner)
 - `PetpoojaQueuesPage`: wrapper toasted "Triggering/Success" around
   callbacks that honestly report no-op states. Removed; callbacks speak.
