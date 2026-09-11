@@ -28,7 +28,8 @@
 - [x] 26 (2026-09-11 — payments-page honesty, 175 green)
 - [x] 27 (2026-09-11 — fixture menu honesty, 175 green)
 - [x] 28 (2026-09-11 — offers-board honesty, 175 green)
-- [ ] 29-120
+- [x] 29 (2026-09-11 — segment-count honesty, 175 green)
+- [ ] 30-120
 ## Carryover (queued product calls, newest last)
 - Wire partner offers/coupons boards to the server coupons collection
   (Loop 28: local drafts never reach checkout). Consolidate /admin/menu
@@ -391,3 +392,10 @@
   QUEUED: wiring boards to the server coupons collection (carryover).
 - Gates: partner typecheck clean + 175 tests + build clean (copy-only).
 - Commits: partner a4e74be LOCAL (diverged, push after sync).
+### Loop 29 — 2026-09-11 13:00 UTC — fixed 1 (segment-count honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — seeds presented as live reach): segment
+  builder showed "Live Match Preview" counts and "MATCHING CUSTOMERS" over
+  the local seed directory. Fix: "Seed Match Preview" + "Seed Matches".
+- Gates: partner typecheck clean + 175 tests + build clean (copy-only).
+- Commits: partner 664cbbd LOCAL (diverged, push after sync).
