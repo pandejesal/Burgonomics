@@ -81,6 +81,10 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — fake endpoint tester DEV-only (partner)
+- `SystemApiTab`: "Test Endpoint" faked 200 + OTP code with spinner and
+  zero backend calls. Runner gated; explorer docs stay visible. Scope clean.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — byId mock fallback DEV-only (core)
 - `storesService.byId`: prod lookup miss returned a mock store (list() was
   already DEV-gated). Now null; callers already handle null. Scope clean.
