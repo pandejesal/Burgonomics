@@ -4,10 +4,15 @@
 - [x] 2 (2026-09-11 — rules dead-block fix, 22/22 gates)
 - [x] 3 (2026-09-11 — partner store honesty, 154 green)
 - [x] 4 (2026-09-11 — FCM topic authz, 240 green)
-- [ ] 5-120
+- [x] 5 (2026-09-11 — refund fake-success fix, 155 green)
+- [x] 6 (2026-09-11 — store directory honesty, 158 green)
+- [ ] 7-120
 ## Carryover (queued product calls, newest last)
 - Loop 5: server endpoint for refund-request DISPOSITION (reject path has no
   API; page fails loud until it lands). Also core home-mock backend (Loop 1).
+- Loop 6: AdminSettingsPage GST/delivery-fee/support-phone Save persists
+  nothing (local useState + timed success toast); needs app_settings wiring or
+  honest-label decision. Same class: check other admin pages for toast-only saves.
 ## Baseline divergence (noted Loop 1 Step 0)
 - root `master`: in sync with origin/master
 - core `main`: ahead 29, behind 7 vs origin/main — DIVERGED, LOCAL commits only, never force-push
@@ -88,3 +93,22 @@
 - Gates: partner typecheck clean + 31 files/155 tests green (+1 gateway test)
   + build clean.
 - Commits: partner bc77d03 LOCAL (diverged, push after sync).
+### Loop 6 — 2026-09-11 07:35 UTC — fixed 1 (store directory honesty) / workers blocked on auth
+- Workers: pinned model still unusable — fresh probe failed with
+  opencode-zen UnknownError (err_c74f150e); Hermes pool shows both Zen creds
+  rate-limited 429, and the CLI-reported error is key rejection at
+  https://opencode.ai/zen/v1. Tries 10/20. Blocked until key is refreshed
+  (user action: hermes auth add opencode-zen). Direct implementation fallback.
+- Fixed (partner, meets bar — fabricated prod data + fake success):
+  AdminStoresPage create persisted "+91 98765 00000" as store/staff phone when
+  left blank (3 spots, live admin_stores collection); edit-settings Save
+  toasted success without persisting; create toast claimed a Petpooja mapping
+  that never happens. Fix: exported normalizeIndianMobile validator (rejects
+  blank/placeholder/all-same-digit), create blocked loud without a valid
+  phone, saveStores returns real persist outcome, both save paths report
+  truthfully, toast copy corrected.
+- Queued: AdminSettingsPage Save persists nothing (carryover).
+- Gates: partner typecheck clean + 32 files/158 tests green (+3 validator
+  tests; one caught the placeholder passing digit-check, validator tightened)
+  + build clean.
+- Commits: partner 7904a1e LOCAL (diverged, push after sync).
