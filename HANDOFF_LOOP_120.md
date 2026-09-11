@@ -18,7 +18,8 @@
 - [x] 16 (2026-09-11 — KDS fake dispatch fix, 168 green)
 - [x] 17 (2026-09-11 — cancel honesty, 168 green)
 - [x] 18 (2026-09-11 — tracking-link guard, 230 green)
-- [ ] 19-120
+- [x] 19 (2026-09-11 — dial safety + fake courier + SLA copy, 232 green)
+- [ ] 20-120
 ## Carryover (queued product calls, newest last)
 - POST /porter/cancel with provider cancel + fee handling (Loop 17: KDS
   cancel only flips the board; live bookings need separate cancellation).
@@ -279,3 +280,17 @@
   (porter.in-only) gating the link; Maps link verified coordinate-built.
 - Gates: core tsc clean + 230 tests (228 + 2 new) + build clean.
 - Commits: core 975c985 LOCAL (diverged, push after sync).
+### Loop 19 — 2026-09-11 11:00 UTC — fixed 3 (dial/link safety + fake courier + SLA copy) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar): (1) tel: links rendered unguarded from order-doc
+  phones (RiderContactCard x3, StoreCard, FulfillmentDetailsCard,
+  FulfillmentPanel, VisualOrderTracker, support ChannelRow incl. a masked
+  "+911****3123" fixture that dialed garbage) — now gated by isSafeTelNumber
+  (new shared util mirroring partner); (2) VisualOrderTracker hardcoded a
+  fake "Ramesh Sharma" courier with rating in prod — now uses live order rider
+  fields or an honest assigning state; (3) support page promised "15-min SLA /
+  auto-escalation" while tickets are device-local — copy corrected to match
+  the honest toast. NOTE: VisualOrderTracker.tsx committed as new blob
+  (was untracked on disk).
+- Gates: core tsc clean + 232 tests (230 + 2 new tel cases) + build clean.
+- Commits: core 4930ef3 LOCAL (diverged, push after sync).
