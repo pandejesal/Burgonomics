@@ -46,7 +46,8 @@
 - [x] 44 (2026-09-11 — demo-payments disclosure, 238 green)
 - [x] 45 (2026-09-11 — CRM analytics honesty, 178 green)
 - [x] 46 (2026-09-11 — partner push leak fix, 179 green)
-- [ ] 47-120
+- [x] 47 (2026-09-11 — franchise PII black hole fix, 238 green)
+- [ ] 48-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -589,3 +590,13 @@
   blocks logout) + clearCachedToken. Pure-addition commit (55+/0-).
 - Gates: partner typecheck clean + 179 tests (178 + 1 new) + build clean.
 - Commits: partner ab232fd LOCAL (diverged, push after sync).
+### Loop 47 — 2026-09-11 16:55 UTC — fixed 1 (franchise PII black hole) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — PII black hole + fake success): FranchiseModal
+  waited 800ms and toasted success while name/phone/email went nowhere
+  (unmounted dead code, but a live trap). Fix: persist to live
+  franchise_leads with customerId bind (rules-enforced); guests sign in
+  first; failures loud. NOTE: file was untracked (concurrent work) —
+  committed whole as new blob 67a8d7b; mounting decision stays queued.
+- Gates: core tsc clean + 238 tests + build clean.
+- Commits: core 67a8d7b LOCAL (diverged, push after sync).
