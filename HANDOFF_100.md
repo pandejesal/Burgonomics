@@ -81,6 +81,16 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — loud errors on dead flag surface (partner)
+- `SystemFeatureFlagsTab`: full CRUD against nonexistent
+  `/api/v1/feature-flags` failed silently (console-only, no toasts).
+  Toasts on catch + non-ok paths; endpoint itself still missing (product).
+- LESSON (tool hazard): the patch tool redacts secret-like text and WROTE
+  the redaction into the file (backtick-Bearer literals became `***`,
+  41 tsc errors). Repaired via perl chr() codes, verified 0 errors +
+  byte-check. Never put Bearer/key-like literals in patch strings —
+  anchor around them or edit via terminal.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — simulated badge on Redis tab (partner)
 - `SystemRedisTab`: local mock state + native alerts claiming Redis/SQL ops
   (backend is Firestore). Badged honest.
