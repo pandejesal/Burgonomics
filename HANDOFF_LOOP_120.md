@@ -57,7 +57,8 @@
 - [x] 55 (2026-09-11 — ticket silent paths fix, 179 green)
 - [x] 56 (2026-09-11 — verification + flake watch closed, 238 green)
 - [x] 57 (2026-09-11 — petpooja sync honesty, 182 green)
-- [ ] 58-120
+- [x] 58 (2026-09-11 — badge unknown-until-verified, 185 green)
+- [ ] 59-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -719,3 +720,23 @@
 - Gates: partner typecheck clean + 182 tests (179 + 3 new
   AdminStoresPage.test) + build clean.
 - Commits: partner bf4297d LOCAL (diverged, push after sync).
+### Loop 58 — 2026-09-11 21:45 UTC — fixed 1 (badge unknown-until-verified) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — status indicator asserting an unverified live
+  state): the header PetpoojaStatusBadge mounted as online/'Live' with a
+  'Just now' timestamp it never measured — every render claimed a verified
+  POS link. It now mounts 'unknown' (zinc 'Unknown' + 'Not checked') via a
+  pure exported petpoojaBadgeMeta map; 'Live'/emerald appears only after a
+  real sync succeeds, failures show 'Fallback'. Also removed the 60s
+  "simulate live timestamp pulse" that rewrote last-sync to now() without
+  syncing — the timestamp now updates only on real sync outcomes.
+- PROCESS FLAG (repeat of Loops 43/49): the badge file carried uncommitted
+  concurrent-lane cosmetic edits (2 theme-token class swaps) — swept into
+  7d52c06, nothing lost, gates green, other lane please verify those 2 lines.
+  All logic hunks are mine-only (verified per-line diff).
+- Queued: mock-mode syncPetpoojaMenuForBranch writes 63 canned items into
+  the deprecated menu/{branch} collection (Loop 3 gateway-posture dismissal
+  stands; no live readers confirmed yet — verify before changing).
+- Gates: partner typecheck clean + 185 tests (182 + 3 new
+  PetpoojaStatusBadge.test) + build clean.
+- Commits: partner 7d52c06 LOCAL (diverged, push after sync).
