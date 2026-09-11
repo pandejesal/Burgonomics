@@ -70,6 +70,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
   NAME/store/amount/status/gateway/date — no phone. Closes the loop-10
   queued export-verify item.
 - No source changes. Handoff only.
+### 2026-09-11 — message-only backend error logs (functions)
+- 11 whole-`err` console calls (auth triggers, FCM send, razorpay resolution,
+  webhook KOT push, 86ing x3, menu sync, porter x2) now log `err.message`.
+  Whole client/API error objects can embed keys or customer fields.
+- Gates: functions tsc + 234 green. Root commit (pushed).
 ### 2026-09-11 — cancel-booking confirm (partner)
 - `PorterDispatchCard`: single-tap "Cancel Porter / Re-assign" killed live
   courier bookings. Now destructive ConfirmDialog + min-h-44px CTA.
