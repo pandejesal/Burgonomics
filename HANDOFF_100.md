@@ -81,6 +81,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — fabricated fallback rider removed (core)
+- `usePorterLiveTracking`: stage 3 with no rider showed fake name/phone/plate
+  + `porter.in/track/sample` URL. Now undefined (card's "Assigning Courier"
+  path) and no sample URL.
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — cancel-booking confirm (partner)
 - `PorterDispatchCard`: single-tap "Cancel Porter / Re-assign" killed live
   courier bookings. Now destructive ConfirmDialog + min-h-44px CTA.
