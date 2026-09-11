@@ -20,7 +20,8 @@
 - [x] 18 (2026-09-11 — tracking-link guard, 230 green)
 - [x] 19 (2026-09-11 — dial safety + fake courier + SLA copy, 232 green)
 - [x] 20 (2026-09-11 — mailto fixture guard, 234 green)
-- [ ] 21-120
+- [x] 21 (2026-09-11 — loyalty fake-saves fix, 171 green)
+- [ ] 22-120
 ## Carryover (queued product calls, newest last)
 - POST /porter/cancel with provider cancel + fee handling (Loop 17: KDS
   cancel only flips the board; live bookings need separate cancellation).
@@ -303,3 +304,12 @@
   branch, same pattern as Loop 19 tel: guards.
 - Gates: core tsc clean + 234 tests (232 + 2 new) + build clean.
 - Commits: core 0be520a LOCAL (diverged, push after sync).
+### Loop 21 — 2026-09-11 11:20 UTC — fixed 1 (loyalty fake-saves) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fake success x2): loyalty page claimed
+  "cryptographic key bundling pushed to edge servers" and "rules saved to
+  cloud + synced to POS" while persisting nothing (local useState). Fix:
+  real persist to app_settings/loyalty_config (merge, brand-only, loud
+  errors) + load on mount + mergeLoyaltyConfig sanitizer + truthful toasts.
+- Gates: partner typecheck clean + 171 tests (168 + 3 new) + build clean.
+- Commits: partner 8566bf5 LOCAL (diverged, push after sync).
