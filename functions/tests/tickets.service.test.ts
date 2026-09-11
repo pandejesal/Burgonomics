@@ -129,6 +129,28 @@ describe("resolveTicket (real money paths)", () => {
     expect(savedDocs["support_tickets/tk_loyal"].status).toBe("resolved");
   });
 
+  it("refuses unbounded loyalty credit mint (over 5000)", async () => {
+    savedDocs["support_tickets/tk_loyal_big"] = {
+      ticketNumber: "TICK-2026-0008",
+      customerId: "cust_9",
+    };
+    await expect(
+      resolveTicket({ ...BASE, ticketId: "tk_loyal_big", action: "loyalty_credit", amount: 100000 })
+    ).rejects.toThrow(/between 1 and 5000/);
+    expect(savedDocs["support_tickets/tk_loyal_big"].status).toBeUndefined();
+  });
+
+  it("refuses negative loyalty credit (balance drain)", async () => {
+    savedDocs["support_tickets/tk_loyal_neg"] = {
+      ticketNumber: "TICK-2026-0009",
+      customerId: "cust_9",
+    };
+    await expect(
+      resolveTicket({ ...BASE, ticketId: "tk_loyal_neg", action: "loyalty_credit", amount: -50 })
+    ).rejects.toThrow(/between 1 and 5000/);
+    expect(savedDocs["support_tickets/tk_loyal_neg"].status).toBeUndefined();
+  });
+
   it("refuses a second resolution of an already-resolved ticket (double-refund guard)", async () => {
     savedDocs["support_tickets/tk_double"] = {
       ticketNumber: "TICK-2026-0005",

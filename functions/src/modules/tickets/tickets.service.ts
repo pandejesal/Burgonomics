@@ -339,6 +339,23 @@ export async function resolveTicket(input: ResolveTicketInput) {
   const ticket = ticketSnap.data()!;
   let refundResult: any = null;
 
+  // Loop 7: branch scoping (mirrors addTicketMessage) — any staff role on
+  // the route must not close another branch's ticket. Brand roles bypass.
+  if (
+    input.caller?.uid &&
+    input.caller.role !== "brand_owner" &&
+    input.caller.role !== "developer" &&
+    Array.isArray(input.caller.branchIds) &&
+    input.caller.branchIds.length > 0 &&
+    !input.caller.branchIds.includes(ticket.branchId)
+  ) {
+    throw serviceError(
+      "TICKET_FORBIDDEN",
+      "Forbidden: ticket is outside your assigned branches",
+      403
+    );
+  }
+
   // Double-refund guard (Loop 57 adversarial finding): a resolved/closed
   // ticket must never resolve again. The second pass would re-fire autoRefund
   // (caller-distinct idempotency keys per call) and double-pay the customer.
@@ -354,6 +371,16 @@ export async function resolveTicket(input: ResolveTicketInput) {
   // Fail LOUD when no captured payment exists: the old code left refundResult
   // null and still closed the ticket as resolved — staff saw success, the
   // customer never got money, and the closed ticket removed all recourse.
+  // Loop 3: a partial_refund with amount 0/omitted would fall through to a
+  // FULL gateway refund (autoRefund reverse_all without amount) — require a
+  // positive amount up front so a staff typo can't full-refund by accident.
+  if (action === "partial_refund" && !(typeof amount === "number" && amount > 0)) {
+    throw serviceError(
+      "TICKET_REFUND_AMOUNT_REQUIRED",
+      "Partial refund needs an amount greater than zero — use full refund for the whole order.",
+      400
+    );
+  }
   if (action === "full_refund" || action === "partial_refund") {
     if (!ticket.orderId) {
       throw serviceError(
@@ -374,8 +401,14 @@ export async function resolveTicket(input: ResolveTicketInput) {
     // NOTE: second-charge protection lives in autoRefund itself
     // (ALREADY_REFUNDED 409 + same-amount idempotent replay); the
     // ticket-status guard above stops re-resolution of this ticket.
+    // Captured-payment proof, both storage shapes: nested server writes AND
+    // the webhook's dotted-literal merge-set form (webhookHandler writes
+    // "payment.razorpayPaymentId" literally — reading only the nested shape
+    // falsely refused legit refunds on webhook-paid orders).
     const razorpayPaymentId =
-      order.payment?.razorpayPaymentId || ticket.diagnostics?.razorpayPaymentId;
+      order.payment?.razorpayPaymentId ||
+      order["payment.razorpayPaymentId"] ||
+      ticket.diagnostics?.razorpayPaymentId;
     if (!razorpayPaymentId) {
       throw serviceError(
         "TICKET_REFUND_NO_PAYMENT",
@@ -391,8 +424,17 @@ export async function resolveTicket(input: ResolveTicketInput) {
     });
   }
 
-  // 2. If loyalty credit, update customer profile
+  // 2. If loyalty credit, update customer profile. Amount is bounded like
+  // staff adjustments (±5000, coin_transactions ledger): an unbounded
+  // increment mints money-equivalent points, a negative one drains them.
   if (action === "loyalty_credit" && amount && ticket.customerId) {
+    if (!Number.isInteger(amount) || amount <= 0 || amount > 5000) {
+      throw serviceError(
+        "TICKET_LOYALTY_AMOUNT_INVALID",
+        "Loyalty credit must be a whole number of points between 1 and 5000.",
+        400
+      );
+    }
     await db
       .collection("users")
       .doc(ticket.customerId)
@@ -472,6 +514,23 @@ export async function escalateTicket(input: EscalateTicketInput) {
 
   const ticket = ticketSnap.data()!;
   let snapshotId: string | null = null;
+
+  // Loop 7: branch scoping (mirrors addTicketMessage/resolveTicket) — staff
+  // must not escalate another branch's ticket. Brand roles bypass.
+  if (
+    input.caller?.uid &&
+    input.caller.role !== "brand_owner" &&
+    input.caller.role !== "developer" &&
+    Array.isArray(input.caller.branchIds) &&
+    input.caller.branchIds.length > 0 &&
+    !input.caller.branchIds.includes(ticket.branchId)
+  ) {
+    throw serviceError(
+      "TICKET_FORBIDDEN",
+      "Forbidden: ticket is outside your assigned branches",
+      403
+    );
+  }
 
   // If escalated to developer team, create a formal error snapshot & dispatch alert
   if (targetTier === "developer_team") {

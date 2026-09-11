@@ -144,7 +144,11 @@ service cloud.firestore {
         ownsBranch(resource.data.branchId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
-          'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus'
+          'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus',
+          // Loop 7: delivery-OTP proof fields are server-owned (verifyDeliveryOtp
+          // path only) — staff must not clear lockouts/attempts or rewrite the
+          // hash to bypass handover proof via direct client update.
+          'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil'
         ])
       ) || (
         // Customers may cancel their own pre-terminal orders only — canonical
@@ -278,12 +282,31 @@ match /petpooja_webhook_logs/{docId} {
       ) || (
         isAuthenticated() && resource.data.customerId == request.auth.uid
       );
+      // Loop 7: create allowlist — a client must not self-set status/
+      // resolution/priority/assignedTo or money-action fields (resolutionAction,
+      // refundAmount, refundResult, couponCode, amount) at birth; those are
+      // server-owned via POST /tickets/* (functions), never through a client
+      // write that could escalate/resolve its own ticket.
       allow create: if isAuthenticated()
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.branchId is string
-        && request.resource.data.branchId.size() > 0;
+        && request.resource.data.branchId.size() > 0
+        && request.resource.data.keys().hasOnly([
+          'ticketNumber', 'subject', 'description', 'message', 'title',
+          'category', 'type', 'branchId', 'orderId', 'customerId', 'customerName',
+          'customerPhone', 'status', 'priority', 'assignedTo', 'targetTier',
+          'branchReminderSent', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.status == 'open';
+      // Loop 7: staff update field mask — direct client writes may advance
+      // workflow (status/resolution/assignedTo/timeline) but money-action and
+      // identity fields resolve server-side only (POST /tickets/resolve).
       allow update: if isBrandOwner() || (
-        isBranchOwner() && ownsBranch(resource.data.branchId)
+        isBranchOwner() && ownsBranch(resource.data.branchId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'resolution', 'assignedTo', 'timeline',
+          'lastActivityAt', 'updatedAt'
+        ])
       );
       allow delete: if false;
     }
@@ -294,12 +317,25 @@ match /petpooja_webhook_logs/{docId} {
       ) || (
         isAuthenticated() && resource.data.customerId == request.auth.uid
       );
+      // Loop 7: same create allowlist + staff update mask as support_tickets
+      // (legacy collection, same threat model).
       allow create: if isAuthenticated()
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.branchId is string
-        && request.resource.data.branchId.size() > 0;
+        && request.resource.data.branchId.size() > 0
+        && request.resource.data.keys().hasOnly([
+          'ticketNumber', 'subject', 'description', 'message', 'title',
+          'category', 'type', 'branchId', 'orderId', 'customerId', 'customerName',
+          'customerPhone', 'status', 'priority', 'assignedTo', 'targetTier',
+          'branchReminderSent', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.status == 'open';
       allow update: if isBrandOwner() || (
-        isBranchOwner() && ownsBranch(resource.data.branchId)
+        isBranchOwner() && ownsBranch(resource.data.branchId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'resolution', 'assignedTo', 'timeline',
+          'lastActivityAt', 'updatedAt'
+        ])
       );
       allow delete: if false;
     }

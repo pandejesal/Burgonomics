@@ -465,7 +465,16 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const resolvedBy = req.user?.uid || req.body.resolvedBy;
-      const result = await resolveTicket({ ...req.body, resolvedBy });
+      // Loop 7: pass the authenticated caller so the in-function staff +
+      // branch guards actually execute (never rely on req.body roles).
+      const caller = req.user
+        ? {
+            uid: req.user.uid,
+            role: (req.user as any)?.role as string | undefined,
+            branchIds: (req.user as any)?.branchIds as string[] | undefined,
+          }
+        : undefined;
+      const result = await resolveTicket({ ...req.body, resolvedBy, caller });
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to resolve ticket" });
@@ -480,7 +489,15 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const escalatedBy = req.user?.uid || req.body.escalatedBy;
-      const result = await escalateTicket({ ...req.body, escalatedBy });
+      // Loop 7: same caller passthrough as /tickets/resolve (see above).
+      const caller = req.user
+        ? {
+            uid: req.user.uid,
+            role: (req.user as any)?.role as string | undefined,
+            branchIds: (req.user as any)?.branchIds as string[] | undefined,
+          }
+        : undefined;
+      const result = await escalateTicket({ ...req.body, escalatedBy, caller });
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to escalate ticket" });
@@ -664,7 +681,9 @@ app.post(
   requireRole(["brand_owner", "developer"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const result = await setUserCustomClaims(req.body);
+      // Loop 7: pass the caller — without it the in-function
+      // assertCallerCanAssignRole always throws (legit brand calls 500).
+      const result = await setUserCustomClaims(req.body, req.user as any);
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to set custom claims" });
