@@ -49,7 +49,8 @@
 - [x] 47 (2026-09-11 — franchise PII black hole fix, 238 green)
 - [x] 48 (2026-09-11 — split franchise pipeline fix, 238 green)
 - [x] 49 (2026-09-11 — fallback-branch stamping fix, 179 green)
-- [ ] 50-120
+- [x] 50 (2026-09-11 — DPDP erasure endpoint, 252 + 238 green)
+- [ ] 51-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -624,3 +625,16 @@
   mine-only (verified per-file diffs).
 - Gates: partner typecheck clean + 179 tests + build clean.
 - Commits: partner 11f6f53 LOCAL (diverged, push after sync).
+### Loop 50 — 2026-09-11 17:30 UTC — fixed 1 (DPDP erasure) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (functions + core, meets bar — DPDP deletion right unavailable):
+  account deletion called a dead Netlify path, so it always failed. Fix:
+  POST /auth/deleteAccount (own-uid-only from verified token + explicit
+  confirm; Admin SDK delete fires the PII-scrub trigger); client rewired
+  with real response contract.
+- Flake note: one full core run showed 1 failed test that did not reproduce
+  on re-run (238 green, 24 skipped) — no test covers the touched path;
+  watching, not chasing.
+- Gates: functions tsc + 252 tests (250 + 2 new) + build clean. Core tsc +
+  238 tests + build clean.
+- Commits: root PUSHED (c8045e3); core a64e118 LOCAL (diverged).
