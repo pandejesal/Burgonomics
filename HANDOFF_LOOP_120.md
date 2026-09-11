@@ -17,7 +17,8 @@
 - [x] 15 (2026-09-11 — live gauges + orders bound, 167 green)
 - [x] 16 (2026-09-11 — KDS fake dispatch fix, 168 green)
 - [x] 17 (2026-09-11 — cancel honesty, 168 green)
-- [ ] 18-120
+- [x] 18 (2026-09-11 — tracking-link guard, 230 green)
+- [ ] 19-120
 ## Carryover (queued product calls, newest last)
 - POST /porter/cancel with provider cancel + fee handling (Loop 17: KDS
   cancel only flips the board; live bookings need separate cancellation).
@@ -269,3 +270,12 @@
 - Gates: partner typecheck clean + 168 tests + build clean (copy-only change,
   full suite green).
 - Commits: partner cda0567 LOCAL (diverged, push after sync).
+### Loop 18 — 2026-09-11 10:40 UTC — fixed 1 (tracking-link phishing guard) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — phishing via trusted label): LiveOrderMap rendered
+  order-doc trackingUrl straight into href behind a "Porter Live Radar"
+  label; staff can store arbitrary riderTrackingUrl values. Partner already
+  allowlists (utils/urlSafety); core had no guard. Fix: shared urlSafety util
+  (porter.in-only) gating the link; Maps link verified coordinate-built.
+- Gates: core tsc clean + 230 tests (228 + 2 new) + build clean.
+- Commits: core 975c985 LOCAL (diverged, push after sync).
