@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — table number required, no fake Table 01 (core+partner)
+- Dine-in orders sailed through with empty table while KDS asserted
+  "Table 01" (food misrouted). Checkout gate + required label (core);
+  badge hidden when absent (partner). Scope-checked (core 2 files, one
+  untracked new; partner 1 file).
+- Gates: core tsc + 38/221; partner typecheck + 30/151. Commits LOCAL.
 ### 2026-09-11 — null-store checkout coherence (no-op, core)
 - After the null-boot change: checkout renders with optional chaining +
   generic fallbacks; promo correctly fail-closed without pricing config;
