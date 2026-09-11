@@ -74,6 +74,18 @@ service cloud.firestore {
       );
     }
 
+    // Loop 12: delivery handover needs OTP proof — POST
+    // /orders/verifyDeliveryOtp flips to DELIVERED server-side (lockout +
+    // timing-safe compare). A direct client status write to DELIVERED on a
+    // delivery order bypasses that proof, so staff client updates may never
+    // perform it. Takeaway/dine-in complete in person; brand owners keep
+    // full access. Missing/non-map status never matches (no block).
+    function directDeliveredBypass() {
+      return request.resource.data.status is map
+        && request.resource.data.status.code == 'DELIVERED'
+        && resource.data.orderType == 'delivery';
+    }
+
     // =========================================================================
     // CRM: CUSTOMERS & GLOBAL LOYALTY (Brand-wide)
     // =========================================================================
@@ -142,6 +154,8 @@ service cloud.firestore {
       allow update: if isBrandOwner() || (
         isBranchOwner() &&
         ownsBranch(resource.data.branchId) &&
+        // Loop 12: delivery handover needs OTP proof — never direct.
+        !directDeliveredBypass() &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
           'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus',
