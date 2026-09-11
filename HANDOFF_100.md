@@ -81,6 +81,13 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — null-store checkout coherence (no-op, core)
+- After the null-boot change: checkout renders with optional chaining +
+  generic fallbacks; promo correctly fail-closed without pricing config;
+  cart lines carry their own storeId so orders stay well-defined; stores
+  screen prompts selection when nothing picked. Home loading/error/empty
+  states honest with recovery. Dismissed.
+- No source changes. Handoff only.
 ### 2026-09-11 — version enforcement unwired (queued product, core)
 - `/force-update` + `/maintenance` routes exist but NOTHING navigates to
   them; nothing reads `minimumAppVersion`/`maintenance` from `/config/app`.
