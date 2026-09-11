@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — honest support surface (core)
+- Ticket toast promised a 15-min manager response nothing fulfills → honest
+  on-device copy; `branch_cg_road` default stamped tickets to a wrong outlet
+  → undefined; feedback vanished entirely → on-device log (cap 100).
+  Server inbox/feedback endpoints still queued. Scope clean (2 files).
+- Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
 ### 2026-09-11 — walk-in counter orders can't save (queued, partner)
 - `ManualOrderCreateModal` writes client-computed totals +
   `paymentStatus:'completed'`/`petpoojaSyncStatus:'synced'`/`kotPrinted:true`
