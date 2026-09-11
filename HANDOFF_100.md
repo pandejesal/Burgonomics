@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — integrity sweep, all clean (no-op)
+- Redaction-damage sweep (post hazard): zero `***` outside the intentional
+  `maskIdentifier` in errors.ts. `useNearestStore` is live (sheet + tests
+  import it) — not dead. PetpoojaLogs CSV export builds + downloads real
+  filtered rows. All dismissed.
+- No source changes. Handoff only.
 ### 2026-09-11 — dead scheduling components deleted (core)
 - `DeliveryPanel` + `DeliverySlotPicker` (255 lines): zero references outside
   the barrel; product has no scheduling ("No scheduling needed" copy).
