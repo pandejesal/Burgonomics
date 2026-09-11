@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — simulated badge on Redis tab (partner)
+- `SystemRedisTab`: local mock state + native alerts claiming Redis/SQL ops
+  (backend is Firestore). Badged honest.
+- NOTE: commit 099e010 also swept another lane's theme-token swaps in the
+  same file. Cosmetic, fine, tangled.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — fake endpoint tester DEV-only (partner)
 - `SystemApiTab`: "Test Endpoint" faked 200 + OTP code with spinner and
   zero backend calls. Runner gated; explorer docs stay visible. Scope clean.
