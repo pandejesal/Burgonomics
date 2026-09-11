@@ -81,6 +81,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — sync report honest empty state (partner)
+- `PetpoojaStoresPage`: seeded `DEFAULT_SYNC_REPORT` (simulated:true) showed
+  plausible numbers with no badge. Null until a real op runs + empty state;
+  seed constant deleted.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — profile mock tables DEV-only (partner)
 - `AdminCustomerProfilePage`: BUR- order rows + pay_Rzp payment rows
   fabricated from the customer's real stats were prod-visible. Both tables
