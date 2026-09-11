@@ -2,7 +2,8 @@
 ## Progress (check each completed loop)
 - [x] 1 (2026-09-11 — workers-down, home-mock queued, tsc green)
 - [x] 2 (2026-09-11 — rules dead-block fix, 22/22 gates)
-- [ ] 3-120
+- [x] 3 (2026-09-11 — partner store honesty, 154 green)
+- [ ] 4-120
 ## Carryover (queued product calls, newest last)
 - (none yet — seeded from HANDOFF_100 if still open; checked Loop 1)
 ## Baseline divergence (noted Loop 1 Step 0)
@@ -59,3 +60,16 @@
   store-overview-honesty) + build clean.
 - Commits: partner LOCAL (diverged, push after sync). NOTE pre-existing
   `M src/types/index.ts` in partner tree left untouched (not mine).
+### Loop 4 — 2026-09-11 06:55 UTC — fixed 1 (FCM topic authz) / workers down
+- Workers: smoke probe failed again, same opencode-zen UnknownError. Tries 8/20.
+- Fixed (functions, meets bar — authz bypass): /notifications/subscribe let ANY
+  authed caller (incl. customers) attach ANY branch's orders/tickets topics to
+  their own token — filter checked topic shape, never caller role. Branch pushes
+  carry order numbers/totals/flow (KOT alerts, templates.ts:105,276). Fix:
+  pure filterSubscribableTopics() (topics.ts, barrel-exported) — branch topics
+  staff-only, other topics keep existing checks; both subscribe + unsubscribe
+  routes use it. Plus unsubscribe gained subscribe's token-ownership 403
+  (previously anyone could detach anyone's token from kitchen alerts).
+- Gates: functions tsc clean + 24 files/240 tests green (23/234 + 6 new
+  fcm.topics) + build clean.
+- Commits: root PUSHED (fix + tests). Handoff pushed below.
