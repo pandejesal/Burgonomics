@@ -427,7 +427,24 @@ export async function resolveTicket(input: ResolveTicketInput) {
   // 2. If loyalty credit, update customer profile. Amount is bounded like
   // staff adjustments (±5000, coin_transactions ledger): an unbounded
   // increment mints money-equivalent points, a negative one drains them.
-  if (action === "loyalty_credit" && amount && ticket.customerId) {
+  // Loop 33/120 fail-closed: a loyalty_credit without a customer profile
+  // must REFUSE loudly — the old code skipped the credit yet still resolved
+  // the ticket as credited.
+  if (action === "loyalty_credit") {
+    if (!ticket.customerId) {
+      throw serviceError(
+        "TICKET_LOYALTY_NO_CUSTOMER",
+        "Cannot credit loyalty: ticket has no customer profile (guest ticket).",
+        400
+      );
+    }
+    if (!amount) {
+      throw serviceError(
+        "TICKET_LOYALTY_NO_AMOUNT",
+        "Cannot credit loyalty: no coin amount was specified.",
+        400
+      );
+    }
     if (!Number.isInteger(amount) || amount <= 0 || amount > 5000) {
       throw serviceError(
         "TICKET_LOYALTY_AMOUNT_INVALID",
