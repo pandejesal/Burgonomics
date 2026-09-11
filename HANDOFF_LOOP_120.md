@@ -55,7 +55,8 @@
 - [x] 53 (2026-09-11 — fake password change fix, 179 green)
 - [x] 54 (2026-09-11 — audit-log honesty, 179 green)
 - [x] 55 (2026-09-11 — ticket silent paths fix, 179 green)
-- [ ] 56-120
+- [x] 56 (2026-09-11 — verification + flake watch closed, 238 green)
+- [ ] 57-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -690,3 +691,13 @@
   Clean 26-line diff, verified mine-only pre-commit.
 - Gates: partner typecheck clean + 179 tests + build clean.
 - Commits: partner 683fde7 LOCAL (diverged, push after sync).
+### Loop 56 — 2026-09-11 19:10 UTC — verification (flake watch) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Dismissed with evidence: reorder flow (cross-store guard, OOS modal);
+  KDS bump; profile edit writes live Firestore; address form sanitized;
+  promo/coupon/search/menu empty states honest; timers all benign UI.
+- Flake watch CLOSED: Loop 50's single failed test did not reproduce across
+  two subsequent full core runs (238 green both). Treating as environment
+  flake; will reopen with the test name if it ever recurs.
+- Gates: core full suite 238 green (this loop).
+- Commits: handoff only.
