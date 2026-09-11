@@ -40,7 +40,8 @@
 - [x] 38 (2026-09-11 — dead preference sync cleanup, 238 green)
 - [x] 39 (2026-09-11 — CRM seed leak + bound, 178 green)
 - [x] 40 (2026-09-11 — directory empty/error states, 178 green)
-- [ ] 41-120
+- [x] 41 (2026-09-11 — green-board verification, all suites green)
+- [ ] 42-120
 ## Carryover (queued product calls, newest last)
 - Server-side delivery-zone enforcement (Loop 34: client geofence only;
   payment intent carries no address coords). Per-service probes (Loop 30).
@@ -519,3 +520,14 @@
   CustomerTable.tsx committed as new blob (was untracked on disk).
 - Gates: partner typecheck clean + 178 tests + build clean.
 - Commits: partner 3a7d868 LOCAL (diverged, push after sync).
+### Loop 41 — 2026-09-11 15:55 UTC — verification (green board, no changes) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Dismissed with evidence: KDS bump honest; chat participant-gated; triggers
+  wired with PII-free KOT + honest snapshots; branches live; staff ticket
+  creation rules-pinned; sandbox self-declares simulated.
+- Verification (no code changes): functions tsc + 250 tests green; core
+  rules 24/24 green under emulator; rules mirrors byte-identical +
+  deploy target correct. Partner 178 + core 238 confirmed green from
+  Loops 38-40 with no subsequent edits.
+- Gates: all suites green, nothing red.
+- Commits: handoff only.
