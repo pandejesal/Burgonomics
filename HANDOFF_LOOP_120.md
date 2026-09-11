@@ -15,7 +15,8 @@
 - [x] 13 (2026-09-11 — dead worker cleanup, 243 green)
 - [x] 14 (2026-09-11 — coupon preview honesty, 228 green)
 - [x] 15 (2026-09-11 — live gauges + orders bound, 167 green)
-- [ ] 16-120
+- [x] 16 (2026-09-11 — KDS fake dispatch fix, 168 green)
+- [ ] 17-120
 ## Carryover (queued product calls, newest last)
 - Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -242,3 +243,15 @@
   orders reads at 1000.
 - Gates: partner typecheck clean + 167 tests (165 + 2 new) + build clean.
 - Commits: partner 1db5150 LOCAL (diverged, push after sync).
+### Loop 16 — 2026-09-11 10:20 UTC — fixed 1 (KDS fake dispatch) / pin exhausted
+- Workers: background probe empty again (timeout kill, no SMOKE_OK). Tries
+  20/20 — model pin EXHAUSTED. No further worker retries until the key is
+  refreshed; loops continue direct-only.
+- Fixed (partner, meets bar — fake fulfillment signal): KDS dispatchPorter
+  flipped status to out_for_delivery + toasted "Porter dispatched (Est.
+  ₹fare)" with a quote fare while booking NO courier. Fix: book the real
+  courier first via POST /porter/book (staff-attributed); status flips only
+  on server confirmation; failures loud with no status change. Mock-mode
+  servers return marked [TEST] riders, so both modes stay honest.
+- Gates: partner typecheck clean + 168 tests (167 + 1 new) + build clean.
+- Commits: partner 35f7998 LOCAL (diverged, push after sync).
