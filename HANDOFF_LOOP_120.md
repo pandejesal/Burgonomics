@@ -21,10 +21,11 @@
 - [x] 19 (2026-09-11 — dial safety + fake courier + SLA copy, 232 green)
 - [x] 20 (2026-09-11 — mailto fixture guard, 234 green)
 - [x] 21 (2026-09-11 — loyalty fake-saves fix, 171 green)
-- [ ] 22-120
+- [x] 22 (2026-09-11 — push-page fabrication fix, 171 green)
+- [ ] 23-120
 ## Carryover (queued product calls, newest last)
-- POST /porter/cancel with provider cancel + fee handling (Loop 17: KDS
-  cancel only flips the board; live bookings need separate cancellation).
+- Customer push broadcast endpoint with token fan-out (Loop 22: page keeps
+  honest local drafts until it lands). POST /porter/cancel (Loop 17).
   Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
   block/campaign/coupon actions all local; server adjustCoins exists).
@@ -313,3 +314,13 @@
   errors) + load on mount + mergeLoyaltyConfig sanitizer + truthful toasts.
 - Gates: partner typecheck clean + 171 tests (168 + 3 new) + build clean.
 - Commits: partner 8566bf5 LOCAL (diverged, push after sync).
+### Loop 22 — 2026-09-11 11:30 UTC — fixed 1 (push-page fabrication) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fabricated deliveries): the "Firebase Push
+  Notification Core" page fabricated 1850/290 delivery counts per send (zero
+  sends; no customer broadcast endpoint exists) + fake "1,850 devices /
+  98.4%" stats. Fix: sends record honest local drafts, fixture rows labeled,
+  stats replaced with honest dashes, success banner corrected. QUEUED:
+  customer broadcast endpoint (carryover).
+- Gates: partner typecheck clean + 171 tests + build clean (copy/state-only).
+- Commits: partner 4c00015 LOCAL (diverged, push after sync).
