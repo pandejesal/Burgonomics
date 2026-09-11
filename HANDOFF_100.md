@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — coins adjustment path review (no-op, functions)
+- `adjustCustomerCoins`: zod ±5000 + reason, requireAuth + role gate,
+  caller-bound, atomic transaction (balance+ledger), branch scope via
+  customer home outlet, claims carry role+branchIds (revocation-checked,
+  bootstrap force-refresh; stale claims fail closed). All HOLD.
+- No source changes. Handoff only.
 ### 2026-09-11 — no fabricated address phone (core)
 - `AddressForm`: empty profile phone persisted `0000000000` into address
   records (rider/SMS downstream). Now empty; update validation skips empty.
