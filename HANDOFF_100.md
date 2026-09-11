@@ -81,6 +81,13 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — no fabricated Route account ids (partner)
+- `createBranch` minted `acc_Rzp_<timestamp>` + lead conversion pre-filled
+  random `acc_Rzp` ids → royalty splits aimed at nonexistent accounts.
+  Now null/empty (Route worker skips with a log); operator pastes the real id.
+- NOTE: commit ad8a4d9 swept another lane's large BranchesPage rewrite.
+  My hunks verified present, zero `acc_Rzp` literals remain, gates green.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — chat impersonation nuance queued (partner, no-op)
 - `chatService.sendMessage`: `senderId`/`senderName` are caller-supplied;
   rules gate thread participation (tests 17-18) but don't bind
