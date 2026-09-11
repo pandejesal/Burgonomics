@@ -81,6 +81,12 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — honest logs tab (partner)
+- `SystemLogsTab`: streaming fake log lines (wrong business facts,
+  ERROR levels staff could chase) DEV-only; download button actually
+  downloads visible lines (was a bare lying alert); audit fetch/export
+  fail loud (endpoint missing). Scope clean (1 file).
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — tracking server refresh (core, follows timer clamp)
 - Removing timer-completion left a staleness gap: tracking read memory-only,
   so server-delivered orders would show pre-terminal forever. `getTracking`
