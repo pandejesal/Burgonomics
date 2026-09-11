@@ -81,6 +81,11 @@ fake/mock reachable in prod, crash. Else dismiss with reason or queue.
 - Hardcoded `+91 98250 99881` fallback (route + card default) dialed a
   fabricated number. Call buttons render only with a real store phone.
 - Gates: core tsc + 38/221 green. Core commit LOCAL (diverged).
+### 2026-09-11 — simulate-trigger DEV-only (partner)
+- `AdminAutomationPage`: "Simulate Real Trigger" wrote fake Delivered
+  journey entries under REAL customer names + random stat bumps. Button
+  now `import.meta.env.DEV`-only in prod builds.
+- Gates: partner typecheck + 30/151 green. Partner commit LOCAL (diverged).
 ### 2026-09-11 — guest-migration adversarial review (no-op)
 - Re-attacked the migration path end-to-end: route has requireAuth +
   AppCheck; `migrateGuestAccount` binds target to caller UID, verifies
