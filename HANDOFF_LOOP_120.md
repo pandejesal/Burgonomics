@@ -37,7 +37,8 @@
 - [x] 35 (2026-09-11 — ticket cross-user leak fix, 236 green)
 - [x] 36 (2026-09-11 — address cross-user leak fix, 238 green)
 - [x] 37 (2026-09-11 — push cross-user leak fix, 250 + 238 green)
-- [ ] 38-120
+- [x] 38 (2026-09-11 — dead preference sync cleanup, 238 green)
+- [ ] 39-120
 ## Carryover (queued product calls, newest last)
 - Server-side delivery-zone enforcement (Loop 34: client geofence only;
   payment intent carries no address coords). Per-service probes (Loop 30).
@@ -489,3 +490,12 @@
 - Gates: functions tsc + 250 tests (248 + 2 new) + build clean. Core tsc +
   238 tests + build clean.
 - Commits: root PUSHED (endpoint + tests); core 1d372f6 LOCAL (diverged).
+### Loop 38 — 2026-09-11 15:05 UTC — cleanup 1 (dead preference sync) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Cleanup (core, checklist — dead code): updateNotificationPreferences
+  setDoc'd server-owned device_tokens on every toggle — always denied, always
+  warn-logged, and nothing server-side reads preferences (dispatch is
+  topic/token addressed). Removed the doomed write; local settings store
+  documented as source of truth. Callers untouched.
+- Gates: core tsc clean + 238 tests + build clean.
+- Commits: core 90ee6ac LOCAL (diverged, push after sync).
