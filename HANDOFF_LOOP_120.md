@@ -56,7 +56,8 @@
 - [x] 54 (2026-09-11 — audit-log honesty, 179 green)
 - [x] 55 (2026-09-11 — ticket silent paths fix, 179 green)
 - [x] 56 (2026-09-11 — verification + flake watch closed, 238 green)
-- [ ] 57-120
+- [x] 57 (2026-09-11 — petpooja sync honesty, 182 green)
+- [ ] 58-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -701,3 +702,20 @@
   flake; will reopen with the test name if it ever recurs.
 - Gates: core full suite 238 green (this loop).
 - Commits: handoff only.
+### Loop 57 — 2026-09-11 21:15 UTC — fixed 1 (petpooja sync honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fake success + fabricated third-party state):
+  AdminStoresPage handleSyncStore ran a 1200ms timer that fabricated
+  menuVersion via Math.random, forced webhookStatus active, and toasted
+  "Petpooja Menu synced successfully!" with ZERO server contact;
+  handleSyncAllStores did the same on an 1800ms timer for every open store.
+  Both now call the real POST /petpooja/syncMenu (staff-only, server
+  fail-closed on unlinked branches, mock env-gated); only 200-confirmed
+  stores are stamped (pure exported markStoresSynced helper — failed rows
+  keep existing state, no version invented); failures toast loud with the
+  server message. Success toast carries real item/category counts; batch
+  reports an honest per-store summary.
+- Per-file diffs verified mine-only pre-commit (page was clean in worktree).
+- Gates: partner typecheck clean + 182 tests (179 + 3 new
+  AdminStoresPage.test) + build clean.
+- Commits: partner bf4297d LOCAL (diverged, push after sync).
