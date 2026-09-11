@@ -41,13 +41,14 @@
 - [x] 39 (2026-09-11 — CRM seed leak + bound, 178 green)
 - [x] 40 (2026-09-11 — directory empty/error states, 178 green)
 - [x] 41 (2026-09-11 — green-board verification, all suites green)
-- [ ] 42-120
+- [x] 42 (2026-09-11 — invoice compliance, 238 + 178 green)
+- [ ] 43-120
 ## Carryover (queued product calls, newest last)
-- Server-side delivery-zone enforcement (Loop 34: client geofence only;
-  payment intent carries no address coords). Per-service probes (Loop 30).
-  Wire partner offers/coupons boards to the server coupons collection
-  (Loop 28). Consolidate /admin/menu (Loop 27). Customer push broadcast
-  endpoint (Loop 22).
+- Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
+  carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
+  Per-service probes (Loop 30). Wire partner offers/coupons boards to the
+  server coupons collection (Loop 28). Consolidate /admin/menu (Loop 27).
+  Customer push broadcast endpoint (Loop 22).
   POST /porter/cancel with provider cancel + fee handling (Loop 17).
   Core home-mock backend (Loop 1) + checkout wiring for partner_settings
   (Loop 8) + live customer directory to replace CRM seeds (Loop 9: loyalty/
@@ -531,3 +532,14 @@
   Loops 38-40 with no subsequent edits.
 - Gates: all suites green, nothing red.
 - Commits: handoff only.
+### Loop 42 — 2026-09-11 15:50 UTC — fixed 1 (invoice compliance) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core + partner, meets bar — compliance breach): order receipt
+  printed a realistic-but-fake GSTIN (24AAACB1234F1Z5) under a "Tax Invoice"
+  title; partner KDS receipt printed a different fake GSTIN (Delhi code) —
+  legal pages mask GSTIN, so neither is verified. Fix: tax IDs removed,
+  honest order-receipt labeling, phantom-tax fallback math corrected to
+  inclusive back-out. QUEUED: real registration + proper invoices.
+- Gates: core tsc + 238 tests + build clean. Partner typecheck + 178 tests
+  + build clean.
+- Commits: core f8e9770 LOCAL; partner 2a7d9a3 LOCAL (both diverged).
