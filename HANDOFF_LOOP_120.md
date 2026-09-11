@@ -52,7 +52,8 @@
 - [x] 50 (2026-09-11 — DPDP erasure endpoint, 252 + 238 green)
 - [x] 51 (2026-09-11 — fabricated analytics fix, 179 green)
 - [x] 52 (2026-09-11 — sim-path hardening, 179 green)
-- [ ] 53-120
+- [x] 53 (2026-09-11 — fake password change fix, 179 green)
+- [ ] 54-120
 ## Carryover (queued product calls, newest last)
 - Real GSTIN/FSSAI registration + proper tax invoices (Loop 42: receipts
   carry no tax IDs now). Server-side delivery-zone enforcement (Loop 34).
@@ -660,3 +661,13 @@
   deterministic ids. Per-file diffs verified mine-only pre-commit.
 - Gates: partner typecheck clean + 179 tests + build clean.
 - Commits: partner aa9d7ad LOCAL (diverged, push after sync).
+### Loop 53 — 2026-09-11 18:35 UTC — fixed 1 (fake password change) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fake SECURITY action): password change showed
+  "successfully modified" with zero backend call (old password kept working).
+  Fix: real Firebase reauthenticate + updatePassword with mapped errors.
+  Also: session-terminate button wrote rules-denied docs silently — now an
+  honest unavailable toast (queued server session-revoke endpoint).
+- Gates: partner typecheck clean + 179 tests + build clean. Per-file diff
+  verified mine-only pre-commit.
+- Commits: partner 0428b1f LOCAL (diverged, push after sync).
