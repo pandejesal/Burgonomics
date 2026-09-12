@@ -60,7 +60,8 @@
 - [x] 58 (2026-09-11 — badge unknown-until-verified, 185 green)
 - [x] 59 (2026-09-11 — push-page honesty, 185 green)
 - [x] 60 (2026-09-11 — HALFWAY green board, all suites green)
-- [ ] 61-120
+- [x] 61 (2026-09-11 — CRM broadcast honesty, 186 green)
+- [ ] 62-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -781,3 +782,26 @@
   complete. Serialize single heavy jobs; never parallelize suites.
 - Gates: all suites green, nothing red.
 - Commits: handoff only.
+### Loop 61 — 2026-09-12 02:30 UTC — fixed 1 (CRM broadcast honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fabricated deliveries + false audit + fake
+  success): customerStorage.broadcastCampaign stamped status "Delivered" on
+  local notification rows, wrote "Received broadcast campaign" audit entries
+  with hardcoded fake IP 157.34.82.112, and toasted "Campaign broadcasted!
+  Dispatched N messages over {type} gateway" — with NO send path (no
+  SMS/Push/WhatsApp/Email channel exists; Loop 22's push-page pattern, here
+  in the CRM). Fix: new "Draft" status in the union (only real provider
+  events may use Delivered/Opened/Clicked), writer stamps Draft + honest
+  "NOT sent" audit rows with ipAddress "local" + truthful draft toast.
+  Profile notifications tab joined the fix: header no longer claims history
+  "pushed over server gateways", and the always-emerald status dot now
+  colors by state (Draft amber, Failed rose).
+- Dismissed with evidence: queue stack honest (gateway hooks, awaited
+  mutations, loud errors); API sandbox self-declares simulated (Loop 31
+  holds, responses carry simulated:true); customers CSV export is a real
+  local-snapshot download by an authorized operator; payment idempotency +
+  TKT numbers cosmetic (Loop 59 carry).
+- Gates: partner typecheck clean + 186 tests (185 + 1 new
+  customersData.test) + build clean.
+- Commits: partner 0a2565a LOCAL (diverged, push after sync). Both files
+  clean pre-edit; diffs mine-only.
