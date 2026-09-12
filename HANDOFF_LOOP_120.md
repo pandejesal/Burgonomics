@@ -63,7 +63,8 @@
 - [x] 61 (2026-09-11 — CRM broadcast honesty, 186 green)
 - [x] 62 (2026-09-12 — loyalty redemption server-checked, 257 green)
 - [x] 63 (2026-09-12 — confirm-time coin debit, 262 green)
-- [ ] 64-120
+- [x] 64 (2026-09-12 — refund record null-safety, 264 green)
+- [ ] 65-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -839,3 +840,18 @@
   single-debit, idempotent retry, clamp, guest/zero no-op, intent
   resolution) + build clean.
 - Commits: root 713d51b PUSHED (pure additions, +155/-0 source).
+### Loop 64 — 2026-09-12 08:50 UTC — fixed 1 (refund record null-safety) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (functions, meets bar — double-refund crash): autoRefund wrote
+  refundAmount: undefined (and audit reason: undefined) when optional
+  fields were omitted — real Firestore rejects undefined, so full refunds
+  crashed AFTER the gateway refund posted; staff saw failure, retried, and
+  the replay guard (finding no refundStatus) posted a SECOND gateway
+  refund. Fix: null-coalesced record fields (replay semantics unchanged:
+  full→full and same-partial still replay, differing amounts still 409).
+  Dismissed: coupons unlimited-reuse is the data model's design (no usage
+  fields exist; single-use would be a product feature); partial-after-partial
+  blocking stays as observed (gateway also caps cumulative refunds).
+- Gates: functions tsc clean + 264 tests (262 + 2 new refund.record:
+  null-shape + partial replay) + build clean.
+- Commits: root 86aa43a PUSHED (fix + tests).
