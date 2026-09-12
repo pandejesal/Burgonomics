@@ -86,6 +86,22 @@ export async function adjustCustomerCoins(
     return { applied, balanceAfter: next };
   });
 
+  // Readiness-7: security-registry row for every coin movement
+  // (best-effort — never fails the adjustment).
+  const { writeAuditLog } = await import("../audit/auditLog");
+  await writeAuditLog({
+    actorUid: caller?.uid ?? null,
+    actorEmail: (caller as any)?.email ?? null,
+    action: "coins_adjusted",
+    targetType: "customer",
+    targetId: input.customerId,
+    metadata: {
+      delta: result.applied,
+      balanceAfter: result.balanceAfter,
+      reason: input.reason,
+    },
+  });
+
   return { success: true, customerId: input.customerId, ...result };
 }
 

@@ -800,7 +800,10 @@ export interface RefundParams {
  * capped at the server-priced total; a completed refund replays idempotently
  * instead of re-POSTing to Razorpay. Every refusal carries a statusCode.
  */
-export async function autoRefund(params: RefundParams) {
+export async function autoRefund(
+  params: RefundParams,
+  caller?: { uid?: string; email?: string | null } | null
+) {
   const { orderId, razorpayPaymentId, amountRupees, reason } = params;
 
   const orderRef = db.collection("orders").doc(orderId);
@@ -932,6 +935,21 @@ export async function autoRefund(params: RefundParams) {
     action: "refund_processed",
     reason: reason ?? null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Readiness-7: security-registry row (best-effort — never fails the refund).
+  const { writeAuditLog } = await import("../audit/auditLog");
+  await writeAuditLog({
+    actorUid: caller?.uid ?? null,
+    actorEmail: caller?.email ?? null,
+    action: "refund_processed",
+    targetType: "order",
+    targetId: orderId,
+    metadata: {
+      razorpayPaymentId,
+      refundId: refundResult.id,
+      amountRupees: amountRupees ?? null,
+    },
   });
 
   return refundResult;

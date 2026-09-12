@@ -109,5 +109,16 @@ export async function inviteStaffMember(
       { merge: true }
     );
 
+  // Readiness-7: security-registry row for every invite (best-effort).
+  const { writeAuditLog } = await import("../audit/auditLog");
+  await writeAuditLog({
+    actorUid: (caller as any)?.uid ?? null,
+    actorEmail: (caller as any)?.email ?? null,
+    action: "staff_invited",
+    targetType: "user",
+    targetId: uid,
+    metadata: { email: input.email, role, invited, branchIds: input.branchIds },
+  });
+
   return { success: true, uid, email: input.email, role, invited };
 }

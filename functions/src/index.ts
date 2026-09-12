@@ -253,7 +253,7 @@ app.post(
   validateBody(refundSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const result = await autoRefund(req.body);
+      const result = await autoRefund(req.body, req.user);
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Refund failed" });

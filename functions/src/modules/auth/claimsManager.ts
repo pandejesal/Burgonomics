@@ -187,6 +187,18 @@ export async function setUserCustomClaims(
     });
   }
 
+  // Readiness-7: security-registry row for every role grant/revocation
+  // (best-effort — never fails the claims write).
+  const { writeAuditLog } = await import("../audit/auditLog");
+  await writeAuditLog({
+    actorUid: (caller as any)?.uid ?? null,
+    actorEmail: (caller as any)?.email ?? null,
+    action: claims.isStaff ? "role_assigned" : "role_revoked",
+    targetType: "user",
+    targetId: targetUid,
+    metadata: { role: validatedRole, branchIds, cityIds },
+  });
+
   return {
     success: true,
     targetUid,
