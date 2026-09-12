@@ -58,7 +58,8 @@
 - [x] 56 (2026-09-11 — verification + flake watch closed, 238 green)
 - [x] 57 (2026-09-11 — petpooja sync honesty, 182 green)
 - [x] 58 (2026-09-11 — badge unknown-until-verified, 185 green)
-- [ ] 59-120
+- [x] 59 (2026-09-11 — push-page honesty, 185 green)
+- [ ] 60-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -740,3 +741,28 @@
 - Gates: partner typecheck clean + 185 tests (182 + 3 new
   PetpoojaStatusBadge.test) + build clean.
 - Commits: partner 7d52c06 LOCAL (diverged, push after sync).
+### Loop 59 — 2026-09-11 22:30 UTC — fixed 1 (push-page honesty) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (partner, meets bar — fabricated reach + dispatch-promising copy on
+  a draft-only page): the push-notification page (Loop 22's fix otherwise
+  holds — drafts honest, fixtures labeled, stats dashed) still showed cohort
+  options "All Registrations (1,850 device targets)" / "Loyal VIP Cohorts
+  (290 targets)" — the exact fabricated counts Loop 22 removed — plus a
+  "Broadcast Campaign Banner" CTA, a "Transmit real-time banners directly to
+  customer locked phones" subtitle, and a "Historic Dispatch Log /
+  performance and conversion" title over a log of zero dispatches. Fix:
+  count-free cohort labels matching the recorded draft strings, "Save
+  Campaign Draft" CTA, draft-only subtitle, "Draft Log" title. No send path
+  exists (broadcast endpoint stays queued); nothing here can dispatch.
+- Dismissed with evidence: core payment idempotency (stable per-cart
+  fingerprint, retries reuse the key; server intent-claim backs
+  cross-session); core TKT numbers (display-only, doc ids are Date-based);
+  automation simulate (Loop 52 DEV-gate + method refusal hold); mock menu
+  seed-writes land in the deprecated menu/{branch} collection with no live
+  readers (partner reads canonical products; server marks legacy
+  deprecated); logs-page Excel path delegates to the real CSV export.
+- Gates: partner typecheck clean + 185 tests + build clean (copy-only;
+  build needed a solo retry after the combined run stalled under host load
+  — 185 green carried from the same tree).
+- Commits: partner 288dabd LOCAL (diverged, push after sync). File was clean
+  pre-edit; diff mine-only.
