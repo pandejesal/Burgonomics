@@ -59,7 +59,8 @@
 - [x] 57 (2026-09-11 — petpooja sync honesty, 182 green)
 - [x] 58 (2026-09-11 — badge unknown-until-verified, 185 green)
 - [x] 59 (2026-09-11 — push-page honesty, 185 green)
-- [ ] 60-120
+- [x] 60 (2026-09-11 — HALFWAY green board, all suites green)
+- [ ] 61-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -766,3 +767,17 @@
   — 185 green carried from the same tree).
 - Commits: partner 288dabd LOCAL (diverged, push after sync). File was clean
   pre-edit; diff mine-only.
+### Loop 60 — 2026-09-11 23:15 UTC — HALFWAY verification (green board, no changes) / direct-only
+- Workers: pin exhausted — no probes; direct-only. HALFWAY MARK: 60/120.
+- Verification (no code changes): functions tsc clean + 252 tests green +
+  build clean; core tsc clean + 238 tests green + build clean (4m49s);
+  core rules 24/24 green under emulator (re-ran with log capture after an
+  earlier tail-only run exited 0 without visible counts); partner 185 green
+  carried from Loops 57-59 gates (no partner edits since — file states
+  rechecked). Root firestore.rules untouched since Loop 12; mirrors
+  byte-identical.
+- Environment note: combined gate commands stall under current host load
+  (Loop 59 build, this loop's combined core build+rules) — solo runs
+  complete. Serialize single heavy jobs; never parallelize suites.
+- Gates: all suites green, nothing red.
+- Commits: handoff only.
