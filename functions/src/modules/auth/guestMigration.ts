@@ -479,10 +479,27 @@ export async function migrateGuestAccount(
 
   if (welcomeBonusAwarded) {
     userUpdates.hasClaimedWelcomeBonus = true;
-    userUpdates.grillCoins = admin.firestore.FieldValue.increment(WELCOME_BONUS_COINS);
   }
 
   ops.push({ kind: "set", ref: permanentUserRef, data: userUpdates, merge: true });
+
+  if (welcomeBonusAwarded) {
+    // Readiness-1: credit the SPENDABLE currency. The old code incremented
+    // users.grillCoins — a write-only dead field nothing reads (pricing
+    // clamp, client display, and debits all use customers.loyaltyPoints),
+    // so bonuses were unspendable. Merge-set increment creates the doc when
+    // missing; the deterministic ledger row (awardWelcomeBonus) plus the
+    // eligibility pre-check keep it once-per-phone.
+    ops.push({
+      kind: "set",
+      ref: db.collection("customers").doc(permanentUid),
+      data: {
+        loyaltyPoints: admin.firestore.FieldValue.increment(WELCOME_BONUS_COINS),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      merge: true,
+    });
+  }
 
   // 6. GUEST CART MIGRATION
   const guestCartId = guestSessionId ? `guest_${guestSessionId}` : anonymousUid ? `anon_${anonymousUid}` : null;

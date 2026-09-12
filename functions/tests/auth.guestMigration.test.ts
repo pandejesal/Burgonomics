@@ -293,6 +293,22 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       const updatedUser = savedDocs[`users/${permanentUid}`];
       expect(updatedUser.addresses.length).toBe(2);
       expect(updatedUser.hasClaimedWelcomeBonus).toBe(true);
+
+      // Readiness-1: the bonus credits the SPENDABLE ledger field
+      // (customers.loyaltyPoints), never the dead users.grillCoins.
+      const coinCredit = batchSets.find(
+        (s: any) => s.ref?.path === `customers/${permanentUid}`
+      );
+      expect(coinCredit).toBeDefined();
+      expect(coinCredit.data.loyaltyPoints).toBe(50);
+      const deadWrites = batchSets.filter(
+        (s: any) =>
+          typeof s.ref?.path === "string" &&
+          s.ref.path.startsWith("users/") &&
+          s.data &&
+          "grillCoins" in s.data
+      );
+      expect(deadWrites).toHaveLength(0);
     });
 
     it("refuses to migrate orders from an identified (non-anonymous) account", async () => {
