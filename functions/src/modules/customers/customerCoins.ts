@@ -88,3 +88,73 @@ export async function adjustCustomerCoins(
 
   return { success: true, customerId: input.customerId, ...result };
 }
+
+/**
+ * Loop 63/120: idempotent confirm-time debit for redeemed Grill Coins.
+ * Loop 62 clamped redemption to verified balances at intent time, but
+ * nothing ever reduced the balance — earned coins stayed reusable forever.
+ * This runs once per captured payment: deterministic ledger id
+ * `coin_redemption_{razorpayOrderId}` makes webhook retries and dual
+ * verify+webhook confirms converge on a single debit. Concurrent spends
+ * clamp at zero (brand absorbs the sliver; balances never go negative).
+ * No-ops for guests, unknown customers, and zero amounts. Never throws
+ * for missing docs — callers must not fail a captured payment over this.
+ */
+export async function debitRedeemedCoins(input: {
+  customerId: string;
+  coins: number;
+  orderId: string;
+  razorpayOrderId: string;
+}): Promise<{ debited: number; balanceAfter: number; alreadyDone: boolean }> {
+  const want =
+    typeof input.coins === "number" && Number.isFinite(input.coins)
+      ? Math.floor(input.coins)
+      : 0;
+  if (want <= 0) return { debited: 0, balanceAfter: 0, alreadyDone: true };
+  if (!input.customerId || input.customerId === "guest") {
+    return { debited: 0, balanceAfter: 0, alreadyDone: true };
+  }
+  const ledgerId = `coin_redemption_${input.razorpayOrderId}`;
+  const customerRef = db.collection("customers").doc(input.customerId);
+  const ledgerRef = db.collection("coin_transactions").doc(ledgerId);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return db.runTransaction(async (tx: any) => {
+    const doneSnap = await tx.get(ledgerRef as any);
+    if (doneSnap.exists) {
+      const done = (doneSnap.data() || {}) as any;
+      return {
+        debited: Math.abs(Number(done.delta) || 0),
+        balanceAfter: Number(done.balanceAfter) || 0,
+        alreadyDone: true,
+      };
+    }
+    const custSnap = await tx.get(customerRef as any);
+    const current = custSnap.exists
+      ? Math.max(0, Math.floor(Number((custSnap.data() as any)?.loyaltyPoints) || 0))
+      : 0;
+    const debit = Math.min(current, want);
+    const next = current - debit;
+    if (custSnap.exists) {
+      tx.set(
+        customerRef as any,
+        {
+          loyaltyPoints: next,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+    tx.set(ledgerRef as any, {
+      customerId: input.customerId,
+      delta: -debit,
+      balanceAfter: custSnap.exists ? next : 0,
+      type: "redemption",
+      reason: `Redeemed on order ${input.orderId}`,
+      orderId: input.orderId,
+      razorpayOrderId: input.razorpayOrderId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { debited: debit, balanceAfter: custSnap.exists ? next : 0, alreadyDone: false };
+  });
+}

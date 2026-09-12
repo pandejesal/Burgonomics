@@ -99,6 +99,38 @@ export async function resolveRedeemableCoins(
 }
 
 /**
+ * Loop 63/120: trusted confirm-time redemption lookup. Reads the
+ * server-written payment_intents doc by Razorpay order id — never the
+ * client-created order doc. Returns null when nothing was redeemed (the
+ * common case) or the lookup fails (callers skip debit, never fail pay).
+ */
+export async function resolveIntentRedemption(
+  razorpayOrderId: string
+): Promise<{ customerId: string; coins: number } | null> {
+  if (!razorpayOrderId || !db || typeof db.collection !== "function") return null;
+  try {
+    const snap = await db
+      .collection("payment_intents")
+      .where("razorpayOrderId", "==", razorpayOrderId)
+      .limit(1)
+      .get();
+    const doc = snap?.docs?.[0];
+    const data = (doc ? (doc.data() as any) : undefined) as any;
+    if (!data) return null;
+    // pricing.loyaltyDiscount is rupees at 1pt = ₹1, server-computed at
+    // intent from the Loop-62-verified amount — it IS the redeemed count.
+    const coins = Math.floor(Number(data?.pricing?.loyaltyDiscount) || 0);
+    const customerId =
+      typeof data?.customerId === "string" ? data.customerId : "";
+    if (!customerId || coins <= 0) return null;
+    return { customerId, coins };
+  } catch (err: any) {
+    console.warn("[Payments] intent redemption lookup failed:", err?.message || err);
+    return null;
+  }
+}
+
+/**
  * Creates a Razorpay server order with authoritative price calculation and route notes.
  */
 export async function createPaymentOrder(params: CreateOrderParams) {
@@ -718,6 +750,30 @@ async function finishVerifiedPayment(args: {
     transferResult,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+
+  // Loop 63/120: confirm-time Grill-Coins debit (manual-verify path; the
+  // webhook path debits independently — both converge via the deterministic
+  // ledger id). Best-effort: never fail a verified payment over this.
+  try {
+    const redemption = await resolveIntentRedemption(razorpayOrderId);
+    if (redemption) {
+      const { debitRedeemedCoins } = await import("../customers/customerCoins");
+      await debitRedeemedCoins({ ...redemption, orderId, razorpayOrderId });
+    }
+  } catch (err: any) {
+    console.warn(
+      `[Payments] confirm-time coin debit failed for order ${orderId}:`,
+      err?.message || err
+    );
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Confirm-time Grill-Coins debit failed for order ${orderId} — remediate via adjustCustomerCoins`,
+      orderId,
+      razorpayPaymentId,
+      errorStack: err?.stack,
+    });
+  }
 
   return {
     success: true,

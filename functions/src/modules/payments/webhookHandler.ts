@@ -249,6 +249,35 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         // double chimes for every online payment. (branchId from notes is
         // intentionally unused from here on.)
 
+        // Loop 63/120: confirm-time Grill-Coins debit. Trusted intent only
+        // (Razorpay order id → server-written intent) — never the client
+        // order doc. Best-effort after confirm: money is captured, so a
+        // debit failure parks a high-severity snapshot for manual remedy
+        // (adjustCustomerCoins) instead of failing the confirmation.
+        // Webhook retries converge via the deterministic ledger id.
+        try {
+          const rzpOrderId =
+            typeof paymentEntity?.order_id === "string" ? paymentEntity.order_id : "";
+          const { resolveIntentRedemption } = await import("./razorpay.service");
+          const redemption = rzpOrderId ? await resolveIntentRedemption(rzpOrderId) : null;
+          if (redemption) {
+            const { debitRedeemedCoins } = await import("../customers/customerCoins");
+            await debitRedeemedCoins({ ...redemption, orderId, razorpayOrderId: rzpOrderId });
+          }
+        } catch (err: any) {
+          console.warn(
+            `[Razorpay Webhook] confirm-time coin debit failed for order ${orderId}:`,
+            err?.message || err
+          );
+          await captureErrorSnapshot({
+            source: "payments",
+            severity: "high",
+            message: `Confirm-time Grill-Coins debit failed for order ${orderId} — remediate via adjustCustomerCoins`,
+            orderId,
+            errorStack: err?.stack,
+          });
+        }
+
         // Auto-push KOT to Petpooja POS upon payment confirmation.
         // pushOrderToPetpooja returns false (not throw) on POS rejection —
         // ignoring the return hid outstanding POS syncs behind a 200 ok.
