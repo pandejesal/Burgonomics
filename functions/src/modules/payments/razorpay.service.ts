@@ -56,10 +56,60 @@ async function resolveBranchId(params: CreateOrderParams): Promise<string> {
 }
 
 /**
+ * Loop 62/120: Grill-Coins redemption is server-checked, never trusted.
+ * The old code passed client-supplied loyaltyPointsToRedeem straight into
+ * pricing (shape-only validation) and nothing ever debited coins — any
+ * caller, including guests, could claim up to 20% off with zero balance,
+ * forever. Over-claims fail closed with 400; guests have no balance.
+ * Exported for tests (same seam pattern as __setPaymentsFetchForTests).
+ */
+export async function resolveRedeemableCoins(
+  customerId: string,
+  requested: unknown,
+): Promise<number> {
+  const want =
+    typeof requested === "number" && Number.isFinite(requested)
+      ? Math.floor(requested)
+      : 0;
+  if (want <= 0) return 0;
+  let balance = 0;
+  if (customerId && customerId !== "guest" && db && typeof db.collection === "function") {
+    try {
+      const snap = await db.collection("customers").doc(customerId).get();
+      const raw = snap.exists ? (snap.data() as any)?.loyaltyPoints : undefined;
+      balance = Math.max(0, Math.floor(Number(raw) || 0));
+    } catch (err: any) {
+      // Fail closed: without a verified balance no coins may be redeemed.
+      console.warn("[Payments] loyalty balance lookup failed:", err?.message || err);
+      const refused: any = new Error(
+        "Could not verify your Grill Coins balance — please retry checkout without redeeming points."
+      );
+      refused.statusCode = 503;
+      throw refused;
+    }
+  }
+  if (want > balance) {
+    const err: any = new Error(
+      `You only have ${balance} Grill Coins — please lower the redemption or earn more before retrying.`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+  return want;
+}
+
+/**
  * Creates a Razorpay server order with authoritative price calculation and route notes.
  */
 export async function createPaymentOrder(params: CreateOrderParams) {
   const branchId = await resolveBranchId(params);
+
+  // Server-verified redemption: the pricing engine only ever sees coins the
+  // customer actually holds (guests hold none).
+  const loyaltyPointsToRedeem = await resolveRedeemableCoins(
+    params.customerId,
+    params.loyaltyPointsToRedeem,
+  );
 
   // Idempotent retries: same key returns the already-open gateway order
   // instead of minting a second payable order (double-charge risk).
@@ -116,7 +166,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     deliveryFee: params.deliveryFee,
     packagingFee: params.packagingFee,
     couponCode: params.couponCode,
-    loyaltyPointsToRedeem: params.loyaltyPointsToRedeem,
+    loyaltyPointsToRedeem,
   });
 
   if (!(pricing.grandTotal > 0)) {
