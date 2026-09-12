@@ -57,6 +57,10 @@ import {
 } from "./modules/tickets/tickets.service";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
 import { deleteUserAccount } from "./modules/auth/accountDeletion";
+import {
+  inviteStaffMember,
+  InviteStaffSchema,
+} from "./modules/auth/staffInvite";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
@@ -155,6 +159,7 @@ app.use(
     "/payments/refund",
     "/refunds/dispose",
     "/discrepancies/resolve",
+    "/staff/invite",
     "/petpooja/syncMenu",
     "/petpooja/pushOrder",
     "/petpooja/pushStock",
@@ -294,6 +299,29 @@ app.post(
     } catch (err: any) {
       const status = err.statusCode === 404 || err.statusCode === 409 ? err.statusCode : 500;
       res.status(status).json({ error: err.message || "Failed to resolve discrepancy" });
+    }
+  }
+);
+
+// Readiness-6: server staff invite. Brand-only (route + in-function assert),
+// validated (strict schema rejects PINs and unknown keys), idempotent per
+// email (re-invite updates claims). Closes the Loop 43 carryover — the
+// partner invite wrote rules-denied docs and failed with nowhere to go.
+app.post(
+  "/staff/invite",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  validateBody(InviteStaffSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await inviteStaffMember(req.body, req.user);
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status =
+        err.statusCode === 400 || err.statusCode === 403 || err.statusCode === 409
+          ? err.statusCode
+          : 500;
+      res.status(status).json({ error: err.message || "Failed to invite staff member" });
     }
   }
 );
