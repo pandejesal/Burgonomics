@@ -62,7 +62,8 @@
 - [x] 60 (2026-09-11 — HALFWAY green board, all suites green)
 - [x] 61 (2026-09-11 — CRM broadcast honesty, 186 green)
 - [x] 62 (2026-09-12 — loyalty redemption server-checked, 257 green)
-- [ ] 63-120
+- [x] 63 (2026-09-12 — confirm-time coin debit, 262 green)
+- [ ] 64-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -823,3 +824,18 @@
 - Gates: functions tsc clean + 257 tests (252 + 5 new loyalty.redeem) +
   build clean.
 - Commits: root 2a21375 PUSHED (clamp + tests).
+### Loop 63 — 2026-09-12 08:20 UTC — fixed 1 (confirm-time coin debit) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (functions, closes the Loop 62 follow-up — earned balances were
+  reusable forever): new exported debitRedeemedCoins (transactional,
+  deterministic ledger id coin_redemption_{rzpOrderId} so webhook retries
+  and dual verify+webhook confirms converge on one debit; clamps at zero,
+  guests/zero no-op) + trusted resolveIntentRedemption (server-written
+  payment_intents by Razorpay order id — never the client order doc).
+  Wired best-effort into BOTH confirm paths (webhook auto-confirm and
+  finishVerifiedPayment) — debit failures park high-severity snapshots for
+  adjustCustomerCoins remedy instead of failing captured payments.
+- Gates: functions tsc clean + 262 tests (257 + 5 new coin.debit:
+  single-debit, idempotent retry, clamp, guest/zero no-op, intent
+  resolution) + build clean.
+- Commits: root 713d51b PUSHED (pure additions, +155/-0 source).
