@@ -64,7 +64,8 @@
 - [x] 62 (2026-09-12 — loyalty redemption server-checked, 257 green)
 - [x] 63 (2026-09-12 — confirm-time coin debit, 262 green)
 - [x] 64 (2026-09-12 — refund record null-safety, 264 green)
-- [ ] 65-120
+- [x] 65 (2026-09-12 — loyalty follows server truth, 242 green)
+- [ ] 66-120 — SUPERSEDED: user ended the 120-loop; production-readiness task active
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -855,3 +856,22 @@
 - Gates: functions tsc clean + 264 tests (262 + 2 new refund.record:
   null-shape + partial replay) + build clean.
 - Commits: root 86aa43a PUSHED (fix + tests).
+### Loop 65 — 2026-09-12 11:20 UTC — fixed 1 (loyalty follows server truth) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (core, meets bar — phantom currency + false earn claims): the
+  loyalty store defaulted EVERY user to 250 points, minted 50 on signup and
+  5% per order, all client-local with zero server backing — while the server
+  (Loops 62-63) charges against its own ledger, so users saw spendable coins
+  then ate "You only have 0" 400s. The order-confirmation card celebrated
+  the phantom mint as wallet credit. Fix: store defaults 0 with
+  refreshFromServer(customers/{uid}.loyaltyPoints) — rules already let
+  customers read own doc and never write loyaltyPoints; mint/redeem
+  primitives removed; signup/order/checkout/confirmation all refresh from
+  truth; wallet tier derives from verified balance (thresholds unchanged;
+  queue server lifetime field for tenure tiers); earned-card removed
+  (queue server purchase-earn rule + honest earn UI).
+- Gates: core tsc clean + 242 tests (238 + 4 new loyaltyStore) + build clean.
+- Commits: core 43d282d LOCAL (diverged, push after sync). All touched
+  files clean pre-edit.
+### NOTE — 120-loop ENDED by user; production-readiness task active. Loops
+66-120 will not run. Carryover product calls below stay open.
