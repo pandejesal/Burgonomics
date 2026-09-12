@@ -906,10 +906,16 @@ export async function autoRefund(params: RefundParams) {
   }
 
   // Update order record
+  // Loop 64/120: refundAmount MUST be null (never undefined) for full
+  // refunds. The old code wrote `undefined` when amountRupees was omitted —
+  // real Firestore rejects undefined values, so the write threw AFTER the
+  // gateway refund posted: staff saw failure, retried, and the replay guard
+  // (finding no refundStatus) posted a SECOND gateway refund. Same for the
+  // audit row below.
   await orderRef.set(
     {
       refundStatus: "refunded",
-      refundAmount: amountRupees,
+      refundAmount: amountRupees ?? null,
       refundId: refundResult.id,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
@@ -922,9 +928,9 @@ export async function autoRefund(params: RefundParams) {
     orderId,
     razorpayPaymentId,
     refundId: refundResult.id,
-    amountRupees,
+    amountRupees: amountRupees ?? null,
     action: "refund_processed",
-    reason,
+    reason: reason ?? null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
