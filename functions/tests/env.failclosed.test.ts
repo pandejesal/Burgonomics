@@ -38,6 +38,7 @@ const SECRET_KEYS = [
   "PORTER_CUSTOMER_ID",
   "PORTER_WEBHOOK_SECRET",
   "OTP_HMAC_SECRET",
+  "BURGONOMICS_ENV",
   "MOCK_PAYMENT_GATEWAY",
   "MOCK_PORTER_DISPATCH",
   "MOCK_PETPOOJA_POS",
@@ -118,6 +119,38 @@ describe("fail-closed boot on empty env", () => {
     vi.resetModules();
     const mod2 = await import("../src/config/env");
     expect(() => mod2.assertProductionKeys()).toThrow(/mock mode active in production/);
+  });
+
+  it("deploymentEnv refuses ambiguity and honors explicit declaration (Readiness-2)", async () => {
+    // Neither BURGONOMICS_ENV nor NODE_ENV (beforeEach cleared both) → FATAL.
+    let mod = await import("../src/config/env");
+    expect(() => mod.deploymentEnv()).toThrow(/BURGONOMICS_ENV/);
+    expect(() => mod.assertProductionKeys()).toThrow(/BURGONOMICS_ENV/);
+
+    process.env.BURGONOMICS_ENV = "bogus";
+    vi.resetModules();
+    mod = await import("../src/config/env");
+    expect(() => mod.deploymentEnv()).toThrow(/BURGONOMICS_ENV/);
+
+    process.env.BURGONOMICS_ENV = "staging";
+    vi.resetModules();
+    mod = await import("../src/config/env");
+    expect(mod.deploymentEnv()).toBe("staging");
+    // Staging enforces secrets on empty env but allows mocks.
+    expect(() => mod.assertProductionKeys()).toThrow(/missing secrets/);
+
+    process.env.BURGONOMICS_ENV = "dev";
+    vi.resetModules();
+    mod = await import("../src/config/env");
+    expect(mod.deploymentEnv()).toBe("dev");
+    expect(() => mod.assertProductionKeys()).not.toThrow();
+
+    process.env.BURGONOMICS_ENV = "production";
+    vi.resetModules();
+    mod = await import("../src/config/env");
+    expect(mod.deploymentEnv()).toBe("production");
+    // Production WITHOUT NODE_ENV now enforces — the old code slept here.
+    expect(() => mod.assertProductionKeys()).toThrow(/FATAL/);
   });
 
   it("forged webhooks deny on empty env with zero writes possible", async () => {

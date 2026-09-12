@@ -114,32 +114,62 @@ export function assertWebhookSecrets(): void {
 // Fail-fast guard for India production: never silently run live payments,
 // dispatch, or POS sync in mock mode or half-configured. (Mock Porter/Petpooja
 // in prod means fake riders and phantom KOTs — worse than refusing to boot.)
+export type DeploymentEnv = "production" | "staging" | "dev";
+
+/**
+ * Readiness-2: the SINGLE source of truth for where this process thinks it
+ * runs. The old code gated everything on NODE_ENV, but nothing in the repo
+ * sets NODE_ENV for deploys (no workflow, no firebase config) — an operator
+ * deploying without it would boot half-configured with mocks and sleeping
+ * guards. BURGONOMICS_ENV must be set explicitly (functions/.env); an
+ * explicit production NODE_ENV still counts, but ambiguity is FATAL.
+ */
+export function deploymentEnv(): DeploymentEnv {
+  const raw = (process.env.BURGONOMICS_ENV || "").trim().toLowerCase();
+  if (raw === "production" || raw === "staging" || raw === "dev") return raw;
+  if (process.env.NODE_ENV === "production") return "production";
+  throw new Error(
+    "FATAL: BURGONOMICS_ENV is unset or invalid — set it to dev, staging, or " +
+      "production in functions/.env. Refusing to boot with an ambiguous environment."
+  );
+}
+
 export function assertProductionKeys(): void {
-  if (process.env.NODE_ENV === "production") {
+  // Throws FATAL on ambiguity (see deploymentEnv) — boot refuses rather
+  // than guessing. Explicit production NODE_ENV short-circuits to enforcement.
+  const nodeProd = process.env.NODE_ENV === "production";
+  const declared = nodeProd ? ("production" as const) : deploymentEnv();
+  // Staging mirrors prod secrets without the mock ban (staging legitimately
+  // exercises fallback paths); dev runs unguarded and mock-friendly.
+  if (declared === "staging") {
     assertWebhookSecrets();
-    const activeMocks = (
-      [
-        ["MOCK_PAYMENT_GATEWAY", config.mock.paymentGateway],
-        ["MOCK_PORTER_DISPATCH", config.mock.porterDispatch],
-        ["MOCK_PETPOOJA_POS", config.mock.petpoojaPos],
-      ] as Array<[string, boolean]>
-    )
-      .filter(([, on]) => on)
-      .map(([name]) => name);
-    if (activeMocks.length > 0) {
-      throw new Error(
-        `FATAL: mock mode active in production (${activeMocks.join(", ")}) — ` +
-          `fake riders and phantom KOTs are worse than refusing to boot.`
-      );
-    }
-    const mockLike = REQUIRED_SECRETS.filter(([, read]) =>
-      read().toLowerCase().includes("mock")
-    ).map(([name]) => name);
-    if (mockLike.length > 0) {
-      throw new Error(
-        `FATAL: mock-like secrets in production (${mockLike.join(", ")}) — ` +
-          `set live keys in functions/.env (dotenv file, not functions:config).`
-      );
-    }
+    return;
+  }
+  if (declared !== "production") return;
+  // Declared production (or explicit production NODE_ENV): full enforcement.
+  assertWebhookSecrets();
+  const activeMocks = (
+    [
+      ["MOCK_PAYMENT_GATEWAY", config.mock.paymentGateway],
+      ["MOCK_PORTER_DISPATCH", config.mock.porterDispatch],
+      ["MOCK_PETPOOJA_POS", config.mock.petpoojaPos],
+    ] as Array<[string, boolean]>
+  )
+    .filter(([, on]) => on)
+    .map(([name]) => name);
+  if (activeMocks.length > 0) {
+    throw new Error(
+      `FATAL: mock mode active in production (${activeMocks.join(", ")}) — ` +
+        `fake riders and phantom KOTs are worse than refusing to boot.`
+    );
+  }
+  const mockLike = REQUIRED_SECRETS.filter(([, read]) =>
+    read().toLowerCase().includes("mock")
+  ).map(([name]) => name);
+  if (mockLike.length > 0) {
+    throw new Error(
+      `FATAL: mock-like secrets in production (${mockLike.join(", ")}) — ` +
+        `set live keys in functions/.env (dotenv file, not functions:config).`
+    );
   }
 }
