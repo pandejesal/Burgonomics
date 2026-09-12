@@ -61,7 +61,8 @@
 - [x] 59 (2026-09-11 — push-page honesty, 185 green)
 - [x] 60 (2026-09-11 — HALFWAY green board, all suites green)
 - [x] 61 (2026-09-11 — CRM broadcast honesty, 186 green)
-- [ ] 62-120
+- [x] 62 (2026-09-12 — loyalty redemption server-checked, 257 green)
+- [ ] 63-120
 ## Carryover (queued product calls, newest last)
 - Server audit writer for admin_audit_logs (Loop 54: dev page shows samples
   only). Real GSTIN/FSSAI registration + proper tax invoices (Loop 42).
@@ -805,3 +806,20 @@
   customersData.test) + build clean.
 - Commits: partner 0a2565a LOCAL (diverged, push after sync). Both files
   clean pre-edit; diffs mine-only.
+### Loop 62 — 2026-09-12 07:35 UTC — fixed 1 (loyalty redemption server-checked) / direct-only
+- Workers: pin exhausted — no probes; direct-only.
+- Fixed (functions, meets bar — fail-open money trust): POST
+  /payments/createPaymentOrder (optionalAuth — guests included) passed
+  client-supplied loyaltyPointsToRedeem straight into the pricing engine
+  (shape-only zod check) with no balance verification, and nothing anywhere
+  debits coins on confirm (webhookHandler has zero coin refs) — anyone could
+  claim up to 20% off with zero balance, forever. Fix: exported
+  resolveRedeemableCoins reads customers/{id}.loyaltyPoints and fails closed
+  (400 over-claim naming the real balance; 503 when the lookup itself
+  fails; guests/unknown = 0); createPaymentOrder prices only the verified
+  amount. OPEN follow-up: idempotent confirm-time debit + ledger row in the
+  webhook claim (earned balances remain reusable until then) — needs the
+  webhook's claim-then-work mapped first.
+- Gates: functions tsc clean + 257 tests (252 + 5 new loyalty.redeem) +
+  build clean.
+- Commits: root 2a21375 PUSHED (clamp + tests).
