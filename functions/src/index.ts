@@ -61,6 +61,10 @@ import {
   inviteStaffMember,
   InviteStaffSchema,
 } from "./modules/auth/staffInvite";
+import {
+  broadcastToDevices,
+  BroadcastSchema,
+} from "./modules/notifications/broadcast";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
@@ -160,6 +164,7 @@ app.use(
     "/refunds/dispose",
     "/discrepancies/resolve",
     "/staff/invite",
+    "/notifications/broadcast",
     "/petpooja/syncMenu",
     "/petpooja/pushOrder",
     "/petpooja/pushStock",
@@ -322,6 +327,26 @@ app.post(
           ? err.statusCode
           : 500;
       res.status(status).json({ error: err.message || "Failed to invite staff member" });
+    }
+  }
+);
+
+// Readiness-8: customer broadcast (queued since Loop 22). Brand-only,
+// validated, measured counts only — the partner drafts page finally has a
+// real send path to call. Audience is all registered devices until
+// segmentation lands (documented in the service).
+app.post(
+  "/notifications/broadcast",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  validateBody(BroadcastSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await broadcastToDevices(req.body, req.user);
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status = err.statusCode === 400 ? err.statusCode : 500;
+      res.status(status).json({ error: err.message || "Failed to send broadcast" });
     }
   }
 );

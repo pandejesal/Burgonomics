@@ -533,5 +533,13 @@ service cloud.firestore {
       allow read: if isBrandOwner();
       allow create, update, delete: if false; // server-only via Admin SDK
     }
+
+    // Readiness-8: broadcast history written by POST /notifications/broadcast.
+    // Brand-owner read (UI history source); client writes denied — rows are
+    // server-measured sends, never client claims.
+    match /broadcasts/{broadcastId} {
+      allow read: if isBrandOwner();
+      allow create, update, delete: if false; // server-only via Admin SDK
+    }
   }
 }
