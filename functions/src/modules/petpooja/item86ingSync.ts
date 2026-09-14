@@ -249,14 +249,22 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
 
     const orderData = orderDoc.data()!;
     const payment = orderData.payment;
-    if (payment?.razorpayPaymentId && !payment.refunded) {
+    // F3: the old `!payment.refunded` guard was dead — nothing ever writes
+    // `payment.refunded` (autoRefund writes top-level `refundStatus`). Gate
+    // on the real terminal state instead, and stamp the nested INITIATED
+    // marker only when a NEW refund was created (replays return reused:true
+    // and must not re-mark an in-flight status after completion).
+    const alreadyRefunded = orderData.refundStatus === "refunded" || payment?.refunded === true;
+    if (payment?.razorpayPaymentId && !alreadyRefunded) {
       try {
-        await autoRefund({
+        const refundResult: any = await autoRefund({
           orderId,
           razorpayPaymentId: payment.razorpayPaymentId,
           reason: "POS_CANCELLED",
         });
-        updateData["payment.refundStatus"] = "INITIATED";
+        if (!refundResult?.reused) {
+          updateData["payment.refundStatus"] = "INITIATED";
+        }
       } catch (err) {
         console.error(`Auto-refund failed on Petpooja cancel for ${orderId}:`, (err as any)?.message || err);
       }

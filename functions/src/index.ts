@@ -100,12 +100,25 @@ import {
 assertProductionKeys();
 
 // Rate limiting middleware
+// F4: provider webhooks arrive from shared egress IPs and monitors poll
+// /health from one IP — a single global budget 429s them during lunch rush.
+// Webhook + health/config paths skip this limiter (webhooks have their own
+// HMAC auth + event-id dedup; health is public by design).
+const WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES = [
+  "/payments/webhook",
+  "/porter/webhook",
+  "/petpooja/webhook",
+  "/petpooja/stockWebhook",
+  "/health",
+  "/config/app",
+];
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
   message: { error: "Too many requests from this IP, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES.some((p) => req.path === p),
 });
 
 const app = express();
@@ -489,7 +502,11 @@ app.post("/porter/webhook", async (req, res) => {
     await handlePorterWebhook(rawBody, signature, req.body);
     res.status(200).json({ status: "success" });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Porter webhook failed" });
+    // F1: auth failures (bad signature → 401) must not 500 — Porter would
+    // retry a permanently-invalid request forever and ops sees a fake outage.
+    // statusCode passthrough first (the handler sets 401 explicitly);
+    // staffErrorStatus covers message-prefixed errors as fallback.
+    res.status((err as any)?.statusCode || staffErrorStatus(err, 500)).json({ error: err.message || "Porter webhook failed" });
   }
 });
 
@@ -637,6 +654,61 @@ app.post(
   requireRole(["brand_owner", "developer", "support", "branch_owner"]),
   async (req: AuthenticatedRequest, res) => {
     try {
+      // F2: this route passed req.body straight to dispatchFCM — any support
+      // or branch staffer could push fabricated copy to any topic or token.
+      // Validate copy, require exactly one audience, and scope it like
+      // /notifications/subscribe (allowlist + ownership).
+      const { topic, token, title, body } = (req.body || {}) as {
+        topic?: unknown; token?: unknown; title?: unknown; body?: unknown;
+      };
+      if (typeof title !== "string" || title.trim().length === 0 || title.length > 120) {
+        res.status(400).json({ error: "title is required (max 120 chars)" });
+        return;
+      }
+      if (typeof body !== "string" || body.trim().length === 0 || body.length > 500) {
+        res.status(400).json({ error: "body is required (max 500 chars)" });
+        return;
+      }
+      const hasTopic = typeof topic === "string" && topic.length > 0;
+      const hasToken = typeof token === "string" && token.length > 0;
+      if (hasTopic === hasToken) {
+        res.status(400).json({ error: "exactly one of topic or token is required" });
+        return;
+      }
+      const role = (req.user as any)?.role as string | undefined;
+      const isBrandAdmin =
+        (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
+      if (hasTopic) {
+        const clean = filterSubscribableTopics([topic], { role, isBrandAdmin });
+        if (clean.length === 0) {
+          res.status(403).json({ error: "Forbidden: topic is outside your role scope" });
+          return;
+        }
+        // Branch topics are staff-wide in the allowlist — additionally bind
+        // non-brand callers to their own outlets so one branch cannot page
+        // another outlet's kitchen as a "system" alert.
+        if (!isBrandAdmin) {
+          const m = /^branch_([A-Za-z0-9_-]+)_(orders|tickets)$/.exec(clean[0]);
+          const branchIds = Array.isArray((req.user as any)?.branchIds)
+            ? ((req.user as any).branchIds as unknown[]).filter((b): b is string => typeof b === "string")
+            : [];
+          if (m && !branchIds.includes(m[1])) {
+            res.status(403).json({ error: "Forbidden: topic is outside your assigned branches" });
+            return;
+          }
+        }
+      } else {
+        // Token path: non-brand callers may only target registered device
+        // tokens (kills arbitrary-token spam; brand admins keep full reach).
+        if (!isBrandAdmin) {
+          const { db } = await import("./core/firebase");
+          const tokenDoc = await db.collection("device_tokens").doc(token as string).get();
+          if (!tokenDoc.exists) {
+            res.status(403).json({ error: "Forbidden: token is not a registered device" });
+            return;
+          }
+        }
+      }
       const success = await dispatchFCM(req.body);
       res.status(200).json({ success });
     } catch (err: any) {
