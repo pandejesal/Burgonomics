@@ -1,5 +1,12 @@
 import * as dotenv from "dotenv";
-dotenv.config();
+// Test runners own process.env (env.failclosed.test.ts asserts empty-env
+// fail-closed behavior after deleting keys) — a developer's local
+// functions/.env must never leak into suites via re-import and flip those
+// expectations. Vitest sets VITEST=true in workers; dotenv stays live
+// everywhere else (emulators, deployed Cloud Functions ignore .env files).
+if (process.env.VITEST !== "true") {
+  dotenv.config();
+}
 
 // Fail-closed env (H-M2/C3): NO mock literals anywhere in this file. Every
 // secret defaults to "" (unset). Webhook/signature verifiers treat an empty

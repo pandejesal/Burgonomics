@@ -15,3 +15,6 @@ serviceAccountKey.json
 node_modules
 dist
 .firebase
+
+# Local verification logs (never commit)
+*.out

@@ -78,10 +78,10 @@ Burgonomics is architected as two dedicated applications backed by a single auth
 
 | Subsystem | Directory | Typecheck | Test Suite Status | Build Status |
 |---|---|---|---|---|
-| **Backend Functions** | `functions/` | ✅ `tsc --noEmit` (0 errors) | ✅ **234 tests passed** across 23 test suites (Porter, Petpooja, E2E flow, Pricing, Tickets + authz + notify, Razorpay, Auth, Payments, Webhooks, Notifications, Escalator, Env fail-closed) | ✅ `dist/index.js` |
-| **Customer App** | `burgonomics-foundation-core/` | ✅ `tsc --noEmit` (0 errors) | ✅ **221 tests passed** across 38 test suites (Pricing, Cart 3-way, BOGO, Parity, Porter, Reconcile, Auth, Payments, Support, Benchmarks) | ✅ `dist/mobile/` |
-| **Partner POS App** | `burgonomics-partner/` | ✅ `tsc --noEmit` (0 errors) | ✅ **151 tests passed** across 30 test suites (KDS, Thermal KOT, Porter logistics, RBAC, Analytics, Tickets, Orders, Settings) | ✅ `dist/` |
-| **Total Monorepo Suite** | **Monorepo** | ✅ **0 Type Errors** | ✅ **606 Passed Tests** (100% Green) | ✅ **Release Ready** |
+| **Backend Functions** | `functions/` | ✅ `tsc --noEmit` (0 errors) | ✅ **275 tests passed** across 34 test suites (Porter, Petpooja, E2E flow, Pricing, Tickets + authz + notify, Razorpay, Auth, Payments, Webhooks, Notifications, Escalator, Env fail-closed) | ✅ `dist/index.js` |
+| **Customer App** | `burgonomics-foundation-core/` | ✅ `tsc --noEmit` (0 errors) | ✅ **242 tests passed** across 45 test suites (Pricing, Cart 3-way, BOGO, Parity, Porter, Reconcile, Auth, Payments, Support, Benchmarks) | ✅ `dist/mobile/` |
+| **Partner POS App** | `burgonomics-partner/` | ✅ `tsc --noEmit` (0 errors) | ✅ **186 tests passed** across 41 test suites (KDS, Thermal KOT, Porter logistics, RBAC, Analytics, Tickets, Orders, Settings) | ✅ `dist/` |
+| **Total Monorepo Suite** | **Monorepo** | ✅ **0 Type Errors** | ✅ **703 Passed Tests** (100% Green) | ✅ **Release Ready** |
 
 ---
 
@@ -113,7 +113,7 @@ cd functions && npm run serve
 
 ### 3. Run Test Suites
 ```bash
-# Run all backend unit tests (145 tests)
+# Run all backend unit tests (275 tests)
 cd functions && npm test
 
 # Run all customer app tests (221 tests)

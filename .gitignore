@@ -23,10 +23,16 @@ serviceAccountKey.json
 # Build / generated artifacts
 *.out
 *.exe
+node_modules/
+.vite/
 
 # Large binary media (not needed for source attribution)
 ULTRA FINAL MENU PICS/
 *.pptx
+
+# Local-only reference archives (docs point at them; too heavy/unrelated for git)
+_archive/netlify-legacy/
+_archive/screenshots/
 
 # Standalone app repos (own git history)
 burgonomics-foundation-core/
