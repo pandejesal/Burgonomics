@@ -68,13 +68,7 @@ function fakeDb(docs: Array<{ id: string; data: Record<string, any> }>) {
   return {
     writes,
     collection: (_name: string) => ({
-      orderBy: () => ({
-        limit: (n: number) => ({
-          startAfter: (snap: any) => buildQuery(snap),
-          get: () => buildQuery(undefined).get(),
-        }),
-        get: () => buildQuery(undefined).get(),
-      }),
+      orderBy: () => buildQuery(undefined, 400),
     }),
     batch: () => ({
       set: (ref: any, data: any) => {
@@ -84,13 +78,17 @@ function fakeDb(docs: Array<{ id: string; data: Record<string, any> }>) {
     }),
   };
 
-  function buildQuery(after: any) {
-    let list = ordered;
-    if (after) list = list.filter((d) => d.id > after.__id);
+  // Immutable, chainable query mock mirroring the real Firestore API:
+  // orderBy() -> limit(n) -> startAfter(snap) -> get(). Every modifier
+  // returns a NEW query so pagination resolves against the cursor instead
+  // of re-reading the full collection on each page.
+  function buildQuery(after: any, pageSize: number) {
+    const list = after ? ordered.filter((d) => d.id > after.__id) : ordered;
     return {
-      startAfter: (snap: any) => buildQuery(snap),
+      limit: (n: number) => buildQuery(after, n),
+      startAfter: (snap: any) => buildQuery(snap, pageSize),
       get: async () => {
-        const docs = list.slice(0, 400).map((d) => ({
+        const docs = list.slice(0, pageSize).map((d) => ({
           id: d.id,
           data: () => d.data,
           ref: { __id: d.id },
@@ -106,25 +104,38 @@ function fakeDb(docs: Array<{ id: string; data: Record<string, any> }>) {
 }
 
 describe("orderBackfill runner", () => {
-  it("dry-run plans without writing", async () => {
-    const db = fakeDb([{ id: "o1", data: { userId: "u" } }]);
-    const summary = await runOrderBackfill(db as any, { dryRun: true });
-    expect(summary.scanned).toBe(1);
-    expect(summary.updated).toBe(1);
-    expect(db.writes).toHaveLength(0);
-    expect(summary.dryRun).toBe(true);
-  });
+  // runOrderBackfill touches admin.firestore.FieldPath.documentId(), which
+  // lazily loads the firebase-admin subpath on first access (~300ms cold,
+  // can spike higher under CI load). Give the runner tests headroom.
+  const RUNNER_TIMEOUT = 10000;
 
-  it("apply writes only missing fields", async () => {
-    const db = fakeDb([
-      { id: "o1", data: { userId: "u", placedAt: "t" } },
-      { id: "o2", data: { customerId: "c", createdAt: "t", updatedAt: "t", branchId: "b" } },
-    ]);
-    const summary = await runOrderBackfill(db as any, { dryRun: false });
-    expect(summary.scanned).toBe(2);
-    expect(summary.updated).toBe(1);
-    expect(summary.skipped).toBe(1);
-    expect(db.writes).toHaveLength(1);
-    expect(db.writes[0]).toMatchObject({ id: "o1" });
-  });
+  it(
+    "dry-run plans without writing",
+    async () => {
+      const db = fakeDb([{ id: "o1", data: { userId: "u" } }]);
+      const summary = await runOrderBackfill(db as any, { dryRun: true });
+      expect(summary.scanned).toBe(1);
+      expect(summary.updated).toBe(1);
+      expect(db.writes).toHaveLength(0);
+      expect(summary.dryRun).toBe(true);
+    },
+    RUNNER_TIMEOUT
+  );
+
+  it(
+    "apply writes only missing fields",
+    async () => {
+      const db = fakeDb([
+        { id: "o1", data: { userId: "u", placedAt: "t" } },
+        { id: "o2", data: { customerId: "c", createdAt: "t", updatedAt: "t", branchId: "b" } },
+      ]);
+      const summary = await runOrderBackfill(db as any, { dryRun: false });
+      expect(summary.scanned).toBe(2);
+      expect(summary.updated).toBe(1);
+      expect(summary.skipped).toBe(1);
+      expect(db.writes).toHaveLength(1);
+      expect(db.writes[0]).toMatchObject({ id: "o1" });
+    },
+    RUNNER_TIMEOUT
+  );
 });
