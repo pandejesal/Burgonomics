@@ -47,8 +47,10 @@ export async function getUnreadCount(customerId: string | undefined): Promise<nu
 
 /**
  * Sends a single FCM message via HTTP v1 API.
+ * Fail-closed for critical notifications: throws on failure so callers
+ * can handle retry/alerting. Non-critical callers should wrap in try/catch.
  */
-export async function sendFcmMessage(message: admin.messaging.Message): Promise<boolean> {
+export async function sendFcmMessage(message: admin.messaging.Message, opts: { critical?: boolean } = {}): Promise<boolean> {
   if (process.env.NODE_ENV === "test" || process.env.VITEST) {
     return true;
   }
@@ -58,10 +60,15 @@ export async function sendFcmMessage(message: admin.messaging.Message): Promise<
       await withTimeout(messaging.send(message));
       return true;
     }
-    // Loop 5: no transport = not sent. The old `return true` here claimed
-    // delivery while sending nothing (fake success on notify paths).
+    // No transport available
+    if (opts.critical) {
+      throw new Error("FCM transport unavailable — critical notification cannot be sent");
+    }
     return false;
   } catch (error: any) {
+    if (opts.critical) {
+      throw error;
+    }
     console.warn("[FCM] Error sending message (non-blocking fallback):", error?.message || error);
     return false;
   }
@@ -70,11 +77,14 @@ export async function sendFcmMessage(message: admin.messaging.Message): Promise<
 /**
  * Sends a multicast FCM message to a list of device tokens, and automatically
  * prunes unregistered or invalid tokens from the user's document in Firestore.
+ * Fail-closed for critical notifications: throws on total failure so callers
+ * can handle retry/alerting.
  */
 export async function sendMulticastFcm(
   tokens: string[],
   payload: Omit<admin.messaging.MulticastMessage, "tokens">,
-  userId?: string
+  userId?: string,
+  opts: { critical?: boolean } = {}
 ): Promise<SendMulticastResult> {
   if (!tokens || tokens.length === 0) {
     return { successCount: 0, failureCount: 0, prunedTokens: [] };
@@ -138,7 +148,16 @@ export async function sendMulticastFcm(
         }
       }
 
+      if (successCount === 0 && opts.critical) {
+        throw new Error("FCM multicast delivered zero messages — critical notification failed");
+      }
+
       return { successCount, failureCount, prunedTokens };
+    }
+
+    // No transport available
+    if (opts.critical) {
+      throw new Error("FCM transport unavailable — critical notification cannot be sent");
     }
 
     // Loop 5: no transport = nothing delivered. Report all-failed so callers
@@ -149,6 +168,9 @@ export async function sendMulticastFcm(
       prunedTokens: [],
     };
   } catch (error: any) {
+    if (opts.critical) {
+      throw error;
+    }
     console.warn("[FCM Multicast] Error sending multicast message:", error?.message || error);
     return {
       successCount: 0,
@@ -194,8 +216,10 @@ export async function writeCustomerInboxDoc(
 }
 
 /**
- * Best-effort customer push by users/{uid} fcmTokens. Non-blocking by design:
- * notification loss must never fail the calling flow (payment/refund/ticket).
+ * Customer push by users/{uid} fcmTokens.
+ * Fail-closed for critical notifications (order confirmations, OTP, delivery):
+ * throws on failure so callers can handle retry/alerting.
+ * Non-critical callers should wrap in try/catch.
  *
  * B5-S1: bodies are server-truncated (~120ch), badge = unread count at send
  * (H18), and every push carries shared apns+webpush parity (H34) so iOS/web
@@ -211,10 +235,13 @@ export async function pushToCustomer(
   title: string,
   body: string,
   data: Record<string, string>,
-  opts: { badge?: number } = {}
+  opts: { badge?: number; critical?: boolean } = {}
 ): Promise<void> {
   try {
-    if (!customerId || !db || typeof db.collection !== "function") return;
+    if (!customerId || !db || typeof db.collection !== "function") {
+      if (opts.critical) throw new Error("FCM unavailable — critical notification cannot be sent");
+      return;
+    }
     const safeBody = truncatePushText(body);
     const badge = typeof opts.badge === "number" ? opts.badge : await getUnreadCount(customerId);
     const userDoc = await db.collection("users").doc(customerId).get();
@@ -222,6 +249,7 @@ export async function pushToCustomer(
     if (fcmTokens.length === 0) {
       // No push target at all — inbox is the only channel.
       await writeCustomerInboxDoc(customerId, title, body, data);
+      if (opts.critical) throw new Error("No FCM tokens registered — critical notification cannot be sent");
       return;
     }
     const result = await sendMulticastFcm(
@@ -235,12 +263,17 @@ export async function pushToCustomer(
         },
         ...buildParityExtras(title, safeBody, { badge }),
       },
-      customerId
+      customerId,
+      { critical: opts.critical }
     );
     if (result.successCount === 0) {
       await writeCustomerInboxDoc(customerId, title, body, data);
+      if (opts.critical) throw new Error("FCM multicast delivered zero messages — critical notification failed");
     }
   } catch (err: any) {
+    if (opts.critical) {
+      throw err;
+    }
     console.warn("[FCM] Customer push failed (non-blocking):", err?.message || err);
   }
 }

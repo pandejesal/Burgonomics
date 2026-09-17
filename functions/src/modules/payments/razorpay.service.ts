@@ -125,8 +125,15 @@ export async function resolveIntentRedemption(
     if (!customerId || coins <= 0) return null;
     return { customerId, coins };
   } catch (err: any) {
-    console.warn("[Payments] intent redemption lookup failed:", err?.message || err);
-    return null;
+    // Fail-closed: intent redemption failure must not silently skip coin debit.
+    // Log HIGH severity and rethrow so the caller handles it (createPaymentOrder will 503).
+    console.error("[Payments] intent redemption lookup failed:", err?.message || err);
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Intent redemption lookup failed: ${err?.message || err}`,
+    }).catch(() => undefined);
+    throw new Error(`Intent redemption lookup failed: ${err?.message || err}`);
   }
 }
 

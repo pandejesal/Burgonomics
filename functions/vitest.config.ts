@@ -17,6 +17,10 @@ export default defineConfig({
         find: "firebase-admin",
         replacement: path.resolve(__dirname, "node_modules/firebase-admin/lib/index.js"),
       },
+      {
+        find: "@burgonomics/shared",
+        replacement: path.resolve(__dirname, "../shared/src"),
+      },
     ],
   },
 });

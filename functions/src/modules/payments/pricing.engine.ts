@@ -219,17 +219,19 @@ export async function calculateOrderPricing(
               packagingFee,
             });
           } catch (err: any) {
-            // Defaults change the royalty split — snapshot LOUD, never silent.
-            console.warn("[Pricing Engine] Could not fetch branch details, using defaults:", err?.message || err);
-            pricingDegraded = true;
+            // Fail-closed: branch config determines royalty split (money-critical).
+            // Using defaults would silently change the 95/5 split — must fail instead.
             const { captureErrorSnapshot } = await import("../../core/errors");
             await captureErrorSnapshot({
               source: "payments",
-              severity: "high",
-              message: `branch config read failed for ${input.branchId} — priced with default royalty/packaging`,
+              severity: "p0_critical",
+              message: `branch config read failed for ${input.branchId} — cannot price without verified royalty/packaging`,
               branchId: input.branchId,
               errorStack: err?.stack,
             });
+            const err2: any = new Error("Branch configuration unavailable — cannot calculate pricing");
+            err2.statusCode = 503;
+            throw err2;
           }
         })()
       : Promise.resolve();
@@ -240,17 +242,18 @@ export async function calculateOrderPricing(
             const couponSnap = await db.collection("coupons").doc(couponCode).get();
             if (couponSnap.exists) couponDoc = couponSnap.data();
           } catch (err: any) {
-            // A failed coupon read silently charges FULL price — snapshot it
-            // (medium: customer-overcharge report, not a royalty error).
-            console.warn("[Pricing Engine] Could not fetch coupon, applying no discount:", err?.message || err);
-            pricingDegraded = true;
+            // Fail-closed: coupon read failure must not silently charge full price.
+            // If coupon was provided, we must verify it; failure = 503.
             const { captureErrorSnapshot } = await import("../../core/errors");
             await captureErrorSnapshot({
               source: "payments",
-              severity: "medium",
-              message: `coupon read failed for ${couponCode} — discount skipped, full price charged`,
+              severity: "high",
+              message: `coupon read failed for ${couponCode} — cannot verify discount`,
               errorStack: err?.stack,
             });
+            const err2: any = new Error("Coupon verification unavailable — please retry checkout");
+            err2.statusCode = 503;
+            throw err2;
           }
         })()
       : Promise.resolve();

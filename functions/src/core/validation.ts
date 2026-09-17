@@ -185,6 +185,71 @@ export const markReadSchema = z.object({
   notificationIds: z.array(z.string().min(1).max(256)).max(200).optional(),
 });
 
+// Notification dispatch: exactly one of topic or token, bounded copy.
+export const dispatchNotificationSchema = z.object({
+  topic: z.string().min(1).max(128).optional(),
+  token: z.string().min(1).max(256).optional(),
+  title: z.string().min(1).max(120),
+  body: z.string().min(1).max(500),
+  data: z.record(z.string()).optional(),
+}).refine((d) => (d.topic ? 1 : 0) + (d.token ? 1 : 0) === 1, {
+  message: "exactly one of topic or token is required",
+});
+
+// Notification token registration
+export const registerTokenSchema = z.object({
+  token: z.string().min(10).max(500),
+  platform: z.enum(["ios", "android", "web"]).optional(),
+  appVersion: z.string().max(64).optional(),
+});
+
+// Token unregistration
+export const unregisterTokenSchema = z.object({
+  token: z.string().min(10).max(500),
+});
+
+// Topic subscription/unsubscription
+export const topicSubscriptionSchema = z.object({
+  token: z.string().min(10).max(500),
+  topics: z.array(z.string().min(1).max(128)).min(1).max(50),
+});
+
+// Auth: set custom claims
+export const setClaimsSchema = z.object({
+  targetUid: z.string().min(1).max(128),
+  role: z.enum(["brand_owner", "developer", "support", "regional_manager", "branch_owner", "branch_staff"]),
+  branchIds: z.array(z.string().min(1).max(128)).max(50).optional(),
+});
+
+// Auth: assign/revoke role
+export const assignRoleSchema = z.object({
+  targetUid: z.string().min(1).max(128),
+  role: z.enum(["support", "regional_manager", "branch_owner", "branch_staff"]),
+  branchIds: z.array(z.string().min(1).max(128)).max(50).optional(),
+});
+
+export const revokeRoleSchema = z.object({
+  targetUid: z.string().min(1).max(128),
+});
+
+// Auth: migrate guest
+export const migrateGuestSchema = z.object({
+  permanentUid: z.string().min(1).max(128),
+  phone: z.string().max(20).optional(),
+  email: z.string().email().max(254).optional(),
+});
+
+// Auth: verify bonus eligibility
+export const verifyBonusSchema = z.object({
+  phone: z.string().min(6).max(20),
+  uid: z.string().min(1).max(128).optional(),
+});
+
+// Auth: delete account
+export const deleteAccountSchema = z.object({
+  confirm: z.literal(true),
+});
+
 // Franchise lead intake: customerId MUST equal the caller UID (rules bind it
 // too) — kills victim-id stamping at both layers (M14 follow-up).
 export const franchiseLeadSchema = z.object({

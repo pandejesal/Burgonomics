@@ -94,6 +94,20 @@ import {
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
   adjustCoinsSchema,
+  createTicketSchema,
+  ticketMessageSchema,
+  resolveTicketSchema,
+  escalateTicketSchema,
+  dispatchNotificationSchema,
+  registerTokenSchema,
+  unregisterTokenSchema,
+  topicSubscriptionSchema,
+  setClaimsSchema,
+  assignRoleSchema,
+  revokeRoleSchema,
+  migrateGuestSchema,
+  verifyBonusSchema,
+  deleteAccountSchema,
 } from "./core/validation";
 
 // Enforce live production keys check on deployment
@@ -548,7 +562,7 @@ app.post(
 // 4. SUPPORT TICKETING & ESCALATOR ROUTES
 // ==========================================
 
-app.post("/tickets/create", requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/tickets/create", requireAuth, validateBody(createTicketSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const customerId = req.user?.uid || req.body.customerId;
     const result = await createTicket({ ...req.body, customerId });
@@ -558,7 +572,7 @@ app.post("/tickets/create", requireAuth, async (req: AuthenticatedRequest, res) 
   }
 });
 
-app.post("/tickets/message", requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/tickets/message", requireAuth, validateBody(ticketMessageSchema), async (req: AuthenticatedRequest, res) => {
   try {
     // Role is derived from auth claims ONLY. The old req.body.senderRole
     // fallback let any authed caller post as any role to any ticket
@@ -583,6 +597,7 @@ app.post(
   "/tickets/resolve",
   requireAuth,
   requireRole(["brand_owner", "developer", "support", "branch_owner", "branch_staff"]),
+  validateBody(resolveTicketSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const resolvedBy = req.user?.uid || req.body.resolvedBy;
@@ -607,6 +622,7 @@ app.post(
   "/tickets/escalate",
   requireAuth,
   requireRole(["brand_owner", "developer", "support", "branch_owner", "branch_staff"]),
+  validateBody(escalateTicketSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const escalatedBy = req.user?.uid || req.body.escalatedBy;
@@ -652,43 +668,28 @@ app.post(
   "/notifications/dispatch",
   requireAuth,
   requireRole(["brand_owner", "developer", "support", "branch_owner"]),
+  validateBody(dispatchNotificationSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
-      // F2: this route passed req.body straight to dispatchFCM — any support
-      // or branch staffer could push fabricated copy to any topic or token.
-      // Validate copy, require exactly one audience, and scope it like
-      // /notifications/subscribe (allowlist + ownership).
-      const { topic, token, title, body } = (req.body || {}) as {
-        topic?: unknown; token?: unknown; title?: unknown; body?: unknown;
+      // Topic/token validation already done by schema; enforce role scoping
+      const { topic, token, title, body, data } = req.body as {
+        topic?: string;
+        token?: string;
+        title: string;
+        body: string;
+        data?: Record<string, string>;
       };
-      if (typeof title !== "string" || title.trim().length === 0 || title.length > 120) {
-        res.status(400).json({ error: "title is required (max 120 chars)" });
-        return;
-      }
-      if (typeof body !== "string" || body.trim().length === 0 || body.length > 500) {
-        res.status(400).json({ error: "body is required (max 500 chars)" });
-        return;
-      }
-      const hasTopic = typeof topic === "string" && topic.length > 0;
-      const hasToken = typeof token === "string" && token.length > 0;
-      if (hasTopic === hasToken) {
-        res.status(400).json({ error: "exactly one of topic or token is required" });
-        return;
-      }
       const role = (req.user as any)?.role as string | undefined;
       const isBrandAdmin =
         (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
-      if (hasTopic) {
+      if (topic) {
         const clean = filterSubscribableTopics([topic], { role, isBrandAdmin });
         if (clean.length === 0) {
           res.status(403).json({ error: "Forbidden: topic is outside your role scope" });
           return;
         }
-        // Branch topics are staff-wide in the allowlist — additionally bind
-        // non-brand callers to their own outlets so one branch cannot page
-        // another outlet's kitchen as a "system" alert.
         if (!isBrandAdmin) {
-          const m = /^branch_([A-Za-z0-9_-]+)_(orders|tickets)$/.exec(clean[0]);
+          const m = /^branch_([A-Za-z0-9_-]+)_(orders|tickets)$/.exec(topic);
           const branchIds = Array.isArray((req.user as any)?.branchIds)
             ? ((req.user as any).branchIds as unknown[]).filter((b): b is string => typeof b === "string")
             : [];
@@ -698,8 +699,7 @@ app.post(
           }
         }
       } else {
-        // Token path: non-brand callers may only target registered device
-        // tokens (kills arbitrary-token spam; brand admins keep full reach).
+        // Token path
         if (!isBrandAdmin) {
           const { db } = await import("./core/firebase");
           const tokenDoc = await db.collection("device_tokens").doc(token as string).get();
@@ -709,7 +709,7 @@ app.post(
           }
         }
       }
-      const success = await dispatchFCM(req.body);
+      const success = await dispatchFCM({ topic, token, title, body, data });
       res.status(200).json({ success });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to dispatch notification" });
@@ -721,7 +721,7 @@ app.post(
 // identity. Clients previously wrote users/{uid}.fcmTokens + device_tokens
 // directly (no validation, no platform/version metadata, no ownership proof
 // beyond rules). This endpoint validates, stamps metadata, and links both.
-app.post("/notifications/registerToken", requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/notifications/registerToken", requireAuth, validateBody(registerTokenSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const { token, platform, appVersion } = req.body as {
       token?: string;
@@ -766,7 +766,7 @@ app.post("/notifications/registerToken", requireAuth, async (req: AuthenticatedR
 // Device detach on logout (Loop 37/120): deletes the token identity and
 // scrubs every fan-out list via Admin SDK. RequireAuth (call pre-signout).
 // Unknown tokens succeed — logout must never fail on already-clean state.
-app.post("/notifications/unregisterToken", requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/notifications/unregisterToken", requireAuth, validateBody(unregisterTokenSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const { token } = req.body as { token?: string };
     if (!token || typeof token !== "string" || token.length < 10 || token.length > 500) {
@@ -785,7 +785,7 @@ app.post("/notifications/unregisterToken", requireAuth, async (req: Authenticate
 // Escalation fan-out topics (regional_managers, superadmins, tickets_escalated)
 // were published but UNSUBSCRIBABLE — every push went nowhere. They are now
 // subscribable with role checks; branch topics stay ownership-checked via token.
-app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/notifications/subscribe", requireAuth, validateBody(topicSubscriptionSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const { token, topics } = req.body as { token?: string; topics?: string[] };
     if (!token || !Array.isArray(topics) || topics.length === 0) {
@@ -822,7 +822,7 @@ app.post("/notifications/subscribe", requireAuth, async (req: AuthenticatedReque
 // Release stale branch topics on account/branch switch or sign-out —
 // otherwise the previous outlet keeps paging this terminal. Same shape,
 // same guards as subscribe.
-app.post("/notifications/unsubscribe", requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/notifications/unsubscribe", requireAuth, validateBody(topicSubscriptionSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const { token, topics } = req.body as { token?: string; topics?: string[] };
     if (!token || !Array.isArray(topics) || topics.length === 0) {
@@ -861,6 +861,7 @@ app.post(
   "/auth/setClaims",
   requireAuth,
   requireRole(["brand_owner", "developer"]),
+  validateBody(setClaimsSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       // Loop 7: pass the caller — without it the in-function
@@ -876,6 +877,7 @@ app.post(
 app.post(
   "/auth/assignRole",
   requireAuth,
+  validateBody(assignRoleSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const result = await assignUserRole(req.user, req.body);
@@ -890,6 +892,7 @@ app.post(
 app.post(
   "/auth/revokeRole",
   requireAuth,
+  validateBody(revokeRoleSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const targetUid = req.body.targetUid || req.body.uid;
@@ -905,6 +908,7 @@ app.post(
 app.post(
   "/auth/migrateGuest",
   requireAuth,
+  validateBody(migrateGuestSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const permanentUid = req.user?.uid || req.body.permanentUid;
@@ -928,6 +932,7 @@ app.post(
 app.post(
   "/auth/verifyBonusEligibility",
   requireAuth,
+  validateBody(verifyBonusSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       const phone = req.body.phone || (req.user as any)?.phone_number;
@@ -946,6 +951,7 @@ app.post(
 app.post(
   "/auth/deleteAccount",
   requireAuth,
+  validateBody(deleteAccountSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
       if (req.body?.confirm !== true) {

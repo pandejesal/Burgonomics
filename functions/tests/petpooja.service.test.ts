@@ -141,7 +141,7 @@ describe("Petpooja POS Bridge Service", () => {
       };
 
       const branch = { id: "branch_surat_01", petpoojaStoreId: "PP_SURAT_01" };
-      const payload = formatPetpoojaOrderPayload(order, branch);
+      const payload = formatPetpoojaOrderPayload(order, branch, "PP_SURAT_01");
 
       expect(payload.orderinfo.orderID).toBe("BUR-1001");
       expect(payload.orderinfo.resID).toBe("PP_SURAT_01");
@@ -185,11 +185,11 @@ describe("Petpooja POS Bridge Service", () => {
         items: [],
       };
 
-      const payload1 = formatPetpoojaOrderPayload(takeawayOrder, null);
+      const payload1 = formatPetpoojaOrderPayload(takeawayOrder, null, "TEST_RES_ID");
       expect(payload1.orderinfo.order_type).toBe("2");
       expect(payload1.orderinfo.payment_type).toBe("COD");
 
-      const payload2 = formatPetpoojaOrderPayload(dineInOrder, null);
+      const payload2 = formatPetpoojaOrderPayload(dineInOrder, null, "TEST_RES_ID");
       expect(payload2.orderinfo.order_type).toBe("3");
       expect(payload2.orderinfo.payment_type).toBe("Prepaid");
     });

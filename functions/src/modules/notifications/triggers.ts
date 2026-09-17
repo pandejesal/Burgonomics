@@ -37,7 +37,7 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
         tableNumber: order.tableNumber,
       });
 
-      const sent = await sendFcmMessage(kotMessage);
+      const sent = await sendFcmMessage(kotMessage, { critical: true });
       if (sent) {
         console.log(`[onOrderCreatedTrigger] Dispatched acoustic KOT alert to branch_${branchId}_orders`);
       } else {
@@ -97,7 +97,8 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
               android: confirmMessage.android,
               apns: confirmMessage.apns,
             },
-            customerId
+            customerId,
+            { critical: true }
           ).then(async (result) => {
             // Loop 5: push-or-nothing left customers silent — fall back to
             // the in-app inbox when FCM delivers zero.
@@ -201,7 +202,8 @@ export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
               android: updateMessage.android,
               apns: updateMessage.apns,
             },
-            customerId
+            customerId,
+            { critical: true }
           ).then(async (result) => {
             // Loop 5: inbox fallback — see PLACED path above.
             if (result.successCount === 0) {
@@ -261,7 +263,7 @@ export const onTicketCreatedUrgentTrigger = onDocumentCreated(
         ticketNumber: ticket.ticketNumber || ticketId.substring(0, 6),
         priority: ticket.priority,
       });
-      await sendFcmMessage(message);
+      await sendFcmMessage(message, { critical: true });
     } catch (err: any) {
       console.error("[onTicketCreatedUrgentTrigger] Failed:", err?.message || err);
       await captureErrorSnapshot({
@@ -299,7 +301,7 @@ export const onTicketEscalatedNotificationTrigger = onDocumentUpdated(
         priority: after.priority,
       });
 
-      await sendFcmMessage(message);
+      await sendFcmMessage(message, { critical: true });
     }
   }
 );

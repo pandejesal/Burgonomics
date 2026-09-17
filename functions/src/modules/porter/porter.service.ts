@@ -13,7 +13,7 @@ import {
   calculateHaversineDistanceKm,
   calculatePorterFare,
   estimatePickupMinutes,
-} from "../../core/utils/geo.utils";
+} from "@burgonomics/shared/geo";
 import * as admin from "firebase-admin";
 
 export interface PorterQuoteParams {
@@ -49,6 +49,15 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
   // the customer pins their address.)
   const isEstimate =
     !params.pickupLat || !params.pickupLng || !params.dropLat || !params.dropLng;
+
+  // Fail-closed for live quotes: if GPS is missing and this is NOT an estimate,
+  // throw 400. Only pre-quote estimates (isEstimate=true) may use fallback coords.
+  if (!isEstimate && (!params.pickupLat || !params.pickupLng || !params.dropLat || !params.dropLng)) {
+    const err: any = new Error("Live Porter quote requires pickupLat, pickupLng, dropLat, dropLng");
+    err.statusCode = 400;
+    throw err;
+  }
+
   const pickupLat = params.pickupLat || 23.0131;
   const pickupLng = params.pickupLng || 72.5085;
   const dropLat = params.dropLat || 23.0338;
@@ -64,7 +73,24 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
   const TTL_SECONDS = 600; // 10 minutes fee lock
   const expiresAt = Date.now() + TTL_SECONDS * 1000;
 
-  if (!config.mock.porterDispatch && config.porter.apiKey) {
+  if (!config.mock.porterDispatch) {
+    // Fail-closed: require live API key when mock is disabled
+    if (!config.porter.apiKey) {
+      const err: any = new Error("Porter API key not configured — cannot fetch live quote");
+      err.statusCode = 503;
+      throw err;
+    }
+    if (!config.porter.customerId) {
+      const err: any = new Error("Porter Customer ID not configured — cannot fetch live quote");
+      err.statusCode = 503;
+      throw err;
+    }
+    if (!config.porter.webhookSecret) {
+      const err: any = new Error("Porter webhook secret not configured — cannot verify webhooks");
+      err.statusCode = 503;
+      throw err;
+    }
+
     try {
       const response = await fetch(`${config.porter.baseUrl}/v1/orders/quote`, {
               method: "POST",
@@ -96,14 +122,19 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
           expiresAt,
         };
       }
+      // Non-OK response from Porter API - fail closed
+      const errorText = await response.text().catch(() => "");
+      const err: any = new Error(`Porter API error ${response.status}: ${errorText}`);
+      err.statusCode = 503;
+      throw err;
     } catch (err: any) {
-      // Loop 10: log the message only — a whole client/API error object can
-      // embed request config (keys) or customer fields; never print it raw.
-      console.warn("[Porter Quote] Failed live quote, falling back to standard rate card:", err?.message || err);
+      // Network or timeout error - fail closed, don't fall back to rate card
+      console.error("[Porter Quote] Live quote failed:", err?.message || err);
+      throw err;
     }
   }
 
-  // Standard 2-Wheeler Rate Card: ₹40 base for 2km + ₹10/km
+  // Mock mode enabled - return estimate with clear labeling
   const estimatedFare = calculatePorterFare(estimatedDistanceKm);
 
   return {
@@ -559,8 +590,11 @@ export async function handlePorterWebhook(
       console.log(`[Porter Webhook] Duplicate ${rawEvent} delivery skipped (${parkId})`);
       return;
     }
-  } catch {
-    // Dedup read best-effort: a failed read must not drop a live event.
+  } catch (err: any) {
+    // Fail-closed: a failed dedup read must not drop a live event.
+    // Log and rethrow so the webhook returns 500 and Porter retries.
+    console.error(`[Porter Webhook] Dedup read failed for ${parkId}:`, err?.message || err);
+    throw new Error(`Dedup read failed: ${err?.message || err}`);
   }
   const markProcessed = async () => {
     try {
@@ -691,8 +725,11 @@ export async function handlePorterWebhook(
         }
         orderRef = db.collection("orders").doc(mappedOrderId);
       }
-    } catch {
-      // Map read best-effort — fall through to the hint/query paths below.
+    } catch (err: any) {
+      // Fail-closed: map read failure must not silently fall through to hint/query paths
+      // which could match the wrong order. Log and rethrow.
+      console.error(`[Porter Webhook] Map read failed for porterOrderId=${porterOrderId}:`, err?.message || err);
+      throw new Error(`Map read failed: ${err?.message || err}`);
     }
   }
   if (!orderRef) {
@@ -1237,8 +1274,9 @@ export async function pollActivePorterOrdersWorker(): Promise<{
       return "polled";
     } catch (err: any) {
       console.warn(`[Porter Polling Worker] Failed to poll order ${doc.id}: ${err.message}`);
-      await recordPollFailure(err?.message || "poll exception").catch(() => undefined);
-      return "polled";
+      await recordPollFailure(err?.message || "poll exception");
+      // Re-throw so Promise.allSettled captures the failure properly
+      throw err;
     }
   };
 

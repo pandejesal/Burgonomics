@@ -10,7 +10,10 @@
     "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "@burgonomics/shared/*": ["../shared/src/*"]
+    }
   },
   "compileOnSave": true,
   "include": [

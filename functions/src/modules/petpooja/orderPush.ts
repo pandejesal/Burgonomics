@@ -11,7 +11,7 @@ function getCallbackUrl(): string {
   );
 }
 
-export function formatPetpoojaOrderPayload(order: any, branch: any) {
+export function formatPetpoojaOrderPayload(order: any, branch: any, resId: string) {
   const fulfillment = (order.fulfillmentType || order.orderType || "DELIVERY").toUpperCase();
   const orderType =
     fulfillment === "DELIVERY"
@@ -51,14 +51,9 @@ export function formatPetpoojaOrderPayload(order: any, branch: any) {
     orderinfo: {
       orderID: order.orderNumber || order.id,
       clientOrderID: order.id,
-      // Branch registry first; fall back to the Delivery store snapshot so
-      // KOT push works even before ops links the outlet (branchId=null).
-      resID:
-        branch?.petpoojaStoreId ||
-        branch?.id ||
-        order.branchId ||
-        order.store?.petpoojaRestId ||
-        order.store?.id,
+      // Fail-closed: resID must be the verified branch.petpoojaStoreId.
+      // No fallback chain — wrong resID sends KOT to wrong kitchen.
+      resID: resId,
       order_type: orderType,
       payment_type: paymentType,
       total: grandTotal,
@@ -128,7 +123,25 @@ export async function pushOrderToPetpooja(orderId: string): Promise<boolean> {
     }
 
     const petpoojaConfig = getPetpoojaConfig();
-    const payload = formatPetpoojaOrderPayload(order, branchData);
+
+    // Fail-closed: resID must come from branch.petpoojaStoreId only.
+    // Fallback chains (branch.id, order.branchId, order.store.*) could send
+    // KOT to the wrong outlet — fail instead of guessing.
+    const resId = branchData?.petpoojaStoreId;
+    if (!resId) {
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "p0_critical",
+        message: `Order ${orderId} missing branch.petpoojaStoreId — cannot push KOT to unknown outlet`,
+        orderId,
+        branchId,
+      });
+      const err: any = new Error("Branch Petpooja Store ID not configured — cannot push KOT");
+      err.statusCode = 503;
+      throw err;
+    }
+
+    const payload = formatPetpoojaOrderPayload(order, branchData, resId);
 
     // Debug visibility: missing contact or zero totals push a broken KOT that
     // looks successful. Flag loudly instead of masking with fallbacks.

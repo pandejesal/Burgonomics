@@ -9,16 +9,28 @@ if (typeof admin.initializeApp === "function" && (!admin.apps || !admin.apps.len
         credential: admin.credential.cert(serviceAccount),
       });
     } catch (e) {
-      console.warn("[Firebase Admin] Could not parse FIREBASE_SERVICE_ACCOUNT json, using default init", e);
-      admin.initializeApp();
+      // Fail-fast: invalid service account must not silently fall back to default init
+      // which would run with wrong project/permissions and mask the real config error.
+      throw new Error(
+        `[Firebase Admin] Invalid FIREBASE_SERVICE_ACCOUNT json: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   } else {
     admin.initializeApp();
   }
 }
 
-export const db = typeof admin.firestore === "function" ? admin.firestore() : ({} as any);
-export const auth = typeof admin.auth === "function" ? admin.auth() : ({} as any);
-export const messaging = typeof admin.messaging === "function" ? admin.messaging() : ({} as any);
+// Fail-fast: if any admin SDK method is unavailable, throw instead of returning empty object
+// which would mask real Firebase outages and cause silent failures downstream.
+function requireAdminSdk<T>(fn: () => T, name: string): T {
+  if (typeof fn !== "function") {
+    throw new Error(`[Firebase Admin] ${name} is not available — Firebase Admin SDK not properly initialized`);
+  }
+  return fn();
+}
+
+export const db = requireAdminSdk(() => admin.firestore(), "admin.firestore");
+export const auth = requireAdminSdk(() => admin.auth(), "admin.auth");
+export const messaging = requireAdminSdk(() => admin.messaging(), "admin.messaging");
 
 export { admin };

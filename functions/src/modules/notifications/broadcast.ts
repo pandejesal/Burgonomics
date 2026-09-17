@@ -73,7 +73,7 @@ export async function broadcastToDevices(
     const result = await sendMulticastFcm(tokens, {
       notification: { title, body },
       data: { type: "broadcast", ...(input.data || {}) },
-    });
+    }, undefined, { critical: true });
     successCount = result.successCount;
     failureCount = result.failureCount;
     prunedCount = (result.prunedTokens || []).length;
