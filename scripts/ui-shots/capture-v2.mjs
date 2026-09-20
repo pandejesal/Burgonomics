@@ -135,8 +135,19 @@ async function main() {
     }
     await browser.close();
 
+    // Merge with any existing report so filtered re-captures update the
+    // consolidated report instead of destroying other entries.
     const reportPath = path.join(OUTPUT_DIR, 'report.json');
-    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+    let merged = [];
+    try {
+      merged = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+      if (!Array.isArray(merged)) merged = [];
+    } catch { /* no prior report — start fresh */ }
+    const key = (e) => `${e.app}|${e.route}|${e.viewport}`;
+    const fresh = new Map(report.map((e) => [key(e), e]));
+    merged = merged.filter((e) => !fresh.has(key(e)));
+    merged.push(...report);
+    fs.writeFileSync(reportPath, JSON.stringify(merged, null, 2));
     const failed = report.filter((e) => !e.ok);
     console.log(`\nCaptured ${report.length - failed.length}/${report.length}. Report: ${reportPath}`);
   } finally {
