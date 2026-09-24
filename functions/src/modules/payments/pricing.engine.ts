@@ -212,6 +212,21 @@ export async function calculateOrderPricing(
               if (typeof branchData?.packagingFee === "number") {
                 packagingFee = branchData.packagingFee;
               }
+            } else {
+              // Fail-closed: a branchId that resolves to no branch doc (new
+              // outlet not yet onboarded, deleted branch) must NOT fall back
+              // to default royalty/packaging — that silently misprices the
+              // order and drifts the Route split. Same 503 as a read failure.
+              const { captureErrorSnapshot } = await import("../../core/errors");
+              await captureErrorSnapshot({
+                source: "payments",
+                severity: "p0_critical",
+                message: `branch doc missing for ${input.branchId} — cannot price without verified royalty/packaging`,
+                branchId: input.branchId,
+              });
+              const err2: any = new Error("Branch configuration unavailable — cannot calculate pricing");
+              err2.statusCode = 503;
+              throw err2;
             }
             branchConfigCache.set(input.branchId!, {
               at: Date.now(),

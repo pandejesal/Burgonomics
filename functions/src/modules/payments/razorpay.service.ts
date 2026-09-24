@@ -1,5 +1,6 @@
 import * as crypto from "crypto";
 import * as admin from "firebase-admin";
+import * as https from "https";
 import { db } from "../../core/firebase";
 import { config } from "../../config/env";
 import {
@@ -8,6 +9,7 @@ import {
   getOtpHmacSecret,
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
+import { assertOrderBranchAccess } from "../../core/middleware";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
 import {
@@ -18,6 +20,64 @@ import {
 
 export { retryPendingRouteTransfersWorker, calculateRouteSplit } from "./routeTransfers";
 export { getOtpHmacSecret };
+
+/**
+ * Direct Razorpay refund POST with an idempotency fingerprint header.
+ * The Node SDK v2 offers no header passthrough, so this bypasses it for
+ * refunds only (everything else keeps the SDK). Basic-auth with the live
+ * key pair; non-2xx responses throw with the gateway's description so the
+ * existing REFUND_GATEWAY_FAILED mapping applies unchanged.
+ */
+function postRefundWithIdempotency(
+  razorpayPaymentId: string,
+  refundPayload: Record<string, any>,
+  idempotencyKey: string
+): Promise<any> {
+  const keyId = config.razorpay.keyId;
+  const keySecret = config.razorpay.keySecret;
+  const body = JSON.stringify(refundPayload);
+  const options = {
+    hostname: "api.razorpay.in",
+    path: `/v1/payments/${encodeURIComponent(razorpayPaymentId)}/refund`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+      Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
+      "X-Refund-Idempotency": idempotencyKey,
+    },
+  };
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        let parsed: any = null;
+        try {
+          parsed = text ? JSON.parse(text) : null;
+        } catch {
+          // Non-JSON gateway response — fall through to status handling.
+        }
+        const status = res.statusCode ?? 0;
+        if (status >= 200 && status < 300 && parsed) {
+          resolve(parsed);
+          return;
+        }
+        const desc =
+          (parsed && parsed.error && parsed.error.description) ||
+          (parsed && parsed.message) ||
+          text ||
+          `HTTP ${status}`;
+        reject(new Error(String(desc).slice(0, 500)));
+      });
+    });
+    req.on("error", (err) => reject(err));
+    req.setTimeout(20000, () => req.destroy(new Error("Razorpay refund request timed out")));
+    req.write(body);
+    req.end();
+  });
+}
 
 export interface CreateOrderParams {
   orderId?: string;
@@ -152,6 +212,13 @@ export async function createPaymentOrder(params: CreateOrderParams) {
 
   // Idempotent retries: same key returns the already-open gateway order
   // instead of minting a second payable order (double-charge risk).
+  // Bounded by a 24h TTL: Razorpay orders expire and catalog prices move,
+  // so a days-old intent must never resurrect a stale total. The client's
+  // fingerprint (items+prices+promo+loyalty+tip) already scopes the key to
+  // one basket; the TTL scopes it in time. Numeric createdAtMs/expiresAtMs
+  // (not serverTimestamp sentinels) so the age check reads without a
+  // toMillis trap.
+  const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
   if (params.idempotencyKey && db && typeof db.collection === "function") {
     try {
       const prior = await db.collection("payment_intents").doc(params.idempotencyKey).get();
@@ -160,12 +227,15 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       // checkout for the wrong total.
       const data = (prior.exists ? (prior.data() as any) : undefined) as any;
       const storedPaise = data?.amountPaise;
+      const expiresAtMs = Number(data?.expiresAtMs);
       if (
         typeof data?.razorpayOrderId === "string" &&
         data.razorpayOrderId.length > 0 &&
         typeof storedPaise === "number" &&
         Number.isFinite(storedPaise) &&
-        storedPaise > 0
+        storedPaise > 0 &&
+        Number.isFinite(expiresAtMs) &&
+        expiresAtMs > Date.now()
       ) {
         return {
           razorpayOrderId: data.razorpayOrderId,
@@ -258,6 +328,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
 
   if (params.idempotencyKey && db && typeof db.collection === "function") {
     const intentRef = db.collection("payment_intents").doc(params.idempotencyKey);
+    const nowMs = Date.now();
     const intentDoc = {
       razorpayOrderId,
       amountPaise,
@@ -266,6 +337,8 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       orderId: params.orderId || null,
       customerId: params.customerId,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      expiresAtMs: nowMs + INTENT_TTL_MS,
     };
     try {
       // Loop 4 (F2): CLAIM, not blind write. Concurrent same-key checkouts
@@ -822,6 +895,10 @@ export async function autoRefund(
     throw missing;
   }
   const order = (orderSnap.data() || {}) as any;
+  // Staff boundary: a staffer may only refund their own branches' orders.
+  // System callers (ticket auto-refunds, 86-ing compensation) pass no caller
+  // and keep working — their paths are covered by scheduler/route RBAC.
+  if (caller) await assertOrderBranchAccess(caller, order);
   // Captured-payment proof, both storage shapes: nested (server writes via
   // object form) and dotted-literal (merge-set writes). Either is acceptable;
   // neither present means COD/unpaid — refuse LOUD, never silent success.
@@ -860,20 +937,105 @@ export async function autoRefund(
     throw over;
   }
 
-  // Idempotent replay: the same (payment, amount) refund returns the stored
-  // receipt instead of POSTing a second refund. A completed full refund
-  // followed by a DIFFERENT amount is a double-spend attempt — refuse.
-  if (order.refundStatus === "refunded" && order.refundId) {
-    const sameAmount =
-      (order.refundAmount ?? undefined) === (amountRupees ?? undefined);
-    if (sameAmount) {
-      return { id: order.refundId, payment_id: razorpayPaymentId, status: "processed", reused: true as const };
+  // Claim-then-work lease (double-refund race): concurrent refund attempts
+  // for the same order serialize inside ONE transaction. The first claimer
+  // sets refundStatus="refunding" with a numeric local-clock lease (never a
+  // serverTimestamp sentinel — it has no toMillis on read and would cause
+  // instant false takeover). A live lease refuses latecomers with 409
+  // REFUND_IN_PROGRESS; a stale lease (>10m, crashed worker) is taken over.
+  // The same transaction enforces the cumulative partial-refund cap and the
+  // idempotent same-amount replay, so check and act are atomic.
+  //
+  // runTx: real Firestore transactions in production; a direct read/write
+  // fallback for datastore shims without transactions (tests only) — same
+  // checks, no cross-process atomicity (matches bookPorterRider +
+  // routeTransfers convention).
+  const runTx: (fn: (tx: any) => Promise<any>) => Promise<any> =
+    db && typeof (db as any).runTransaction === "function"
+      ? (fn) => (db as any).runTransaction(fn)
+      : async (fn) =>
+          fn({
+            get: (ref: any) => ref.get(),
+            set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+          });
+  const REFUND_CLAIM_TTL_MS = 10 * 60_000;
+  const requestedPaise =
+    amountRupees !== undefined && amountRupees !== null
+      ? Math.round(Number(amountRupees) * 100)
+      : null;
+  const capturedPaise =
+    Number.isFinite(storedGrandTotal) && storedGrandTotal > 0
+      ? Math.round(storedGrandTotal * 100)
+      : null;
+  const claimed = await runTx(async (tx) => {
+    const snap = await tx.get(orderRef);
+    const data = ((snap.exists ? snap.data() : {}) || {}) as any;
+    const existingTotal = Number(data.refundedTotalPaise) || 0;
+
+    // Idempotent replay: the same (payment, amount) refund returns the stored
+    // receipt instead of POSTing a second refund. A completed full refund
+    // followed by a DIFFERENT amount is a double-spend attempt — refuse.
+    if (data.refundStatus === "refunded" && data.refundId) {
+      const sameAmount =
+        (data.refundAmount ?? undefined) === (amountRupees ?? undefined);
+      if (sameAmount) {
+        return { replay: { id: data.refundId, payment_id: razorpayPaymentId, status: "processed", reused: true as const } };
+      }
+      const dup: any = new Error("Order is already fully refunded — refusing a second refund.");
+      dup.statusCode = 409;
+      dup.code = "ALREADY_REFUNDED";
+      throw dup;
     }
-    const dup: any = new Error("Order is already fully refunded — refusing a second refund.");
-    dup.statusCode = 409;
-    dup.code = "ALREADY_REFUNDED";
-    throw dup;
-  }
+
+    if (data.refundStatus === "refunding") {
+      const claimedAt = Number(data.refundClaimedAt) || 0;
+      if (Date.now() - claimedAt < REFUND_CLAIM_TTL_MS) {
+        const busy: any = new Error("A refund for this order is already in progress — do not retry.");
+        busy.statusCode = 409;
+        busy.code = "REFUND_IN_PROGRESS";
+        throw busy;
+      }
+      // Stale lease: previous worker died mid-flight. Take over (the old
+      // worker's gateway POST, if it landed, is reconciled by the
+      // refund.processed webhook's monotonic totals).
+    }
+
+    // Cumulative partial-refund cap: sequential partials may never exceed
+    // the captured total. A "full" request after partials is refused with
+    // the exact remaining paise (operator refunds the remainder explicitly —
+    // no magic remainder that could double-pay).
+    if (requestedPaise !== null && capturedPaise !== null) {
+      if (requestedPaise + existingTotal > capturedPaise) {
+        const over: any = new Error(
+          `Refund of ${requestedPaise}pa exceeds the remaining refundable ${capturedPaise - existingTotal}pa — refused.`
+        );
+        over.statusCode = 400;
+        over.code = "REFUND_EXCEEDS_REMAINING";
+        throw over;
+      }
+    }
+    if (requestedPaise === null && existingTotal > 0 && capturedPaise !== null) {
+      const partials: any = new Error(
+        `Order already has partial refunds (${existingTotal}pa) — refund the remaining ${capturedPaise - existingTotal}pa explicitly.`
+      );
+      partials.statusCode = 409;
+      partials.code = "REFUND_PARTIALS_EXIST";
+      throw partials;
+    }
+
+    tx.set(
+      orderRef,
+      {
+        refundStatus: "refunding",
+        refundClaimedAt: Date.now(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { existingTotal };
+  });
+  if ((claimed as any).replay) return (claimed as any).replay;
+  const existingTotalPaise = (claimed as { existingTotal: number }).existingTotal;
 
   const refundPayload: any = {
     reverse_all: true, // Automatically reverses split transfer proportionally from branch
@@ -898,8 +1060,18 @@ export async function autoRefund(
     };
   } else {
     try {
-      const razorpay = getRazorpayClient();
-      refundResult = await razorpay.payments.refund(razorpayPaymentId, refundPayload);
+      // Key validation + mock-mode refusal live in getRazorpayClient; the
+      // POST itself goes over raw HTTPS (not the SDK) so we can send
+      // X-Refund-Idempotency: a stable per-(order, amount) fingerprint.
+      // Razorpay dedupes retries with the same key server-side — a
+      // lost-response retry replays the ORIGINAL refund instead of posting
+      // a second one. A retry with a DIFFERENT body is rejected outright.
+      getRazorpayClient();
+      refundResult = await postRefundWithIdempotency(
+        razorpayPaymentId,
+        refundPayload,
+        `refund_${orderId}_${requestedPaise ?? "full"}`
+      );
     } catch (err: any) {
       await captureErrorSnapshot({
         source: "payments",
@@ -915,17 +1087,16 @@ export async function autoRefund(
     }
   }
 
-  // Update order record
-  // Loop 64/120: refundAmount MUST be null (never undefined) for full
-  // refunds. The old code wrote `undefined` when amountRupees was omitted —
-  // real Firestore rejects undefined values, so the write threw AFTER the
-  // gateway refund posted: staff saw failure, retried, and the replay guard
-  // (finding no refundStatus) posted a SECOND gateway refund. Same for the
-  // audit row below.
+  // Update order record. refundedTotalPaise accumulates monotonically so
+  // sequential partials and webhook replays converge instead of overwriting
+  // (see webhookHandler refund.processed). The lease marker is cleared.
+  const refundedPaise = Number(refundResult.amount) || 0;
   await orderRef.set(
     {
       refundStatus: "refunded",
       refundAmount: amountRupees ?? null,
+      refundedTotalPaise: existingTotalPaise + refundedPaise,
+      refundClaimedAt: admin.firestore.FieldValue.delete(),
       refundId: refundResult.id,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },

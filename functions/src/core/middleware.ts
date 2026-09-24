@@ -122,7 +122,7 @@ export interface StaffCaller {
   role?: string | undefined;
   branchIds?: string[] | undefined;
   isBrandAdmin?: boolean | undefined;
-  email?: string | undefined;
+  email?: string | null | undefined;
 }
 
 export function isBrandAdminClaim(caller: StaffCaller | undefined): boolean {
@@ -137,6 +137,24 @@ export function isBrandAdminClaim(caller: StaffCaller | undefined): boolean {
 function callerBranchIds(caller: StaffCaller | undefined): string[] {
   const ids = caller?.branchIds;
   return Array.isArray(ids) ? ids.filter((b): b is string => typeof b === "string") : [];
+}
+
+/**
+ * Branch-level access for branch-keyed (non-order) actions: menu sync,
+ * stock pushes, branch reads. Brand admins pass any branch; scoped staff
+ * must hold the branch. Anonymous callers are rejected.
+ */
+export function assertBranchAccess(
+  caller: StaffCaller | undefined,
+  branchId: string
+): void {
+  if (!caller || (!caller.uid && !caller.email && !caller.role)) {
+    throw new Error("Unauthorized: staff authentication required");
+  }
+  if (isBrandAdminClaim(caller)) return;
+  if (!branchId || !callerBranchIds(caller).includes(branchId)) {
+    throw new Error("Forbidden: branch is outside your assigned branches");
+  }
 }
 
 /** Effective branch of an order doc: explicit branchId, else linked delivery store. */

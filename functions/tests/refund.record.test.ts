@@ -24,6 +24,16 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
     collection: (colName: string) => ({
       doc: (docId: string) => docRef(colName, docId),
     }),
+    // Transaction seam: runs the callback immediately against the same
+    // in-memory refs (single-threaded test, no contention to simulate).
+    runTransaction: vi.fn(async (fn: any) => {
+      const tx = {
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, options?: any) => ref.set(data, options),
+        update: (ref: any, data: any) => ref.set(data, { merge: true }),
+      };
+      return fn(tx);
+    }),
   };
   return { mockDb, savedDocs };
 });
@@ -115,5 +125,39 @@ describe("Loop 64: refund record writes are Firestore-serializable", () => {
     });
     expect(second.reused).toBe(true);
     expect(second.id).toBe(first.id);
+  });
+
+  it("refuses a second refund while a live lease is held (409 REFUND_IN_PROGRESS)", async () => {
+    savedDocs["orders/ord_r1"] = {
+      payment: { razorpayPaymentId: "pay_r1" },
+      pricing: { grandTotal: 500 },
+      refundStatus: "refunding",
+      refundClaimedAt: Date.now(),
+    };
+    await expect(
+      autoRefund({ orderId: "ord_r1", razorpayPaymentId: "pay_r1", amountRupees: 100 })
+    ).rejects.toMatchObject({ statusCode: 409, code: "REFUND_IN_PROGRESS" });
+  });
+
+  it("refuses a partial that exceeds the remaining refundable total (400)", async () => {
+    savedDocs["orders/ord_r1"] = {
+      payment: { razorpayPaymentId: "pay_r1" },
+      pricing: { grandTotal: 500 },
+      refundedTotalPaise: 40000, // ₹400 of ₹500 already refunded
+    };
+    await expect(
+      autoRefund({ orderId: "ord_r1", razorpayPaymentId: "pay_r1", amountRupees: 200 })
+    ).rejects.toMatchObject({ statusCode: 400, code: "REFUND_EXCEEDS_REMAINING" });
+  });
+
+  it("refuses a full refund after partials with the exact remainder (409)", async () => {
+    savedDocs["orders/ord_r1"] = {
+      payment: { razorpayPaymentId: "pay_r1" },
+      pricing: { grandTotal: 500 },
+      refundedTotalPaise: 40000,
+    };
+    await expect(
+      autoRefund({ orderId: "ord_r1", razorpayPaymentId: "pay_r1" })
+    ).rejects.toMatchObject({ statusCode: 409, code: "REFUND_PARTIALS_EXIST" });
   });
 });

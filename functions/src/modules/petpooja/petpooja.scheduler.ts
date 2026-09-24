@@ -77,10 +77,15 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
 }> {
   // Single scan (single-field where, no composite needed): split retryable
   // vs exhausted in memory instead of scanning the collection twice.
+  // Oldest-first with a 100-doc window: the old unordered limit(40) could
+  // starve retryable orders sitting behind exhausted ones forever.
+  // Requires the (petpoojaStatus, createdAt) composite in
+  // firestore.indexes.json.
   const pendingOrdersSnap = await db
     .collection("orders")
     .where("petpoojaStatus", "==", "pending_retry")
-    .limit(40)
+    .orderBy("createdAt", "asc")
+    .limit(100)
     .get();
 
   let retriedCount = 0;
@@ -114,17 +119,22 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
           const data = (fresh.exists ? fresh.data() : undefined) as any;
           if (!data || data.petpoojaStatus !== "pending_retry") continue;
           // Fresh claim owned elsewhere — skip. Stale (>TTL, crashed worker)
-          // or never-claimed docs are take-over-able.
+          // or never-claimed docs are take-over-able. Numeric-first lease
+          // read: serverTimestamp sentinels have no toMillis and read as 0
+          // (instant false takeover → double KOT POST).
+          const claimedRaw = data.petpoojaClaimedAt;
           const claimedAt =
-            data.petpoojaClaimedAt && typeof data.petpoojaClaimedAt.toMillis === "function"
-              ? data.petpoojaClaimedAt.toMillis()
-              : 0;
+            typeof claimedRaw === "number" && Number.isFinite(claimedRaw)
+              ? claimedRaw
+              : claimedRaw && typeof claimedRaw.toMillis === "function"
+                ? claimedRaw.toMillis()
+                : 0;
           if (data.petpoojaClaimedAt && Date.now() - claimedAt < CLAIM_TTL_MS) continue;
           tx.set(
             doc.ref,
             {
               petpoojaStatus: "processing",
-              petpoojaClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+              petpoojaClaimedAt: Date.now(),
             },
             { merge: true }
           );

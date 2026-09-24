@@ -38,7 +38,7 @@ to `firebase.json`, add a row to this table.
 | `PETPOOJA_ACCESS_TOKEN` | Petpooja team (same panel) | 40 chars | `Authorization: Bearer` |
 | `PETPOOJA_MENU_URL` / `PETPOOJA_ORDER_URL` | defaults OK | AWS execute-api URLs | menu / order push |
 | `RAZORPAY_KEY_ID` / `KEY_SECRET` / `WEBHOOK_SECRET` | Razorpay dashboard | `rzp_live_…` | payments; deploy **refuses** to boot in production on mock keys (`assertProductionKeys`) |
-| `OTP_HMAC_SECRET` | `openssl rand -hex 32` — set BEFORE first prod deploy | 64 hex chars | delivery-OTP HMAC. Falls back to the Razorpay webhook secret with a warning — so rotating `RAZORPAY_WEBHOOK_SECRET` without this set silently invalidates every in-flight OTP |
+| `OTP_HMAC_SECRET` | `openssl rand -hex 32` — set BEFORE first prod deploy | 64 hex chars | delivery-OTP HMAC. Dedicated secret, no fallback: `assertProductionKeys` refuses to boot in production without it |
 | `PORTER_API_KEY` / `PORTER_CUSTOMER_ID` / `PORTER_WEBHOOK_SECRET` | Porter Enterprise onboarding (`porter.in/api-integrations`, ~1 business day, `help@porter.in`) | — | quote/book dispatch; deploy **refuses** mock keys in production (same guard) |
 | `FIREBASE_SERVICE_ACCOUNT` / `FIREBASE_PROJECT_ID` | GCP console | JSON | admin SDK |
 
@@ -192,9 +192,18 @@ All remotes use clean `https://github.com/…` URLs (no tokens on disk —
    on token registration. ~~Web push~~ DONE (Delivery): SW + VAPID + token→user
    linking; needs `VITE_FCM_VAPID_KEY` from Firebase Console. Native Play
    Integrity / App Attest still open (no native plugin).
-6. ~~App Check~~ DONE (monitor mode): clients attest (reCAPTCHA v3 web),
-   server verifies on app routes, webhooks excluded. To enforce: ship
-   `VITE_RECAPTCHA_SITE_KEY`, then set functions `APP_CHECK_ENFORCEMENT=true`.
+6. ~~App Check~~ DONE (monitor mode + native wiring 2026-09-23): clients
+   attest (reCAPTCHA v3 web; Play Integrity / App Attest on native via
+   `@capacitor-firebase/app-check`, wired in both apps' firebase config with
+   graceful null fallback), server verifies on app routes, webhooks excluded.
+   To enforce (needs Firebase Console, cannot be done from code alone):
+   a) Console → App Check → register both Android apps (SHA-256 from the
+      release keystore) with Play Integrity, both iOS apps with App Attest;
+   b) ship `VITE_RECAPTCHA_SITE_KEY` in both clients; c) run `npx cap sync`
+      in both apps (registers the native plugin) and rebuild; d) set
+      functions `APP_CHECK_ENFORCEMENT=true` and redeploy. Verify with a
+      release build calling a guarded route before flipping, or legit
+      traffic 403s.
 7. ~~Validation + parity~~ DONE: Zod on 10 money/dispatch routes, 20-basket
    parity suite, zod/vitest patch alignment (functions vitest 1.x and TS majors
    intentionally left — major bumps need a dedicated pass).

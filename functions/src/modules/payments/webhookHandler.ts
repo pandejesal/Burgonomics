@@ -73,28 +73,39 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   // attempt died >10 min ago without completing) is taken over.
   const auditDocRef = db.collection("payment_audits").doc(`aud_evt_${eventId}`);
   const CLAIM_TTL_MS = 10 * 60 * 1000;
-  const alreadyClaimed = async (): Promise<boolean> => {
+  // Tri-state lease: "new" (we claimed it — process), "done" (a prior
+  // attempt completed — 200 ack), "inflight" (a prior attempt claimed
+  // recently but never completed: crash or still working — 500 so Razorpay
+  // retries. The old code 200-acked inflight claims, and a crash between
+  // claim and completion silently dropped real money forever).
+  const acquireClaim = async (): Promise<"new" | "done" | "inflight"> => {
     try {
       await auditDocRef.create({
         eventId,
         event,
-        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        claimedAt: Date.now(),
         completedAt: null,
       });
-      return false;
+      return "new";
     } catch {
       // Lost the race or a prior attempt claimed it — inspect the lease.
       try {
         const snap = await auditDocRef.get();
         const data = (snap.exists ? (snap.data() as any) : undefined) as any;
-        if (data?.completedAt) return true;
+        if (data?.completedAt) return "done";
         const claimedMs =
           typeof data?.claimedAt?.toMillis === "function"
             ? data.claimedAt.toMillis()
             : typeof data?.claimedAt === "number"
               ? data.claimedAt
               : 0;
-        return Date.now() - claimedMs < CLAIM_TTL_MS;
+        // Stale claim (previous attempt died >10 min ago): take over by
+        // re-stamping a fresh numeric lease, then process.
+        if (Date.now() - claimedMs >= CLAIM_TTL_MS) {
+          await auditDocRef.set({ claimedAt: Date.now() }, { merge: true });
+          return "new";
+        }
+        return "inflight";
       } catch (leaseErr) {
         // Lease unreadable: we cannot prove a prior attempt completed.
         // Fail LOUD (500 → Razorpay retries) — the old `return true`
@@ -108,9 +119,9 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       }
     }
   };
-  let claimed: boolean;
+  let claim: "new" | "done" | "inflight";
   try {
-    claimed = await alreadyClaimed();
+    claim = await acquireClaim();
   } catch (leaseErr: any) {
     console.warn(
       "[Razorpay Webhook] idempotency lease unavailable — 500 so Razorpay retries:",
@@ -119,8 +130,12 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
     res.status(500).json({ error: "Idempotency check unavailable" });
     return;
   }
-  if (claimed) {
+  if (claim === "done") {
     res.status(200).json({ status: "already_processed" });
+    return;
+  }
+  if (claim === "inflight") {
+    res.status(500).json({ error: "Event is being processed — retry shortly" });
     return;
   }
 
@@ -325,7 +340,10 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       const transferEntity = payload.payload?.transfer?.entity;
       const linkedAccount = transferEntity?.recipient;
       if (transferEntity?.id) {
-        await db.collection("route_transfer_events").doc(`rtevt_${eventId}`).set(
+        // Convergent doc id per transfer+event (NOT per Razorpay eventId):
+        // the same transfer retried under a new eventId updates one doc
+        // instead of forking divergent duplicates.
+        await db.collection("route_transfer_events").doc(`rtevt_${transferEntity.id}_${event}`).set(
           {
             eventId,
             event,
@@ -351,24 +369,58 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       const refundId = refundEntity?.id;
       const amount = refundEntity?.amount ? refundEntity.amount / 100 : 0;
 
-      // Find order by paymentId
+      // Find order by paymentId. More than one match (reused payment
+      // intent) is ambiguous — park for review instead of picking an
+      // arbitrary doc and stamping the wrong order refunded.
       const ordersSnap = await db
         .collection("orders")
         .where("payment.razorpayPaymentId", "==", paymentId)
-        .limit(1)
+        .limit(2)
         .get();
 
-      if (!ordersSnap.empty) {
-        const orderDoc = ordersSnap.docs[0];
-        await orderDoc.ref.set(
+      if (ordersSnap.size > 1) {
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Ambiguous processed refund ${refundId} (payment ${paymentId}, amount ${amount}) — ${ordersSnap.size} orders share this payment id; manual review required`,
+        });
+        await db.collection("unmatched_payments").doc(`ump_refund_${eventId}`).set(
           {
-            refundStatus: "refunded",
+            eventId,
+            event,
+            razorpayPaymentId: paymentId,
             refundId,
-            refundAmount: amount,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            amount,
+            currency: refundEntity?.currency || "INR",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+            reason: "refund_ambiguous_match",
           },
           { merge: true }
         );
+      } else if (!ordersSnap.empty) {
+        const orderDoc = ordersSnap.docs[0];
+        // Monotonic compare-and-set in a transaction: a stale or smaller
+        // replay must never overwrite a larger recorded refund downwards.
+        // refundedTotalPaise only ever grows toward the captured total.
+        const amountPaise = Math.round((Number(amount) || 0) * 100);
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(orderDoc.ref);
+          const data = (snap.exists ? snap.data() : {}) as any;
+          const existingTotal = Number(data.refundedTotalPaise) || 0;
+          const nextTotal = Math.max(existingTotal, amountPaise);
+          tx.set(
+            orderDoc.ref,
+            {
+              refundStatus: "refunded",
+              refundId,
+              refundAmount: nextTotal / 100,
+              refundedTotalPaise: nextTotal,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        });
         try {
           const orderData = orderDoc.data() as any;
           const { pushToCustomer } = await import("../notifications/fcmClient");

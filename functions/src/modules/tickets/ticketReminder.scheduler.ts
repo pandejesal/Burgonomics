@@ -129,9 +129,13 @@ export async function checkTicketInactivityReminders(): Promise<{
   remindedCount: number;
 }> {
   // Any ticket still open or escalated and not yet resolved/closed.
+  // Ordered oldest-first: beyond the 100-doc cap the most overdue tickets
+  // escalate first (an unordered limit could starve old tickets forever).
+  // Requires the (status, createdAt) composite in firestore.indexes.json.
   const snapshot = await db
     .collection("support_tickets")
     .where("status", "in", ["open", "escalated"])
+    .orderBy("createdAt", "asc")
     .limit(100)
     .get();
 

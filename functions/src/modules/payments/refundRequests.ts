@@ -1,11 +1,14 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { serviceError } from "../../core/errors";
+import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 
 export interface DisposeRefundParams {
   refundId: string;
   reason: string;
   decidedBy?: string;
+  /** Authenticated staff caller — branch-scoped when present. */
+  caller?: StaffCaller;
 }
 
 /**
@@ -18,7 +21,7 @@ export interface DisposeRefundParams {
  * Writes via Admin SDK — client rules deny all direct writes to `refunds`.
  */
 export async function disposeRefundRequest(params: DisposeRefundParams) {
-  const { refundId, reason, decidedBy } = params;
+  const { refundId, reason, decidedBy, caller } = params;
   const ref = db.collection("refunds").doc(refundId);
   const snap = await ref.get();
   if (!snap.exists) {
@@ -30,6 +33,14 @@ export async function disposeRefundRequest(params: DisposeRefundParams) {
     throw missing;
   }
   const data = (snap.data() || {}) as any;
+  // Staff boundary: resolve the linked order and confine the decision to
+  // the caller's branches. Docs without a resolvable order fail closed for
+  // scoped roles (brand admins pass).
+  if (caller) {
+    const orderId = typeof data.orderId === "string" ? data.orderId : null;
+    const orderSnap = orderId ? await db.collection("orders").doc(orderId).get() : null;
+    await assertOrderBranchAccess(caller, orderSnap && orderSnap.exists ? orderSnap.data()! : {});
+  }
   if (data.status !== "PENDING") {
     const conflict: any = serviceError(
       "REFUND_REQUEST_NOT_PENDING",

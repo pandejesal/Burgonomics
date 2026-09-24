@@ -7,6 +7,7 @@ import {
   syncMenuSchema,
   pushStockSchema,
   porterBookSchema,
+  porterCancelSchema,
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
 } from "../src/core/validation";
@@ -62,6 +63,8 @@ describe("route request validation", () => {
     expect(pushOrderSchema.safeParse({}).success).toBe(false);
     expect(syncMenuSchema.safeParse({}).success).toBe(false);
     expect(porterBookSchema.safeParse({ staffName: "x" }).success).toBe(false);
+    expect(porterCancelSchema.safeParse({}).success).toBe(false);
+    expect(porterCancelSchema.safeParse({ orderId: "o" }).success).toBe(true);
     expect(
       manualDispatchSchema.safeParse({ orderId: "o", riderName: "r", riderPhone: "p" }).success
     ).toBe(true);

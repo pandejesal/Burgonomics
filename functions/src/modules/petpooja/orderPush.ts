@@ -3,6 +3,7 @@ import { config } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
 import * as admin from "firebase-admin";
+import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 
 function getCallbackUrl(): string {
   return (
@@ -86,13 +87,16 @@ export function formatPetpoojaOrderPayload(order: any, branch: any, resId: strin
   };
 }
 
-export async function pushOrderToPetpooja(orderId: string): Promise<boolean> {
+export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller): Promise<boolean> {
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
     throw new Error(`Order ${orderId} does not exist`);
   }
 
   const order = orderDoc.data()!;
+  // Staff boundary: branch-A staff cannot push Branch-B's KOT. System
+  // callers (scheduler) pass no caller and skip the check.
+  if (caller) await assertOrderBranchAccess(caller, order);
   const branchId = order.branchId;
 
   // Mock Mode Return

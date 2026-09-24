@@ -155,12 +155,24 @@ export async function attemptRouteTransfer(
  * Runs on a schedule and handles each order independently.
  */
 export async function retryPendingRouteTransfersWorker() {
-  const pendingSnap = await db
-    .collection("orders")
-    .where("routeTransferStatus", "==", "pending_retry")
-    .where("routeTransferRetryCount", "<=", 3)
-    .limit(20)
-    .get();
+  // The composite index for (routeTransferStatus, routeTransferRetryCount)
+  // may be missing on a fresh project — an unhandled throw would kill the
+  // whole tick silently. Fail the tick LOUD with zero retried instead.
+  let pendingSnap: any;
+  try {
+    pendingSnap = await db
+      .collection("orders")
+      .where("routeTransferStatus", "==", "pending_retry")
+      .where("routeTransferRetryCount", "<=", 3)
+      .limit(20)
+      .get();
+  } catch (err: any) {
+    console.warn(
+      "[Route Transfer Worker] initial query failed (missing composite index?) — skipping tick:",
+      err?.message || err
+    );
+    return { retriedCount: 0 };
+  }
 
   // One batched prefetch for every distinct branch: the old code re-read the
   // same branch doc once per order (N orders × 1 read + 1 external POST,
@@ -178,7 +190,11 @@ export async function retryPendingRouteTransfersWorker() {
         const snap = await db.collection("branches").doc(branchId).get();
         branchAccounts.set(branchId, snap.data()?.razorpayAccountId ?? null);
       } catch {
-        branchAccounts.set(branchId, null);
+        // Transient read blip: leave the branch ABSENT (not null) so
+        // processDoc passes undefined and attemptRouteTransfer re-reads the
+        // branch inline. Poisoning null here would mark the order terminally
+        // "failed" (unlinked) over a momentary timeout — branch unpaid, no
+        // retry trail. Only a present-but-empty account means unlinked.
       }
     })
   );
@@ -196,16 +212,22 @@ export async function retryPendingRouteTransfersWorker() {
           const fresh = await tx.get(doc.ref);
           const data = (fresh.exists ? fresh.data() : undefined) as any;
           if (!data || data.routeTransferStatus !== "pending_retry") continue;
+          // Numeric-first lease read (see porter claim): a serverTimestamp
+          // sentinel has no toMillis and would read as 0, causing instant
+          // false takeover and a double transfer POST.
+          const claimedAtRaw = data.routeTransferClaimedAt;
           const claimedAt =
-            data.routeTransferClaimedAt && typeof data.routeTransferClaimedAt.toMillis === "function"
-              ? data.routeTransferClaimedAt.toMillis()
-              : 0;
+            typeof claimedAtRaw === "number" && Number.isFinite(claimedAtRaw)
+              ? claimedAtRaw
+              : claimedAtRaw && typeof claimedAtRaw.toMillis === "function"
+                ? claimedAtRaw.toMillis()
+                : 0;
           if (data.routeTransferClaimedAt && Date.now() - claimedAt < CLAIM_TTL_MS) continue;
           tx.set(
             doc.ref,
             {
               routeTransferStatus: "transferring",
-              routeTransferClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+              routeTransferClaimedAt: Date.now(),
             },
             { merge: true }
           );

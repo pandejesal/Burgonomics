@@ -8,7 +8,9 @@ import { z } from "zod";
  */
 
 const nonEmptyString = z.string().min(1);
-const optionalNonNegative = z.number().min(0).optional();
+// Finite + capped: Infinity/NaN used to flow into Math.max(0, x) and produce
+// Infinity totals downstream. Cap matches the per-line-item ceiling.
+const optionalNonNegative = z.number().finite().min(0).max(100000).optional();
 
 const pricingLineItemSchema = z.object({
   id: z.string().min(1).optional(),
@@ -34,8 +36,8 @@ export const createPaymentOrderSchema = z
     orderType: z.enum(["delivery", "takeaway", "dinein"]),
     deliveryFee: optionalNonNegative,
     packagingFee: optionalNonNegative,
-    couponCode: z.string().optional(),
-    loyaltyPointsToRedeem: z.number().int().min(0).optional(),
+    couponCode: z.string().trim().max(64).optional(),
+    loyaltyPointsToRedeem: z.number().int().min(0).max(100000).optional(),
     customerId: z.string().optional(),
     orderId: z.string().optional(),
     idempotencyKey: z.string().min(8).max(128).optional(),
@@ -54,8 +56,8 @@ export const verifyPaymentSchema = z.object({
 export const refundSchema = z.object({
   orderId: nonEmptyString,
   razorpayPaymentId: nonEmptyString,
-  amountRupees: z.number().positive().optional(),
-  reason: z.string().optional(),
+  amountRupees: z.number().finite().positive().max(100000).optional(),
+  reason: z.string().max(2000).optional(),
 });
 
 // Loop 7/120: refund-request disposition (reject path). Reason is REQUIRED —
@@ -89,18 +91,24 @@ export const pushStockSchema = z.object({
 
 export const porterBookSchema = z.object({
   orderId: nonEmptyString,
-  staffName: z.string().optional(),
+  staffName: z.string().max(128).optional(),
 });
 
-const optionalCoord = z.number().finite().optional();
+export const porterCancelSchema = z.object({
+  orderId: nonEmptyString,
+  staffName: z.string().max(128).optional(),
+});
+
+const optionalLatitude = z.number().finite().min(-90).max(90).optional();
+const optionalLongitude = z.number().finite().min(-180).max(180).optional();
 
 export const porterQuoteSchema = z.object({
-  pickupLat: optionalCoord,
-  pickupLng: optionalCoord,
-  dropLat: optionalCoord,
-  dropLng: optionalCoord,
-  customerName: z.string().optional(),
-  customerPhone: z.string().optional(),
+  pickupLat: optionalLatitude,
+  pickupLng: optionalLongitude,
+  dropLat: optionalLatitude,
+  dropLng: optionalLongitude,
+  customerName: z.string().max(120).optional(),
+  customerPhone: z.string().max(32).optional(),
 });
 
 export const verifyDeliveryOtpSchema = z.object({
@@ -111,10 +119,26 @@ export const verifyDeliveryOtpSchema = z.object({
 
 export const manualDispatchSchema = z.object({
   orderId: nonEmptyString,
-  riderName: nonEmptyString,
-  riderPhone: nonEmptyString,
-  staffName: z.string().optional(),
-  notes: z.string().optional(),
+  riderName: z.string().min(1).max(120),
+  riderPhone: z.string().min(1).max(32),
+  staffName: z.string().max(128).optional(),
+  notes: z.string().max(500).optional(),
+});
+
+export const orderBumpSchema = z.object({
+  orderId: nonEmptyString,
+  status: z.enum([
+    "pending",
+    "accepted",
+    "preparing",
+    "ready",
+    "out_for_delivery",
+    "delivered",
+    "cancelled",
+    "placed",
+    "ready_for_pickup",
+  ]),
+  cancellationReason: z.string().trim().min(1).max(500).optional(),
 });
 
 export const adjustCoinsSchema = z.object({
@@ -191,7 +215,7 @@ export const dispatchNotificationSchema = z.object({
   token: z.string().min(1).max(256).optional(),
   title: z.string().min(1).max(120),
   body: z.string().min(1).max(500),
-  data: z.record(z.string()).optional(),
+  data: z.record(z.string(), z.string()).optional(),
 }).refine((d) => (d.topic ? 1 : 0) + (d.token ? 1 : 0) === 1, {
   message: "exactly one of topic or token is required",
 });

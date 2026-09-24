@@ -14,10 +14,14 @@ export async function cleanupExpiredGuestSessionsWorker(): Promise<{
   let cleanedCartsCount = 0;
 
   try {
+    // Oldest-stale-first (single-field range + same-field orderBy needs no
+    // composite). Window raised to the 500-write batch ceiling so a large
+    // backlog drains instead of re-cleaning the same head each tick.
     const staleCartsSnap = await db
       .collection("carts")
       .where("updatedAt", "<", sevenDaysAgo)
-      .limit(100)
+      .orderBy("updatedAt", "asc")
+      .limit(500)
       .get();
 
     if (!staleCartsSnap.empty) {

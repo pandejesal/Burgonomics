@@ -1,12 +1,15 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { serviceError } from "../../core/errors";
+import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 
 export interface ResolveDiscrepancyParams {
   discrepancyId: string;
   resolution: string;
   note?: string;
   decidedBy?: string;
+  /** Authenticated staff caller — branch-scoped when present. */
+  caller?: StaffCaller;
 }
 
 /**
@@ -19,7 +22,7 @@ export interface ResolveDiscrepancyParams {
  * Writes via Admin SDK — client rules deny all direct writes.
  */
 export async function resolveDiscrepancy(params: ResolveDiscrepancyParams) {
-  const { discrepancyId, resolution, note, decidedBy } = params;
+  const { discrepancyId, resolution, note, decidedBy, caller } = params;
   const ref = db.collection("payment_discrepancies").doc(discrepancyId);
   const snap = await ref.get();
   if (!snap.exists) {
@@ -30,6 +33,13 @@ export async function resolveDiscrepancy(params: ResolveDiscrepancyParams) {
     );
   }
   const data = (snap.data() || {}) as any;
+  // Staff boundary: confine the resolution to the caller's branches via the
+  // parked order. Unresolvable linkage fails closed for scoped roles.
+  if (caller) {
+    const orderId = typeof data.orderId === "string" ? data.orderId : null;
+    const orderSnap = orderId ? await db.collection("orders").doc(orderId).get() : null;
+    await assertOrderBranchAccess(caller, orderSnap && orderSnap.exists ? orderSnap.data()! : {});
+  }
   if (data.status !== "needs_review") {
     throw serviceError(
       "DISCREPANCY_NOT_PENDING",

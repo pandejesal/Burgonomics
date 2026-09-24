@@ -91,6 +91,7 @@ vi.mock("firebase-admin", () => {
     serverTimestamp: () => "MOCK_TIMESTAMP",
     increment: (n: number) => n,
     arrayUnion: (item: any) => [item],
+    delete: () => "MOCK_DELETE",
   };
 
   const firestoreFn: any = vi.fn(() => mockDb);

@@ -2,8 +2,8 @@ import { db } from "../../core/firebase";
 import { captureErrorSnapshot } from "../../core/errors";
 import { config } from "../../config/env";
 import { getPetpoojaConfig } from "./client";
-import { autoRefund } from "../payments/razorpay.service";
 import * as admin from "firebase-admin";
+import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
 
 /**
  * Normalizes Petpooja order status codes into canonical Burgonomics order statuses.
@@ -82,8 +82,11 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
 export async function pushItemStockToPetpooja(
   branchId: string,
   itemId: string,
-  inStock: boolean
+  inStock: boolean,
+  caller?: StaffCaller
 ): Promise<boolean> {
+  // Staff boundary: branch-A staff cannot 86 Branch-B's items.
+  if (caller) assertBranchAccess(caller, branchId);
   if (config.mock.petpoojaPos) {
     console.log(`[Mock Petpooja 86ing] Pushed branch=${branchId} item=${itemId} inStock=${inStock}`);
     return true;
@@ -249,24 +252,41 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
 
     const orderData = orderDoc.data()!;
     const payment = orderData.payment;
-    // F3: the old `!payment.refunded` guard was dead — nothing ever writes
-    // `payment.refunded` (autoRefund writes top-level `refundStatus`). Gate
-    // on the real terminal state instead, and stamp the nested INITIATED
-    // marker only when a NEW refund was created (replays return reused:true
-    // and must not re-mark an in-flight status after completion).
+    // Product decision 2026-09-23: kitchen-cancelled orders PARK a refund
+    // request for staff approval instead of auto-refunding. The old code
+    // POSTed the refund with no human and no branch check — a compromised
+    // or mistaken POS cancel moved real money silently.
     const alreadyRefunded = orderData.refundStatus === "refunded" || payment?.refunded === true;
     if (payment?.razorpayPaymentId && !alreadyRefunded) {
       try {
-        const refundResult: any = await autoRefund({
-          orderId,
-          razorpayPaymentId: payment.razorpayPaymentId,
-          reason: "POS_CANCELLED",
-        });
-        if (!refundResult?.reused) {
-          updateData["payment.refundStatus"] = "INITIATED";
+        const existing = await db
+          .collection("refunds")
+          .where("orderId", "==", orderId)
+          .where("status", "==", "PENDING")
+          .limit(1)
+          .get();
+        if (existing.empty) {
+          await db.collection("refunds").doc().set({
+            orderId,
+            branchId: orderData.branchId ?? null,
+            razorpayPaymentId: payment.razorpayPaymentId,
+            amountPaise:
+              typeof payment?.amount === "number"
+                ? payment.amount
+                : typeof orderData.pricing?.grandTotal === "number"
+                  ? Math.round(orderData.pricing.grandTotal * 100)
+                  : null,
+            reason: "POS_CANCELLED",
+            detail:
+              payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS",
+            status: "PENDING",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          updateData["payment.refundStatus"] = "PENDING_APPROVAL";
         }
       } catch (err) {
-        console.error(`Auto-refund failed on Petpooja cancel for ${orderId}:`, (err as any)?.message || err);
+        console.error(`Refund-request parking failed on Petpooja cancel for ${orderId}:`, (err as any)?.message || err);
       }
     }
   }

@@ -106,6 +106,7 @@ import {
   normalizePorterEvent,
   bookPorterRider,
   rebookPorterRider,
+  cancelPorterBooking,
   handlePorterWebhook,
   generateDeliveryOtp,
   verifyDeliveryOtp,
@@ -514,6 +515,54 @@ describe("Porter Logistics Service", () => {
       expect(res.porterOrderId).toBeDefined();
       expect(res.status).toBe("dispatched");
       expect(savedDocs["orders/order_rebook_ok"].deliveryStatus).toBe("dispatched");
+    });
+  });
+
+  describe("cancelPorterBooking (staff cancel, honest provider contract)", () => {
+    const ownBranchCaller = { uid: "staff_1", role: "branch_staff", branchIds: ["branch_ahmedabad_1"] };
+    const otherBranchCaller = { uid: "staff_2", role: "branch_staff", branchIds: ["branch_other"] };
+
+    it("releases an active booking locally and flags manual dashboard confirm", async () => {
+      savedDocs["orders/order_cancel_1"] = {
+        branchId: "branch_ahmedabad_1",
+        porterOrderId: "PRTR-ORD-LIVE",
+        deliveryStatus: "dispatched",
+      };
+      const res = await cancelPorterBooking("order_cancel_1", "Store Manager", ownBranchCaller);
+      expect(res.success).toBe(true);
+      expect(res.providerCancel).toBe("manual-required");
+      const doc = savedDocs["orders/order_cancel_1"];
+      expect(doc.deliveryStatus).toBe("rider_cancelled");
+      expect(doc.needsRebook).toBe(true);
+      expect(doc.porterDispatchStatus).toBe("cancelled_by_store");
+    });
+
+    it("409s when no active Porter booking exists", async () => {
+      savedDocs["orders/order_cancel_none"] = {
+        branchId: "branch_ahmedabad_1",
+        deliveryStatus: "ready",
+      };
+      const err: any = await cancelPorterBooking("order_cancel_none", "Store Manager", ownBranchCaller).then(
+        () => null,
+        (e) => e
+      );
+      expect(err?.code).toBe("NOTHING_TO_CANCEL");
+      expect(err?.statusCode).toBe(409);
+    });
+
+    it("denies a cross-branch staffer (Forbidden)", async () => {
+      savedDocs["orders/order_cancel_2"] = {
+        branchId: "branch_ahmedabad_1",
+        porterOrderId: "PRTR-ORD-LIVE2",
+        deliveryStatus: "in_transit",
+      };
+      const err: any = await cancelPorterBooking("order_cancel_2", "Store Manager", otherBranchCaller).then(
+        () => null,
+        (e) => e
+      );
+      expect(String(err?.message || "")).toMatch(/^Forbidden/);
+      // Booking untouched by the denied caller.
+      expect(savedDocs["orders/order_cancel_2"].deliveryStatus).toBe("in_transit");
     });
   });
 });

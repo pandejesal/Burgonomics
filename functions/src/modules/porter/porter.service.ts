@@ -179,6 +179,10 @@ export function normalizePorterEvent(event: string | undefined | null): string {
 const PORTER_DISPATCH_CLAIM_TTL_MS = 10 * 60 * 1000;
 
 function porterClaimFreshMs(claimedAt: any): number {
+  // Numeric local-clock lease (never a serverTimestamp sentinel: it has no
+  // toMillis on a fast re-read, which read as 0 and caused instant false
+  // takeover — a second booking while the winner was still in-flight).
+  if (typeof claimedAt === "number" && Number.isFinite(claimedAt)) return claimedAt;
   return claimedAt && typeof claimedAt.toMillis === "function" ? claimedAt.toMillis() : 0;
 }
 
@@ -223,7 +227,7 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
     Date.now() - porterClaimFreshMs(d?.porterDispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS;
   const claimWrite = {
     porterDispatchStatus: "dispatch_pending",
-    porterDispatchClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+    porterDispatchClaimedAt: Date.now(),
   };
 
   if (db && typeof (db as any).runTransaction === "function") {
@@ -489,6 +493,71 @@ export async function bookPorterRider(
   }
 
   return dispatchResult;
+}
+
+/**
+ * Staff-initiated cancellation of a Porter booking. HONESTY CONTRACT: Porter
+ * (porter.in enterprise) publishes no documented cancel endpoint — the
+ * runbook's verify-live list confirms only quote/book shapes. This function
+ * therefore NEVER claims a provider-side cancellation. It releases the order
+ * locally (rider_cancelled + needsRebook so the rebook/in-house flows take
+ * over) and marks porterProviderCancel:"manual-required" so staff confirm
+ * the cancellation in the Porter enterprise dashboard. A blind POST to an
+ * unconfirmed endpoint would be fake traffic.
+ *
+ * Refuses when no active Porter booking exists (409 NOTHING_TO_CANCEL).
+ */
+export async function cancelPorterBooking(
+  orderId: string,
+  staffName?: string,
+  caller?: StaffCaller
+): Promise<{ success: boolean; orderId: string; providerCancel: string; message: string }> {
+  const orderDoc = await db.collection("orders").doc(orderId).get();
+  if (!orderDoc.exists) {
+    const missing: any = new Error(`Order ${orderId} not found`);
+    missing.statusCode = 404;
+    missing.code = "ORDER_NOT_FOUND";
+    throw missing;
+  }
+
+  const order = orderDoc.data()!;
+  if (caller) await assertOrderBranchAccess(caller, order);
+
+  const deliveryStatus = (order as any).deliveryStatus as string | undefined;
+  const porterOrderId = (order as any).porterOrderId as string | undefined;
+  const active =
+    !!porterOrderId &&
+    (deliveryStatus === "dispatched" ||
+      deliveryStatus === "in_transit" ||
+      deliveryStatus === "driver_allocated");
+  if (!active) {
+    const nothing: any = new Error("No active Porter booking to cancel for this order.");
+    nothing.statusCode = 409;
+    nothing.code = "NOTHING_TO_CANCEL";
+    throw nothing;
+  }
+
+  await orderDoc.ref.set(
+    {
+      deliveryStatus: "rider_cancelled",
+      porterDispatchStatus: "cancelled_by_store",
+      porterProviderCancel: "manual-required",
+      needsRebook: true,
+      riderCancellationReason: `Booking cancelled by ${staffName || "Branch Staff"} — confirm cancellation in the Porter dashboard`,
+      cancelledBy: staffName || "Branch Staff",
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return {
+    success: true,
+    orderId,
+    providerCancel: "manual-required",
+    message:
+      "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented.",
+  };
 }
 
 /**

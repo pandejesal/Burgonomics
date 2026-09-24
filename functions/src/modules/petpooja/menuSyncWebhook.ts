@@ -3,6 +3,7 @@ import { config } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
 import * as admin from "firebase-admin";
+import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
 
 export interface PetpoojaMenuItem {
   itemid: string;
@@ -26,10 +27,12 @@ export interface PetpoojaMenuItem {
  * 86-ing in both directions. Legacy `petpooja_products` /
  * `petpooja_categories` / `menu/{branch}/…` collections are deprecated.
  */
-export async function syncPetpoojaMenu(branchId: string): Promise<{
+export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller): Promise<{
   itemCount: number;
   categoriesCount: number;
 }> {
+  // Staff boundary: branch-A staff cannot sync Branch-B's menu.
+  if (caller) assertBranchAccess(caller, branchId);
   // Resolve the Petpooja restID for this branch (ops links outlets via
   // branches/{id}.petpoojaStoreId — Runbook §5). Loop 6: FAIL CLOSED on
   // unlinked branches or failed lookups — the old fallback sent our internal
@@ -216,29 +219,43 @@ export async function syncPetpoojaMenu(branchId: string): Promise<{
   if (!config.mock.petpoojaPos && items.length > 0) {
     try {
       const feedIds = new Set(items.map((i) => String((i as PetpoojaMenuItem).itemid)));
-      const existingSnap = await db
-        .collection("products")
-        .where("branchId", "==", branchId)
-        .limit(1000)
-        .get();
+      // Paginated by doc id: the old single limit(1000) pass left SKUs past
+      // the window live/orderable forever on catalogs bigger than the page.
+      const TOMBSTONE_PAGE = 500;
+      let lastDoc: any = null;
       let retired = 0;
-      for (const d of existingSnap.docs || []) {
-        const dd = (d.data() as any) || {};
-        if (dd.isCombo) continue;
-        const pid = dd.petpoojaItemId ? String(dd.petpoojaItemId) : null;
-        if (!pid) continue;
-        if (!feedIds.has(pid) && dd.inStock !== false) {
-          await d.ref.set(
-            {
-              inStock: false,
-              ghostRetired: true,
-              ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-          retired++;
+      for (;;) {
+        let pageQuery: any = db
+          .collection("products")
+          .where("branchId", "==", branchId)
+          .orderBy("__name__")
+          .limit(TOMBSTONE_PAGE);
+        if (lastDoc && typeof pageQuery.startAfter === "function") {
+          pageQuery = pageQuery.startAfter(lastDoc);
         }
+        const existingSnap = await pageQuery.get();
+        const docs = existingSnap.docs || [];
+        for (const d of docs) {
+          const dd = (d.data() as any) || {};
+          if (dd.isCombo) continue;
+          const pid = dd.petpoojaItemId ? String(dd.petpoojaItemId) : null;
+          if (!pid) continue;
+          if (!feedIds.has(pid) && dd.inStock !== false) {
+            await d.ref.set(
+              {
+                inStock: false,
+                ghostRetired: true,
+                ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+            retired++;
+          }
+        }
+        if (docs.length < TOMBSTONE_PAGE) break;
+        lastDoc = docs[docs.length - 1];
+        if (!lastDoc || typeof pageQuery.startAfter !== "function") break;
       }
       if (retired > 0) {
         const { captureErrorSnapshot } = await import("../../core/errors");

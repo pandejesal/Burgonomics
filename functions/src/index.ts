@@ -45,10 +45,12 @@ import {
   bookPorterRider,
   handlePorterWebhook,
   rebookPorterRider,
+  cancelPorterBooking,
   verifyDeliveryOtp,
   manualBranchDispatch,
   pollActivePorterOrdersWorker,
 } from "./modules/porter/porter.service";
+import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import {
   createTicket,
   addTicketMessage,
@@ -90,9 +92,11 @@ import {
   syncMenuSchema,
   pushStockSchema,
   porterBookSchema,
+  porterCancelSchema,
   porterQuoteSchema,
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
+  orderBumpSchema,
   adjustCoinsSchema,
   createTicketSchema,
   ticketMessageSchema,
@@ -198,6 +202,8 @@ app.use(
     "/porter/quote",
     "/porter/book",
     "/porter/rebook",
+    "/porter/cancel",
+    "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
     "/tickets/create",
@@ -274,7 +280,14 @@ app.post("/payments/verifyPayment", optionalAuth, validateBody(verifyPaymentSche
     const result = await verifyPayment(req.body);
     res.status(200).json(result);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || "Payment verification failed" });
+    // Pass through service status codes — notably 202 TRANSFER_IN_PROGRESS
+    // (client retries verify with the same key in ~2s). Degrading it to 400
+    // makes clients treat a live transfer as a hard failure and re-pay.
+    const status = err.statusCode === 202 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 502 || err.statusCode === 503 ? err.statusCode : 400;
+    if (err.statusCode === 202 && Number.isFinite(err.retryAfterMs)) {
+      res.setHeader("Retry-After", String(Math.ceil(err.retryAfterMs / 1000)));
+    }
+    res.status(status).json({ error: err.message || "Payment verification failed", code: err.code });
   }
 });
 
@@ -288,7 +301,11 @@ app.post(
       const result = await autoRefund(req.body, req.user);
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Refund failed" });
+      // Pass through service status codes (400 validation, 404 not found,
+      // 409 already-refunded, 502 gateway failure) so the UI can distinguish
+      // "already refunded — do not retry" from retryable outages.
+      const status = err.statusCode === 400 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 502 ? err.statusCode : 500;
+      res.status(status).json({ error: err.message || "Refund failed", code: err.code });
     }
   }
 );
@@ -306,10 +323,10 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const decidedBy = req.user?.email || req.user?.uid || "staff";
-      const result = await disposeRefundRequest({ ...req.body, decidedBy });
+      const result = await disposeRefundRequest({ ...req.body, decidedBy, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
-      const status = err.statusCode === 404 || err.statusCode === 409 ? err.statusCode : 500;
+      const status = err.statusCode === 404 || err.statusCode === 409 ? err.statusCode : staffErrorStatus(err, 500);
       res.status(status).json({ error: err.message || "Failed to dispose refund request" });
     }
   }
@@ -326,10 +343,10 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const decidedBy = req.user?.email || req.user?.uid || "staff";
-      const result = await resolveDiscrepancy({ ...req.body, decidedBy });
+      const result = await resolveDiscrepancy({ ...req.body, decidedBy, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
-      const status = err.statusCode === 404 || err.statusCode === 409 ? err.statusCode : 500;
+      const status = err.statusCode === 404 || err.statusCode === 409 ? err.statusCode : staffErrorStatus(err, 500);
       res.status(status).json({ error: err.message || "Failed to resolve discrepancy" });
     }
   }
@@ -394,10 +411,10 @@ app.post(
         res.status(400).json({ error: "branchId is required" });
         return;
       }
-      const result = await syncPetpoojaMenu(branchId);
+      const result = await syncPetpoojaMenu(branchId, req.user);
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Menu sync failed" });
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Menu sync failed" });
     }
   }
 );
@@ -428,10 +445,10 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.body.orderId;
-      const success = await pushOrderToPetpooja(orderId);
+      const success = await pushOrderToPetpooja(orderId, req.user);
       res.status(200).json({ success });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "KOT push failed" });
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "KOT push failed" });
     }
   }
 );
@@ -444,10 +461,10 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { branchId, itemId, inStock } = req.body;
-      const success = await pushItemStockToPetpooja(branchId, itemId, inStock);
+      const success = await pushItemStockToPetpooja(branchId, itemId, inStock, req.user);
       res.status(200).json({ success });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Stock push failed" });
+      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Stock push failed" });
     }
   }
 );
@@ -501,6 +518,49 @@ app.post(
       res.status(200).json(result);
     } catch (err: any) {
       res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to re-book Porter rider" });
+    }
+  }
+);
+
+app.post(
+  "/porter/cancel",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(porterCancelSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { orderId, staffName } = req.body;
+      const result = await cancelPorterBooking(
+        orderId,
+        staffName || req.user?.email || "Branch Staff",
+        req.user
+      );
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status =
+        err.statusCode === 404 || err.statusCode === 409
+          ? err.statusCode
+          : staffErrorStatus(err, 500);
+      res.status(status).json({ error: err.message || "Failed to cancel Porter booking" });
+    }
+  }
+);
+
+app.post(
+  "/orders/bumpStatus",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(orderBumpSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await bumpOrderStatus({ ...req.body, caller: req.user });
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status =
+        err.statusCode === 400 || err.statusCode === 404
+          ? err.statusCode
+          : staffErrorStatus(err, 500);
+      res.status(status).json({ error: err.message || "Failed to update order status" });
     }
   }
 );
@@ -565,7 +625,9 @@ app.post(
 app.post("/tickets/create", requireAuth, validateBody(createTicketSchema), async (req: AuthenticatedRequest, res) => {
   try {
     const customerId = req.user?.uid || req.body.customerId;
-    const result = await createTicket({ ...req.body, customerId });
+    // Bind the verified caller so customerId cannot be stamped for another
+    // user and per-customer spam guards key on the real uid.
+    const result = await createTicket({ ...req.body, customerId, caller: req.user });
     res.status(200).json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to create support ticket" });
