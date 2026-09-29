@@ -1,0 +1,160 @@
+{
+  "capturedAt": "2026-09-25T21:34:26.070Z",
+  "viewport": "390x844 mobile viewport (fullPage off)",
+  "results": [
+    {
+      "name": "01-login",
+      "route": "/login?demo=1",
+      "finalUrl": "http://localhost:5194/login?demo=1",
+      "file": "01-login.png",
+      "ok": true
+    },
+    {
+      "name": "02-dashboard",
+      "route": "/dashboard?demo=1",
+      "finalUrl": "http://localhost:5194/dashboard?demo=1",
+      "file": "02-dashboard.png",
+      "ok": true
+    },
+    {
+      "name": "03-orders",
+      "route": "/orders?demo=1",
+      "finalUrl": "http://localhost:5194/orders?demo=1",
+      "file": "03-orders.png",
+      "ok": true
+    },
+    {
+      "name": "04-order-detail",
+      "route": "/orders/demo-order-01?demo=1",
+      "finalUrl": "http://localhost:5194/orders/demo-order-01?demo=1",
+      "file": "04-order-detail.png",
+      "ok": true
+    },
+    {
+      "name": "05-delivery-queue",
+      "route": "/delivery-queue?demo=1",
+      "finalUrl": "http://localhost:5194/delivery-queue?demo=1",
+      "file": "05-delivery-queue.png",
+      "ok": true
+    },
+    {
+      "name": "06-kds",
+      "route": "/kds?demo=1",
+      "finalUrl": "http://localhost:5194/kds?demo=1",
+      "file": "06-kds.png",
+      "ok": true
+    },
+    {
+      "name": "07-chat",
+      "route": "/chat?demo=1",
+      "finalUrl": "http://localhost:5194/chat?demo=1",
+      "file": "07-chat.png",
+      "ok": true
+    },
+    {
+      "name": "08-customers",
+      "route": "/customers?demo=1",
+      "finalUrl": "http://localhost:5194/customers?demo=1",
+      "file": "08-customers.png",
+      "ok": true
+    },
+    {
+      "name": "09-customer-detail",
+      "route": "/customers/demo-customer-01?demo=1",
+      "finalUrl": "http://localhost:5194/customers/demo-customer-01?demo=1",
+      "file": "09-customer-detail.png",
+      "ok": true
+    },
+    {
+      "name": "10-tickets",
+      "route": "/tickets?demo=1",
+      "finalUrl": "http://localhost:5194/tickets?demo=1",
+      "file": "10-tickets.png",
+      "ok": true
+    },
+    {
+      "name": "11-ticket-detail",
+      "route": "/tickets/demo-ticket-01?demo=1",
+      "finalUrl": "http://localhost:5194/tickets/demo-ticket-01?demo=1",
+      "file": "11-ticket-detail.png",
+      "ok": true
+    },
+    {
+      "name": "12-menu",
+      "route": "/menu?demo=1",
+      "finalUrl": "http://localhost:5194/menu?demo=1",
+      "file": "12-menu.png",
+      "ok": true
+    },
+    {
+      "name": "13-notifications",
+      "route": "/notifications?demo=1",
+      "finalUrl": "http://localhost:5194/notifications?demo=1",
+      "file": "13-notifications.png",
+      "ok": true
+    },
+    {
+      "name": "14-branches",
+      "route": "/branches?demo=1",
+      "finalUrl": "http://localhost:5194/branches?demo=1",
+      "file": "14-branches.png",
+      "ok": true
+    },
+    {
+      "name": "15-analytics",
+      "route": "/analytics?demo=1",
+      "finalUrl": "http://localhost:5194/analytics?demo=1",
+      "file": "15-analytics.png",
+      "ok": true
+    },
+    {
+      "name": "16-users",
+      "route": "/users?demo=1",
+      "finalUrl": "http://localhost:5194/users?demo=1",
+      "file": "16-users.png",
+      "ok": true
+    },
+    {
+      "name": "17-settings",
+      "route": "/settings?demo=1",
+      "finalUrl": "http://localhost:5194/settings?demo=1",
+      "file": "17-settings.png",
+      "ok": true
+    },
+    {
+      "name": "18-admin-login",
+      "route": "/admin/login?demo=1",
+      "finalUrl": "http://localhost:5194/admin/login?demo=1",
+      "file": "18-admin-login.png",
+      "ok": true
+    },
+    {
+      "name": "19-admin-dashboard",
+      "route": "/admin?demo=1",
+      "finalUrl": "http://localhost:5194/admin?demo=1",
+      "file": "19-admin-dashboard.png",
+      "ok": true
+    },
+    {
+      "name": "20-admin-orders",
+      "route": "/admin/orders?demo=1",
+      "finalUrl": "http://localhost:5194/admin/orders?demo=1",
+      "file": "20-admin-orders.png",
+      "ok": true
+    },
+    {
+      "name": "21-admin-stores",
+      "route": "/admin/stores?demo=1",
+      "finalUrl": "http://localhost:5194/admin/stores?demo=1",
+      "file": "21-admin-stores.png",
+      "ok": true
+    },
+    {
+      "name": "22-admin-menu",
+      "route": "/admin/menu?demo=1",
+      "finalUrl": "http://localhost:5194/admin/menu?demo=1",
+      "file": "22-admin-menu.png",
+      "ok": true
+    }
+  ]
+}

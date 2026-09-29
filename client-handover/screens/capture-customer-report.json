@@ -1,0 +1,181 @@
+{
+  "capturedAt": "2026-09-25T20:57:47.014Z",
+  "viewport": "390x844 mobile viewport (fullPage off)",
+  "storeSelected": true,
+  "results": [
+    {
+      "name": "01-splash-root",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/stores",
+      "file": "01-splash-root.png"
+    },
+    {
+      "name": "02-home",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/home",
+      "file": "02-home.png"
+    },
+    {
+      "name": "05-menu",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/menu",
+      "file": "05-menu.png"
+    },
+    {
+      "name": "06-product-detail",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/menu/product/demo-burger-01",
+      "file": "06-product-detail.png"
+    },
+    {
+      "name": "03-stores",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/stores",
+      "file": "03-stores.png"
+    },
+    {
+      "name": "04-search",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/search",
+      "file": "04-search.png"
+    },
+    {
+      "name": "07-offers",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/offers",
+      "file": "07-offers.png"
+    },
+    {
+      "name": "08-cart",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/cart",
+      "file": "08-cart.png"
+    },
+    {
+      "name": "09-checkout",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/checkout",
+      "file": "09-checkout.png"
+    },
+    {
+      "name": "10-payment",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Fpayment",
+      "file": "10-payment.png"
+    },
+    {
+      "name": "11-order-confirmation",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/order-confirmation/demo-order-01",
+      "file": "11-order-confirmation.png"
+    },
+    {
+      "name": "12-orders-list",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Forders",
+      "file": "12-orders-list.png"
+    },
+    {
+      "name": "13-order-detail",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Forders%2Fdemo-order-01",
+      "file": "13-order-detail.png"
+    },
+    {
+      "name": "14-order-tracking",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Forders%2Fdemo-order-01%2Ftrack",
+      "file": "14-order-tracking.png"
+    },
+    {
+      "name": "15-auth-login",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login",
+      "file": "15-auth-login.png"
+    },
+    {
+      "name": "16-auth-otp",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login",
+      "file": "16-auth-otp.png"
+    },
+    {
+      "name": "17-profile",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/profile",
+      "file": "17-profile.png"
+    },
+    {
+      "name": "18-profile-edit",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Fprofile%2Fedit",
+      "file": "18-profile-edit.png"
+    },
+    {
+      "name": "19-profile-addresses",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Fprofile%2Faddresses",
+      "file": "19-profile-addresses.png"
+    },
+    {
+      "name": "20-address-create",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/addresses/create",
+      "file": "20-address-create.png"
+    },
+    {
+      "name": "21-profile-favorites",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Fprofile%2Ffavorites",
+      "file": "21-profile-favorites.png"
+    },
+    {
+      "name": "22-profile-notifications",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Fprofile%2Fnotifications",
+      "file": "22-profile-notifications.png"
+    },
+    {
+      "name": "23-profile-settings",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Fprofile%2Fsettings",
+      "file": "23-profile-settings.png"
+    },
+    {
+      "name": "24-support",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/support",
+      "file": "24-support.png"
+    },
+    {
+      "name": "25-about",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/about",
+      "file": "25-about.png"
+    },
+    {
+      "name": "26-terms",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/terms",
+      "file": "26-terms.png"
+    },
+    {
+      "name": "27-privacy",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/privacy",
+      "file": "27-privacy.png"
+    },
+    {
+      "name": "28-maintenance",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/maintenance",
+      "file": "28-maintenance.png"
+    },
+    {
+      "name": "29-force-update",
+      "ok": true,
+      "finalUrl": "http://localhost:5193/force-update",
+      "file": "29-force-update.png"
+    }
+  ]
+}
