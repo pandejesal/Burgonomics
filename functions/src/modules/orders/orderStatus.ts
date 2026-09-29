@@ -52,11 +52,12 @@ export interface BumpOrderStatusParams {
   orderId: string;
   status: BumpStatus;
   cancellationReason?: string;
+  timelineEvent?: { title: string; actor?: string; description?: string };
   caller?: StaffCaller;
 }
 
 export async function bumpOrderStatus(params: BumpOrderStatusParams) {
-  const { orderId, status, cancellationReason, caller } = params;
+  const { orderId, status, cancellationReason, timelineEvent, caller } = params;
   const canonical = ALIAS_TO_CANONICAL[status] ?? status;
   const meta = PARTNER_TO_DELIVERY[canonical];
   if (!meta) {
@@ -76,6 +77,12 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
   if (cancellationReason) payload.cancellationReason = cancellationReason;
+  if (timelineEvent) {
+    payload.timeline = admin.firestore.FieldValue.arrayUnion({
+      ...timelineEvent,
+      timestamp: new Date().toISOString(),
+    });
+  }
   await orderRef.set(payload, { merge: true });
   return { orderId, status: meta };
 }

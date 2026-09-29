@@ -139,6 +139,13 @@ export const orderBumpSchema = z.object({
     "ready_for_pickup",
   ]),
   cancellationReason: z.string().trim().min(1).max(500).optional(),
+  timelineEvent: z
+    .object({
+      title: z.string().trim().min(1).max(120),
+      actor: z.string().trim().min(1).max(120).optional(),
+      description: z.string().trim().min(1).max(500).optional(),
+    })
+    .optional(),
 });
 
 export const adjustCoinsSchema = z.object({
@@ -201,6 +208,11 @@ export const escalateTicketSchema = z.object({
   reason: z.string().trim().min(3).max(1000),
   escalatedBy: z.string().min(1).max(128).optional(),
   escalatedByName: z.string().trim().min(1).max(120).optional(),
+});
+
+export const resolveNoteSchema = z.object({
+  ticketId: nonEmptyString,
+  resolution: z.string().trim().min(1).max(2000),
 });
 
 // MOP-S1 (B5-S1 follow-up): mark-read intake. Empty body marks the whole

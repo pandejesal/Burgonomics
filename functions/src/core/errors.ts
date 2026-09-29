@@ -52,11 +52,21 @@ export async function captureErrorSnapshot(
       )
     : undefined;
   // Caller-built messages often interpolate raw payment ids
-  // (e.g. "Unmatched captured payment pay_...") — mask those too.
-  const scrubbedMessage = snapshot.message.replace(
-    /\b(pay_[A-Za-z0-9]+)\b/g,
-    (_m, id) => maskIdentifier(id)
-  );
+  // (e.g. "Unmatched captured payment pay_...") — mask those too, along
+  // with any pasted Indian mobile numbers and email addresses (DPDP:
+  // free-text fields routinely carry contact PII into snapshots).
+  const scrubbedMessage = snapshot.message
+    .replace(/\b(pay_[A-Za-z0-9]+)\b/g, (_m, id) => maskIdentifier(id))
+    .replace(/\b(\+91[\s-]?)?[6-9]\d{9}\b/g, (m) =>
+      m.length <= 4 ? "****" : `${m.slice(0, 2)}****${m.slice(-2)}`
+    )
+    .replace(
+      /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+      (m) => {
+        const [local, domain] = m.split("@");
+        return `${(local || "").slice(0, 2)}****@${domain}`;
+      }
+    );
   const fullSnapshot: DevErrorSnapshot = {
     ...snapshot,
     message: scrubbedMessage,

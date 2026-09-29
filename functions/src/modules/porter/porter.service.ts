@@ -6,6 +6,7 @@ import {
   verifyPorterWebhookSignature,
   computeHmacSha256,
   getOtpHmacSecret,
+  isSafeDocId,
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
@@ -803,6 +804,31 @@ export async function handlePorterWebhook(
   }
   if (!orderRef) {
     if (orderId) {
+      // Fail-closed id shape: the echoed request_id hint is attacker-
+      // adjacent input — slashes/empties would throw or path-escape at
+      // doc() time. Park visibly instead of 500-retrying.
+      if (!isSafeDocId(orderId)) {
+        console.warn("[Porter Webhook] unsafe order hint parked:", JSON.stringify(orderId).slice(0, 80));
+        try {
+          await db
+            .collection("unmatched_porter_events")
+            .doc(parkId)
+            .set(
+              {
+                porterOrderId: porterOrderId || null,
+                rawEvent: rawEvent || null,
+                status: "needs_review",
+                reason: "unsafe_order_id",
+                receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+        } catch {
+          /* parking is best-effort; the warn above is the trail */
+        }
+        await markProcessed();
+        return;
+      }
       orderRef = db.collection("orders").doc(orderId);
     } else {
       const q = await db.collection("orders").where("porterOrderId", "==", porterOrderId).limit(1).get();

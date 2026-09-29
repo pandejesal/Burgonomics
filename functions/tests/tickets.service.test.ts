@@ -56,7 +56,7 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { resolveTicket, addTicketMessage } from "../src/modules/tickets/tickets.service";
+import { resolveTicket, resolveTicketNote, addTicketMessage } from "../src/modules/tickets/tickets.service";
 import { config } from "../src/config/env";
 
 const BASE = {
@@ -365,5 +365,54 @@ describe("addTicketMessage authz (Loop 57/58)", () => {
         caller: { uid: "cust_1", role: "customer" },
       })
     ).rejects.toThrow(/not found/);
+  });
+});
+
+describe("resolveTicketNote (non-money resolution)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    savedDocs["support_tickets/tk_note"] = {
+      ticketNumber: "TICK-2026-0100",
+      customerId: "cust_1",
+      branchId: "branch_a",
+      status: "open",
+    };
+  });
+
+  it("resolves with a timeline entry and no money movement", async () => {
+    const res: any = await resolveTicketNote({
+      ticketId: "tk_note",
+      resolution: "Burger re-fired fresh, customer satisfied.",
+      caller: { uid: "staff_1", role: "branch_staff", branchIds: ["branch_a"] },
+    });
+    expect(res.success).toBe(true);
+    const doc = savedDocs["support_tickets/tk_note"];
+    expect(doc.status).toBe("resolved");
+    expect(doc.resolution).toBe("Burger re-fired fresh, customer satisfied.");
+    expect(doc.timeline).toHaveLength(1);
+    expect(doc.timeline[0]).toMatchObject({ action: "resolved_note" });
+  });
+
+  it("refuses an already-resolved ticket (409, no rewrite)", async () => {
+    savedDocs["support_tickets/tk_done"] = { status: "resolved", branchId: "branch_a" };
+    await expect(
+      resolveTicketNote({
+        ticketId: "tk_done",
+        resolution: "again",
+        caller: { uid: "staff_1", role: "branch_staff", branchIds: ["branch_a"] },
+      })
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(savedDocs["support_tickets/tk_done"].timeline).toBeUndefined();
+  });
+
+  it("denies a cross-branch staffer (403, untouched)", async () => {
+    await expect(
+      resolveTicketNote({
+        ticketId: "tk_note",
+        resolution: "intruder note",
+        caller: { uid: "staff_2", role: "branch_staff", branchIds: ["branch_b"] },
+      })
+    ).rejects.toThrow(/outside your assigned branches/);
+    expect(savedDocs["support_tickets/tk_note"].status).toBe("open");
   });
 });

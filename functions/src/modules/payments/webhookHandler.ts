@@ -2,7 +2,7 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { config } from "../../config/env";
-import { verifyRazorpayWebhookSignature } from "../../core/security";
+import { verifyRazorpayWebhookSignature, isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { pushOrderToPetpooja } from "../petpooja";
 
@@ -154,7 +154,29 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           ? paymentEntity?.payments?.[0] || paymentEntity?.payment_id
           : paymentEntity?.id;
 
-      if (!orderId) {
+      if (orderId && !isSafeDocId(orderId)) {
+        // Fail-closed id shape: crafted notes.orderId values (slashes,
+        // empties, overlong) would throw or path-escape at doc() time and
+        // 500-retry-storm real money. Park visibly, still 200.
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Webhook ${event} carries an unsafe order id — refusing ghost CONFIRM, parked for review`,
+        });
+        await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
+          {
+            eventId,
+            event,
+            razorpayPaymentId: razorpayPaymentId || paymentEntity?.id || "unknown",
+            amount: paymentEntity?.amount ? paymentEntity.amount / 100 : null,
+            currency: paymentEntity?.currency || "INR",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+            reason: "unsafe_order_id",
+          },
+          { merge: true }
+        );
+      } else if (!orderId) {
         // Money captured, no order to attach it to (stripped notes, dashboard
         // payment, misconfigured create). The old code acked ok and dropped
         // it — customer shows unpaid, support has nothing to refund against.
@@ -179,7 +201,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         );
       }
 
-      if (orderId) {
+      if (orderId && isSafeDocId(orderId)) {
         // Loop 4: bind BEFORE confirming. Fetch the order first: a typo'd or
         // deleted id must not be resurrected as a partial CONFIRMED doc by the
         // merge-set below, and an under-captured / wrong-order payment must

@@ -4,6 +4,7 @@ import { config } from "../../config/env";
 import { getPetpoojaConfig } from "./client";
 import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
+import { isSafeDocId } from "../../core/security";
 
 /**
  * Normalizes Petpooja order status codes into canonical Burgonomics order statuses.
@@ -50,6 +51,17 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
     return;
   }
   const inStockBool = in_stock === 1 || in_stock === "1" || in_stock === true;
+
+  // Fail-closed id shape: item_id comes from the POS vendor — slashes or
+  // empties would throw/path-escape the doc write below and 500-retry.
+  if (!isSafeDocId(String(item_id))) {
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: "Petpooja 86ing webhook arrived with an unsafe item_id — stock toggle dropped, manual review required",
+    });
+    return;
+  }
 
   if (item_id) {
     // Same branch-scoped id scheme as the menu sync — and attributed with

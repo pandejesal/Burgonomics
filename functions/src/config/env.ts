@@ -35,6 +35,10 @@ export const config = {
     appKey: process.env.PETPOOJA_APP_KEY || "",
     appSecret: process.env.PETPOOJA_APP_SECRET || "",
     accessToken: process.env.PETPOOJA_ACCESS_TOKEN || "",
+    // Inbound HMAC secret, NEVER sent outbound. Starts as a copy of
+    // APP_SECRET (Petpooja signs with the issued secret today) — set it
+    // independently to rotate inbound trust without touching outbound auth.
+    webhookSecret: process.env.PETPOOJA_WEBHOOK_SECRET || "",
     menuUrl:
       process.env.PETPOOJA_MENU_URL ||
       "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/mapped_restaurant_menus",

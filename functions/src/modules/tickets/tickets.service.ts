@@ -152,6 +152,67 @@ export interface EscalateTicketInput {
   caller?: TicketCaller;
 }
 
+export interface ResolveNoteInput {
+  ticketId: string;
+  resolution: string;
+  /** Verified caller (req.user). Binds identity + asserts staff in-function. */
+  caller?: TicketCaller;
+}
+
+/**
+ * Records a non-money resolution note and flips the ticket to resolved.
+ * Staff-only, branch-scoped, timeline-appended server-side — the client
+ * direct-write path it replaces skipped all three (and let any authed
+ * caller rewrite any ticket's status/resolution).
+ */
+export async function resolveTicketNote(input: ResolveNoteInput) {
+  assertStaff(input.caller, "resolve tickets");
+  const actorId = input.caller?.uid || "staff";
+  const actorName = "Staff";
+  const ticketRef = db.collection("support_tickets").doc(input.ticketId);
+  const ticketSnap = await ticketRef.get();
+  if (!ticketSnap.exists) {
+    throw serviceError("TICKET_NOT_FOUND", `Ticket ${input.ticketId} not found`, 404);
+  }
+  const ticket = ticketSnap.data()!;
+  if (ticket.status === "resolved" || ticket.status === "closed") {
+    throw serviceError("TICKET_NOT_PENDING", "Ticket is already resolved.", 409);
+  }
+  if (
+    input.caller?.uid &&
+    input.caller.role !== "brand_owner" &&
+    input.caller.role !== "developer" &&
+    Array.isArray(input.caller.branchIds) &&
+    input.caller.branchIds.length > 0 &&
+    !input.caller.branchIds.includes(ticket.branchId)
+  ) {
+    throw serviceError(
+      "TICKET_FORBIDDEN",
+      "Forbidden: ticket is outside your assigned branches",
+      403
+    );
+  }
+  const resolution = String(input.resolution || "").trim().slice(0, 2000) || "Resolved by staff.";
+  const event: TicketTimelineEvent = {
+    action: "resolved_note",
+    actorId,
+    actorName,
+    actorRole: "staff",
+    message: resolution,
+    timestamp: new Date().toISOString(),
+  };
+  await ticketRef.set(
+    {
+      status: "resolved",
+      resolution,
+      timeline: admin.firestore.FieldValue.arrayUnion(event),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return { success: true, ticketId: input.ticketId };
+}
+
 /**
  * Generates human-friendly ticket numbers like TICK-2026-8942
  */
@@ -549,12 +610,15 @@ export async function escalateTicket(input: EscalateTicketInput) {
     );
   }
 
-  // If escalated to developer team, create a formal error snapshot & dispatch alert
+  // If escalated to developer team, create a formal error snapshot & dispatch alert.
+  // The operator-supplied reason is NOT persisted here: reporters paste PII
+  // (phones, order details) into free text and snapshots are staff-visible.
+  // Fetch the reason via ticketId when triaging.
   if (targetTier === "developer_team") {
     snapshotId = await captureErrorSnapshot({
       source: "tickets",
       severity: "high",
-      message: `Escalated ticket ${ticket.ticketNumber}: ${reason}`,
+      message: `Escalated ticket ${ticket.ticketNumber} to developer team`,
       orderId: ticket.orderId,
       branchId: ticket.branchId,
       customerId: ticket.customerId,
@@ -565,8 +629,6 @@ export async function escalateTicket(input: EscalateTicketInput) {
       context: {
         ticketId,
         ticketNumber: ticket.ticketNumber,
-        // No free-text subject/description here (H17): reporters paste PII
-        // into them and snapshots are staff-visible. Fetch via ticketId.
         escalatedBy: escalatedByName,
       },
     });

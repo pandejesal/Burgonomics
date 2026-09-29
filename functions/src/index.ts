@@ -55,6 +55,7 @@ import {
   createTicket,
   addTicketMessage,
   resolveTicket,
+  resolveTicketNote,
   escalateTicket,
 } from "./modules/tickets/tickets.service";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
@@ -67,6 +68,7 @@ import {
   broadcastToDevices,
   BroadcastSchema,
 } from "./modules/notifications/broadcast";
+import { withSchedulerLock } from "./core/schedulerLock";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
@@ -102,6 +104,7 @@ import {
   ticketMessageSchema,
   resolveTicketSchema,
   escalateTicketSchema,
+  resolveNoteSchema,
   dispatchNotificationSchema,
   registerTokenSchema,
   unregisterTokenSchema,
@@ -209,6 +212,7 @@ app.use(
     "/tickets/create",
     "/tickets/message",
     "/tickets/resolve",
+    "/tickets/resolveNote",
     "/tickets/escalate",
     "/notifications/dispatch",
     "/notifications/subscribe",
@@ -704,6 +708,28 @@ app.post(
   }
 );
 
+// Non-money ticket resolution note (staff-only, branch-scoped, timeline-
+// appended). Money actions stay on /tickets/resolve; this route must never
+// move funds.
+app.post(
+  "/tickets/resolveNote",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "support", "branch_owner", "branch_staff"]),
+  validateBody(resolveNoteSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await resolveTicketNote({ ...req.body, caller: req.user });
+      res.status(200).json(result);
+    } catch (err: any) {
+      const status =
+        err.statusCode === 404 || err.statusCode === 409
+          ? err.statusCode
+          : staffErrorStatus(err, 500);
+      res.status(status).json({ error: err.message || "Failed to resolve ticket" });
+    }
+  }
+);
+
 // Staff Grill-Coins compensation. Branch-scoped server-side: the partner app
 // must never write loyaltyPoints directly (rules forbid non-brand writes, and
 // local-only "success" toasts were compensating nobody).
@@ -1057,8 +1083,18 @@ export const hourlyPetpoojaMenuSync = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await syncAllBranchesPetpoojaMenu();
-    console.log(`[Hourly Sync] Processed ${result.syncedBranches} branches`);
+    // Whole-run overlap guard (TTL < cadence, >> 60s function timeout):
+    // a still-running tick makes the next one skip instead of double-scan.
+    const { ran, result } = await withSchedulerLock(
+      "hourly-petpooja-menu-sync",
+      30 * 60 * 1000,
+      () => syncAllBranchesPetpoojaMenu()
+    );
+    if (!ran) {
+      console.log("[Hourly Sync] previous tick still running — skipped");
+      return;
+    }
+    console.log(`[Hourly Sync] Processed ${result!.syncedBranches} branches`);
   }
 );
 
@@ -1069,8 +1105,16 @@ export const retryPetpoojaOrders = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await retryPendingPetpoojaOrdersWorker();
-    console.log(`[Retry Worker] Retried ${result.retriedCount} KOT orders`);
+    const { ran, result } = await withSchedulerLock(
+      "retry-petpooja-orders",
+      4 * 60 * 1000,
+      () => retryPendingPetpoojaOrdersWorker()
+    );
+    if (!ran) {
+      console.log("[Retry Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(`[Retry Worker] Retried ${result!.retriedCount} KOT orders`);
   }
 );
 
@@ -1081,8 +1125,16 @@ export const retryRouteTransfers = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await retryPendingRouteTransfersWorker();
-    console.log(`[Route Transfer Retry Worker] Retried ${result.retriedCount} transfers`);
+    const { ran, result } = await withSchedulerLock(
+      "retry-route-transfers",
+      4 * 60 * 1000,
+      () => retryPendingRouteTransfersWorker()
+    );
+    if (!ran) {
+      console.log("[Route Transfer Retry Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(`[Route Transfer Retry Worker] Retried ${result!.retriedCount} transfers`);
   }
 );
 
@@ -1093,8 +1145,16 @@ export const ticketInactivityReminder = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await checkTicketInactivityReminders();
-    console.log(`[Ticket Inactivity Worker] Sent ${result.remindedCount} reminders`);
+    const { ran, result } = await withSchedulerLock(
+      "ticket-inactivity-reminder",
+      10 * 60 * 1000,
+      () => checkTicketInactivityReminders()
+    );
+    if (!ran) {
+      console.log("[Ticket Inactivity Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(`[Ticket Inactivity Worker] Sent ${result!.remindedCount} reminders`);
   }
 );
 
@@ -1105,9 +1165,17 @@ export const pollActivePorterDeliveries = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await pollActivePorterOrdersWorker();
+    const { ran, result } = await withSchedulerLock(
+      "poll-active-porter",
+      4 * 60 * 1000,
+      () => pollActivePorterOrdersWorker()
+    );
+    if (!ran) {
+      console.log("[Porter Polling Worker] previous tick still running — skipped");
+      return;
+    }
     console.log(
-      `[Porter Polling Worker] Polled ${result.polledCount} orders, updated ${result.updatedCount} orders`
+      `[Porter Polling Worker] Polled ${result!.polledCount} orders, updated ${result!.updatedCount} orders`
     );
   }
 );
@@ -1119,8 +1187,16 @@ export const cleanupExpiredGuestSessions = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await cleanupExpiredGuestSessionsWorker();
-    console.log(`[Guest Cleanup Worker] Purged ${result.cleanedCartsCount} expired guest carts`);
+    const { ran, result } = await withSchedulerLock(
+      "cleanup-guest-sessions",
+      12 * 60 * 60 * 1000,
+      () => cleanupExpiredGuestSessionsWorker()
+    );
+    if (!ran) {
+      console.log("[Guest Cleanup Worker] previous run still active — skipped");
+      return;
+    }
+    console.log(`[Guest Cleanup Worker] Purged ${result!.cleanedCartsCount} expired guest carts`);
   }
 );
 
