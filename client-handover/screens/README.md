@@ -65,6 +65,14 @@ Guest-redirect notes (real app behavior, not capture errors):
 Partner note: captured with a temporary local `?demo=1` auth bypass
 (fully reverted + production build restored afterwards). Empty states
 reflect no live backend data; layout/navigation is real.
+01-login.png re-shot 2026-09-30: brand header now shows the Burgonomics
+mascot (was the generic SVG burger mark). `node scripts/fix-login-shot.mjs`.
+02-dashboard.png .. 17-settings.png re-shot 2026-10-01 after the partner
+header fix: the "Branch Scope" / outlet pill no longer overlaps or clips
+the right-hand badges at 390px (gaps + overflow-hidden + responsive label
+hiding in Header.tsx / BranchSwitcher.tsx / PetpoojaStatusBadge.tsx).
+Layout verified by DOM probe at 320-1280px: zero overlap, full label at
+>=390px, ellipsis below that. Re-run: `node scripts/fix-partner-shots.mjs`.
 
 ## Verification (each PNG eyes-checked, 2026-09-26)
 - Customer 29/29 correct: real boot, viewport shots, privacy dismissed,

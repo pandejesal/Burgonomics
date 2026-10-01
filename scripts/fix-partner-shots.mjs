@@ -1,6 +1,9 @@
-// Targeted re-shoot for slow/unsettled partner routes with extended settle:
-// 02-dashboard, 04-order-detail, 15-analytics, 19-admin-dashboard, 21-admin-stores.
-// Waits for loading spinners to clear (up to 25s) and logs page errors.
+// Targeted re-shoot of partner handover screens (client-handover/screens/02-partner-app)
+// after the header Branch-Scope overlap fix. Extended settle: waits for loading
+// spinners to clear (up to 25s), dismisses blocking modals, logs page errors.
+// To re-run: temporarily re-add the localhost `?demo=1` bypass in
+// authStore.initialize (it is REVERTED in the shipped source), rebuild,
+// run this script, then revert the bypass and rebuild production again.
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -10,7 +13,22 @@ const PORT = 5194;
 const OUT = path.join(ROOT, 'client-handover/screens/02-partner-app');
 
 const ROUTES = [
+  ['02-dashboard', '/dashboard?demo=1'],
+  ['03-orders', '/orders?demo=1'],
+  ['04-order-detail', '/orders/demo-order-01?demo=1'],
+  ['05-delivery-queue', '/delivery-queue?demo=1'],
+  ['06-kds', '/kds?demo=1'],
+  ['07-chat', '/chat?demo=1'],
+  ['08-customers', '/customers?demo=1'],
+  ['09-customer-detail', '/customers/demo-customer-01?demo=1'],
+  ['10-tickets', '/tickets?demo=1'],
+  ['11-ticket-detail', '/tickets/demo-ticket-01?demo=1'],
+  ['12-menu', '/menu?demo=1'],
+  ['13-notifications', '/notifications?demo=1'],
+  ['14-branches', '/branches?demo=1'],
   ['15-analytics', '/analytics?demo=1'],
+  ['16-users', '/users?demo=1'],
+  ['17-settings', '/settings?demo=1'],
 ];
 
 const CONTENT_MARKERS = {
