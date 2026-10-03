@@ -59,6 +59,34 @@ export const config = {
     webhookSecret: process.env.PORTER_WEBHOOK_SECRET || "",
     baseUrl: process.env.PORTER_BASE_URL || "https://api.porter.in",
   },
+  // Multi-provider dispatch (references/delivery_routing.md §9). Providers are
+  // OPTIONAL: an unset key excludes the provider from the quote fan-out (it is
+  // not a failure) — DR2. Empty webhook secrets deny inbound events, never
+  // verify against a default.
+  borzo: {
+    enabled: process.env.BORZO_ENABLED !== "false",
+    apiKey: process.env.BORZO_API_KEY || "",
+    customerId: process.env.BORZO_CUSTOMER_ID || "",
+    // Inbound Callback Secret Key (Personal cabinet) — HMAC-SHA256 arrives in
+    // the X-DV-Signature header; NEVER the outbound X-DV-Auth-Token.
+    webhookSecret: process.env.BORZO_WEBHOOK_SECRET || "",
+    // Production Business API 1.8 base (test: https://robotapitest-in.borzodelivery.com);
+    // the adapter appends /api/business/1.8 when the base omits it.
+    baseUrl: process.env.BORZO_BASE_URL || "https://robot-in.borzodelivery.com",
+  },
+  shadowfax: {
+    enabled: process.env.SHADOWFAX_ENABLED !== "false",
+    apiKey: process.env.SHADOWFAX_API_KEY || "",
+    // Merchant/client code required by POST /api/v2/orders/ (place order).
+    clientCode: process.env.SHADOWFAX_CLIENT_CODE || "",
+    webhookSecret: process.env.SHADOWFAX_WEBHOOK_SECRET || "",
+    // Hyperlocal Marketplace production base (staging: https://hlbackend.staging.shadowfax.in).
+    baseUrl: process.env.SHADOWFAX_BASE_URL || "https://api.shadowfax.in",
+  },
+  dispatch: {
+    quoteTimeoutMs: Number(process.env.DISPATCH_QUOTE_TIMEOUT_MS || 6000),
+    fareConfirmDeltaInr: Number(process.env.DISPATCH_FARE_CONFIRM_DELTA_INR || 20),
+  },
   alerts: {
     slackWebhookUrl: process.env.SLACK_DEV_WEBHOOK_URL || "",
     discordWebhookUrl: process.env.DISCORD_DEV_WEBHOOK_URL || "",
@@ -70,6 +98,8 @@ export const config = {
     paymentGateway: explicitMock(process.env.MOCK_PAYMENT_GATEWAY),
     porterDispatch: explicitMock(process.env.MOCK_PORTER_DISPATCH),
     petpoojaPos: explicitMock(process.env.MOCK_PETPOOJA_POS),
+    borzoDispatch: explicitMock(process.env.MOCK_BORZO_DISPATCH),
+    shadowfaxDispatch: explicitMock(process.env.MOCK_SHADOWFAX_DISPATCH),
   },
 };
 
@@ -164,6 +194,8 @@ export function assertProductionKeys(): void {
       ["MOCK_PAYMENT_GATEWAY", config.mock.paymentGateway],
       ["MOCK_PORTER_DISPATCH", config.mock.porterDispatch],
       ["MOCK_PETPOOJA_POS", config.mock.petpoojaPos],
+      ["MOCK_BORZO_DISPATCH", config.mock.borzoDispatch],
+      ["MOCK_SHADOWFAX_DISPATCH", config.mock.shadowfaxDispatch],
     ] as Array<[string, boolean]>
   )
     .filter(([, on]) => on)

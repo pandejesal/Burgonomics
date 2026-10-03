@@ -111,6 +111,53 @@ export const porterQuoteSchema = z.object({
   customerPhone: z.string().max(32).optional(),
 });
 
+// ---- Multi-provider dispatch (references/delivery_routing.md) ----
+
+const latitude = z.number().finite().min(-90).max(90);
+const longitude = z.number().finite().min(-180).max(180);
+
+// Pre-order quote: coordinates are REQUIRED — the radius gate cannot run on
+// undefined, and a missing drop lat/lng would fan out providers with a
+// garbage point.
+export const dispatchQuoteSchema = z.object({
+  pickupLat: latitude,
+  pickupLng: longitude,
+  dropLat: latitude,
+  dropLng: longitude,
+  customerName: z.string().max(120).optional(),
+  customerPhone: z.string().max(32).optional(),
+  orderId: z.string().max(64).optional(),
+});
+
+export const dispatchBookSchema = z.object({
+  orderId: nonEmptyString,
+  staffName: z.string().max(128).optional(),
+  // Staff-confirmed fare from the quote card — gates the DR7 delta check.
+  quotedFare: z.number().finite().min(0).max(100000).optional(),
+  confirmFare: z.boolean().optional(),
+  preferredProvider: z.enum(["borzo", "shadowfax", "porter"]).optional(),
+});
+
+export const dispatchRebookSchema = z.object({
+  orderId: nonEmptyString,
+  staffName: z.string().max(128).optional(),
+  quotedFare: z.number().finite().min(0).max(100000).optional(),
+  confirmFare: z.boolean().optional(),
+  preferredProvider: z.enum(["borzo", "shadowfax", "porter"]).optional(),
+});
+
+export const dispatchPorterManualSchema = z.object({
+  orderId: nonEmptyString,
+  porterOrderId: z.string().min(1).max(64),
+  trackingUrl: z.string().max(512).optional(),
+  staffName: z.string().max(128).optional(),
+});
+
+export const dispatchCancelSchema = z.object({
+  orderId: nonEmptyString,
+  staffName: z.string().max(128).optional(),
+});
+
 export const verifyDeliveryOtpSchema = z.object({
   orderId: nonEmptyString,
   otp: z.string().regex(/^\d{4}$/, "OTP must be exactly 4 digits"),

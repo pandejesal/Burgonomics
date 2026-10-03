@@ -1,0 +1,655 @@
+import * as crypto from "crypto";
+import * as admin from "firebase-admin";
+import { config } from "../../config/env";
+import { captureErrorSnapshot } from "../../core/errors";
+import { computeHmacSha256, isSafeDocId, timingSafeEqual } from "../../core/security";
+import { db } from "../../core/firebase";
+import { dispatchFCM } from "../notifications/fcm.service";
+
+/**
+ * Borzo / Shadowfax webhook intake (DR10).
+ *
+ * Porter's webhook lives in porter.service.ts and is untouched — this file
+ * mirrors its fail-closed shape for the other two providers:
+ *   1. Signature verify (empty secret denies; no mock bypass). Borzo sends
+ *      HMAC-SHA256 in X-DV-Signature (Callback Secret Key, doc-confirmed);
+ *      Shadowfax has NO native HMAC — the configured secret is accepted as a
+ *      static shared value in x-shadowfax-signature (custom header arranged
+ *      with the Shadowfax team), with HMAC accepted as an alternative form.
+ *   2. Provider-aware payload extraction (real doc shapes): Borzo wraps
+ *      `{event_type, event_datetime, order|delivery:{status, order_id,
+ *      client_order_id, courier}}`, Shadowfax sends
+ *      `{order_status, sfx_order_id, client_order_id, rider_*}`; generic
+ *      `event`/`order_id` payloads keep working for tests/legacy.
+ *   3. Event normalization → canonical lifecycle events; known-but-inert
+ *      lifecycle noise (Borzo order `new`/`available`/…) marks processed
+ *      silently; unknown parks.
+ *   4. Deterministic dedup + freshness gate.
+ *   5. Order resolution via dispatch_order_map FIRST, hint only when the
+ *      order's own dispatchOrderId confirms it (conflict → park, never guess).
+ *   6. Late non-terminal events after `delivered` are ignored (no rewind).
+ *   7. Canonical field switch (duplicated from porter — deliberate: do NOT
+ *      refactor porter's webhook, its tests must stay green).
+ */
+
+export type DispatchWebhookProvider = "borzo" | "shadowfax";
+
+const DISPATCH_WEBHOOK_FRESHNESS_MS = 15 * 60 * 1000;
+const DISPATCH_WEBHOOK_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+function webhookSecretFor(provider: DispatchWebhookProvider): string {
+  return provider === "borzo" ? config.borzo.webhookSecret : config.shadowfax.webhookSecret;
+}
+
+/**
+ * Fail-closed signature check: empty/missing secret always denies (401).
+ * Borzo: HMAC-SHA256(rawBody, Callback Secret Key) in `X-DV-Signature`
+ * (doc-confirmed); bare hex or `sha256=<hex>` prefix accepted. Shadowfax has
+ * no native HMAC — their callbacks carry a custom header we ask the team to
+ * configure with SHADOWFAX_WEBHOOK_SECRET as a static shared value; a plain
+ * HMAC over the body is also accepted so either contract verifies.
+ */
+export function verifyDispatchWebhookSignature(
+  provider: DispatchWebhookProvider,
+  rawBody: string,
+  signature: string
+): boolean {
+  const secret = webhookSecretFor(provider);
+  if (!rawBody || !signature || !secret) return false;
+  if (provider === "shadowfax" && timingSafeEqual(secret, signature.trim())) {
+    return true;
+  }
+  // Providers may send bare hex or the common `sha256=<hex>` prefix form.
+  const bare = signature.startsWith("sha256=") ? signature.slice("sha256=".length) : signature;
+  const expected = computeHmacSha256(rawBody, secret);
+  return timingSafeEqual(expected, bare);
+}
+
+const EVENT_ALIASES: Record<string, string> = {
+  DRIVER_ALLOCATED: "DRIVER_ALLOCATED",
+  RIDER_ASSIGNED: "DRIVER_ALLOCATED",
+  DRIVER_ASSIGNED: "DRIVER_ALLOCATED",
+  ORDER_ACCEPTED: "DRIVER_ALLOCATED",
+  ACCEPTED: "DRIVER_ALLOCATED",
+  CONFIRMED: "DRIVER_ALLOCATED",
+  ARRIVED_AT_PICKUP: "ARRIVED_AT_PICKUP",
+  AT_PICKUP: "ARRIVED_AT_PICKUP",
+  PICKED_UP: "ARRIVED_AT_PICKUP",
+  ORDER_PICKED_UP: "ARRIVED_AT_PICKUP",
+  STARTED_DELIVERY: "STARTED_DELIVERY",
+  OUT_FOR_DELIVERY: "STARTED_DELIVERY",
+  DELIVERY_STARTED: "STARTED_DELIVERY",
+  IN_TRANSIT: "STARTED_DELIVERY",
+  DELIVERED: "DELIVERED",
+  ORDER_DELIVERED: "DELIVERED",
+  COMPLETED: "DELIVERED",
+  RIDER_CANCELLED: "RIDER_CANCELLED",
+  NO_RIDERS_FOUND: "RIDER_CANCELLED",
+  CANCELLED: "RIDER_CANCELLED",
+  CANCELED: "RIDER_CANCELLED",
+  ORDER_CANCELLED: "RIDER_CANCELLED",
+  FAILED: "RIDER_CANCELLED",
+  // Borzo delivery statuses (Business API 1.8 status model, doc-confirmed).
+  COURIER_ASSIGNED: "DRIVER_ALLOCATED",
+  COURIER_DEPARTED: "DRIVER_ALLOCATED",
+  COURIER_AT_PICKUP: "ARRIVED_AT_PICKUP",
+  PARCEL_PICKED_UP: "STARTED_DELIVERY",
+  COURIER_ARRIVED: "STARTED_DELIVERY",
+  FINISHED: "DELIVERED",
+  // Shadowfax Hyperlocal order_status callbacks (doc-confirmed).
+  ALLOTTED: "DRIVER_ALLOCATED",
+  ARRIVED: "ARRIVED_AT_PICKUP",
+  DISPATCHED: "STARTED_DELIVERY",
+  ARRIVED_CUSTOMER_DOORSTEP: "STARTED_DELIVERY",
+  CANCELLED_BY_CUSTOMER: "RIDER_CANCELLED",
+  RETURNED_TO_SELLER: "RIDER_CANCELLED",
+};
+
+/**
+ * Borzo `active` means different things by scope: order-level = "courier
+ * assigned" (DRIVER_ALLOCATED), delivery-level = "courier on the way"
+ * (STARTED_DELIVERY). Scoped lookup wins over EVENT_ALIASES.
+ */
+const SCOPED_EVENT_ALIASES: Record<"order" | "delivery", Record<string, string>> = {
+  order: { ACTIVE: "DRIVER_ALLOCATED" },
+  delivery: { ACTIVE: "STARTED_DELIVERY" },
+};
+
+/**
+ * Known lifecycle noise that carries nothing to flip. Marked processed
+ * silently (no park, no alert): Borzo order pre-courier states, delivery
+ * pre-courier/dup states, and callback envelope types that surface only when
+ * the nested status is missing. Anything else unmapped parks (DR10).
+ */
+const IGNORED_DISPATCH_EVENTS = new Set([
+  "NEW",
+  "AVAILABLE",
+  "REACTIVATED",
+  "DRAFT",
+  "DELAYED",
+  "PLANNED",
+  "INVALID",
+  "DELETED",
+  "ORDER_CREATED",
+  "ORDER_CHANGED",
+  "DELIVERY_CREATED",
+  "DELIVERY_CHANGED",
+]);
+
+function normalizeEventKey(rawEvent: any): string {
+  return typeof rawEvent === "string"
+    ? rawEvent.trim().toUpperCase().replace(/[\s-]+/g, "_")
+    : "";
+}
+
+export function isIgnoredDispatchEvent(rawEvent: any): boolean {
+  return IGNORED_DISPATCH_EVENTS.has(normalizeEventKey(rawEvent));
+}
+
+export function normalizeDispatchEvent(
+  rawEvent: any,
+  scope?: "order" | "delivery" | "generic"
+): string | null {
+  if (typeof rawEvent !== "string" || !rawEvent.trim()) return null;
+  const key = normalizeEventKey(rawEvent);
+  if (scope && scope !== "generic" && SCOPED_EVENT_ALIASES[scope]?.[key]) {
+    return SCOPED_EVENT_ALIASES[scope][key];
+  }
+  return EVENT_ALIASES[key] || null;
+}
+
+function hash12(raw: string): string {
+  return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 12);
+}
+
+function eventDocId(
+  provider: string,
+  rawEvent: string,
+  ref: string,
+  rawBody: string
+): string {
+  const safeRef = ref.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "noref";
+  const safeEvent = (rawEvent || "unknown").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 32);
+  return `dwe_${provider}_${safeEvent}_${safeRef}_${hash12(rawBody)}`;
+}
+
+function eventTimestampMs(payload: any): number | null {
+  const raw =
+    payload?.timestamp ??
+    payload?.event_time ??
+    payload?.created_at ??
+    payload?.updated_at ??
+    payload?.occurred_at ??
+    // Borzo callbacks: `event_datetime` (both order + delivery envelopes).
+    payload?.event_datetime ??
+    payload?.delivery?.status_datetime ??
+    payload?.order?.status_datetime ??
+    // Shadowfax per-status time fields (whichever the payload carries).
+    payload?.allot_time ??
+    payload?.arrival_time ??
+    payload?.dispatch_time ??
+    payload?.customer_doorstep_arrival_time ??
+    payload?.delivery_time ??
+    payload?.return_time ??
+    payload?.rts_time;
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw < 1e12 ? raw * 1000 : raw;
+  }
+  if (typeof raw === "string") {
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+async function parkDispatchEvent(
+  provider: DispatchWebhookProvider,
+  parkId: string,
+  fields: Record<string, any>,
+  snapshotMessage: string,
+  severity: "low" | "medium" | "high"
+): Promise<void> {
+  try {
+    await db
+      .collection("unmatched_dispatch_events")
+      .doc(parkId)
+      .set(
+        {
+          provider,
+          status: "needs_review",
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...fields,
+        },
+        { merge: true }
+      );
+    await captureErrorSnapshot({
+      source: "dispatch",
+      severity,
+      message: snapshotMessage,
+      context: { provider },
+    });
+  } catch (err: any) {
+    console.warn(`[Dispatch Webhook/${provider}] failed to park event:`, err?.message || err);
+  }
+}
+
+export async function handleDispatchWebhook(
+  provider: DispatchWebhookProvider,
+  rawBody: string,
+  signature: string,
+  payload: any
+): Promise<void> {
+  const log = (msg: string) => console.log(`[Dispatch Webhook/${provider}] ${msg}`);
+
+  if (!verifyDispatchWebhookSignature(provider, rawBody, signature)) {
+    const authErr: any = new Error(`Invalid ${provider} webhook signature`);
+    authErr.statusCode = 401;
+    throw authErr;
+  }
+
+  // ---- Provider-aware extraction (real doc payload shapes) ----
+  let rawEvent = "";
+  let scope: "order" | "delivery" | "generic" = "generic";
+  let providerOrderId: string | number | null = null;
+  let hintRaw: string | number | null = null;
+
+  if (provider === "borzo") {
+    const delivery = payload?.delivery;
+    const order = payload?.order;
+    if (delivery && typeof delivery.status === "string" && delivery.status) {
+      rawEvent = delivery.status;
+      scope = "delivery";
+    } else if (order && typeof order.status === "string" && order.status) {
+      rawEvent = order.status;
+      scope = "order";
+    } else {
+      rawEvent = payload?.event || payload?.event_type || payload?.type || payload?.status || "";
+    }
+    providerOrderId =
+      order?.order_id ??
+      delivery?.order_id ??
+      payload?.order_id ??
+      payload?.provider_order_id ??
+      payload?.delivery_id ??
+      null;
+    hintRaw =
+      delivery?.client_order_id ??
+      order?.client_order_id ??
+      payload?.request_id ??
+      payload?.merchant_order_id ??
+      payload?.order_ref ??
+      null;
+  } else {
+    // shadowfax: `{order_status, sfx_order_id, client_order_id, rider_*}` —
+    // generic `event`/`order_id` payloads still fall through for tests.
+    rawEvent =
+      payload?.order_status ||
+      payload?.event ||
+      payload?.event_type ||
+      payload?.type ||
+      payload?.status ||
+      "";
+    providerOrderId =
+      payload?.sfx_order_id ??
+      payload?.order_id ??
+      payload?.provider_order_id ??
+      payload?.delivery_id ??
+      null;
+    hintRaw =
+      payload?.client_order_id ??
+      payload?.COID ??
+      payload?.request_id ??
+      payload?.merchant_order_id ??
+      payload?.order_ref ??
+      null;
+  }
+
+  const event = normalizeDispatchEvent(rawEvent, scope);
+  const orderIdHint = typeof hintRaw === "string" ? hintRaw.replace(/^REQ-/, "") : null;
+
+  // Borzo order_id is a JSON integer — coerce before the doc-id sanitizer.
+  const parkId = eventDocId(
+    provider,
+    rawEvent,
+    String(providerOrderId || orderIdHint || ""),
+    rawBody
+  );
+
+  // Status-gated dedup (same pattern as porter): datastore-missing docs still
+  // proceed on first delivery; true redeliveries skip.
+  try {
+    const seen = await db.collection("dispatch_webhook_events").doc(parkId).get();
+    if (seen.data?.()?.status === "processed") {
+      log(`Duplicate ${rawEvent} delivery skipped (${parkId})`);
+      return;
+    }
+  } catch (err: any) {
+    console.error(`[Dispatch Webhook/${provider}] Dedup read failed for ${parkId}:`, err?.message || err);
+    throw new Error(`Dedup read failed: ${err?.message || err}`);
+  }
+  const markProcessed = async () => {
+    try {
+      await db.collection("dispatch_webhook_events").doc(parkId).set(
+        {
+          provider,
+          rawEvent: rawEvent || null,
+          providerOrderId: providerOrderId || null,
+          orderId: orderIdHint || null,
+          status: "processed",
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch {
+      // Best-effort: the order write is the durable trail.
+    }
+  };
+
+  // Freshness: a stale retry must not rewind newer order state.
+  const eventTs = eventTimestampMs(payload);
+  if (eventTs !== null) {
+    const skew = Date.now() - eventTs;
+    if (skew > DISPATCH_WEBHOOK_FRESHNESS_MS || skew < -DISPATCH_WEBHOOK_FUTURE_SKEW_MS) {
+      log(`Stale event ${rawEvent} parked (skew ${Math.round(skew / 1000)}s)`);
+      await parkDispatchEvent(
+        provider,
+        parkId,
+        {
+          orderId: orderIdHint,
+          providerOrderId,
+          rawEvent: rawEvent || null,
+          reason: "stale_event",
+        },
+        `Stale ${provider} event ${rawEvent || "unknown"} parked (no state rewind)`,
+        "medium"
+      );
+      await markProcessed();
+      return;
+    }
+  }
+
+  if (!event && isIgnoredDispatchEvent(rawEvent)) {
+    // Known-but-inert lifecycle noise (Borzo order `new`/`available`, envelope
+    // types): acknowledge so provider retries stop, without a park or alert.
+    log(`Ignored lifecycle event ${rawEvent}`);
+    await markProcessed();
+    return;
+  }
+
+  if (!event) {
+    log(`Unknown event parked: ${rawEvent}`);
+    await parkDispatchEvent(
+      provider,
+      parkId,
+      { orderId: orderIdHint, providerOrderId, rawEvent: rawEvent || null, reason: "unknown_event" },
+      `Unknown ${provider} event ${rawEvent || "unknown"} parked — order untouched`,
+      "medium"
+    );
+    await markProcessed();
+    return;
+  }
+
+  if (!providerOrderId && !orderIdHint) {
+    log(`Dropping event with no order reference: ${rawEvent}`);
+    await parkDispatchEvent(
+      provider,
+      parkId,
+      { rawEvent: rawEvent || null, reason: "no_order_reference" },
+      `${provider} webhook with no order reference parked`,
+      "medium"
+    );
+    await markProcessed();
+    return;
+  }
+
+  // ---- Order resolution: server map first, hint only when confirmed. ----
+  let orderRef: admin.firestore.DocumentReference | null = null;
+  let mappedOrderId: string | null = null;
+
+  if (providerOrderId) {
+    try {
+      const mapSnap = await db.collection("dispatch_order_map").doc(String(providerOrderId)).get();
+      const mapped = mapSnap.data?.();
+      if (mapped && typeof mapped.orderId === "string" && mapped.orderId) {
+        mappedOrderId = mapped.orderId;
+        if (orderIdHint && orderIdHint !== mappedOrderId) {
+          log(
+            `providerOrderId conflict parked: map says ${mappedOrderId}, hint says ${orderIdHint}`
+          );
+          await parkDispatchEvent(
+            provider,
+            parkId,
+            {
+              orderId: orderIdHint,
+              providerOrderId,
+              mappedOrderId,
+              rawEvent: rawEvent || null,
+              reason: "order_id_conflict",
+            },
+            `${provider} webhook order-id conflict parked (hint ${orderIdHint} vs mapped ${mappedOrderId}) — no state flipped`,
+            "high"
+          );
+          await markProcessed();
+          return;
+        }
+        orderRef = db.collection("orders").doc(mappedOrderId);
+      }
+    } catch (err: any) {
+      // Fail-closed: a map read failure must not fall through to the hint.
+      console.error(
+        `[Dispatch Webhook/${provider}] Map read failed for providerOrderId=${providerOrderId}:`,
+        err?.message || err
+      );
+      throw new Error(`Map read failed: ${err?.message || err}`);
+    }
+  }
+
+  if (!orderRef && orderIdHint) {
+    if (!isSafeDocId(orderIdHint)) {
+      log(`unsafe order hint parked: ${JSON.stringify(orderIdHint).slice(0, 80)}`);
+      await parkDispatchEvent(
+        provider,
+        parkId,
+        { providerOrderId, rawEvent: rawEvent || null, reason: "unsafe_order_id" },
+        `${provider} webhook unsafe order hint parked`,
+        "medium"
+      );
+      await markProcessed();
+      return;
+    }
+    const hintDoc = await db.collection("orders").doc(orderIdHint).get();
+    const hintOrder = hintDoc.exists ? hintDoc.data() : undefined;
+    // Hint is only trusted when the order's OWN dispatch binding confirms the
+    // provider order id (or the order has no dispatch binding at all yet).
+    const binding = hintOrder?.dispatchOrderId || hintOrder?.porterOrderId || null;
+    if (hintOrder && (!binding || binding === providerOrderId)) {
+      orderRef = hintDoc.ref;
+    } else if (hintOrder && providerOrderId && binding !== providerOrderId) {
+      log(
+        `hint/order conflict parked: order ${orderIdHint} bound to ${binding}, event says ${providerOrderId}`
+      );
+      await parkDispatchEvent(
+        provider,
+        parkId,
+        {
+          orderId: orderIdHint,
+          providerOrderId,
+          mappedOrderId: binding,
+          rawEvent: rawEvent || null,
+          reason: "order_id_conflict",
+        },
+        `${provider} webhook hint/order binding conflict parked — no state flipped`,
+        "high"
+      );
+      await markProcessed();
+      return;
+    }
+  }
+
+  if (!orderRef) {
+    log(`No matching order for event ${rawEvent} (providerOrderId=${providerOrderId || "n/a"})`);
+    await parkDispatchEvent(
+      provider,
+      parkId,
+      { orderId: orderIdHint, providerOrderId, rawEvent: rawEvent || null, reason: "no_matching_order" },
+      `${provider} webhook for unmatched order parked for review`,
+      "medium"
+    );
+    await markProcessed();
+    return;
+  }
+
+  const nonEmpty = (...candidates: any[]): string | undefined =>
+    candidates.find((c) => typeof c === "string" && c.trim()) as string | undefined;
+
+  const driver =
+    payload?.driver_details ||
+    payload?.rider_details ||
+    payload?.driver ||
+    payload?.rider ||
+    payload?.delivery?.courier || // Borzo delivery callback nests courier
+    payload?.order?.courier ||
+    {};
+
+  const composedDriverName =
+    typeof driver?.surname === "string" && driver.surname && typeof driver?.name === "string"
+      ? `${driver.surname} ${driver.name}`
+      : undefined;
+
+  // Late non-terminal events must not rewind a delivered order — provider
+  // retries can deliver stale courier updates out of order within the window.
+  if (
+    event === "DRIVER_ALLOCATED" ||
+    event === "ARRIVED_AT_PICKUP" ||
+    event === "STARTED_DELIVERY"
+  ) {
+    try {
+      const current = await orderRef.get();
+      if (current.data()?.deliveryStatus === "delivered") {
+        log(`Late ${rawEvent} after delivery ignored (no rewind)`);
+        await markProcessed();
+        return;
+      }
+    } catch (err: any) {
+      // Fail closed: if we cannot prove the order is not yet delivered, skip
+      // the flip rather than risk rewinding DELIVERED state.
+      console.error(
+        `[Dispatch Webhook/${provider}] pre-write order read failed:`,
+        err?.message || err
+      );
+      throw new Error(`Pre-write order read failed: ${err?.message || err}`);
+    }
+  }
+
+  const updateData: Record<string, any> = {
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    dispatchWebhookEvent: rawEvent,
+    dispatchWebhookProvider: provider,
+  };
+
+  switch (event) {
+    case "DRIVER_ALLOCATED": {
+      // Rider identity fields are written only when actually present — an
+      // `undefined` Firestore value would reject the whole batch write.
+      const riderName = nonEmpty(
+        composedDriverName,
+        driver?.name,
+        payload?.driver_name,
+        payload?.rider_name
+      );
+      const riderPhone = nonEmpty(
+        driver?.phone,
+        payload?.driver_phone,
+        payload?.rider_phone,
+        payload?.rider_contact,
+        payload?.driver_contact
+      );
+      const riderVehicle = nonEmpty(
+        driver?.vehicle_number,
+        payload?.driver_vehicle_number,
+        payload?.rider_vehicle_number
+      );
+      const trackingUrl = nonEmpty(
+        payload?.tracking_url,
+        payload?.tracking_link,
+        payload?.track_url,
+        payload?.track,
+        payload?.delivery?.tracking_url
+      );
+      if (riderName) updateData.riderName = riderName;
+      if (riderPhone) updateData.riderPhone = riderPhone;
+      if (riderVehicle) updateData.riderVehicleNumber = riderVehicle;
+      if (trackingUrl) updateData.riderTrackingUrl = trackingUrl;
+      updateData.deliveryStatus = "dispatched";
+      break;
+    }
+
+    case "ARRIVED_AT_PICKUP":
+      updateData.riderArrivedAtStore = true;
+      updateData.riderArrivedAt = admin.firestore.FieldValue.serverTimestamp();
+      break;
+
+    case "STARTED_DELIVERY":
+      updateData.status = {
+        code: "OUT_FOR_DELIVERY",
+        label: "Out for delivery",
+        kind: "in_progress",
+        terminal: false,
+      };
+      updateData.deliveryStatus = "in_transit";
+      break;
+
+    case "DELIVERED":
+      updateData.status = {
+        code: "DELIVERED",
+        label: "Delivered",
+        kind: "completed",
+        terminal: true,
+      };
+      updateData.deliveryStatus = "delivered";
+      updateData.deliveredAt = admin.firestore.FieldValue.serverTimestamp();
+      break;
+
+    case "RIDER_CANCELLED": {
+      const reason =
+        nonEmpty(
+          payload?.reason_text,
+          payload?.cancel_reason_text,
+          typeof payload?.reason === "string" ? payload.reason : undefined,
+          payload?.status_description
+        ) || "Driver cancelled dispatch";
+      updateData.status = {
+        code: "RIDER_CANCELLED",
+        label: "Rider cancelled — rebook required",
+        kind: "in_progress",
+        terminal: false,
+      };
+      updateData.deliveryStatus = "rider_cancelled";
+      updateData.needsRebook = true;
+      updateData.riderCancellationReason = reason;
+      break;
+    }
+  }
+
+  await orderRef.set(updateData, { merge: true });
+  await markProcessed();
+
+  // Branch alert so nobody has to notice a silent rebook need.
+  if (event === "RIDER_CANCELLED") {
+    try {
+      const snap = await orderRef.get();
+      const branchId = snap.data()?.branchId;
+      if (typeof branchId === "string" && branchId) {
+        await dispatchFCM({
+          topic: `branch_${branchId}_orders`,
+          title: "Rider cancelled — rebook needed",
+          body: `Order #${orderRef.id.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`,
+          data: { type: "rider_cancelled", orderId: orderRef.id, needsRebook: "true" },
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[Dispatch Webhook/${provider}] branch rebook alert failed:`, err?.message || err);
+    }
+  }
+}

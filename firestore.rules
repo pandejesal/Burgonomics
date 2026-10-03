@@ -239,6 +239,34 @@ service cloud.firestore {
       allow write: if isBrandOwner();
     }
 
+    // HOME MERCHANDISING — the customer app queries these anonymously at
+    // boot (homeService getHome); without public read the home bundle is
+    // always empty. Marketing content only; writes stay brand-owned.
+    match /banners/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /categories/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /combos/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /offers/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /recommendations/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
     match /admin_stores/{storeId} {
       allow read: if true;
       allow create: if isBrandOwner() || isBranchOwner();

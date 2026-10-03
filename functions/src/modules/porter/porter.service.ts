@@ -226,6 +226,30 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
   const isFreshPending = (d: any): boolean =>
     d?.porterDispatchStatus === "dispatch_pending" &&
     Date.now() - porterClaimFreshMs(d?.porterDispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS;
+  // Cross-provider guards (multi-provider dispatch layer): the generic router
+  // (/dispatch/book) runs its own claim over the same order doc. A direct
+  // /porter/book tap must never race it or hijack another provider's booking.
+  const crossProvider = (d: any): "busy" | "conflict" | null => {
+    const active = ["dispatched", "in_transit", "driver_allocated"].includes(d?.deliveryStatus);
+    // Another provider owns an active dispatch (porterOrderId absent = not ours).
+    if (active && d?.dispatchOrderId && !d?.porterOrderId) return "conflict";
+    // The router holds a fresh generic claim — same 202 retry contract.
+    if (
+      d?.dispatchStatus === "dispatch_pending" &&
+      Date.now() - porterClaimFreshMs(d?.dispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS
+    ) {
+      return "busy";
+    }
+    return null;
+  };
+  const conflictError = (d: any): Error => {
+    const err: any = new Error(
+      `This order is already dispatched via ${d?.dispatchProvider || "another provider"} — cancel that dispatch before booking Porter.`
+    );
+    err.statusCode = 409;
+    err.code = "DISPATCH_EXISTS";
+    return err;
+  };
   const claimWrite = {
     porterDispatchStatus: "dispatch_pending",
     porterDispatchClaimedAt: Date.now(),
@@ -237,6 +261,9 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
       const d = (fresh.exists ? fresh.data() : undefined) as any;
       if (!d) return { claimed: true };
       if (isDispatched(d)) return { reuse: true, data: d };
+      const cross = crossProvider(d);
+      if (cross === "conflict") return { conflict: true, data: d };
+      if (cross === "busy") return { busy: true };
       // Another tap owns the booking right now — never POST ours. Stale
       // claims (>10 min, owner crashed) are taken over below.
       if (isFreshPending(d)) return { busy: true };
@@ -244,6 +271,7 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
       return { claimed: true };
     });
     if (outcome?.reuse) return storedDispatchSummary(outcome.data);
+    if (outcome?.conflict) throw conflictError(outcome.data);
     if (outcome?.busy) throw dispatchInProgressError();
     return null;
   }
@@ -252,6 +280,9 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
   // the already-read order. Concurrent taps are serialized by the caller's
   // per-order pending UI state (partner H-M8 fix); this is the last guard.
   if (isDispatched(order)) return storedDispatchSummary(order);
+  const cross = crossProvider(order);
+  if (cross === "conflict") throw conflictError(order);
+  if (cross === "busy") throw dispatchInProgressError();
   if (isFreshPending(order)) throw dispatchInProgressError();
   await orderDoc.ref.set(claimWrite, { merge: true });
   return null;
@@ -271,7 +302,7 @@ export async function bookPorterRider(
   orderId: string,
   staffName?: string,
   caller?: StaffCaller,
-  opts?: { idempotencyKey?: string }
+  opts?: { idempotencyKey?: string; preclaimed?: boolean }
 ) {
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
@@ -309,8 +340,12 @@ export async function bookPorterRider(
 
   // Per-order idempotency gate: replay + pending claim live here (before any
   // external POST) so neither the mock path nor the live path can double-book.
-  const reuse = await claimPorterDispatch(orderDoc, order);
-  if (reuse) return reuse;
+  // preclaimed = the multi-provider router already holds its own generic claim
+  // and its guards — claiming again here would self-conflict (202).
+  if (!opts?.preclaimed) {
+    const reuse = await claimPorterDispatch(orderDoc, order);
+    if (reuse) return reuse;
+  }
 
   const pickupLat = order.branchCoordinates?.lat || 23.0131;
   const pickupLng = order.branchCoordinates?.lng || 72.5085;

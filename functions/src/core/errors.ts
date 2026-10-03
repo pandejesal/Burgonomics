@@ -4,7 +4,7 @@ import * as admin from "firebase-admin";
 
 export interface DevErrorSnapshot {
   id?: string;
-  source: "payments" | "petpooja" | "porter" | "tickets" | "notifications" | "auth" | "system";
+  source: "payments" | "petpooja" | "porter" | "dispatch" | "tickets" | "notifications" | "auth" | "system";
   severity: "low" | "medium" | "high" | "p0_critical";
   message: string;
   errorStack?: string;

@@ -5,6 +5,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as functionsV1 from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import express from "express";
+import type { Response } from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 
@@ -50,6 +51,14 @@ import {
   manualBranchDispatch,
   pollActivePorterOrdersWorker,
 } from "./modules/porter/porter.service";
+import {
+  dispatchQuote,
+  dispatchBook,
+  dispatchRebook,
+  dispatchCancel,
+  savePorterManualBooking,
+  handleDispatchWebhook,
+} from "./modules/dispatch";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import {
   createTicket,
@@ -96,6 +105,11 @@ import {
   porterBookSchema,
   porterCancelSchema,
   porterQuoteSchema,
+  dispatchQuoteSchema,
+  dispatchBookSchema,
+  dispatchRebookSchema,
+  dispatchPorterManualSchema,
+  dispatchCancelSchema,
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
   orderBumpSchema,
@@ -128,6 +142,8 @@ assertProductionKeys();
 const WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES = [
   "/payments/webhook",
   "/porter/webhook",
+  "/dispatch/webhooks/borzo",
+  "/dispatch/webhooks/shadowfax",
   "/petpooja/webhook",
   "/petpooja/stockWebhook",
   "/health",
@@ -206,6 +222,11 @@ app.use(
     "/porter/book",
     "/porter/rebook",
     "/porter/cancel",
+    "/dispatch/quote",
+    "/dispatch/book",
+    "/dispatch/rebook",
+    "/dispatch/porter-manual",
+    "/dispatch/cancel",
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
@@ -549,6 +570,151 @@ app.post(
     }
   }
 );
+
+// ==========================================
+// 3b. MULTI-PROVIDER DISPATCH ROUTES (delivery_routing.md)
+// ==========================================
+
+// Typed dispatch errors carry an explicit statusCode (202/400/404/409/422/
+// 502/503) so staff UI can branch on the exact failure; everything else
+// falls back to staffErrorStatus. 202 = dispatch already in flight; carries
+// Retry-After so the client's retry lands after the claim settles.
+function dispatchErrorStatus(err: any): number {
+  const known = [202, 400, 404, 409, 422, 502, 503];
+  return known.includes(err?.statusCode) ? err.statusCode : staffErrorStatus(err, 500);
+}
+
+function sendDispatchError(res: Response, err: any, fallback: string): void {
+  const status = dispatchErrorStatus(err);
+  if (status === 202) {
+    res.setHeader("Retry-After", String(Math.ceil((err?.retryAfterMs || 2000) / 1000)));
+  }
+  const extra: Record<string, any> = {};
+  if (err?.attempts) extra.attempts = err.attempts;
+  if (err?.providers) extra.providers = err.providers;
+  if (err?.retryAfterMs) extra.retryAfterMs = err.retryAfterMs;
+  res.status(status).json({ error: err?.message || fallback, ...extra });
+}
+
+app.post("/dispatch/quote", optionalAuth, validateBody(dispatchQuoteSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const quote = await dispatchQuote(req.body);
+    res.status(200).json(quote);
+  } catch (err: any) {
+    sendDispatchError(res, err, "Failed to calculate dispatch quote");
+  }
+});
+
+app.post(
+  "/dispatch/book",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchBookSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await dispatchBook({
+        ...req.body,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to dispatch order");
+    }
+  }
+);
+
+app.post(
+  "/dispatch/rebook",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchRebookSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await dispatchRebook({
+        ...req.body,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to rebook dispatch");
+    }
+  }
+);
+
+app.post(
+  "/dispatch/porter-manual",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchPorterManualSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await savePorterManualBooking({
+        ...req.body,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to save Porter booking");
+    }
+  }
+);
+
+app.post(
+  "/dispatch/cancel",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchCancelSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await dispatchCancel({
+        orderId: req.body.orderId,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to cancel dispatch");
+    }
+  }
+);
+
+app.post("/dispatch/webhooks/borzo", async (req, res) => {
+  try {
+    // Official header is X-DV-Signature (HMAC-SHA256 with the Callback Secret
+    // Key); x-borzo-signature kept as a fallback for pre-doc wiring/tests.
+    const signature =
+      (req.headers["x-dv-signature"] as string) ||
+      (req.headers["x-borzo-signature"] as string) ||
+      "";
+    const rawBody = (req as any).rawBody
+      ? (req as any).rawBody.toString("utf8")
+      : typeof req.body === "string"
+      ? req.body
+      : JSON.stringify(req.body);
+    await handleDispatchWebhook("borzo", rawBody, signature, req.body);
+    res.status(200).json({ status: "success" });
+  } catch (err: any) {
+    res.status(err?.statusCode || staffErrorStatus(err, 500)).json({ error: err.message || "Borzo webhook failed" });
+  }
+});
+
+app.post("/dispatch/webhooks/shadowfax", async (req, res) => {
+  try {
+    const signature = (req.headers["x-shadowfax-signature"] as string) || "";
+    const rawBody = (req as any).rawBody
+      ? (req as any).rawBody.toString("utf8")
+      : typeof req.body === "string"
+      ? req.body
+      : JSON.stringify(req.body);
+    await handleDispatchWebhook("shadowfax", rawBody, signature, req.body);
+    res.status(200).json({ status: "success" });
+  } catch (err: any) {
+    res.status(err?.statusCode || staffErrorStatus(err, 500)).json({ error: err.message || "Shadowfax webhook failed" });
+  }
+});
 
 app.post(
   "/orders/bumpStatus",
