@@ -1,0 +1,206 @@
+{
+  "generatedAt": "2026-10-05T06:35:38.272Z",
+  "verdict": "PASS",
+  "survivingRefs": 994,
+  "nullImageValues": 1016,
+  "fixedBySeed": [
+    {
+      "doc": "products",
+      "id": "prd_amar-jawan-circle_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_cbd-mall_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_containers-park_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_food-valley_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_ganesh-glory_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_ghodasar_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_gor-dhod-road_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_hl-road_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_karnavati-university_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_mansi-circle_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_motera_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_narayanpura_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_nehru-nagar_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_new-ranip_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_nizampura_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_pal-road_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_patan_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_pune_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_rest_akshar_chowk_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_rest_kota_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_sabri-food-court_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_science-city_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_sobo_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_urban-chowk_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_vallabh-vidhyanagar_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_vr-mall_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "products",
+      "id": "prd_westbank_tandoori-paneer-pizza",
+      "name": "Tandoori Paneer Pizza",
+      "field": "imageUrl",
+      "value": "/images/menu/tandoori_paneer.jpg"
+    },
+    {
+      "doc": "banners",
+      "id": "banner_myob",
+      "field": "imageUrl",
+      "value": "/images/menu/banners/myob-banner.png"
+    }
+  ],
+  "stranded": [],
+  "pathDisagreements": [],
+  "note": "FIXED_BY_SEED rows are docs the prune would strand, each of which seed-menu.mjs rewrites to report.items[].final before any client can read them. seed-menu.mjs re-verifies that every target file exists after the prune."
+}
