@@ -177,6 +177,13 @@ service cloud.firestore {
         request.resource.data.status.kind == 'cancelled' &&
         request.resource.data.status.terminal == true &&
         request.resource.data.status.keys().hasOnly(['code', 'label', 'kind', 'terminal'])
+      ) || (
+        // Customer-owned notification preference: boolean opt-in only,
+        // pinned to whatsappOptIn + updatedAt (order-confirmation toggle).
+        isAuthenticated() &&
+        (resource.data.customerId == request.auth.uid || resource.data.userId == request.auth.uid) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whatsappOptIn', 'updatedAt']) &&
+        request.resource.data.whatsappOptIn is bool
       );
 
       allow delete: if false;
