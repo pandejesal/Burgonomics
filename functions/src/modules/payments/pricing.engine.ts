@@ -207,7 +207,19 @@ export async function calculateOrderPricing(
             if (branchSnap.exists) {
               const branchData = branchSnap.data();
               if (typeof branchData?.royaltyPercentage === "number") {
-                royaltyPercentage = branchData.royaltyPercentage;
+                const rp = branchData.royaltyPercentage;
+                // Bounds before use: a corrupt rate (>100%, negative, NaN)
+                // would mint a NEGATIVE branch leg (split > 100% of net
+                // food), which attemptRouteTransfer then refuses forever —
+                // a permanently stuck Route settlement for every order at
+                // this branch. Refuse to price instead (mapped to the same
+                // fail-closed 503 below), exactly like a missing branch doc.
+                if (!Number.isFinite(rp) || rp < 0 || rp > 100) {
+                  throw new Error(
+                    `branch royaltyPercentage ${String(rp)} outside [0,100] for ${input.branchId} — refusing to price (corrupt royalty config would strand the Route split)`
+                  );
+                }
+                royaltyPercentage = rp;
               }
               if (typeof branchData?.packagingFee === "number") {
                 packagingFee = branchData.packagingFee;

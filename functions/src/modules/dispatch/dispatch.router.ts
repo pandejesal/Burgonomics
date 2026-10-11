@@ -5,9 +5,16 @@ import { isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 import {
+  dropGpsMissingError,
+  isRealCoordinatePair,
+  pickupGpsMissingError,
+  resolvePickupCoordinates,
+  type PickupCoordinates,
+} from "../../core/utils/pickupCoords";
+import {
   checkBranchDeliveryServiceability,
   calculateHaversineDistanceKm,
-} from "@burgonomics/shared/geo";
+} from "../../core/geo";
 import {
   ACTIVE_DELIVERY_STATUSES,
   PROVIDER_PRIORITY,
@@ -82,6 +89,11 @@ function terminalError(deliveryStatus: string): Error {
   err.statusCode = 409;
   err.code = "DISPATCH_LOCKED";
   return err;
+}
+
+/** Drops undefined values — Firestore rejects them inside any write payload. */
+function definedFields(o: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 }
 
 function isActiveDispatch(d: any): boolean {
@@ -188,6 +200,12 @@ async function releaseClaimFailed(
         ...(quoteSnapshot ? { dispatchQuote: quoteSnapshot } : {}),
         // Enables the /dispatch/rebook guard without flipping deliveryStatus.
         needsRebook: true,
+        // Auto-rebook trigger (mission §3): the scheduled worker retries a
+        // failed dispatch up to AUTO_REBOOK_MAX_ATTEMPTS times. A carrier
+        // cancel keeps its own trigger — releaseClaimFailed must not erase it.
+        ...(orderDoc.data?.()?.rebookTrigger === "carrier_cancelled"
+          ? {}
+          : { rebookTrigger: "dispatch_failed" }),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -276,21 +294,19 @@ function assertOrderDispatchable(order: any): void {
     );
   }
   const orderType = order.orderType || order.fulfillment || "delivery";
-  const drop = order.deliveryAddress;
+  const drop = order.deliveryAddress || order.address;
   if (orderType === "delivery" && !(drop?.street || drop?.full || (drop?.lat && drop?.lng))) {
     throw new Error("Delivery address is incomplete — add street or map pin, then retry dispatch.");
   }
   // Fail-closed GPS for EVERY dispatch (H-R19): dispatch quote/book never
   // invents a drop pin — a textual address without coordinates is refused
   // (422, retryable), never routed to fallback defaults.
-  if (!(drop?.lat && drop?.lng)) {
-    const noGps: any = new Error(
-      "Delivery location is missing map coordinates — pin the customer address on the map, then retry dispatch."
-    );
-    noGps.statusCode = 422;
-    noGps.code = "DISPATCH_GPS_MISSING";
-    throw noGps;
-  }
+  if (!(drop?.lat && drop?.lng)) throw dropGpsMissingError();
+  // Fail-closed PICKUP GPS (H-R19 parity): a courier booked against a
+  // fabricated pickup would be sent to the wrong store — the same class of
+  // fake as a fabricated drop pin. Resolved separately (order snapshot →
+  // branch document) by resolvePickupCoordinates, still pre-claim; a miss
+  // throws DISPATCH_PICKUP_GPS_MISSING (422, retryable).
 }
 
 function assertDispatchNotLocked(order: any): void {
@@ -298,17 +314,24 @@ function assertDispatchNotLocked(order: any): void {
   if (ds === "delivered" || ds === "cancelled") throw terminalError(ds);
 }
 
+/**
+ * Builds the quote context from REAL coordinates only: pickup is resolved
+ * pre-claim (order snapshot → branch document — see resolvePickupCoordinates)
+ * and the drop was validated in assertOrderDispatchable. No default city pin,
+ * no null island: a miss never reaches here (422 upstream).
+ */
 function buildQuoteContext(
   order: any,
-  params: Partial<DispatchQuoteParams> & { staffName?: string; caller?: StaffCaller }
-): { ctx: DispatchQuoteContext; geoSource: "live_gps" | "fallback_default" } {
-  const pickupLat = order.branchCoordinates?.lat || 23.0131;
-  const pickupLng = order.branchCoordinates?.lng || 72.5085;
-  const usedFallbackCoords = !(order.branchCoordinates?.lat && order.branchCoordinates?.lng);
+  params: Partial<DispatchQuoteParams> & { staffName?: string; caller?: StaffCaller },
+  pickup: PickupCoordinates
+): { ctx: DispatchQuoteContext; geoSource: "live_gps" } {
   return {
     ctx: {
-      pickup: { lat: pickupLat, lng: pickupLng },
-      drop: { lat: order.deliveryAddress?.lat, lng: order.deliveryAddress?.lng },
+      pickup: { lat: pickup.lat, lng: pickup.lng },
+      drop: {
+        lat: order.deliveryAddress?.lat ?? order.address?.lat,
+        lng: order.deliveryAddress?.lng ?? order.address?.lng,
+      },
       customerName: order.customerName || params.customerName,
       customerPhone: order.customerPhone || params.customerPhone,
       orderId: params.orderId,
@@ -316,7 +339,7 @@ function buildQuoteContext(
       staffName: params.staffName,
       caller: params.caller,
     },
-    geoSource: usedFallbackCoords ? "fallback_default" : "live_gps",
+    geoSource: "live_gps",
   };
 }
 
@@ -335,12 +358,24 @@ export interface DispatchQuoteParams {
 }
 
 /**
- * POST /dispatch/quote: radius gate (DR4) → parallel fan-out (DR5) →
- * cheapest serviceable wins (DR1). Radius failure is a 200 with
+ * POST /dispatch/quote: null-island guard (fail closed 422) → radius gate
+ * (DR4) → parallel fan-out (DR5) → cheapest serviceable wins (DR1). Radius
+ * failure is a 200 with
  * serviceable:false (the address simply is not in zone); a fan-out with zero
  * ok providers fails closed 503 — never a static fare (DR2).
  */
 export async function dispatchQuote(params: DispatchQuoteParams): Promise<any> {
+  // NULL-ISLAND GUARD (zero-fake, DR2): a (0,0)/out-of-range pin is not
+  // "outside the delivery zone" — it is a broken map pin. Fail closed 422
+  // BEFORE the radius gate so we never quote a fare computed from a point in
+  // the Gulf of Guinea (or hand garbage coordinates to a live carrier API).
+  if (
+    !isRealCoordinatePair(params.pickupLat, params.pickupLng) ||
+    !isRealCoordinatePair(params.dropLat, params.dropLng)
+  ) {
+    throw coordinatesInvalidError();
+  }
+
   const gate = checkBranchDeliveryServiceability(
     params.pickupLat,
     params.pickupLng,
@@ -398,6 +433,16 @@ function noServiceableProviderError(outcomes: ProviderQuoteOutcome[]): Error {
   return err;
 }
 
+/** Typed, retryable 422 — one of the quote pins is null-island or garbage. */
+function coordinatesInvalidError(): Error {
+  const err: any = new Error(
+    "Pickup or delivery coordinates are invalid — re-pin the address on the map, then retry the quote."
+  );
+  err.statusCode = 422;
+  err.code = "DISPATCH_COORDINATES_INVALID";
+  return err;
+}
+
 export interface DispatchBookParams {
   orderId: string;
   staffName?: string;
@@ -407,6 +452,13 @@ export interface DispatchBookParams {
   confirmFare?: boolean;
   /** Optional staff override: book this provider first when it quoted ok. */
   preferredProvider?: ProviderId;
+  /**
+   * Auto-rebook guard (mission §3): providers the worker must NOT re-book —
+   * normally the carrier that just cancelled. Applied AFTER the ranked walk
+   * order is built, so an excluded provider is never reached even when it is
+   * cheapest. Empty/absent = no exclusion (staff manual rebook keeps DR1).
+   */
+  excludeProviders?: ProviderId[];
 }
 
 /**
@@ -427,19 +479,23 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
 
   assertDispatchNotLocked(order);
   assertOrderDispatchable(order);
+  // Pickup GPS resolved BEFORE the claim (a bad order never parks a lease):
+  // branchCoordinates snapshot → order.store → branches/{branchId}.coordinates.
+  const pickup = await resolvePickupCoordinates(order);
+  if (!pickup) throw pickupGpsMissingError();
 
   // Per-order idempotency gate before any provider call (double-book guard).
   const reuse = await claimDispatch(orderDoc, order);
   if (reuse) return reuse;
 
-  const { ctx, geoSource } = buildQuoteContext(order, params);
+  const { ctx, geoSource } = buildQuoteContext(order, params, pickup);
 
   try {
     const gate = checkBranchDeliveryServiceability(
       ctx.pickup.lat,
       ctx.pickup.lng,
-      order.deliveryAddress.lat,
-      order.deliveryAddress.lng,
+      ctx.drop.lat,
+      ctx.drop.lng,
       DEFAULT_SERVICED_RADIUS_KM
     );
     if (!gate.isServiced) {
@@ -509,6 +565,13 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
       const preferred = ranked.filter((q) => q.provider === params.preferredProvider);
       const rest = ranked.filter((q) => q.provider !== params.preferredProvider);
       walk = [...preferred, ...rest];
+    }
+    // Auto-rebook exclusion: the carrier that cancelled (or failed) is never
+    // re-booked by the scheduled worker — otherwise the worker would just
+    // re-book the same provider and cancel-loop forever.
+    if (params.excludeProviders && params.excludeProviders.length > 0) {
+      const excluded = new Set<string>(params.excludeProviders);
+      walk = walk.filter((q) => !excluded.has(q.provider));
     }
     const cheapest = ranked[0].provider;
 
@@ -608,12 +671,42 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
       dispatchedBy: staffName || "Branch Staff",
       dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
       needsRebook: false,
+      // A successful book clears the auto-rebook trigger: the order is live
+      // again, so the scheduled worker must stop seeing it as pending.
+      rebookTrigger: null,
+      autoRebookAttempts: 0,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
-    // Porter alias: the poller + porter webhook key on porterOrderId.
-    if (booked.provider === "porter") {
-      write.porterOrderId = booked.providerOrderId;
-    }
+    // Provider aliases: exactly ONE is non-null per order (the active
+    // dispatch). Stale ids from a previous carrier are nulled so a late
+    // webhook/poller can never bind an OLD booking to the new dispatch.
+    write.porterOrderId = booked.provider === "porter" ? booked.providerOrderId : null;
+    write.borzoOrderId = booked.provider === "borzo" ? booked.providerOrderId : null;
+    write.shadowfaxOrderId = booked.provider === "shadowfax" ? booked.providerOrderId : null;
+
+    // `order.delivery` sub-object mirror (frontend tracking contract): a
+    // COMPLETE snapshot built from the pre-write order + this book result, so
+    // Firestore's deep merge and the shallow-merge test shims converge on the
+    // same object. `undefined` is stripped — Firestore rejects it inside a
+    // write payload.
+    const prevDelivery =
+      order.delivery && typeof order.delivery === "object" ? order.delivery : {};
+    write.delivery = definedFields({
+      ...prevDelivery,
+      provider: booked.provider,
+      providerOrderId: String(booked.providerOrderId),
+      status: booked.riderName ? "rider_assigned" : "pending",
+      riderName: booked.riderName ?? null,
+      riderPhone: booked.riderPhone ?? null,
+      riderVehicleNumber: booked.riderVehicleNumber ?? null,
+      trackingUrl: booked.trackingUrl || null,
+      // New dispatch = the previous rider's GPS is stale (and would be fake
+      // data for the new carrier). Cleared until a real callback lands.
+      riderLocation: null,
+      riderLocationAt: null,
+      assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
     await orderDoc.ref.set(write, { merge: true });
 
     // Server orderId mapping: bind provider order id → our orderId so the
@@ -687,6 +780,151 @@ export async function dispatchRebook(params: DispatchBookParams): Promise<any> {
     throw err;
   }
   return dispatchBook(params);
+}
+
+// ---------------------------------------------------------------------------
+// Auto-rebook worker (mission §3): a carrier cancel or a dispatch failure
+// re-dispatches the order with the NEXT provider automatically, bounded —
+// never the provider that cancelled, never more than AUTO_REBOOK_MAX_ATTEMPTS
+// automatic tries, never for a staff-initiated cancel (`staff_cancelled`).
+// ---------------------------------------------------------------------------
+
+export const AUTO_REBOOK_MAX_ATTEMPTS = 2;
+export const AUTO_REBOOK_QUERY_LIMIT = 25;
+
+export interface AutoRebookWorkerResult {
+  scanned: number;
+  rebooked: number;
+  failed: number;
+  busy: number;
+  skipped: number;
+  exhausted: number;
+}
+
+/** Providers that must NOT be re-booked: whoever last owned this dispatch. */
+function excludedProvidersFor(order: any): ProviderId[] {
+  const excluded = new Set<ProviderId>();
+  if (order?.dispatchProvider) excluded.add(order.dispatchProvider as ProviderId);
+  if (order?.porterOrderId) excluded.add("porter");
+  if (order?.borzoOrderId) excluded.add("borzo");
+  if (order?.shadowfaxOrderId) excluded.add("shadowfax");
+  return [...excluded];
+}
+
+/**
+ * Scheduled (5-min) auto-rebook: scans `needsRebook` orders and re-enters §3
+ * for the ones a CARRIER (or a dispatch failure) flagged. Staff cancels are
+ * filtered out by trigger, terminal states are filtered out defensively, and
+ * every automatic attempt is counted so a poison order stops after
+ * AUTO_REBOOK_MAX_ATTEMPTS instead of paying for riders forever.
+ */
+export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult> {
+  const result: AutoRebookWorkerResult = {
+    scanned: 0,
+    rebooked: 0,
+    failed: 0,
+    busy: 0,
+    skipped: 0,
+    exhausted: 0,
+  };
+
+  let snap: any;
+  try {
+    snap = await db
+      .collection("orders")
+      .where("needsRebook", "==", true)
+      .limit(AUTO_REBOOK_QUERY_LIMIT)
+      .get();
+  } catch (err: any) {
+    // Fail closed: a worker that cannot read must not dispatch anything.
+    console.error("[Auto Rebook] query failed:", err?.message || err);
+    return result;
+  }
+
+  for (const doc of snap?.docs || []) {
+    const order = doc.data ? doc.data() : undefined;
+    if (!order) continue;
+    result.scanned++;
+
+    const trigger = order.rebookTrigger;
+    // Only automatic triggers: `staff_cancelled` (and legacy rows with no
+    // trigger) stay with staff — the worker never re-dispatches them.
+    if (trigger !== "carrier_cancelled" && trigger !== "dispatch_failed") {
+      result.skipped++;
+      continue;
+    }
+    // Defensive terminal guard: never pay for a rider on a done/cancelled order.
+    if (
+      order.deliveryStatus === "delivered" ||
+      order.deliveryStatus === "cancelled" ||
+      order.status?.terminal === true ||
+      order.status?.code === "DELIVERED"
+    ) {
+      result.skipped++;
+      continue;
+    }
+    const attempts = Number.isInteger(order.autoRebookAttempts)
+      ? order.autoRebookAttempts
+      : 0;
+    if (attempts >= AUTO_REBOOK_MAX_ATTEMPTS) {
+      result.exhausted++;
+      continue;
+    }
+
+    try {
+      await dispatchBook({
+        orderId: doc.id,
+        staffName: "Auto Rebook",
+        excludeProviders: excludedProvidersFor(order),
+      });
+      result.rebooked++;
+    } catch (err: any) {
+      // 202 = a staff book is in flight right now — not an attempt, no count.
+      if (err?.statusCode === 202) {
+        result.busy++;
+        continue;
+      }
+      result.failed++;
+      const nextAttempts = attempts + 1;
+      try {
+        await doc.ref.set(
+          {
+            autoRebookAttempts: nextAttempts,
+            autoRebookLastError: String(err?.message || err).slice(0, 300),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (writeErr: any) {
+        console.error(
+          "[Auto Rebook] attempt-count write failed:",
+          writeErr?.message || writeErr
+        );
+      }
+      if (nextAttempts >= AUTO_REBOOK_MAX_ATTEMPTS) {
+        result.exhausted++;
+        try {
+          await captureErrorSnapshot({
+            source: "dispatch",
+            severity: "high",
+            message: `Auto-rebook exhausted for order ${doc.id} after ${nextAttempts} attempts: ${String(
+              err?.message || err
+            ).slice(0, 200)}`,
+            orderId: doc.id,
+            branchId: order.branchId,
+          });
+        } catch {
+          // Snapshot best-effort — the attempt count above is the guard.
+        }
+      }
+      console.warn(
+        `[Auto Rebook] ${doc.id} attempt ${nextAttempts}/${AUTO_REBOOK_MAX_ATTEMPTS} failed:`,
+        err?.message || err
+      );
+    }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -774,12 +1012,18 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
   if (isFreshGenericPending(order)) throw dispatchInProgressError();
 
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const prevDelivery =
+    order.delivery && typeof order.delivery === "object" ? order.delivery : {};
   await orderDoc.ref.set(
     {
       deliveryStatus: "dispatched",
       dispatchProvider: "porter",
       dispatchOrderId: pid,
       porterOrderId: pid,
+      // One active alias per order — the pasted Porter id supersedes any
+      // stale id left by a previous carrier's dispatch.
+      borzoOrderId: null,
+      shadowfaxOrderId: null,
       riderTrackingUrl: trackingUrl,
       dispatchStatus: "dispatched",
       dispatchClaimedAt: null,
@@ -787,6 +1031,24 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
       dispatchedBy: staffName || "Branch Staff",
       dispatchedAt: now,
       needsRebook: false,
+      // Staff resolved the dispatch by hand — the auto-rebook worker stops.
+      rebookTrigger: null,
+      autoRebookAttempts: 0,
+      // Tracking mirror for the customer app (rider identity arrives with the
+      // porter webhook — never invented here).
+      delivery: definedFields({
+        ...prevDelivery,
+        provider: "porter",
+        providerOrderId: pid,
+        status: "pending",
+        trackingUrl: trackingUrl || null,
+        riderName: null,
+        riderPhone: null,
+        riderVehicleNumber: null,
+        riderLocation: null,
+        riderLocationAt: null,
+        updatedAt: now,
+      }),
       updatedAt: now,
     },
     { merge: true }
@@ -879,6 +1141,9 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
       dispatchStatus: "cancelled_by_store",
       dispatchProviderCancel: "manual-required",
       needsRebook: true,
+      // Staff-initiated cancel: the auto-rebook worker must NEVER re-dispatch
+      // this one (only carrier_cancelled / dispatch_failed triggers auto-rebook).
+      rebookTrigger: "staff_cancelled",
       riderCancellationReason: `Booking cancelled by ${staffName || "Branch Staff"} — confirm the cancellation in the ${provider || "provider"} dashboard`,
       cancelledBy: staffName || "Branch Staff",
       cancelledAt: admin.firestore.FieldValue.serverTimestamp(),

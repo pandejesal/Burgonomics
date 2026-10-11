@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-09-25T20:57:47.014Z",
+  "capturedAt": "2026-10-09T04:17:28.149Z",
   "viewport": "390x844 mobile viewport (fullPage off)",
   "storeSelected": true,
   "results": [
@@ -24,7 +24,7 @@
     {
       "name": "06-product-detail",
       "ok": true,
-      "finalUrl": "http://localhost:5193/menu/product/demo-burger-01",
+      "finalUrl": "http://localhost:5193/menu/product/prd_rest_akshar_chowk_2-jr-hero-burger",
       "file": "06-product-detail.png"
     },
     {
@@ -114,7 +114,7 @@
     {
       "name": "19-profile-addresses",
       "ok": true,
-      "finalUrl": "http://localhost:5193/auth/login?redirect=%2Fprofile%2Faddresses",
+      "finalUrl": "http://localhost:5193/profile/addresses",
       "file": "19-profile-addresses.png"
     },
     {

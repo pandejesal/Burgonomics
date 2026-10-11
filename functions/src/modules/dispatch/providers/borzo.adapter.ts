@@ -131,7 +131,7 @@ export const borzoAdapter: ProviderAdapter = {
   },
 
   async quote(ctx: DispatchQuoteContext): Promise<ProviderQuoteOk> {
-    const { calculateHaversineDistanceKm } = await import("@burgonomics/shared/geo");
+    const { calculateHaversineDistanceKm } = await import("../../../core/geo");
     const fallbackKm = calculateHaversineDistanceKm(
       ctx.pickup.lat,
       ctx.pickup.lng,

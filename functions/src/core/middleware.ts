@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { auth, db } from "./firebase";
 import { config } from "../config/env";
 import { timingSafeEqual } from "./security";
+import { verifyPetpoojaSignature } from "../modules/petpooja/client";
 import * as admin from "firebase-admin";
 
 export interface AuthenticatedRequest extends Request {
@@ -258,7 +259,28 @@ export async function requireAppCheck(
 export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFunction): void {
   const inboundSecret = config.petpooja.appKey;
   if (!inboundSecret) {
+    console.warn("[Petpooja Auth] denied: PETPOOJA_APP_KEY unset — fail-closed 401");
     res.status(401).json({ error: "Unauthorized: Petpooja webhook not configured" });
+    return;
+  }
+
+  // Signed path (HMAC-SHA256 over the raw bytes, timing-safe, denies on an
+  // empty secret): when the caller presents a signature header it MUST
+  // verify — a bad signature is a forgery attempt, so it 401s instead of
+  // falling back to the static token. Callers without the header keep the
+  // documented app-key token flow below. Signatures are only checked against
+  // the RAW body (express `verify` capture); no raw bytes → no verdict → 401.
+  const signatureHeader = req.headers["x-petpooja-signature"];
+  if (signatureHeader) {
+    const raw = (req as any).rawBody;
+    const rawBody =
+      typeof raw === "string" ? raw : raw ? Buffer.from(raw).toString("utf8") : "";
+    if (rawBody && verifyPetpoojaSignature(rawBody, String(signatureHeader))) {
+      next();
+      return;
+    }
+    console.warn("[Petpooja Auth] denied: invalid or unverifiable HMAC signature");
+    res.status(401).json({ error: "Unauthorized: Invalid Petpooja webhook signature" });
     return;
   }
 
@@ -269,6 +291,7 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     (req.headers["authorization"] as string);
 
   if (!tokenHeader || typeof tokenHeader !== "string") {
+    console.warn("[Petpooja Auth] denied: no credential header presented");
     res.status(401).json({ error: "Unauthorized: Missing or invalid Petpooja credentials" });
     return;
   }
@@ -282,5 +305,6 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     return;
   }
 
+  console.warn("[Petpooja Auth] denied: credential header did not match PETPOOJA_APP_KEY");
   res.status(401).json({ error: "Unauthorized: Invalid Petpooja webhook credentials" });
 }

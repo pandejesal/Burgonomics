@@ -132,14 +132,19 @@ export function pickupAddressBlock(order: Record<string, any> | undefined): stri
 }
 
 export function dropAddressBlock(order: Record<string, any> | undefined): any {
-  const drop = order?.deliveryAddress || {};
+  const drop = order?.deliveryAddress || order?.address || {};
   return {
-    house: drop.house || drop.flat || "",
-    street: drop.street || drop.full || "",
+    house: drop.house || drop.flat || drop.line1 || "",
+    street: drop.street || drop.full || drop.line2 || "",
     city: drop.city || "Ahmedabad",
     state: drop.state || "Gujarat",
     pincode: drop.pincode || "380015",
-    line: [drop.house || drop.flat, drop.street || drop.full, drop.city, drop.pincode]
+    line: [
+      drop.house || drop.flat || drop.line1,
+      drop.street || drop.full || drop.line2,
+      drop.city,
+      drop.pincode,
+    ]
       .filter((v) => typeof v === "string" && v.trim())
       .join(", "),
   };

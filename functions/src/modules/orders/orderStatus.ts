@@ -72,8 +72,22 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
   const order = (snap.data() || {}) as any;
   if (caller) await assertOrderBranchAccess(caller, order);
 
+  let finalMeta = { ...meta };
+  const fulfillment = (order.fulfillmentType || order.orderType || order.fulfillment || "delivery").toLowerCase();
+  if (fulfillment === "dinein") {
+    if (canonical === "ready") {
+      finalMeta = { code: "READY_TO_SERVE", label: "Ready to serve", kind: "in_progress", terminal: false };
+    } else if (canonical === "delivered") {
+      finalMeta = { code: "COMPLETED", label: "Completed", kind: "completed", terminal: true };
+    }
+  } else if (fulfillment === "takeaway") {
+    if (canonical === "delivered") {
+      finalMeta = { code: "PICKED_UP", label: "Picked up", kind: "completed", terminal: true };
+    }
+  }
+
   const payload: Record<string, any> = {
-    status: meta,
+    status: finalMeta,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
   if (cancellationReason) payload.cancellationReason = cancellationReason;

@@ -23,7 +23,9 @@
  *               already reuses one photo across categories, so sydney-s-viral
  *               (currently null) gets the same fallback its products use.
  *   categories  name, order (menuData array order), imageUrl
- *   banners     imageUrl only for the one banner whose image asset moved
+ *   banners     imageUrl for the one banner whose image asset moved, plus
+ *               gradient normalisation via BANNER_GRADIENTS (keeps banner
+ *               colors inside the 60-30-10 scheme — see note in that block)
  *
  * Everything else in each document (id, createdAt, restId, branchId, inStock,
  * isAvailable, isBestSeller, badges, tags, prepTimeMinutes, customizable,
@@ -305,12 +307,20 @@ for (const [id] of catDocs) {
 }
 
 /* ---- banners ---- */
+// Brand 60-30-10 guard (references/ui_ux_spec.md): banner gradients must stay
+// in-scheme. banner_myob shipped off-scheme purple (#4A2E7A -> #6D47B8); the
+// MYOB banner uses the Vibrant Orange accent so it stays distinct from the two
+// green banners and the red Peri Peri banner. Future imports inherit this map.
+const BANNER_GRADIENTS = {
+  banner_myob: "bg-gradient-to-br from-[#FF6600] to-[#E55C00] text-white",
+};
 for (const doc of live.banners) {
   const id = doc.fields?.id?.stringValue ?? doc.name.split("/").pop();
-  const newUrl = imageMap.banners[id];
-  if (!newUrl) continue;
   const before = { ...doc.fields };
-  if (doc.fields.imageUrl?.stringValue !== newUrl) before.imageUrl = S(newUrl);
+  const wantGradient = BANNER_GRADIENTS[id];
+  if (wantGradient && doc.fields.gradient?.stringValue !== wantGradient) before.gradient = S(wantGradient);
+  const newUrl = imageMap.banners[id];
+  if (newUrl && doc.fields.imageUrl?.stringValue !== newUrl) before.imageUrl = S(newUrl);
   const changedKeys = Object.keys(before).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(doc.fields[k]));
   if (!changedKeys.length) {
     skipped++;

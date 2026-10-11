@@ -70,6 +70,8 @@ import {
   autoRefund,
   __setPaymentsFetchForTests,
 } from "../src/modules/payments/razorpay.service";
+import { calculateRouteSplit, attemptRouteTransfer } from "../src/modules/payments/routeTransfers";
+import { getRazorpayKeyId } from "../src/modules/payments/razorpayClient";
 import { config } from "../src/config/env";
 
 describe("verifyPayment fail-closed (B2-S1)", () => {
@@ -262,6 +264,97 @@ describe("verifyPayment fail-closed (B2-S1)", () => {
     expect(res.success).toBe(true);
     expect(true).toBe(true); // reaching here proves the fetch was skipped
   });
+
+  it("refuses verification fail-closed when the key secret is unset (503, never a confirm)", async () => {
+    // Misconfiguration, not forgery: with no secret there is no HMAC to
+    // check at all — the order must not be confirmed on a guess.
+    config.razorpay.keySecret = "";
+    savedDocs["orders/order_nosecret_1"] = { branchId: "branch_test_1" };
+    const err: any = await verifyPayment({
+      orderId: "order_nosecret_1",
+      razorpayOrderId: "order_rzp_1",
+      razorpayPaymentId: "pay_nosecret_1",
+      razorpaySignature: "any_signature_at_all",
+    }).then(
+      () => null,
+      (e) => e
+    );
+    expect(err?.code).toBe("PAYMENT_VERIFICATION_UNAVAILABLE");
+    expect(err?.statusCode).toBe(503);
+    expect(savedDocs["orders/order_nosecret_1"].paymentStatus).toBeUndefined();
+  });
+
+  it("mock mode never accepts an empty signature", async () => {
+    config.mock.paymentGateway = true;
+    savedDocs["orders/order_empty_sig_1"] = { branchId: "branch_test_1" };
+    const err: any = await verifyPayment({
+      orderId: "order_empty_sig_1",
+      razorpayOrderId: "order_rzp_1",
+      razorpayPaymentId: "pay_empty_sig_1",
+      razorpaySignature: "",
+    }).then(
+      () => null,
+      (e) => e
+    );
+    expect(err?.code).toBe("INVALID_SIGNATURE");
+    expect(savedDocs["orders/order_empty_sig_1"].paymentStatus).toBeUndefined();
+  });
+
+  it("flags a missing linked account for manual settlement but still confirms the paid order", async () => {
+    config.mock.paymentGateway = true;
+    savedDocs["orders/order_manual_1"] = {
+      branchId: "branch_unlinked_1",
+      orderType: "delivery",
+      pricing: { grandTotal: 100, split: { branchTransferPaise: 9500, brandRoyaltyPaise: 500 } },
+    };
+    const res = await verifyPayment({
+      orderId: "order_manual_1",
+      razorpayOrderId: "order_rzp_m1",
+      razorpayPaymentId: "pay_manual_1",
+      razorpaySignature: "mock_signature_valid",
+    });
+    expect(res.success).toBe(true);
+    const order = savedDocs["orders/order_manual_1"];
+    // Customer outcome is NEVER failed over a payout bookkeeping gap...
+    expect(order.paymentStatus).toBe("completed");
+    // ...but ops can see exactly what needs a human.
+    expect(order.routeTransferStatus).toBe("failed");
+    expect(order.routeTransferNeedsManualSettlement).toBe(true);
+    expect(String(order.routeTransferError)).toMatch(/settle this payout manually/i);
+  });
+
+  it("never re-POSTs a transfer for an order already marked transferred (missing receipt included)", async () => {
+    config.mock.paymentGateway = true;
+    savedDocs["orders/order_double_1"] = {
+      branchId: "branch_test_1",
+      pricing: { grandTotal: 100, split: { branchTransferPaise: 9500 } },
+      routeTransferStatus: "transferred",
+      // payment.routeTransfer intentionally missing: a missing receipt is a
+      // data anomaly, never permission to move money a second time.
+    };
+    const res = await verifyPayment({
+      orderId: "order_double_1",
+      razorpayOrderId: "order_rzp_1",
+      razorpayPaymentId: "pay_double_1",
+      razorpaySignature: "mock_signature_valid",
+    });
+    expect(res.success).toBe(true);
+    expect(res.transfer).toBeNull();
+    expect(savedDocs["orders/order_double_1"].routeTransferStatus).toBe("transferred");
+    expect(savedDocs["orders/order_double_1"]["payment.routeTransfer"]).toBeUndefined();
+  });
+
+  it("splits whole paise and fails closed on unrepresentable input", () => {
+    expect(() => calculateRouteSplit(0)).toThrow(/positive integer/);
+    expect(() => calculateRouteSplit(Number.NaN)).toThrow(/positive integer/);
+    expect(() => calculateRouteSplit(-100)).toThrow(/positive integer/);
+    expect(() => calculateRouteSplit(100.5)).toThrow(/positive integer/);
+    expect(() => calculateRouteSplit(10000, 1)).toThrow(/\[0, 1\)/);
+    expect(() => calculateRouteSplit(10000, -0.1)).toThrow(/\[0, 1\)/);
+    // Rounding dust always lands on the branch leg, never vanishes.
+    const odd = calculateRouteSplit(9999);
+    expect(odd.brandRoyaltyPaise + odd.branchTransferPaise).toBe(9999);
+  });
 });
 
 describe("autoRefund fail-closed + idempotent (B2-S1)", () => {
@@ -402,5 +495,69 @@ describe("Razorpay Service & Signature Verification", () => {
     it("throws instead of falling back to the webhook secret when unset", () => {
       expect(() => getOtpHmacSecret()).toThrow(/OTP_HMAC_SECRET is unset/);
     });
+  });
+});
+
+// Track 2 (live gateway + Route settlement): the ZERO-MOCK policy and the
+// rzp_test_* ban have to hold at RUNTIME, not only at boot — these two entry
+// points are reachable without ever building the SDK client (idempotent intent
+// reuse, scheduled transfer retry), so they carry their own guards.
+describe("Track 2 — ZERO-MOCK + test-key runtime guards", () => {
+  let prevEnv: string | undefined;
+  let prevMock: boolean;
+  let prevKeyId: string;
+
+  beforeEach(() => {
+    prevEnv = process.env.BURGONOMICS_ENV;
+    prevMock = config.mock.paymentGateway;
+    prevKeyId = config.razorpay.keyId;
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.BURGONOMICS_ENV;
+    else process.env.BURGONOMICS_ENV = prevEnv;
+    config.mock.paymentGateway = prevMock;
+    config.razorpay.keyId = prevKeyId;
+  });
+
+  it("refuses an rzp_test_* key id at checkout in a declared production process", () => {
+    process.env.BURGONOMICS_ENV = "production";
+    config.razorpay.keyId = "rzp_test_TRACK2GUARD";
+    expect(() => getRazorpayKeyId()).toThrow(/test-mode key/);
+    // The guard is production-scoped: dev/staging keep working.
+    process.env.BURGONOMICS_ENV = "dev";
+    expect(getRazorpayKeyId()).toBe("rzp_test_TRACK2GUARD");
+  });
+
+  it("refuses a fake Route transfer when the mock gateway is flipped on in production", async () => {
+    process.env.BURGONOMICS_ENV = "production";
+    config.mock.paymentGateway = true;
+    // Throws BEFORE the mock short-circuit — no trf_mock_* receipt, no
+    // `transferred` stamp, no branch left thinking it was settled.
+    await expect(
+      attemptRouteTransfer(
+        "pay_track2_1",
+        "branch_track2",
+        { branchTransferPaise: 1000 },
+        "order_track2_1",
+        "acc_track2",
+        5000
+      )
+    ).rejects.toThrow(/MOCK_PAYMENT_GATEWAY/);
+  });
+
+  it("still allows the mock transfer path outside production (dev/sandbox)", async () => {
+    process.env.BURGONOMICS_ENV = "dev";
+    config.mock.paymentGateway = true;
+    const attempt = await attemptRouteTransfer(
+      "pay_track2_2",
+      "branch_track2",
+      { branchTransferPaise: 1000 },
+      "order_track2_2",
+      "acc_track2",
+      5000
+    );
+    expect(attempt.ok).toBe(true);
+    expect(attempt.result.id).toMatch(/^trf_mock_/);
   });
 });

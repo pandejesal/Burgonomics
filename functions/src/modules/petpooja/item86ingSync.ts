@@ -1,6 +1,6 @@
 import { db } from "../../core/firebase";
 import { captureErrorSnapshot } from "../../core/errors";
-import { config } from "../../config/env";
+import { config, assertLivePetpoojaContext } from "../../config/env";
 import { getPetpoojaConfig } from "./client";
 import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
@@ -38,7 +38,14 @@ export function normalizePetpoojaStatus(rawStatus: any): string {
  * Instant stock-out (86ing) webhook handler from Petpooja physical POS.
  */
 export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
-  const { rest_id, item_id, in_stock } = payload;
+  // Field-name tolerance: the published callback samples and our own route
+  // contract disagree on `rest_id`/`restID` and `in_stock`/`inStock`. Read
+  // both so a rename on Petpooja's side can never silently drop an 86ing
+  // toggle (the payload still has to authenticate through verifyPetpoojaAuth).
+  const p = payload || {};
+  const rest_id = p.rest_id ?? p.restID ?? p.restId;
+  const item_id = p.item_id ?? p.itemID ?? p.itemId;
+  const in_stock = p.in_stock ?? p.inStock;
   if (!item_id) {
     // Loop 6: a malformed 86ing payload (no item_id) used to log-and-drop —
     // silent stock-toggle loss. Snapshot loud so ops sees it; return (no
@@ -99,6 +106,9 @@ export async function pushItemStockToPetpooja(
 ): Promise<boolean> {
   // Staff boundary: branch-A staff cannot 86 Branch-B's items.
   if (caller) assertBranchAccess(caller, branchId);
+  // ZERO-MOCK runtime gate: a declared-production process must never "push"
+  // a toggle it never sent (the mock branch below would return true).
+  assertLivePetpoojaContext(`stock push for branch ${branchId} item ${itemId}`);
   if (config.mock.petpoojaPos) {
     console.log(`[Mock Petpooja 86ing] Pushed branch=${branchId} item=${itemId} inStock=${inStock}`);
     return true;
@@ -125,12 +135,26 @@ export async function pushItemStockToPetpooja(
         linked = (branchSnap.data() as any)?.petpoojaStoreId || null;
       } catch (err: any) {
         console.warn(`[Petpooja Stock Push] Branch lookup failed for ${branchId}:`, err?.message || err);
+        // Fail-closed AND loud: the KDS reports this toggle as not synced,
+        // so ops needs an alert (not a log line nobody reads).
+        await captureErrorSnapshot({
+          source: "petpooja",
+          severity: "high",
+          message: `Stock push for item ${itemId} aborted — branch lookup failed for ${branchId}: ${err?.message || err}`,
+          branchId,
+        });
         return false;
       }
       if (!linked) {
         console.warn(
           `[Petpooja Stock Push] Branch ${branchId} has no linked outlet — refusing wrong-outlet toggle (link per Runbook §5)`
         );
+        await captureErrorSnapshot({
+          source: "petpooja",
+          severity: "high",
+          message: `Stock push for item ${itemId} refused — branch ${branchId} has no linked Petpooja outlet (link per Runbook §5)`,
+          branchId,
+        });
         return false;
       }
       restId = linked;
@@ -143,30 +167,65 @@ export async function pushItemStockToPetpooja(
             signal: AbortSignal.timeout(15_000),
       headers: {
         "Content-Type": "application/json",
-        Content_key: petpoojaConfig.appKey,
+        // Legacy headers (Content_key + Bearer) AND the documented
+        // app-key/app-secret/access-token trio: the published
+        // update_item_stock contract authenticates with the latter, our
+        // integration shipped with the former. Dual-send until the sandbox
+        // probe pins exactly one — an 86 that never lands is a lie to the
+        // kitchen either way.
+        "Content_key": petpoojaConfig.appKey,
+        "app-key": petpoojaConfig.appKey,
+        "app-secret": petpoojaConfig.appSecret,
+        "access-token": petpoojaConfig.accessToken,
         Authorization: `Bearer ${petpoojaConfig.accessToken}`,
       },
       body: JSON.stringify({
         app_key: petpoojaConfig.appKey,
         app_secret: petpoojaConfig.appSecret,
         access_token: petpoojaConfig.accessToken,
+        // Dual key spelling (rest_id/restID, item_id/itemID, in_stock/inStock,
+        // scalar + array item id) — same values, whichever the POS reads.
         rest_id: restId,
+        restID: restId,
         item_id: itemId,
+        itemID: [itemId],
         in_stock: inStock ? 1 : 0,
+        inStock: inStock,
+        type: "item",
       }),
     });
 
-    const result = await response.json();
+    const result: any = await response.json().catch(() => null);
     // Petpooja acks vary (success:"1"/1/true or status:"success") — accept
-    // all documented forms, like orderPush does. Anything else is a failure.
-    return (
-      result.success === "1" ||
-      result.success === 1 ||
-      result.success === true ||
-      result.status === "success"
-    );
+    // all documented forms, like orderPush does. Anything else (HTTP error,
+    // empty/garbage body, explicit reject) is a FAILURE, and a failure must
+    // leave an alert behind: the KDS is about to show "not synced".
+    const acked =
+      response.ok &&
+      !!result &&
+      (result.success === "1" ||
+        result.success === 1 ||
+        result.success === true ||
+        result.status === "success");
+    if (!acked) {
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message:
+          `Petpooja stock push rejected/unreachable — branch ${branchId} item ${itemId} inStock=${inStock} ` +
+          `(HTTP ${response.status}${result?.message ? `: ${result.message}` : ""})`,
+        branchId,
+      });
+    }
+    return acked;
   } catch (err: any) {
     console.warn(`[Petpooja Stock Push Error] Failed for item ${itemId}:`, err.message);
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Petpooja stock push failed for item ${itemId} at branch ${branchId}: ${err?.message || err}`,
+      branchId,
+    });
     return false;
   }
 }

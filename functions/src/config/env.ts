@@ -22,8 +22,12 @@ function explicitMock(flag: string | undefined): boolean {
 
 export const config = {
   firebase: {
-    projectId: process.env.FIREBASE_PROJECT_ID || "burgonomics-7faa8",
-    region: process.env.FIREBASE_REGION || "asia-south1",
+    projectId:
+      process.env.GCLOUD_PROJECT ||
+      process.env.FIREBASE_PROJECT_ID ||
+      "burgonomics-7faa8",
+    region:
+      process.env.FUNCTION_REGION || process.env.FIREBASE_REGION || "asia-south1",
   },
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID || "",
@@ -50,7 +54,7 @@ export const config = {
       "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_item_stock",
     callbackUrl:
       process.env.PETPOOJA_CALLBACK_URL ||
-      `https://asia-south1-${process.env.FIREBASE_PROJECT_ID || "burgonomics-7faa8"}.cloudfunctions.net/api/petpooja/webhook`,
+      `https://asia-south1-${process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT_ID || "burgonomics-7faa8"}.cloudfunctions.net/api/petpooja/webhook`,
   },
   porter: {
     enabled: process.env.PORTER_ENABLED !== "false",
@@ -175,11 +179,64 @@ export function deploymentEnv(): DeploymentEnv {
   );
 }
 
+/**
+ * Non-throwing production predicate for RUNTIME guard rails on money paths.
+ * Boot still fails loudly through deploymentEnv()/assertProductionKeys();
+ * this only powers belt-and-braces checks that must hold even when config is
+ * mutated after boot (a flipped flag, a half-initialized deploy). Ambiguity
+ * (neither BURGONOMICS_ENV nor an explicit NODE_ENV=production) resolves to
+ * "not production" here — the boot assert is the strict gate for that case.
+ */
+export function isDeclaredProduction(): boolean {
+  const raw = (process.env.BURGONOMICS_ENV || "").trim().toLowerCase();
+  if (raw === "production") return true;
+  if (raw === "staging" || raw === "dev") return false;
+  return process.env.NODE_ENV === "production";
+}
+
+/** Razorpay test-mode key ids are always `rzp_test_*` (live: `rzp_live_*`). */
+export function isRazorpayTestKeyId(keyId: string | undefined): boolean {
+  return /^rzp_test_/i.test(String(keyId || "").trim());
+}
+
+/**
+ * ZERO-MOCK runtime guard for payment execution pathways. The boot-time
+ * assert is necessary but not sufficient: `config.mock.paymentGateway` is a
+ * plain mutable object, so a process that boots clean can still be flipped
+ * into minting `order_mock_*` orders / accepting any non-empty signature /
+ * faking Route transfers. In a declared production process every payment
+ * entrypoint refuses instead.
+ */
+export function assertLivePaymentsContext(operation: string): void {
+  if (config.mock.paymentGateway && isDeclaredProduction()) {
+    throw new Error(
+      `FATAL: MOCK_PAYMENT_GATEWAY is active in production — refusing ${operation} (fail-closed).`
+    );
+  }
+}
+
+/**
+ * ZERO-MOCK runtime guard for the Petpooja POS bridge. Boot refuses a
+ * declared-production process with MOCK_PETPOOJA_POS=true (assertProductionKeys),
+ * but `config.mock.petpoojaPos` stays mutable afterwards — and a flipped flag
+ * would turn real KOT pushes, 86ing, and menu syncs into phantom/synthetic
+ * operations (fake `pp_kot_*` orders, canned catalogs) in a LIVE store.
+ * Every petpooja entrypoint calls this before touching its mock branch.
+ */
+export function assertLivePetpoojaContext(operation: string): void {
+  if (config.mock.petpoojaPos && isDeclaredProduction()) {
+    throw new Error(
+      `FATAL: MOCK_PETPOOJA_POS is active in production — refusing ${operation} (fail-closed).`
+    );
+  }
+}
+
 export function assertProductionKeys(): void {
-  // Throws FATAL on ambiguity (see deploymentEnv) — boot refuses rather
-  // than guessing. Explicit production NODE_ENV short-circuits to enforcement.
-  const nodeProd = process.env.NODE_ENV === "production";
-  const declared = nodeProd ? ("production" as const) : deploymentEnv();
+  // deploymentEnv() prioritizes explicit BURGONOMICS_ENV ("dev" | "staging" | "production")
+  // and falls back to NODE_ENV === "production" when BURGONOMICS_ENV is unset.
+  // Using deploymentEnv() directly ensures Cloud Run containers (which always set
+  // NODE_ENV=production) honor BURGONOMICS_ENV="dev" or "staging".
+  const declared = deploymentEnv();
   // Staging mirrors prod secrets without the mock ban (staging legitimately
   // exercises fallback paths); dev runs unguarded and mock-friendly.
   if (declared === "staging") {
@@ -213,6 +270,15 @@ export function assertProductionKeys(): void {
     throw new Error(
       `FATAL: mock-like secrets in production (${mockLike.join(", ")}) — ` +
         `set live keys in functions/.env (dotenv file, not functions:config).`
+    );
+  }
+  // Live mode must refuse test-mode keys: an rzp_test_* key against the live
+  // deployment creates orders nobody can pay (or, worse, "succeeds" against
+  // Razorpay's test realm while production traffic silently fails).
+  if (isRazorpayTestKeyId(config.razorpay.keyId)) {
+    throw new Error(
+      "FATAL: rzp_test_* Razorpay key in production — set the rzp_live_* key " +
+        "in functions/.env (dotenv file, not functions:config)."
     );
   }
 }

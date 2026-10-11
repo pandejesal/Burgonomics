@@ -37,3 +37,5 @@ _archive/screenshots/
 # Standalone app repos (own git history)
 burgonomics-foundation-core/
 burgonomics-partner/
+# Agent session traces
+scripts/session_*.json

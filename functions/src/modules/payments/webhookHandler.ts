@@ -1,7 +1,7 @@
 ﻿import { Request, Response } from "express";
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
-import { config } from "../../config/env";
+import { config, assertLivePaymentsContext } from "../../config/env";
 import { verifyRazorpayWebhookSignature, isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { pushOrderToPetpooja } from "../petpooja";
@@ -10,6 +10,17 @@ import { pushOrderToPetpooja } from "../petpooja";
  * Handles incoming webhooks from Razorpay with signature verification & idempotent execution.
  */
 export async function handleRazorpayWebhook(req: Request, res: Response): Promise<void> {
+  // ZERO-MOCK production guard (defense in depth — the boot assert is the
+  // primary gate): a production process must never act on unverified
+  // webhook payloads because a mock flag got flipped after boot.
+  try {
+    assertLivePaymentsContext("handleRazorpayWebhook");
+  } catch (err: any) {
+    console.error("[Razorpay Webhook]", err?.message || err);
+    res.status(500).json({ error: "Webhook processing unavailable" });
+    return;
+  }
+
   const signature = req.headers["x-razorpay-signature"] as string;
   const rawBody = (req as any).rawBody
     ? (req as any).rawBody.toString("utf8")
@@ -149,9 +160,29 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           : payload.payload?.payment?.entity;
       const orderId = paymentEntity?.notes?.orderId;
       const branchId = paymentEntity?.notes?.branchId;
+      // payment.* carries the payment id on the entity itself; order.paid
+      // nests it under `payments` (either a bare id string or a full payment
+      // OBJECT, depending on Razorpay's payload version), then `payment_id`,
+      // then the event's own payment.entity. An object entry used to be
+      // written verbatim ("[object Object]") into payment.razorpayPaymentId,
+      // which breaks refund binding, coin-ledger dedupe, and the
+      // failed-attempt guard downstream.
+      const firstListedPayment = Array.isArray(paymentEntity?.payments)
+        ? paymentEntity.payments[0]
+        : undefined;
+      const listedPaymentId =
+        typeof firstListedPayment === "string"
+          ? firstListedPayment
+          : typeof firstListedPayment?.id === "string"
+          ? firstListedPayment.id
+          : undefined;
       const razorpayPaymentId =
         event === "order.paid"
-          ? paymentEntity?.payments?.[0] || paymentEntity?.payment_id
+          ? listedPaymentId ||
+            (typeof paymentEntity?.payment_id === "string"
+              ? paymentEntity.payment_id
+              : undefined) ||
+            payload.payload?.payment?.entity?.id
           : paymentEntity?.id;
 
       if (orderId && !isSafeDocId(orderId)) {
@@ -237,6 +268,35 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             },
             { merge: true }
           );
+        } else if (paymentEntity?.currency && paymentEntity.currency !== "INR") {
+          // INR-only settlement: Route splits, refunds (`reverse_all`), and
+          // every ledger on this order are paise-denominated. A non-INR
+          // capture (or a tampered currency field) must never flip the order
+          // to CONFIRMED or feed the split engine — park it for ops instead.
+          // Mirrors verifyPayment's live CURRENCY_MISMATCH refusal; absent
+          // currency stays accepted (legacy payloads — our orders.create
+          // always stamps INR).
+          await captureErrorSnapshot({
+            source: "payments",
+            severity: "high",
+            message: `Webhook ${event} currency mismatch for order ${orderId}: captured in ${paymentEntity.currency} — refusing CONFIRM, parked for review`,
+            orderId,
+            razorpayPaymentId: razorpayPaymentId || undefined,
+          });
+          await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
+            {
+              eventId,
+              event,
+              razorpayPaymentId: razorpayPaymentId || paymentEntity?.id || "unknown",
+              amount: capturedPaise !== null ? capturedPaise / 100 : null,
+              currency: paymentEntity?.currency || null,
+              claimedOrderId: orderId,
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+              status: "needs_review",
+              reason: "confirm_currency_mismatch",
+            },
+            { merge: true }
+          );
         } else if (storedPaise !== null && capturedPaise !== null && capturedPaise !== storedPaise) {
           await captureErrorSnapshot({
             source: "payments",
@@ -267,6 +327,11 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             "payment.status": "completed",
             // order.paid carries no payment id — never write undefined.
             ...(razorpayPaymentId ? { "payment.razorpayPaymentId": razorpayPaymentId } : {}),
+            // Live gateway truth in paise for the Route split over-transfer
+            // guard and the retry worker's transfer-cap check.
+            ...(typeof capturedPaise === "number"
+              ? { "payment.capturedAmountPaise": capturedPaise }
+              : {}),
             // Canonical object form (see verifyPayment): both apps + triggers
             // accept it; bare-string writes break Delivery tracking.
             status: {
@@ -285,6 +350,34 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         // SECOND push per paid order (this one with a mojibake title) —
         // double chimes for every online payment. (branchId from notes is
         // intentionally unused from here on.)
+
+        // Route split (RZ2): the webhook is the AUTHORITATIVE settlement
+        // channel — a payer who closes the app right after paying never calls
+        // verifyPayment, so without this the franchise branch payout would
+        // never execute at all. executeRouteSplit is the same claim-serialized
+        // routine verifyPayment uses, so webhook + client verify + `order.paid`
+        // duplicates can never double-POST the non-idempotent transfer API.
+        // Errors here propagate to a 500 on purpose: Razorpay then retries the
+        // delivery instead of letting a real payout silently drop.
+        const { executeRouteSplit } = await import("./razorpay.service");
+        const splitOutcome = await executeRouteSplit({
+          orderRef,
+          orderId,
+          orderData,
+          razorpayPaymentId: String(razorpayPaymentId || paymentEntity?.id || ""),
+          capturedAmountPaise: typeof capturedPaise === "number" ? capturedPaise : undefined,
+        });
+        if (splitOutcome.state === "busy") {
+          // Another actor (client verify / retry worker) owns the payout and
+          // will finish it — ack this delivery instead of double-POSTing.
+          console.warn(
+            `[Razorpay Webhook] Route split already in flight for order ${orderId} — acking without a second POST`
+          );
+        } else if (splitOutcome.state === "flagged") {
+          console.warn(
+            `[Razorpay Webhook] Route split flagged for order ${orderId}: ${splitOutcome.error}`
+          );
+        }
 
         // Loop 63/120: confirm-time Grill-Coins debit. Trusted intent only
         // (Razorpay order id → server-written intent) — never the client
@@ -318,6 +411,19 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         // Auto-push KOT to Petpooja POS upon payment confirmation.
         // pushOrderToPetpooja returns false (not throw) on POS rejection —
         // ignoring the return hid outstanding POS syncs behind a 200 ok.
+        //
+        // Duplicate-capture guard: `payment.captured` AND `order.paid` are
+        // both delivered for one payment under DIFFERENT event ids, so the
+        // event-id claim above cannot dedupe them — the kitchen would ring
+        // twice for one paid order. petpoojaOrderId is only written on a
+        // successful push, so its presence IS the "already pushed" marker,
+        // and a crashed push leaves it absent so a later retry still pushes.
+        const kotSnap = await db.collection("orders").doc(orderId).get();
+        if (kotSnap.exists && (kotSnap.data() as any)?.petpoojaOrderId) {
+          console.warn(
+            `[Razorpay Webhook] KOT already pushed for order ${orderId} — skipping duplicate push`
+          );
+        } else {
         try {
           const pushed = await pushOrderToPetpooja(orderId);
           if (!pushed) {
@@ -328,34 +434,91 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         } catch (err) {
           console.warn(`[Razorpay Webhook] KOT push queued for order ${orderId}:`, (err as any)?.message || err);
         }
+        }
         } // end Loop-4 bound-CONFIRM else (ghost/mismatch parked above)
       }
     } else if (event === "payment.failed") {
       const paymentEntity = payload.payload?.payment?.entity;
       const orderId = paymentEntity?.notes?.orderId;
-      if (orderId) {
-        await db.collection("orders").doc(orderId).set(
+      const failedPaymentId = typeof paymentEntity?.id === "string" ? paymentEntity.id : null;
+      const parkFailed = async (reason: string) => {
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Webhook payment.failed for order ${String(orderId)} — ${reason}, parked for review`,
+          razorpayPaymentId: failedPaymentId || undefined,
+        }).catch(() => undefined);
+        await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
           {
-            paymentStatus: "failed",
-            "payment.status": "failed",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            eventId,
+            event,
+            razorpayPaymentId: failedPaymentId || "unknown",
+            amount: typeof paymentEntity?.amount === "number" ? paymentEntity.amount / 100 : null,
+            currency: paymentEntity?.currency || "INR",
+            claimedOrderId: typeof orderId === "string" ? orderId : null,
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+            reason,
           },
           { merge: true }
         );
-        // The customer otherwise stares at a spinner: tell them plainly.
-        // (Status code is untouched, so no status trigger fires — push here.)
-        try {
-          const orderSnap = await db.collection("orders").doc(orderId).get();
-          const orderData = (orderSnap.exists ? orderSnap.data() : undefined) as any;
-          const { pushToCustomer } = await import("../notifications/fcmClient");
-          await pushToCustomer(
-            orderData?.customerId || orderData?.userId,
-            "⚠️ Payment failed",
-            `Payment for order #${orderId.substring(0, 6)} did not go through. No money was charged — please try again.`,
-            { type: "payment_failed", orderId }
-          );
-        } catch {
-          // Non-blocking (see pushToCustomer).
+      };
+
+      if (orderId && !isSafeDocId(orderId)) {
+        // Crafted notes.orderId (slash, empty, overlong) would throw or
+        // path-escape at doc() time and 500-retry-storm the endpoint. Park
+        // visibly; still 200.
+        await parkFailed("unsafe_order_id");
+      } else if (orderId) {
+        const orderRef = db.collection("orders").doc(orderId);
+        const orderSnap = await orderRef.get();
+        const orderData = (orderSnap.exists ? orderSnap.data() : undefined) as any;
+        if (!orderSnap.exists || !orderData) {
+          // Never resurrect a ghost order doc with a merged "failed" write
+          // (the mirror image of the confirm-path ghost guard).
+          await parkFailed("failed_unknown_order");
+        } else {
+          const alreadyPaid =
+            orderData.paymentStatus === "completed" ||
+            orderData?.payment?.status === "completed";
+          const recordedPaymentId =
+            orderData.payment?.razorpayPaymentId ??
+            orderData["payment.razorpayPaymentId"] ??
+            null;
+          // Monotonic status guard: a PAID order is never flipped back to
+          // failed by a late or replayed failure, and attempt A's failure
+          // never fails an order that already carries captured payment B
+          // (the pay-fail-retry-pay flow lands in exactly that ordering).
+          const foreignAttempt =
+            !!recordedPaymentId && !!failedPaymentId && recordedPaymentId !== failedPaymentId;
+          if (alreadyPaid || foreignAttempt) {
+            console.warn(
+              `[Razorpay Webhook] ignored payment.failed for order ${orderId} — ` +
+                `${alreadyPaid ? "order is already paid" : "failure belongs to a different payment attempt"}`
+            );
+          } else {
+            await orderRef.set(
+              {
+                paymentStatus: "failed",
+                "payment.status": "failed",
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+            // The customer otherwise stares at a spinner: tell them plainly.
+            // (Status code is untouched, so no status trigger fires — push here.)
+            try {
+              const { pushToCustomer } = await import("../notifications/fcmClient");
+              await pushToCustomer(
+                orderData?.customerId || orderData?.userId,
+                "⚠️ Payment failed",
+                `Payment for order #${orderId.substring(0, 6)} did not go through. No money was charged — please try again.`,
+                { type: "payment_failed", orderId }
+              );
+            } catch {
+              // Non-blocking (see pushToCustomer).
+            }
+          }
         }
       }
     } else if (event === "transfer.processed" || event === "transfer.failed" || event === "transfer.reversed") {
@@ -422,15 +585,41 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         );
       } else if (!ordersSnap.empty) {
         const orderDoc = ordersSnap.docs[0];
-        // Monotonic compare-and-set in a transaction: a stale or smaller
-        // replay must never overwrite a larger recorded refund downwards.
-        // refundedTotalPaise only ever grows toward the captured total.
+        // Per-refund ledger + monotonic total, computed inside one
+        // transaction (compare-and-set). Each gateway refund id is counted
+        // EXACTLY ONCE:
+        //  - a replay of one refund (same event re-delivered after a stale
+        //    claim takeover, or a second event id for the same refund) must
+        //    never double-credit refundedTotalPaise;
+        //  - SEQUENTIAL partial refunds must all accumulate — the old
+        //    max(existing, amount) kept only the largest, understating what
+        //    had been returned and inviting a second refund of the rest;
+        //  - autoRefund (which POSTs the refund, then records it) and this
+        //    webhook converge on the same refund id instead of summing the
+        //    same rupees twice.
         const amountPaise = Math.round((Number(amount) || 0) * 100);
-        await db.runTransaction(async (tx) => {
+        const refundNewlyRecorded = await db.runTransaction(async (tx) => {
           const snap = await tx.get(orderDoc.ref);
           const data = (snap.exists ? snap.data() : {}) as any;
           const existingTotal = Number(data.refundedTotalPaise) || 0;
-          const nextTotal = Math.max(existingTotal, amountPaise);
+          const ledger: Record<string, number> =
+            data.refundLedger &&
+            typeof data.refundLedger === "object" &&
+            !Array.isArray(data.refundLedger)
+              ? { ...(data.refundLedger as Record<string, number>) }
+              : {};
+          const isNewRefund =
+            typeof refundId === "string" && !!refundId && amountPaise > 0 && !(refundId in ledger);
+          if (isNewRefund) {
+            ledger[refundId] = amountPaise;
+          }
+          const ledgerTotal = Object.values(ledger).reduce(
+            (sum, v) => sum + (Number(v) || 0),
+            0
+          );
+          // Monotonic: never move the recorded total downwards (a smaller
+          // replayed amount must never mask a larger recorded refund).
+          const nextTotal = Math.max(existingTotal, ledgerTotal);
           tx.set(
             orderDoc.ref,
             {
@@ -438,11 +627,16 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               refundId,
               refundAmount: nextTotal / 100,
               refundedTotalPaise: nextTotal,
+              refundLedger: ledger,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
             { merge: true }
           );
+          return isNewRefund;
         });
+        // Customer notice only for a refund we had not recorded yet — a
+        // duplicate delivery must not re-announce the same money.
+        if (refundNewlyRecorded) {
         try {
           const orderData = orderDoc.data() as any;
           const { pushToCustomer } = await import("../notifications/fcmClient");
@@ -454,6 +648,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           );
         } catch {
           // Non-blocking (see pushToCustomer).
+        }
         }
       } else {
         await captureErrorSnapshot({

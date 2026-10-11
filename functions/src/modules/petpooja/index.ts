@@ -15,6 +15,7 @@ export {
   resolveBranchIdForRestId,
 } from "./item86ingSync";
 export { getPetpoojaConfig, verifyPetpoojaSignature } from "./client";
+export { runPetpoojaTestScenario } from "./testRunner";
 export {
   syncAllBranchesPetpoojaMenu,
   retryPendingPetpoojaOrdersWorker,

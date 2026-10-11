@@ -1,5 +1,5 @@
 import { db } from "../../core/firebase";
-import { config } from "../../config/env";
+import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
 import * as admin from "firebase-admin";
@@ -33,6 +33,9 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller): 
 }> {
   // Staff boundary: branch-A staff cannot sync Branch-B's menu.
   if (caller) assertBranchAccess(caller, branchId);
+  // ZERO-MOCK runtime gate: the canned catalog below must never be written
+  // into the live `products` collection a real app is ordering from.
+  assertLivePetpoojaContext(`menu sync for branch ${branchId}`);
   // Resolve the Petpooja restID for this branch (ops links outlets via
   // branches/{id}.petpoojaStoreId — Runbook §5). Loop 6: FAIL CLOSED on
   // unlinked branches or failed lookups — the old fallback sent our internal
@@ -129,10 +132,19 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller): 
               signal: AbortSignal.timeout(15_000),
         headers: {
           "Content-Type": "application/json",
-          Content_key: petpoojaConfig.appKey,
+          // Documented Menu-API auth (app-key/app-secret/access-token) PLUS
+          // the legacy Content_key/Bearer pair this integration shipped with.
+          // Dual-send until the sandbox probe pins one shape — a wrong guess
+          // here silently stops ALL catalog ingestion from the source of truth.
+          "Content_key": petpoojaConfig.appKey,
+          "app-key": petpoojaConfig.appKey,
+          "app-secret": petpoojaConfig.appSecret,
+          "access-token": petpoojaConfig.accessToken,
           Authorization: `Bearer ${petpoojaConfig.accessToken}`,
         },
-        body: JSON.stringify({ rest_id: restId }),
+        // Published contract names the outlet key `restID` (required); our
+        // legacy call used `rest_id`. Same verified value under both spellings.
+        body: JSON.stringify({ rest_id: restId, restID: restId }),
       });
 
       if (!response.ok) {
@@ -318,7 +330,8 @@ export async function handlePetpoojaMenuWebhook(payload: any): Promise<{
   success: boolean;
   itemCount: number;
 }> {
-  const restId = payload.rest_id || payload.res_id;
+  const p = payload || {};
+  const restId = p.rest_id || p.res_id || p.restID || p.restId;
   if (!restId) {
     throw new Error("Missing rest_id in Petpooja menu webhook payload");
   }

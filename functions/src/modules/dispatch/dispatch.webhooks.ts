@@ -74,8 +74,12 @@ const EVENT_ALIASES: Record<string, string> = {
   CONFIRMED: "DRIVER_ALLOCATED",
   ARRIVED_AT_PICKUP: "ARRIVED_AT_PICKUP",
   AT_PICKUP: "ARRIVED_AT_PICKUP",
-  PICKED_UP: "ARRIVED_AT_PICKUP",
-  ORDER_PICKED_UP: "ARRIVED_AT_PICKUP",
+  // Parcel in the courier's hands = the order LEFT the store → OUT_FOR_DELIVERY
+  // (mission §3: picked_up → OUT_FOR_DELIVERY; matches Porter's own
+  // normalizePorterEvent and Borzo's PARCEL_PICKED_UP mapping below). The
+  // "rider is standing at the store" stage is ARRIVED_AT_PICKUP / AT_PICKUP.
+  PICKED_UP: "STARTED_DELIVERY",
+  ORDER_PICKED_UP: "STARTED_DELIVERY",
   STARTED_DELIVERY: "STARTED_DELIVERY",
   OUT_FOR_DELIVERY: "STARTED_DELIVERY",
   DELIVERY_STARTED: "STARTED_DELIVERY",
@@ -160,6 +164,47 @@ export function normalizeDispatchEvent(
 
 function hash12(raw: string): string {
   return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 12);
+}
+
+/**
+ * Real rider GPS extraction — ZERO-FAKE rule. Only rider/driver/courier-
+ * prefixed coordinate pairs are accepted, and only when BOTH values coerce to
+ * finite in-range numbers. Nothing is interpolated, defaulted, or derived: a
+ * callback without a genuine courier position yields null and the mirror keeps
+ * its previous value (customer map hides the pin instead of faking one).
+ */
+export function extractRiderGps(payload: any): { lat: number; lng: number } | null {
+  const p = payload || {};
+  const pairs: Array<[unknown, unknown]> = [
+    [p.rider_latitude, p.rider_longitude],
+    [p.driver_latitude, p.driver_longitude],
+    [p.courier_latitude, p.courier_longitude],
+    [p.rider_location?.lat ?? p.rider_location?.latitude, p.rider_location?.lng ?? p.rider_location?.longitude],
+    [p.driver_location?.lat ?? p.driver_location?.latitude, p.driver_location?.lng ?? p.driver_location?.longitude],
+    [p.courier_location?.lat ?? p.courier_location?.latitude, p.courier_location?.lng ?? p.courier_location?.longitude],
+    [p.rider?.lat ?? p.rider?.latitude, p.rider?.lng ?? p.rider?.longitude],
+    [p.driver?.lat ?? p.driver?.latitude, p.driver?.lng ?? p.driver?.longitude],
+    [p.courier?.lat ?? p.courier?.latitude, p.courier?.lng ?? p.courier?.longitude],
+    [p.rider_details?.latitude, p.rider_details?.longitude],
+    [p.driver_details?.latitude, p.driver_details?.longitude],
+    [p.delivery?.courier?.latitude ?? p.delivery?.courier?.lat, p.delivery?.courier?.longitude ?? p.delivery?.courier?.lng],
+    [p.order?.courier?.latitude ?? p.order?.courier?.lat, p.order?.courier?.longitude ?? p.order?.courier?.lng],
+  ];
+  for (const [rawLat, rawLng] of pairs) {
+    const lat = typeof rawLat === "string" ? Number(rawLat) : rawLat;
+    const lng = typeof rawLng === "string" ? Number(rawLng) : rawLng;
+    if (typeof lat !== "number" || typeof lng !== "number") continue;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    if (lat === 0 && lng === 0) continue; // (0,0) is a null-island placeholder
+    return { lat, lng };
+  }
+  return null;
+}
+
+/** Drops undefined values — Firestore rejects them inside any write payload. */
+function definedFields(o: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 }
 
 function eventDocId(
@@ -517,30 +562,56 @@ export async function handleDispatchWebhook(
       ? `${driver.surname} ${driver.name}`
       : undefined;
 
-  // Late non-terminal events must not rewind a delivered order — provider
-  // retries can deliver stale courier updates out of order within the window.
-  if (
-    event === "DRIVER_ALLOCATED" ||
-    event === "ARRIVED_AT_PICKUP" ||
-    event === "STARTED_DELIVERY"
-  ) {
-    try {
-      const current = await orderRef.get();
-      if (current.data()?.deliveryStatus === "delivered") {
-        log(`Late ${rawEvent} after delivery ignored (no rewind)`);
-        await markProcessed();
-        return;
-      }
-    } catch (err: any) {
-      // Fail closed: if we cannot prove the order is not yet delivered, skip
-      // the flip rather than risk rewinding DELIVERED state.
-      console.error(
-        `[Dispatch Webhook/${provider}] pre-write order read failed:`,
-        err?.message || err
-      );
-      throw new Error(`Pre-write order read failed: ${err?.message || err}`);
-    }
+  // ONE pre-write order read — it feeds the terminal guard AND the
+  // `order.delivery` mirror merge base below.
+  let currentOrder: Record<string, any> = {};
+  try {
+    const current = await orderRef.get();
+    currentOrder = (current.data() || {}) as Record<string, any>;
+  } catch (err: any) {
+    // Fail closed: if we cannot prove the order is not yet delivered, skip
+    // the flip rather than risk rewinding DELIVERED state.
+    console.error(
+      `[Dispatch Webhook/${provider}] pre-write order read failed:`,
+      err?.message || err
+    );
+    throw new Error(`Pre-write order read failed: ${err?.message || err}`);
   }
+
+  // Terminal-state guard (mission §4): after `delivered`, EVERY event except
+  // the terminal DELIVERED flip itself is ignored. Provider retries replay
+  // stale courier updates out of order within the freshness window — a late
+  // RIDER_CANCELLED would otherwise resurrect a DELIVERED order as
+  // rider_cancelled + needsRebook and pay for a second rider.
+  if (event !== "DELIVERED" && currentOrder.deliveryStatus === "delivered") {
+    log(`Late ${rawEvent} after delivery ignored (no rewind)`);
+    await markProcessed();
+    return;
+  }
+
+  // `order.delivery` sub-object mirror (customer tracking reads exactly this
+  // path). Always built from the PRE-WRITE snapshot + this event's fields, so
+  // the write is a complete snapshot — deterministic under Firestore's deep
+  // merge AND under the shallow-merge test shims (never drops a field the
+  // previous event wrote).
+  const deliveryMirror = (patch: Record<string, any>): Record<string, any> =>
+    definedFields({
+      ...(currentOrder.delivery && typeof currentOrder.delivery === "object"
+        ? currentOrder.delivery
+        : {}),
+      provider: currentOrder.dispatchProvider || provider,
+      providerOrderId:
+        currentOrder.dispatchOrderId != null
+          ? String(currentOrder.dispatchOrderId)
+          : providerOrderId != null
+          ? String(providerOrderId)
+          : undefined,
+      ...patch,
+    });
+
+  // Real rider GPS only — null when the callback carries no genuine courier
+  // position (the mirror then keeps whatever real value it already had).
+  const riderGps = extractRiderGps(payload);
 
   const updateData: Record<string, any> = {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -582,12 +653,26 @@ export async function handleDispatchWebhook(
       if (riderVehicle) updateData.riderVehicleNumber = riderVehicle;
       if (trackingUrl) updateData.riderTrackingUrl = trackingUrl;
       updateData.deliveryStatus = "dispatched";
+      // courier_assigned: order status itself stays PREPARING/READY — only
+      // rider details attach (mission §3).
+      updateData.delivery = deliveryMirror({
+        status: "rider_assigned",
+        riderName,
+        riderPhone,
+        riderVehicleNumber: riderVehicle,
+        trackingUrl,
+        assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       break;
     }
 
     case "ARRIVED_AT_PICKUP":
       updateData.riderArrivedAtStore = true;
       updateData.riderArrivedAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.delivery = deliveryMirror({
+        status: "at_pickup",
+        riderArrivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       break;
 
     case "STARTED_DELIVERY":
@@ -598,6 +683,7 @@ export async function handleDispatchWebhook(
         terminal: false,
       };
       updateData.deliveryStatus = "in_transit";
+      updateData.delivery = deliveryMirror({ status: "in_transit" });
       break;
 
     case "DELIVERED":
@@ -609,6 +695,10 @@ export async function handleDispatchWebhook(
       };
       updateData.deliveryStatus = "delivered";
       updateData.deliveredAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.delivery = deliveryMirror({
+        status: "delivered",
+        deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       break;
 
     case "RIDER_CANCELLED": {
@@ -627,9 +717,28 @@ export async function handleDispatchWebhook(
       };
       updateData.deliveryStatus = "rider_cancelled";
       updateData.needsRebook = true;
+      // Auto-rebook trigger (mission §3): the scheduled auto-rebook worker
+      // re-dispatches this order with the NEXT provider, never the one that
+      // cancelled. Staff-initiated cancels clear this flag, so they never
+      // auto-rebook.
+      updateData.rebookTrigger = "carrier_cancelled";
       updateData.riderCancellationReason = reason;
+      updateData.delivery = deliveryMirror({
+        status: "rider_cancelled",
+        riderCancellationReason: reason,
+      });
       break;
     }
+  }
+
+  // Live rider coordinates ride every callback that actually carries them
+  // (mission §3: live GPS). Real numbers only — see extractRiderGps.
+  if (riderGps) {
+    updateData.delivery = {
+      ...(updateData.delivery || deliveryMirror({})),
+      riderLocation: riderGps,
+      riderLocationAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
   }
 
   await orderRef.set(updateData, { merge: true });

@@ -219,6 +219,30 @@ describe("dispatchQuote (DR1/DR4/DR5)", () => {
     expect(fetchCalls).toHaveLength(0); // gate runs before any fan-out
   });
 
+  it("fails closed 422 DISPATCH_COORDINATES_INVALID on a null-island pin", async () => {
+    // Pickup (0,0): a broken store pin must not be quoted as a real pickup.
+    await expect(
+      dispatchQuote({
+        pickupLat: 0,
+        pickupLng: 0,
+        dropLat: DROP.lat,
+        dropLng: DROP.lng,
+      })
+    ).rejects.toMatchObject({ statusCode: 422, code: "DISPATCH_COORDINATES_INVALID" });
+
+    // Drop (0,0): a missing customer pin must not reach the fan-out either.
+    await expect(
+      dispatchQuote({
+        pickupLat: PICKUP.lat,
+        pickupLng: PICKUP.lng,
+        dropLat: 0,
+        dropLng: 0,
+      })
+    ).rejects.toMatchObject({ statusCode: 422, code: "DISPATCH_COORDINATES_INVALID" });
+
+    expect(fetchCalls).toHaveLength(0); // guard runs before any carrier call
+  });
+
   it("fails closed 503 NO_SERVICEABLE_PROVIDER when no provider is eligible", async () => {
     config.porter.enabled = false;
     config.mock.borzoDispatch = false;
@@ -620,7 +644,9 @@ describe("dispatch webhooks (DR10)", () => {
 
   it("normalizes provider aliases to the canonical lifecycle", () => {
     expect(normalizeDispatchEvent("RIDER_ASSIGNED")).toBe("DRIVER_ALLOCATED");
-    expect(normalizeDispatchEvent("picked-up")).toBe("ARRIVED_AT_PICKUP");
+    // Courier holds the parcel → already out for delivery (STARTED_DELIVERY),
+    // not merely arrived at pickup. Matches parcel_picked_up below.
+    expect(normalizeDispatchEvent("picked-up")).toBe("STARTED_DELIVERY");
     expect(normalizeDispatchEvent(" out_for_delivery ")).toBe("STARTED_DELIVERY");
     expect(normalizeDispatchEvent("COMPLETED")).toBe("DELIVERED");
     expect(normalizeDispatchEvent("NO_RIDERS_FOUND")).toBe("RIDER_CANCELLED");

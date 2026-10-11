@@ -50,7 +50,12 @@ export const verifyPaymentSchema = z.object({
   orderId: nonEmptyString,
   razorpayOrderId: nonEmptyString,
   razorpayPaymentId: nonEmptyString,
-  razorpaySignature: nonEmptyString,
+  // Empty is ALLOWED through validation on purpose: a missing/blank
+  // signature is an auth failure, not a malformed body, and must answer
+  // 401 INVALID_SIGNATURE from the HMAC layer (verifyRazorpaySignature
+  // refuses any falsy signature before touching an order) instead of a
+  // generic 400 validation error.
+  razorpaySignature: z.string(),
 });
 
 export const refundSchema = z.object({
@@ -87,6 +92,14 @@ export const pushStockSchema = z.object({
   branchId: nonEmptyString,
   itemId: nonEmptyString,
   inStock: z.boolean(),
+});
+
+// MT-01: Petpooja sandbox test relay. scenarioId is bounded (not enum'd) so
+// new sandbox scenarios can ship without a schema change — the runner itself
+// rejects unknown ids with the valid catalog in the error message.
+export const petpoojaTestRunnerSchema = z.object({
+  scenarioId: z.string().min(1),
+  branchId: z.string().optional(),
 });
 
 export const porterBookSchema = z.object({

@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
-import { config } from "../../config/env";
+import { config, assertLivePaymentsContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getRazorpayClient } from "./razorpayClient";
 
@@ -18,19 +18,37 @@ export interface RouteTransferAttempt {
 }
 
 /**
- * Calculates 95% branch transfer and 5% brand royalty split in paise.
+ * Calculates the branch/brand royalty split in paise.
+ *
+ * Fail-closed input gate: the split feeds a real money transfer, so a NaN,
+ * fractional, or negative paise total (or a rate outside [0,1)) must throw
+ * instead of producing `NaN` paise that a downstream `> 0` check could leak
+ * past. `branchTransferPaise` is derived as `total - royalty` so the two legs
+ * ALWAYS sum to the captured total — no rounding dust is created or lost.
  */
 export function calculateRouteSplit(
   totalAmountPaise: number,
   royaltyRate = 0.05
 ): RoutePricingSplit {
-  const brandRoyaltyPaise = Math.round(totalAmountPaise * royaltyRate);
-  const branchTransferPaise = totalAmountPaise - brandRoyaltyPaise;
+  const total = Number(totalAmountPaise);
+  const rate = Number(royaltyRate);
+  if (!Number.isInteger(total) || total <= 0) {
+    throw new Error(
+      `calculateRouteSplit: totalAmountPaise must be a positive integer of whole paise (got ${String(totalAmountPaise)})`
+    );
+  }
+  if (!Number.isFinite(rate) || rate < 0 || rate >= 1) {
+    throw new Error(
+      `calculateRouteSplit: royaltyRate must be a fraction in [0, 1) (got ${String(royaltyRate)})`
+    );
+  }
+  const brandRoyaltyPaise = Math.round(total * rate);
+  const branchTransferPaise = total - brandRoyaltyPaise;
 
   return {
     branchTransferPaise,
     brandRoyaltyPaise,
-    totalAmountPaise,
+    totalAmountPaise: total,
   };
 }
 
@@ -80,6 +98,14 @@ export async function attemptRouteTransfer(
   // would pull brand money into the branch payout).
   capturedAmountPaise?: number
 ): Promise<RouteTransferAttempt> {
+  // ZERO-MOCK production guard at the single choke point every Route payout
+  // passes through (verify, webhook, retry worker). The entry guards on
+  // verifyPayment/handleRazorpayWebhook do NOT cover the scheduled retry
+  // worker — without this, a MOCK_PAYMENT_GATEWAY flipped on in a declared
+  // production process would stamp `trf_mock_*` receipts as `transferred`
+  // and silently never move a branch's money. Thrown (not returned as
+  // ok:false) so callers fail LOUD instead of recording a fake attempt.
+  assertLivePaymentsContext("attemptRouteTransfer");
   try {
     const rawAccountId =
       preResolvedAccountId !== undefined
@@ -174,10 +200,51 @@ export async function retryPendingRouteTransfersWorker() {
     return { retriedCount: 0 };
   }
 
+  // Stale-claim TTL shared by the claim transaction below and the
+  // crash-recovery sweep: both must agree on when a lease is dead.
+  const CLAIM_TTL_MS = 10 * 60 * 1000;
+
+  const docs = pendingSnap.docs as any[];
+
+  // Crash-recovery sweep: an order claimed into `transferring` by a verify
+  // call or a `payment.captured` webhook that then died has NO other retrier
+  // — a webhook-only payer closes the tab and never calls verify again, so
+  // the branch payout would sit untransferred forever. Pull parked,
+  // expired-lease orders back into this tick. The claim transaction below
+  // re-reads the lease, so a claim that is still live elsewhere is never
+  // stolen (and overlapping ticks still serialize on the same lease).
+  try {
+    const parkedSnap = await db
+      .collection("orders")
+      .where("routeTransferStatus", "==", "transferring")
+      .limit(20)
+      .get();
+    const nowMs = Date.now();
+    for (const parked of (parkedSnap?.docs as any[]) || []) {
+      const parkedData = parked?.data?.() as any;
+      const claimedAtRaw = parkedData?.routeTransferClaimedAt;
+      const claimedAt =
+        typeof claimedAtRaw === "number" && Number.isFinite(claimedAtRaw)
+          ? claimedAtRaw
+          : claimedAtRaw && typeof claimedAtRaw.toMillis === "function"
+            ? claimedAtRaw.toMillis()
+            : 0;
+      // Unreadable/absent lease = parked with nobody working it → stale.
+      if (claimedAt === 0 || nowMs - claimedAt >= CLAIM_TTL_MS) docs.push(parked);
+    }
+  } catch (err: any) {
+    // A datastore without a single-field chained where() (shimmed tests)
+    // skips the sweep for this tick — pending_retry processing above is
+    // unaffected and the tick must still drain.
+    console.warn(
+      "[Route Transfer Worker] stale-transferring sweep skipped:",
+      err?.message || err
+    );
+  }
+
   // One batched prefetch for every distinct branch: the old code re-read the
   // same branch doc once per order (N orders × 1 read + 1 external POST,
   // all serial). External transfer POSTs then run in bounded chunks.
-  const docs = pendingSnap.docs as any[];
   const distinctBranchIds = [
     ...new Set(
       docs.map((d) => d.data()?.branchId).filter((b): b is string => typeof b === "string" && !!b)
@@ -202,7 +269,6 @@ export async function retryPendingRouteTransfersWorker() {
   // Claim-then-work (shared lease with verifyPayment's `transferring` flag):
   // overlapping scheduler ticks used to POST the same non-idempotent
   // transfer twice. Stale claims (>10 min) are take-over-able.
-  const CLAIM_TTL_MS = 10 * 60 * 1000;
   const claimedDocs: any[] = [];
   if (db && typeof (db as any).runTransaction === "function") {
     try {
@@ -211,7 +277,12 @@ export async function retryPendingRouteTransfersWorker() {
         for (const doc of docs) {
           const fresh = await tx.get(doc.ref);
           const data = (fresh.exists ? fresh.data() : undefined) as any;
-          if (!data || data.routeTransferStatus !== "pending_retry") continue;
+          const status = data?.routeTransferStatus;
+          // `pending_retry` is the scheduled lane; `transferring` is only
+          // claimable when its lease below reads as expired (a verify or
+          // webhook that crashed between claim and POST) — a LIVE
+          // transferring lease is somebody else's in-flight money move.
+          if (!data || (status !== "pending_retry" && status !== "transferring")) continue;
           // Numeric-first lease read (see porter claim): a serverTimestamp
           // sentinel has no toMillis and would read as 0, causing instant
           // false takeover and a double transfer POST.
@@ -290,6 +361,11 @@ export async function retryPendingRouteTransfersWorker() {
         await doc.ref.set(
           {
             routeTransferStatus: "failed",
+            // Unlinked branch: retrying will not conjure a linked account.
+            // Flag it so ops links the branch in the Razorpay dashboard and
+            // settles this order by hand — the customer's CONFIRMED order is
+            // never failed over a missing payout.
+            routeTransferNeedsManualSettlement: true,
             routeTransferError: attempt.error,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },

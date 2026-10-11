@@ -57,6 +57,14 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
         }),
       }),
     }),
+    // Transaction seam used by executeRouteSplit's claim and the
+    // refund.processed per-refund ledger. Thin shim over the same doc mock.
+    runTransaction: vi.fn(async (fn: (tx: any) => Promise<any>) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      })
+    ),
   };
   return { mockDb, savedDocs };
 });
@@ -186,6 +194,200 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     });
   });
 
+  // ── Monotonic status guard: a late/replayed payment.failed must never
+  // downgrade an order that already carries captured payment. ──────────────
+  it("ignores payment.failed for an already-paid order (no downgrade)", async () => {
+    savedDocs["orders/order_replay_1"] = {
+      ...savedDocs["orders/order_replay_1"],
+      paymentStatus: "completed",
+      payment: { status: "completed", razorpayPaymentId: "pay_test_123" },
+    };
+    const payload = {
+      id: "evt_fail_late_1",
+      event: "payment.failed",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_test_123",
+            amount: 25000,
+            currency: "INR",
+            notes: { orderId: "order_replay_1", branchId: "branch_surat_01" },
+          },
+        },
+      },
+    };
+    const call = mockReqRes(payload);
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("completed");
+    expect(savedDocs["orders/order_replay_1"].payment).toMatchObject({
+      status: "completed",
+      razorpayPaymentId: "pay_test_123",
+    });
+    // Nothing parked — this is an expected non-event, not an anomaly.
+    expect(savedDocs["unmatched_payments/ump_evt_fail_late_1"]).toBeUndefined();
+  });
+
+  it("ignores a foreign payment attempt's failure (pay-fail-retry-pay ordering)", async () => {
+    // Order already carries captured attempt B; a late failure for attempt A
+    // must not fail it (that is exactly the retry-after-failure flow).
+    savedDocs["orders/order_replay_1"] = {
+      ...savedDocs["orders/order_replay_1"],
+      paymentStatus: "completed",
+      payment: { status: "completed", razorpayPaymentId: "pay_attempt_B" },
+    };
+    const payload = {
+      id: "evt_fail_foreign_1",
+      event: "payment.failed",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_attempt_A",
+            amount: 25000,
+            currency: "INR",
+            notes: { orderId: "order_replay_1" },
+          },
+        },
+      },
+    };
+    const call = mockReqRes(payload);
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("completed");
+  });
+
+  it("never resurrects a ghost order from payment.failed — parks for review", async () => {
+    const payload = {
+      id: "evt_fail_ghost_1",
+      event: "payment.failed",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_ghost_1",
+            amount: 12300,
+            currency: "INR",
+            notes: { orderId: "order_ghost_9" },
+          },
+        },
+      },
+    };
+    const call = mockReqRes(payload);
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    // No ghost order doc was created by the merged write.
+    expect(savedDocs["orders/order_ghost_9"]).toBeUndefined();
+    expect(savedDocs["unmatched_payments/ump_evt_fail_ghost_1"]).toMatchObject({
+      razorpayPaymentId: "pay_ghost_1",
+      claimedOrderId: "order_ghost_9",
+      status: "needs_review",
+      reason: "failed_unknown_order",
+    });
+  });
+
+  // ── RZ2: the webhook is the authoritative settlement channel, but
+  // payment.captured AND order.paid both land for one payment — the
+  // non-idempotent Route transfer POST must fire exactly once. ────────────
+  it("executes the Route split exactly once across payment.captured + order.paid", async () => {
+    savedDocs["orders/order_replay_1"] = {
+      ...savedDocs["orders/order_replay_1"],
+      pricing: {
+        grandTotal: 250,
+        split: { branchTransferPaise: 23750, brandRoyaltyPaise: 1250, totalAmountPaise: 25000 },
+      },
+    };
+    savedDocs["branches/branch_surat_01"] = { razorpayAccountId: "acc_surat_1" };
+
+    const captured = mockReqRes(capturedPayload("evt_split_once_1"));
+    await handleRazorpayWebhook(captured.req, captured.res);
+    expect(captured.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBe("transferred");
+    const transferId = savedDocs["orders/order_replay_1"]["payment.routeTransfer"]?.id;
+    expect(transferId).toMatch(/^trf_mock_/);
+    const kotId = savedDocs["orders/order_replay_1"].petpoojaOrderId;
+    expect(kotId).toMatch(/^pp_kot_/);
+
+    // Swap the stored receipt for a sentinel: if the order.paid delivery
+    // re-POSTed the transfer it would overwrite this with a fresh trf_mock_*.
+    savedDocs["orders/order_replay_1"]["payment.routeTransfer"] = {
+      id: "trf_sentinel_no_repost",
+      status: "processed",
+    };
+
+    const orderPaid = {
+      id: "evt_split_once_2",
+      event: "order.paid",
+      payload: {
+        order: {
+          entity: {
+            id: "rzp_order_1",
+            amount: 25000,
+            currency: "INR",
+            notes: { orderId: "order_replay_1", branchId: "branch_surat_01" },
+            payments: ["pay_test_123"],
+          },
+        },
+      },
+    };
+    const second = mockReqRes(orderPaid);
+    await handleRazorpayWebhook(second.req, second.res);
+    expect(second.out().statusCode).toBe(200);
+
+    // Fast-path: already transferred → stored receipt reused, no second POST.
+    expect(savedDocs["orders/order_replay_1"]["payment.routeTransfer"].id).toBe(
+      "trf_sentinel_no_repost"
+    );
+    expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBe("transferred");
+    // KOT dedupe: petpoojaOrderId is the "already pushed" marker.
+    expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBe(kotId);
+  });
+
+  // ── Refund accounting: each gateway refund id is counted EXACTLY ONCE —
+  // replays must not double-credit, sequential partials must accumulate. ──
+  it("counts each refund id once: replay doesn't double-credit, partials accumulate", async () => {
+    savedDocs["orders/order_ref_1"] = {
+      id: "order_ref_1",
+      branchId: "branch_surat_01",
+      customerPhone: "+91 90000 00001",
+      paymentStatus: "completed",
+      payment: { razorpayPaymentId: "pay_ref_1", status: "completed" },
+    };
+    const refundPayload = (eventId: string, refundId: string, amountPaise: number) => ({
+      id: eventId,
+      event: "refund.processed",
+      payload: {
+        refund: {
+          entity: { id: refundId, payment_id: "pay_ref_1", amount: amountPaise, currency: "INR" },
+        },
+      },
+    });
+
+    const first = mockReqRes(refundPayload("evt_ref_once_1", "rfnd_1", 10000));
+    await handleRazorpayWebhook(first.req, first.res);
+    expect(first.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_ref_1"]).toMatchObject({
+      refundStatus: "refunded",
+      refundedTotalPaise: 10000,
+      refundLedger: { rfnd_1: 10000 },
+    });
+
+    // Same refund re-delivered under a DIFFERENT event id (stale-claim
+    // takeover path): the event-id claim can't dedupe this — the ledger must.
+    const replay = mockReqRes(refundPayload("evt_ref_once_2", "rfnd_1", 10000));
+    await handleRazorpayWebhook(replay.req, replay.res);
+    expect(replay.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_ref_1"].refundedTotalPaise).toBe(10000);
+
+    // A DISTINCT second partial refund must accumulate, not replace.
+    const partial = mockReqRes(refundPayload("evt_ref_once_3", "rfnd_2", 5000));
+    await handleRazorpayWebhook(partial.req, partial.res);
+    expect(partial.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_ref_1"]).toMatchObject({
+      refundedTotalPaise: 15000,
+      refundAmount: 150,
+      refundLedger: { rfnd_1: 10000, rfnd_2: 5000 },
+    });
+  });
+
   it("parks processed refunds with no matching order in unmatched_payments (never drops money)", async () => {
     const payload = {
       id: "evt_refund_orphan_1",
@@ -210,5 +412,59 @@ describe("Razorpay webhook idempotency (real handler)", () => {
       status: "needs_review",
       reason: "refund_no_match",
     });
+  });
+
+  // ── Track 2 (live gateway hardening): INR-only settlement. Every split,
+  // refund, and ledger downstream is paise-denominated — a non-INR capture
+  // must never flip an order to CONFIRMED. ───────────────────────────────
+  it("refuses to confirm a non-INR capture — parks the money for review", async () => {
+    const payload = capturedPayload("evt_currency_1");
+    payload.payload.payment.entity.currency = "USD";
+    const call = mockReqRes(payload);
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    // Order untouched: no CONFIRM, no KOT, no Route split.
+    expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("pending");
+    expect(savedDocs["orders/order_replay_1"].status).toBeUndefined();
+    expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBeUndefined();
+    expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBeUndefined();
+    // Money is visible to ops, never dropped.
+    expect(savedDocs["unmatched_payments/ump_evt_currency_1"]).toMatchObject({
+      status: "needs_review",
+      reason: "confirm_currency_mismatch",
+      currency: "USD",
+      claimedOrderId: "order_replay_1",
+    });
+  });
+
+  // ── Track 2: order.paid carries the payment id as an OBJECT entry in some
+  // payload versions — writing it verbatim poisoned payment.razorpayPaymentId
+  // with "[object Object]" (refund binding + coin ledger + attempt guard). ──
+  it("extracts a string payment id from object-shaped order.paid payments[]", async () => {
+    const payload = {
+      id: "evt_objpay_1",
+      event: "order.paid",
+      payload: {
+        order: {
+          entity: {
+            id: "rzp_order_obj_1",
+            amount: 25000,
+            currency: "INR",
+            notes: { orderId: "order_replay_1", branchId: "branch_surat_01" },
+            payments: [{ id: "pay_object_shape_1", amount: 25000, currency: "INR" }],
+          },
+        },
+      },
+    };
+    const call = mockReqRes(payload);
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("completed");
+    expect(savedDocs["orders/order_replay_1"]["payment.razorpayPaymentId"]).toBe(
+      "pay_object_shape_1"
+    );
+    expect(String(savedDocs["orders/order_replay_1"]["payment.razorpayPaymentId"])).not.toContain(
+      "[object"
+    );
   });
 });

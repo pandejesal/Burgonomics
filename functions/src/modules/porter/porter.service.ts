@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import { db } from "../../core/firebase";
 import { config } from "../../config/env";
+import { extractRiderGps } from "../dispatch/dispatch.webhooks";
 import {
   timingSafeEqual,
   verifyPorterWebhookSignature,
@@ -11,10 +12,15 @@ import {
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 import {
+  dropGpsMissingError,
+  pickupGpsMissingError,
+  resolvePickupCoordinates,
+} from "../../core/utils/pickupCoords";
+import {
   calculateHaversineDistanceKm,
   calculatePorterFare,
   estimatePickupMinutes,
-} from "@burgonomics/shared/geo";
+} from "../../core/geo";
 import * as admin from "firebase-admin";
 
 export interface PorterQuoteParams {
@@ -200,6 +206,11 @@ function dispatchInProgressError(): Error {
   return retry;
 }
 
+/** Drops undefined values — Firestore rejects them inside any write payload. */
+function definedFields(o: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+}
+
 function storedDispatchSummary(d: any): any {
   return {
     porterOrderId: d.porterOrderId,
@@ -322,21 +333,21 @@ export async function bookPorterRider(
     throw new Error("Customer phone number is missing — edit the order to add it, then retry dispatch.");
   }
   const orderType = order.orderType || order.fulfillment || "delivery";
-  const drop = order.deliveryAddress;
+  const drop = order.deliveryAddress || order.address;
   if (orderType === "delivery" && !(drop?.street || drop?.full || (drop?.lat && drop?.lng))) {
     throw new Error("Delivery address is incomplete — add street or map pin, then retry dispatch.");
   }
   // Fail-closed GPS (B2-S1, H-R19): a textual address without coordinates must
   // never dispatch a rider to fallback defaults — the courier would drive to
   // the wrong pin on a paid booking. Pin the address first (422, retryable).
-  if (orderType === "delivery" && !(drop?.lat && drop?.lng)) {
-    const noGps: any = new Error(
-      "Delivery location is missing map coordinates — pin the customer address on the map, then retry dispatch."
-    );
-    noGps.statusCode = 422;
-    noGps.code = "DISPATCH_GPS_MISSING";
-    throw noGps;
-  }
+  // Unconditional (parity with the dispatch router): NO order type dispatches
+  // against a fabricated drop pin.
+  if (!(drop?.lat && drop?.lng)) throw dropGpsMissingError();
+  // Fail-closed PICKUP GPS (H-R19 parity): never book a courier to a default
+  // store pin. Real coordinates only: order.branchCoordinates (snapshot) →
+  // order.store → branches/{branchId}.coordinates (the canonical branch doc).
+  const pickupCoords = await resolvePickupCoordinates(order);
+  if (!pickupCoords) throw pickupGpsMissingError();
 
   // Per-order idempotency gate: replay + pending claim live here (before any
   // external POST) so neither the mock path nor the live path can double-book.
@@ -347,15 +358,13 @@ export async function bookPorterRider(
     if (reuse) return reuse;
   }
 
-  const pickupLat = order.branchCoordinates?.lat || 23.0131;
-  const pickupLng = order.branchCoordinates?.lng || 72.5085;
-  const dropLat = order.deliveryAddress?.lat || 23.0338;
-  const dropLng = order.deliveryAddress?.lng || 72.5262;
+  const pickupLat = pickupCoords.lat;
+  const pickupLng = pickupCoords.lng;
+  const dropLat = drop.lat;
+  const dropLng = drop.lng;
 
-  const usedFallbackCoords =
-    !(order.branchCoordinates?.lat && order.branchCoordinates?.lng) ||
-    !(order.deliveryAddress?.lat && order.deliveryAddress?.lng);
-  const dispatchGeoSource = usedFallbackCoords ? "fallback_default" : "live_gps";
+  // Every coordinate above is real GPS — no fallback source can exist here.
+  const dispatchGeoSource = "live_gps";
 
   let dispatchResult: any;
 
@@ -406,14 +415,16 @@ export async function bookPorterRider(
         },
         drop_details: {
           address: {
-            apartment_address: order.deliveryAddress?.house || order.deliveryAddress?.flat || "",
+            apartment_address: drop?.house || drop?.flat || drop?.line1 || "",
             street_address1:
-              order.deliveryAddress?.street ||
-              order.deliveryAddress?.full ||
+              drop?.street ||
+              drop?.full ||
+              drop?.line2 ||
+              drop?.landmark ||
               "Customer Delivery Address",
-            city: order.deliveryAddress?.city || "Ahmedabad",
-            state: order.deliveryAddress?.state || "Gujarat",
-            pincode: order.deliveryAddress?.pincode || "380015",
+            city: drop?.city || "Ahmedabad",
+            state: drop?.state || "Gujarat",
+            pincode: drop?.pincode || "380015",
             country: "India",
             lat: dropLat,
             lng: dropLng,
@@ -503,6 +514,29 @@ export async function bookPorterRider(
       dispatchGeoSource,
       dispatchedBy: staffName || "Branch Staff",
       dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // `order.delivery` mirror (customer tracking contract): the customer map
+      // reads this path for rider identity + live GPS + tracking link. Real
+      // values only, and a NEW booking clears the previous rider's stale GPS.
+      delivery: definedFields({
+        ...(order.delivery && typeof order.delivery === "object" ? order.delivery : {}),
+        provider: "porter",
+        providerOrderId: String(dispatchResult.porterOrderId),
+        status: dispatchResult.riderName ? "rider_assigned" : "pending",
+        riderName: dispatchResult.riderName ?? null,
+        riderPhone: dispatchResult.riderPhone ?? null,
+        riderVehicleNumber: dispatchResult.riderVehicleNumber ?? null,
+        trackingUrl: dispatchResult.trackingUrl || null,
+        riderLocation: null,
+        riderLocationAt: null,
+        assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }),
+      // A live booking settles any pending rebook request — otherwise the
+      // auto-rebook worker would re-dispatch this order with a SECOND carrier
+      // (double rider) on its next sweep. Mirrors dispatchBook's book write.
+      needsRebook: false,
+      rebookTrigger: null,
+      autoRebookAttempts: 0,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
@@ -579,6 +613,9 @@ export async function cancelPorterBooking(
       porterDispatchStatus: "cancelled_by_store",
       porterProviderCancel: "manual-required",
       needsRebook: true,
+      // Staff-initiated cancel: stomp any stale `carrier_cancelled` trigger so
+      // the auto-rebook worker never re-dispatches a cancel the staff chose.
+      rebookTrigger: "staff_cancelled",
       riderCancellationReason: `Booking cancelled by ${staffName || "Branch Staff"} — confirm cancellation in the Porter dashboard`,
       cancelledBy: staffName || "Branch Staff",
       cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -947,23 +984,117 @@ export async function handlePorterWebhook(
     return;
   }
 
+  // ONE pre-write order read: it feeds the terminal guard AND the
+  // `order.delivery` mirror merge base below.
+  let currentOrder: Record<string, any> = {};
+  try {
+    const current = await orderRef.get();
+    currentOrder = (current.data() || {}) as Record<string, any>;
+  } catch (err: any) {
+    // Fail closed: if we cannot prove the order is not yet delivered, skip
+    // the flip rather than risk rewinding DELIVERED state.
+    console.error(`[Porter Webhook] pre-write order read failed:`, err?.message || err);
+    throw new Error(`Pre-write order read failed: ${err?.message || err}`);
+  }
+
+  // Terminal-state guard: after `delivered`, every event except DELIVERED
+  // itself is ignored. Provider retries replay courier updates out of order
+  // inside the freshness window — a late CANCELLED/IN_TRANSIT would otherwise
+  // resurrect a DELIVERED order (and pay for a second rider).
+  if (event !== "DELIVERED" && currentOrder.deliveryStatus === "delivered") {
+    console.log(`[Porter Webhook] Late ${rawEvent} after delivery ignored (no rewind)`);
+    await markProcessed();
+    return;
+  }
+
+  // `order.delivery` sub-object mirror — the customer tracking map reads
+  // exactly this path for rider identity, live GPS and the tracking link.
+  // Always built from the PRE-WRITE snapshot + this event's fields, so every
+  // write is a complete snapshot (Firestore deep merge and the shallow-merge
+  // test shims converge; a field an earlier event wrote is never dropped).
+  const deliveryMirror = (patch: Record<string, any>): Record<string, any> =>
+    definedFields({
+      ...(currentOrder.delivery && typeof currentOrder.delivery === "object"
+        ? currentOrder.delivery
+        : {}),
+      provider: currentOrder.dispatchProvider || "porter",
+      providerOrderId:
+        currentOrder.porterOrderId != null
+          ? String(currentOrder.porterOrderId)
+          : porterOrderId != null
+          ? String(porterOrderId)
+          : undefined,
+      ...patch,
+    });
+
+  // Real rider GPS only — a callback without a genuine courier position
+  // leaves the mirror untouched (customer map hides the pin, never fakes one).
+  const riderGps = extractRiderGps(payload);
+  // A courier that already left the store must never be rewound to "rider
+  // assigned" by a late/out-of-order ALLOTTED retry.
+  const alreadyMoving =
+    currentOrder.deliveryStatus === "in_transit" ||
+    currentOrder.deliveryStatus === "delivered";
+
+  const firstNonEmpty = (...candidates: any[]): string | undefined =>
+    candidates.find((c) => typeof c === "string" && c.trim());
+
   const updateData: Record<string, any> = {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     porterWebhookEvent: rawEvent,
   };
 
   switch (event) {
-    case "DRIVER_ALLOCATED":
-      updateData.riderName = driverDetails.name || payload.driver_name;
-      updateData.riderPhone = driverDetails.phone || payload.driver_phone;
-      updateData.riderVehicleNumber = driverDetails.vehicle_number || payload.driver_vehicle_number;
-      updateData.riderTrackingUrl = payload.tracking_url || payload.tracking_link;
-      updateData.deliveryStatus = "dispatched";
+    case "DRIVER_ALLOCATED": {
+      const riderName = firstNonEmpty(
+        driverDetails.name,
+        payload.driver_name,
+        payload.rider_name
+      );
+      const riderPhone = firstNonEmpty(
+        driverDetails.phone,
+        payload.driver_phone,
+        payload.rider_contact,
+        payload.rider_phone
+      );
+      const riderVehicleNumber = firstNonEmpty(
+        driverDetails.vehicle_number,
+        payload.driver_vehicle_number,
+        payload.rider_vehicle_number
+      );
+      const trackingUrl = firstNonEmpty(
+        payload.tracking_url,
+        payload.tracking_link,
+        payload.track_url
+      );
+      // Only fields actually present are written — an `undefined` Firestore
+      // value rejects the whole write (the webhook would 500-loop forever).
+      if (riderName) updateData.riderName = riderName;
+      if (riderPhone) updateData.riderPhone = riderPhone;
+      if (riderVehicleNumber) updateData.riderVehicleNumber = riderVehicleNumber;
+      if (trackingUrl) updateData.riderTrackingUrl = trackingUrl;
+      const mirrorPatch: Record<string, any> = {
+        riderName,
+        riderPhone,
+        riderVehicleNumber,
+        trackingUrl,
+      };
+      if (!alreadyMoving) {
+        updateData.deliveryStatus = "dispatched";
+        mirrorPatch.status = "rider_assigned";
+        mirrorPatch.assignedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+      updateData.delivery = deliveryMirror(mirrorPatch);
       break;
+    }
 
     case "ARRIVED_AT_PICKUP":
       updateData.riderArrivedAtStore = true;
       updateData.riderArrivedAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.delivery = deliveryMirror({
+        status: "at_pickup",
+        riderArrivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       break;
 
     case "STARTED_DELIVERY":
@@ -975,6 +1106,7 @@ export async function handlePorterWebhook(
         terminal: false,
       };
       updateData.deliveryStatus = "in_transit";
+      updateData.delivery = deliveryMirror({ status: "in_transit" });
       break;
 
     case "DELIVERED":
@@ -986,6 +1118,10 @@ export async function handlePorterWebhook(
       };
       updateData.deliveryStatus = "delivered";
       updateData.deliveredAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.delivery = deliveryMirror({
+        status: "delivered",
+        deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       break;
 
     case "RIDER_CANCELLED":
@@ -995,6 +1131,7 @@ export async function handlePorterWebhook(
       // and the status-change trigger (customer push) never fired. Core
       // renders the server label verbatim; partner maps RIDER_CANCELLED into
       // the actionable dispatch bucket (see orderContract).
+      const reason = firstNonEmpty(payload.reason, payload.reason_text) || "Driver cancelled dispatch";
       updateData.status = {
         code: "RIDER_CANCELLED",
         label: "Rider cancelled — rebook required",
@@ -1003,9 +1140,26 @@ export async function handlePorterWebhook(
       };
       updateData.deliveryStatus = "rider_cancelled";
       updateData.needsRebook = true;
-      updateData.riderCancellationReason = payload.reason || "Driver cancelled dispatch";
+      // Auto-rebook trigger (mission §3): the scheduled worker re-dispatches
+      // this order with the NEXT provider, never the one that cancelled —
+      // without this stamp a Porter cancel was never auto-rebooked at all.
+      updateData.rebookTrigger = "carrier_cancelled";
+      updateData.riderCancellationReason = reason;
+      updateData.delivery = deliveryMirror({
+        status: "rider_cancelled",
+        riderCancellationReason: reason,
+      });
       break;
     }
+  }
+
+  // Live rider coordinates ride every callback that actually carries them.
+  if (riderGps) {
+    updateData.delivery = {
+      ...(updateData.delivery || deliveryMirror({})),
+      riderLocation: riderGps,
+      riderLocationAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
   }
 
   await orderRef.set(updateData, { merge: true });
@@ -1015,8 +1169,7 @@ export async function handlePorterWebhook(
   // order rots. Customer push rides the existing status-change trigger.
   if (event === "RIDER_CANCELLED" || event === "NO_RIDERS_FOUND") {
     try {
-      const snap = await orderRef.get();
-      const branchId = snap.data()?.branchId;
+      const branchId = currentOrder.branchId;
       if (typeof branchId === "string" && branchId) {
         const { dispatchFCM } = await import("../notifications/fcm.service");
         await dispatchFCM({
@@ -1225,6 +1378,12 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
     dispatchedBy: staffName || "Branch Manager",
     dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
     manualDispatchNotes: notes || "Dispatched via Branch POS Terminal fallback",
+    // An in-house rider settles any pending auto-rebook: leaving needsRebook
+    // set would make the worker book a 3PL rider ALONGSIDE this one (double
+    // rider on one order).
+    needsRebook: false,
+    rebookTrigger: null,
+    autoRebookAttempts: 0,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 

@@ -4,6 +4,12 @@
 
 ---
 
+## [Unreleased] — 2026-10-02 (Spec v2.1 — Multi-Provider Dispatch Requirements & Phase 7 Plan)
+
+### Added
+- **Spec Version 2.1** (.swarm/spec.md, 2026-10-02): multi-provider delivery dispatch requirements — FR-021 cheapest-serviceable-wins routing across Borzo/Shadowfax/Porter (parallel quote fan-out bounded by DISPATCH_QUOTE_TIMEOUT_MS default 6000 ms after the branch-radius gate, tie-break borzo > shadowfax > porter, bounded booking failover, fail-closed HTTP 503 when no provider is serviceable, ₹20/10% book-time fare-drift confirmation), FR-022 fail-closed per-provider webhook HMAC verification with unknown/stale/conflicting events parked as needs_review, FR-023 Porter manual-hybrid dispatch lane (POST /dispatch/porter-manual for food-vertical API refusal), FR-024 dispatch mock-flag ban rejecting MOCK_BORZO_DISPATCH/MOCK_SHADOWFAX_DISPATCH/MOCK_PORTER_DISPATCH at production boot, plus Scenario 9, Assumptions A-007/A-008, the In-Scope dispatch bullet, and Success Criteria amendments 1/10/13.
+- **Plan Phase 7 (Multi-Provider Delivery Dispatch)**: tasks 7.1 dispatch router/adapter audit against references/delivery_routing.md, 7.2 fail-closed provider webhook verification and test gaps, 7.3 partner POS manual-hybrid dispatch UI, 7.4 dispatch environment keys and mock-flag ban; the full verification suite task's dependencies extended with 7.1-7.4.
+
 ## [2.6.2] — 2026-09-10 (Audit Loop 1-12 Complete, 606 Tests Gate)
 
 ### Fixed & Verified

@@ -32,11 +32,14 @@ import { disposeRefundRequest } from "./modules/payments/refundRequests";
 import { resolveDiscrepancy } from "./modules/payments/discrepancies";
 import {
   syncPetpoojaMenu,
+  handlePetpoojaMenuWebhook,
   handlePetpoojaStockWebhook,
   handlePetpoojaWebhook,
   pushOrderToPetpooja,
   pushItemStockToPetpooja,
+  runPetpoojaTestScenario,
 } from "./modules/petpooja";
+import { auditPetpoojaWebhook } from "./modules/petpooja/webhookAudit";
 import {
   syncAllBranchesPetpoojaMenu,
   retryPendingPetpoojaOrdersWorker,
@@ -57,6 +60,7 @@ import {
   dispatchRebook,
   dispatchCancel,
   savePorterManualBooking,
+  autoRebookDispatchWorker,
   handleDispatchWebhook,
 } from "./modules/dispatch";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
@@ -102,6 +106,7 @@ import {
   pushOrderSchema,
   syncMenuSchema,
   pushStockSchema,
+  petpoojaTestRunnerSchema,
   porterBookSchema,
   porterCancelSchema,
   porterQuoteSchema,
@@ -146,6 +151,7 @@ const WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES = [
   "/dispatch/webhooks/shadowfax",
   "/petpooja/webhook",
   "/petpooja/stockWebhook",
+  "/petpooja/menu-sync",
   "/health",
   "/config/app",
 ];
@@ -308,7 +314,10 @@ app.post("/payments/verifyPayment", optionalAuth, validateBody(verifyPaymentSche
     // Pass through service status codes — notably 202 TRANSFER_IN_PROGRESS
     // (client retries verify with the same key in ~2s). Degrading it to 400
     // makes clients treat a live transfer as a hard failure and re-pay.
-    const status = err.statusCode === 202 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 502 || err.statusCode === 503 ? err.statusCode : 400;
+    // 401 INVALID_SIGNATURE must also pass through: collapsing a forged or
+    // empty signature into a generic 400 hides an auth failure behind a
+    // validation error (Track-2 mandate: signature refusals answer 401).
+    const status = err.statusCode === 202 || err.statusCode === 401 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 502 || err.statusCode === 503 ? err.statusCode : 400;
     if (err.statusCode === 202 && Number.isFinite(err.retryAfterMs)) {
       res.setHeader("Retry-After", String(Math.ceil(err.retryAfterMs / 1000)));
     }
@@ -445,19 +454,76 @@ app.post(
 );
 
 app.post("/petpooja/stockWebhook", verifyPetpoojaAuth, async (req, res) => {
+  const p = req.body || {};
   try {
-    await handlePetpoojaStockWebhook(req.body);
+    await handlePetpoojaStockWebhook(p);
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/stockWebhook",
+      outcome: "ok",
+      restId: p.rest_id ?? p.restID ?? p.restId ?? null,
+      itemId: p.item_id ?? p.itemID ?? p.itemId ?? null,
+    });
     res.status(200).json({ status: "success" });
   } catch (err: any) {
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/stockWebhook",
+      outcome: "error",
+      restId: p.rest_id ?? p.restID ?? p.restId ?? null,
+      itemId: p.item_id ?? p.itemID ?? p.itemId ?? null,
+      detail: err?.message,
+    });
     res.status(500).json({ error: err.message || "Stock webhook failed" });
   }
 });
 
-app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
+// Menu push webhook: Petpooja desktop POS notifies us of catalog changes and
+// we re-pull the authoritative menu for the linked outlet. Fail-closed auth
+// (verifyPetpoojaAuth) like every other inbound POS webhook — an
+// unauthenticated menu-sync trigger would let anyone fan out catalog pulls.
+app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
+  const p = req.body || {};
   try {
-    await handlePetpoojaWebhook(req.body);
+    const result = await handlePetpoojaMenuWebhook(p);
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/menu-sync",
+      outcome: "ok",
+      restId: p.rest_id ?? p.res_id ?? p.restID ?? p.restId ?? null,
+      itemCount: result.itemCount,
+      detail: result.success ? undefined : "outlet not linked — catalog pull skipped",
+    });
+    // success:false (unlinked outlet) is still a 200 — the payload was valid,
+    // there is nothing for Petpooja to retry; the skip was logged loudly.
+    res.status(200).json(result);
+  } catch (err: any) {
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/menu-sync",
+      outcome: "error",
+      restId: p.rest_id ?? p.res_id ?? p.restID ?? p.restId ?? null,
+      detail: err?.message,
+    });
+    res.status(400).json({ error: err.message || "Menu webhook failed" });
+  }
+});
+
+app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
+  const p = req.body || {};
+  try {
+    await handlePetpoojaWebhook(p);
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/webhook",
+      outcome: "ok",
+      restId: p.rest_id ?? p.restId ?? null,
+      orderId: p.order_id ?? p.clientOrderID ?? p.client_order_id ?? null,
+    });
     res.status(200).json({ status: "success" });
   } catch (err: any) {
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/webhook",
+      outcome: "error",
+      restId: p.rest_id ?? p.restId ?? null,
+      orderId: p.order_id ?? p.clientOrderID ?? p.client_order_id ?? null,
+      detail: err?.message,
+    });
     res.status(500).json({ error: err.message || "Petpooja webhook failed" });
   }
 });
@@ -487,9 +553,50 @@ app.post(
     try {
       const { branchId, itemId, inStock } = req.body;
       const success = await pushItemStockToPetpooja(branchId, itemId, inStock, req.user);
-      res.status(200).json({ success });
+      if (!success) {
+        // Fail-closed to the KDS: apiRequest only throws on non-2xx, so a
+        // 200 {success:false} would read as "synced" in the Partner app and
+        // the kitchen would believe a rejected/unreachable POS toggle landed.
+        // 502 is retryable client-side; the failure snapshot is already
+        // written server-side (item86ingSync).
+        res.status(502).json({
+          success: false,
+          error: "Petpooja POS did not confirm the stock toggle — not synced",
+        });
+        return;
+      }
+      res.status(200).json({ success: true });
     } catch (err: any) {
       res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Stock push failed" });
+    }
+  }
+);
+
+// MT-01: sandbox 5-scenario relay (dine-in KOT / modifiers / delivery GST+fee /
+// cancel+discount / bulk). Degrades to a `pp_test_*` order id whenever the
+// live POS is unreachable or unconfigured — never fails the smoke test.
+app.post(
+  "/petpooja/testRunner",
+  requireAuth,
+  requireRole([
+    "brand_owner",
+    "developer",
+    "branch_owner",
+    "branch_staff",
+    "superadmin",
+    "manager",
+  ]),
+  validateBody(petpoojaTestRunnerSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await runPetpoojaTestScenario(req.body, req.user);
+      res.status(200).json(result);
+    } catch (err: any) {
+      // 403 = the zero-mock production refusal raised by the runner itself;
+      // any other failure stays 500.
+      res
+        .status(err.statusCode === 403 ? 403 : 500)
+        .json({ error: err.message || "Petpooja test runner failed" });
     }
   }
 );
@@ -1234,6 +1341,7 @@ export const api = onRequest(
     maxInstances: 20,
     timeoutSeconds: 60,
     concurrency: 80,
+    invoker: "public",
   },
   app
 );
@@ -1342,6 +1450,33 @@ export const pollActivePorterDeliveries = onSchedule(
     }
     console.log(
       `[Porter Polling Worker] Polled ${result!.polledCount} orders, updated ${result!.updatedCount} orders`
+    );
+  }
+);
+
+// Auto-rebook worker (mission §3): sweeps orders a CARRIER cancelled (or a
+// dispatch that failed) and re-dispatches with the NEXT alternative provider —
+// never the one that cancelled, never a staff cancel, never past
+// AUTO_REBOOK_MAX_ATTEMPTS. Dead code until this wiring: without a schedule a
+// `carrier_cancelled` order sat waiting for a manual rebook forever.
+export const autoRebookCancelledDispatches = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "auto-rebook-dispatch",
+      4 * 60 * 1000,
+      () => autoRebookDispatchWorker()
+    );
+    if (!ran) {
+      console.log("[Auto Rebook Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Auto Rebook Worker] scanned ${result!.scanned} — rebooked ${result!.rebooked}, failed ${result!.failed}, busy ${result!.busy}, skipped ${result!.skipped}, exhausted ${result!.exhausted}`
     );
   }
 );

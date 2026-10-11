@@ -2,7 +2,7 @@ import * as crypto from "crypto";
 import * as admin from "firebase-admin";
 import * as https from "https";
 import { db } from "../../core/firebase";
-import { config } from "../../config/env";
+import { config, assertLivePaymentsContext } from "../../config/env";
 import {
   verifyRazorpaySignature,
   computeHmacSha256,
@@ -20,6 +20,44 @@ import {
 
 export { retryPendingRouteTransfersWorker, calculateRouteSplit } from "./routeTransfers";
 export { getOtpHmacSecret };
+
+/**
+ * The only currency Burgonomics settles in. Route splits, refund reversal
+ * (`reverse_all`), paise rounding, and the reconciliation ledgers are all
+ * INR-specific — an unsupported currency must fail closed at order creation
+ * instead of reaching an INR-only gateway (or, worse, being coerced).
+ */
+const ORDER_CURRENCY = "INR";
+const SUPPORTED_CURRENCIES = ["INR"];
+
+function assertSupportedCurrency(currency: string): void {
+  if (!SUPPORTED_CURRENCIES.includes(currency)) {
+    const err: any = new Error(
+      `Currency ${currency} is not supported for payment — we settle in ${SUPPORTED_CURRENCIES.join(", ")}.`
+    );
+    err.code = "CURRENCY_NOT_SUPPORTED";
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
+/**
+ * Fail-closed payable-amount gate (whole paise). `<= 0`, `NaN`, `±Infinity`,
+ * and any rupee total that cannot be represented as an integer paise count
+ * are refused BEFORE a gateway order is minted — Razorpay rejects them, and a
+ * coerced float would silently charge the wrong number of paise.
+ */
+function assertPayableAmount(amountPaise: number): number {
+  if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) {
+    const err: any = new Error(
+      "Your cart total is empty or cannot be settled in whole paise — please review your cart and retry."
+    );
+    err.code = "INVALID_AMOUNT";
+    err.statusCode = 400;
+    throw err;
+  }
+  return amountPaise;
+}
 
 /**
  * Direct Razorpay refund POST with an idempotency fingerprint header.
@@ -201,6 +239,10 @@ export async function resolveIntentRedemption(
  * Creates a Razorpay server order with authoritative price calculation and route notes.
  */
 export async function createPaymentOrder(params: CreateOrderParams) {
+  // ZERO-MOCK production guard: a production process must never mint an
+  // `order_mock_*` payable id, no matter how the config object got flipped.
+  assertLivePaymentsContext("createPaymentOrder");
+
   const branchId = await resolveBranchId(params);
 
   // Server-verified redemption: the pricing engine only ever sees coins the
@@ -241,7 +283,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           razorpayOrderId: data.razorpayOrderId,
           amountPaise: data.amountPaise,
           amountRupees: data.amountPaise / 100,
-          currency: "INR",
+          currency: ORDER_CURRENCY,
           receipt: data.receipt,
           pricing: data.pricing,
           keyId: getRazorpayKeyId(),
@@ -278,15 +320,11 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     loyaltyPointsToRedeem,
   });
 
-  if (!(pricing.grandTotal > 0)) {
-    // User-facing copy (no screaming codes): the route maps this to 400.
-    const err: any = new Error("Your cart total is empty — please add an item before paying.");
-    err.code = "INVALID_AMOUNT";
-    err.statusCode = 400;
-    throw err;
-  }
-
-  const amountPaise = Math.round(pricing.grandTotal * 100);
+  // Paise math stays in integers end to end: grandTotal is rupees (ruled to
+  // whole paise by the engine), amountPaise is the exact gateway amount.
+  // Both gates (finite/positive + whole paise) run BEFORE any gateway call.
+  assertSupportedCurrency(ORDER_CURRENCY);
+  const amountPaise = assertPayableAmount(Math.round(Number(pricing.grandTotal) * 100));
   const receipt = `rcpt_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
 
   let razorpayOrderId: string;
@@ -298,7 +336,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       const razorpay = getRazorpayClient();
       const rzpOrder = await razorpay.orders.create({
         amount: amountPaise,
-        currency: "INR",
+        currency: ORDER_CURRENCY,
         receipt,
         // Required for Razorpay Route: transfers only execute on captured
         // payments of orders with partial payments disabled.
@@ -376,7 +414,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
               razorpayOrderId: winner.razorpayOrderId,
               amountPaise: winner.amountPaise,
               amountRupees: winner.amountPaise / 100,
-              currency: "INR",
+              currency: ORDER_CURRENCY,
               receipt: winner.receipt,
               pricing: winner.pricing,
               keyId: getRazorpayKeyId(),
@@ -404,7 +442,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     razorpayOrderId,
     amountPaise,
     amountRupees: pricing.grandTotal,
-    currency: "INR",
+    currency: ORDER_CURRENCY,
     receipt,
     pricing,
     keyId: getRazorpayKeyId(),
@@ -432,13 +470,43 @@ export interface VerifyPaymentParams {
  * poll — the client retries verify with the same key).
  */
 export async function verifyPayment(params: VerifyPaymentParams) {
+  // ZERO-MOCK production guard: a live checkout must never be "verified" by
+  // the mock short-circuit below.
+  assertLivePaymentsContext("verifyPayment");
+
   const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
 
   // 1. Signature verification
   let isValid = false;
   if (config.mock.paymentGateway) {
-    isValid = razorpaySignature !== "force_fail";
+    // Dev/test sandbox ONLY (the guard above refuses it in production).
+    // A signature must still be present — an empty string is never valid.
+    isValid =
+      typeof razorpaySignature === "string" &&
+      razorpaySignature.length > 0 &&
+      razorpaySignature !== "force_fail";
   } else {
+    // Fail-closed on missing key secret: with nothing to verify against there
+    // is no signature check at all. 503 (misconfiguration — retryable, ops
+    // paged) rather than 401 (a forged signature), and either way the order
+    // is never confirmed.
+    if (!config.razorpay.keySecret) {
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message:
+          "RAZORPAY_KEY_SECRET is unset — payment signature verification is unavailable, refusing verify (fail-closed)",
+        orderId,
+        razorpayPaymentId,
+      }).catch(() => undefined);
+      const unavailable: any = new Error(
+        "Payment verification is temporarily unavailable — please retry (nothing was charged)."
+      );
+      unavailable.statusCode = 503;
+      unavailable.code = "PAYMENT_VERIFICATION_UNAVAILABLE";
+      unavailable.retryAfterMs = 2000;
+      throw unavailable;
+    }
     isValid = verifyRazorpaySignature(
       razorpayOrderId,
       razorpayPaymentId,
@@ -475,7 +543,6 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     throw ghost;
   }
   const orderData = orderSnap.data() || {};
-  const branchId = orderData.branchId;
 
   // Live gateway truth check (fail-closed on money mismatch, no auto-capture).
   // Runs only in live mode AND when the order carries a stored server-side
@@ -498,113 +565,39 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     });
   }
 
-  let transferResult: any = null;
+  // 3. Execute the Razorpay Route split. Claim-then-work lives inside
+  // executeRouteSplit, which is SHARED with the authoritative
+  // `payment.captured` webhook — both channels can fire for one payment and
+  // the underlying `payments.transfer` POST is not idempotent.
+  const splitOutcome = await executeRouteSplit({
+    orderRef,
+    orderId,
+    orderData,
+    razorpayPaymentId,
+    capturedAmountPaise,
+  });
 
-  // 3. Execute Razorpay Route split transfer if linked account exists.
-  // Claim-then-work inside a transaction: two concurrent verifies used to
-  // both read `!== "transferred"` and both POST the non-idempotent transfer
-  // API. The winner flips `transferring`; the loser reuses the result.
-  if (orderData.routeTransferStatus === "transferred") {
-    transferResult = orderData.payment?.routeTransfer ?? orderData["payment.routeTransfer"] ?? null;
-  } else if (db && typeof (db as any).runTransaction === "function") {
-    const claim: "claimed" | "done" | "busy" = await (db as any).runTransaction(
-      async (tx: any) => {
-        const fresh = await tx.get(orderRef as any);
-        const freshData = (fresh.exists ? fresh.data() : undefined) as any;
-        if (!freshData) return "busy";
-        if (freshData.routeTransferStatus === "transferred") {
-          transferResult =
-            freshData.payment?.routeTransfer ?? freshData["payment.routeTransfer"] ?? null;
-          return "done";
-        }
-        // Another verify/worker owns the transfer right now — never POST ours.
-        // Stale-claim takeover: a crash between claim and POST must not park
-        // the order in `transferring` forever (every future verify would 503).
-        if (freshData.routeTransferStatus === "transferring") {
-          const claimedAt = freshData.routeTransferClaimedAt;
-          const claimedMs =
-            claimedAt && typeof claimedAt.toMillis === "function" ? claimedAt.toMillis() : 0;
-          if (Date.now() - claimedMs < 10 * 60 * 1000) return "busy";
-        }
-        tx.set(
-          orderRef as any,
-          {
-            routeTransferStatus: "transferring",
-            routeTransferClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-        return "claimed";
-      }
+  if (splitOutcome.state === "busy") {
+    // Winner still mid-flight: return a 202 retry signal IMMEDIATELY (no
+    // blocking poll — the old 4x500ms serial loop stalled checkout ~2s per
+    // M32). The client retries verify with the same key; by then the
+    // transfer has settled. Posting our own transfer here is exactly the
+    // double-spend this guards. NOTE: /payments/verifyPayment route mapping
+    // to HTTP 202 is batch-4 owned — the message below carries the retry
+    // instruction so clients retry even while the route degrades this to 400.
+    const retry: any = new Error(
+      "Transfer in progress elsewhere — please retry payment verification in a couple of seconds (you will not be charged twice)."
     );
-    if (claim === "done" && transferResult) {
-      // Lost the race after a winner completed — reuse, skip our own POST.
-      return finishVerifiedPayment({
-        orderRef,
-        orderData: { ...orderData, routeTransferStatus: "transferred" },
-        orderId,
-        razorpayOrderId,
-        razorpayPaymentId,
-        transferResult,
-      });
-    }
-    if (claim === "busy") {
-      // Winner still mid-flight: return a 202 retry signal IMMEDIATELY (no
-      // blocking poll — the old 4x500ms serial loop stalled checkout ~2s per
-      // M32). The client retries verify with the same key; by then the
-      // transfer has settled. Posting our own transfer here is exactly the
-      // double-spend this guards. NOTE: /payments/verifyPayment route mapping
-      // to HTTP 202 is batch-4 owned — the message below carries the retry
-      // instruction so clients retry even while the route degrades this to 400.
-      const retry: any = new Error(
-        "Transfer in progress elsewhere — please retry payment verification in a couple of seconds (you will not be charged twice)."
-      );
-      retry.statusCode = 202;
-      retry.code = "TRANSFER_IN_PROGRESS";
-      retry.retryAfterMs = 2000;
-      throw retry;
-    }
+    retry.statusCode = 202;
+    retry.code = "TRANSFER_IN_PROGRESS";
+    retry.retryAfterMs = 2000;
+    throw retry;
   }
-  const pricingSplit = orderData.pricing?.split;
-  if (
-    transferResult === null &&
-    branchId &&
-    pricingSplit &&
-    pricingSplit.branchTransferPaise > 0
-  ) {
-    const attempt = await attemptRouteTransfer(razorpayPaymentId, branchId, pricingSplit, orderId, undefined, capturedAmountPaise);
 
-    if (attempt.ok && attempt.result) {
-      transferResult = attempt.result;
-      await orderRef.set(
-        {
-          routeTransferStatus: "transferred",
-          "payment.routeTransfer": attempt.result,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } else if (!attempt.skipped) {
-      await captureErrorSnapshot({
-        source: "payments",
-        severity: "high",
-        message: `Razorpay Route transfer failed for order ${orderId}: ${attempt.error}`,
-        orderId,
-        branchId,
-        razorpayPaymentId,
-      });
-      await orderRef.set(
-        {
-          routeTransferStatus: "pending_retry",
-          routeTransferError: attempt.error,
-          routeTransferRetryAt: admin.firestore.FieldValue.serverTimestamp(),
-          routeTransferRetryCount: 0,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    }
-  }
+  // Flagged (manual settlement / pending_retry) and no_split both leave the
+  // transfer unresolved on purpose: the customer's PAID order still confirms
+  // below — a payout bookkeeping problem must never fail a charged customer.
+  const transferResult = splitOutcome.state === "transferred" ? splitOutcome.transfer : null;
 
   // 4+5. Confirm state + audit (shared by the normal and race-loser paths).
   return finishVerifiedPayment({
@@ -616,6 +609,187 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     transferResult,
     capturedAmountPaise,
   });
+}
+
+/** Stale-lease TTL for the Route split claim (shared with the retry worker). */
+const TRANSFER_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+export type RouteSplitOutcome =
+  | { state: "transferred"; transfer: any }
+  | { state: "busy" }
+  | { state: "flagged"; error: string }
+  | { state: "no_split" };
+
+/**
+ * Executes the Razorpay Route payout split for ONE captured payment.
+ *
+ * Shared by both money-truth channels — the client `verifyPayment` shim and
+ * the authoritative `payment.captured` webhook (RZ2 in
+ * references/razorpay_payments.md) — so the non-idempotent
+ * `payments.transfer` POST can never fire twice for one order:
+ *  - an order already marked `transferred` returns the stored receipt and
+ *    never re-POSTs (even when that receipt itself is missing);
+ *  - a claim-then-work Firestore transaction serializes concurrent callers
+ *    (winner POSTs, losers get `busy`), with a stale-lease takeover so a
+ *    crash between claim and POST cannot park the payout forever — the
+ *    scheduled worker also sweeps expired `transferring` leases;
+ *  - a missing branch/linked account is FLAGGED for manual settlement
+ *    (`routeTransferNeedsManualSettlement`) and never fails the paid order;
+ *  - a transient gateway failure lands in `pending_retry` with the claim
+ *    lease released, so the retry worker can claim it on the next tick
+ *    instead of idling out the lease.
+ */
+export async function executeRouteSplit(args: {
+  orderRef: any;
+  orderId: string;
+  orderData: any;
+  razorpayPaymentId: string;
+  capturedAmountPaise?: number;
+}): Promise<RouteSplitOutcome> {
+  const { orderRef, orderId, orderData, razorpayPaymentId, capturedAmountPaise } = args;
+
+  if (orderData.routeTransferStatus === "transferred") {
+    // Already settled — reuse the receipt. A missing receipt here is a data
+    // anomaly, NOT permission to re-POST money that already moved.
+    return {
+      state: "transferred",
+      transfer: orderData.payment?.routeTransfer ?? orderData["payment.routeTransfer"] ?? null,
+    };
+  }
+
+  const branchId = orderData.branchId;
+  const pricingSplit = orderData.pricing?.split;
+  const splitPaise = Number(pricingSplit?.branchTransferPaise);
+  if (!Number.isFinite(splitPaise) || splitPaise <= 0) {
+    // Nothing to split (legacy/no-pricing doc): no claim, no write, no POST.
+    return { state: "no_split" };
+  }
+
+  const flagManualSettlement = async (error: string): Promise<RouteSplitOutcome> => {
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Route split needs manual settlement for order ${orderId}: ${error}`,
+      orderId,
+      branchId,
+      razorpayPaymentId,
+    }).catch(() => undefined);
+    await orderRef.set(
+      {
+        routeTransferStatus: "failed",
+        routeTransferNeedsManualSettlement: true,
+        routeTransferError: error,
+        // Release the claim lease so a human-fixable order is re-claimable
+        // as soon as ops links the branch (a live lease would block it).
+        routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { state: "flagged", error };
+  };
+
+  if (!branchId) {
+    return flagManualSettlement("Order has no branchId — cannot execute Route split");
+  }
+
+  let racedTransfer: any = null;
+
+  if (db && typeof (db as any).runTransaction === "function") {
+    const claim: "claimed" | "done" | "busy" = await (db as any).runTransaction(
+      async (tx: any) => {
+        const fresh = await tx.get(orderRef as any);
+        const freshData = (fresh.exists ? fresh.data() : undefined) as any;
+        if (!freshData) return "busy";
+        if (freshData.routeTransferStatus === "transferred") {
+          racedTransfer =
+            freshData.payment?.routeTransfer ?? freshData["payment.routeTransfer"] ?? null;
+          return "done";
+        }
+        // Another verify/webhook/worker owns the transfer right now — never
+        // POST ours. Stale-claim takeover: a crash between claim and POST
+        // must not park the order in `transferring` forever (every future
+        // attempt would otherwise 202/503 forever).
+        if (freshData.routeTransferStatus === "transferring") {
+          const claimedAt = freshData.routeTransferClaimedAt;
+          const claimedMs =
+            claimedAt && typeof claimedAt.toMillis === "function" ? claimedAt.toMillis() : 0;
+          if (Date.now() - claimedMs < TRANSFER_CLAIM_TTL_MS) return "busy";
+        }
+        // NUMERIC local-clock lease (never a serverTimestamp sentinel): a
+        // sentinel reads back as null until the server resolves it, and a
+        // null lease reads as "claimable" — the exact instant false-takeover
+        // the worker/autoRefund/schedulerLock leases already avoid. It also
+        // keeps ONE clock domain (function Date.now()) across every reader
+        // (verify, webhook, retry worker, stale sweep), so the 10-minute TTL
+        // is measured consistently.
+        tx.set(
+          orderRef as any,
+          {
+            routeTransferStatus: "transferring",
+            routeTransferClaimedAt: Date.now(),
+          },
+          { merge: true }
+        );
+        return "claimed";
+      }
+    );
+    if (claim === "busy") return { state: "busy" };
+    if (claim === "done") return { state: "transferred", transfer: racedTransfer };
+  }
+
+  const attempt = await attemptRouteTransfer(
+    razorpayPaymentId,
+    branchId,
+    pricingSplit,
+    orderId,
+    undefined,
+    capturedAmountPaise
+  );
+
+  if (attempt.ok && attempt.result) {
+    await orderRef.set(
+      {
+        routeTransferStatus: "transferred",
+        "payment.routeTransfer": attempt.result,
+        routeTransferNeedsManualSettlement: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { state: "transferred", transfer: attempt.result };
+  }
+
+  if (attempt.skipped) {
+    return flagManualSettlement(
+      `${attempt.error || "No linked Razorpay account for branch"} — link the branch in the Razorpay dashboard and settle this payout manually`
+    );
+  }
+
+  const error = attempt.error || "Route transfer failed";
+  await captureErrorSnapshot({
+    source: "payments",
+    severity: "high",
+    message: `Razorpay Route transfer failed for order ${orderId}: ${error}`,
+    orderId,
+    branchId,
+    razorpayPaymentId,
+  }).catch(() => undefined);
+  await orderRef.set(
+    {
+      routeTransferStatus: "pending_retry",
+      routeTransferError: error,
+      routeTransferRetryAt: admin.firestore.FieldValue.serverTimestamp(),
+      routeTransferRetryCount: 0,
+      // Release the claim lease: the POST already failed, so the scheduled
+      // retry worker may claim this order on its next tick instead of
+      // idling out the full lease.
+      routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return { state: "flagged", error };
 }
 
 /**
@@ -884,6 +1058,11 @@ export async function autoRefund(
   params: RefundParams,
   caller?: { uid?: string; email?: string | null } | null
 ) {
+  // ZERO-MOCK production guard: a production refund must never be faked by
+  // the mock branch below (a customer would be told "refunded" with no money
+  // ever leaving the gateway).
+  assertLivePaymentsContext("autoRefund");
+
   const { orderId, razorpayPaymentId, amountRupees, reason } = params;
 
   const orderRef = db.collection("orders").doc(orderId);
@@ -1032,10 +1211,18 @@ export async function autoRefund(
       },
       { merge: true }
     );
-    return { existingTotal };
+    // Snapshot the per-refund ledger with the claim so the post-gateway write
+    // can merge THIS refund into it exactly once (see refundLedger below).
+    const priorLedger =
+      data.refundLedger && typeof data.refundLedger === "object" && !Array.isArray(data.refundLedger)
+        ? { ...(data.refundLedger as Record<string, number>) }
+        : {};
+    return { existingTotal, priorLedger };
   });
   if ((claimed as any).replay) return (claimed as any).replay;
   const existingTotalPaise = (claimed as { existingTotal: number }).existingTotal;
+  const priorRefundLedger = ((claimed as { priorLedger?: Record<string, number> }).priorLedger ||
+    {}) as Record<string, number>;
 
   const refundPayload: any = {
     reverse_all: true, // Automatically reverses split transfer proportionally from branch
@@ -1090,12 +1277,27 @@ export async function autoRefund(
   // Update order record. refundedTotalPaise accumulates monotonically so
   // sequential partials and webhook replays converge instead of overwriting
   // (see webhookHandler refund.processed). The lease marker is cleared.
+  //
+  // refundLedger counts each gateway refund id EXACTLY ONCE: `autoRefund`
+  // (this write) and the `refund.processed` webhook both land for the same
+  // refund under different triggers, so the total is
+  // max(recorded, ledger-sum) — never summed twice (double credit of the
+  // refundable balance), never under-counted (a smaller follow-up partial).
   const refundedPaise = Number(refundResult.amount) || 0;
+  const refundLedger: Record<string, number> = { ...priorRefundLedger };
+  if (typeof refundResult.id === "string" && refundResult.id && refundedPaise > 0) {
+    refundLedger[refundResult.id] = refundedPaise;
+  }
+  const ledgerTotal = Object.values(refundLedger).reduce(
+    (sum, v) => sum + (Number(v) || 0),
+    0
+  );
   await orderRef.set(
     {
       refundStatus: "refunded",
       refundAmount: amountRupees ?? null,
-      refundedTotalPaise: existingTotalPaise + refundedPaise,
+      refundedTotalPaise: Math.max(existingTotalPaise + refundedPaise, ledgerTotal),
+      refundLedger,
       refundClaimedAt: admin.firestore.FieldValue.delete(),
       refundId: refundResult.id,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),

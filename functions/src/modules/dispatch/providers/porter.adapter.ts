@@ -43,7 +43,7 @@ export const porterAdapter: ProviderAdapter = {
   async quote(ctx: DispatchQuoteContext): Promise<ProviderQuoteOk> {
     const { getDeliveryQuote } = await import("../../porter/porter.service");
     const { calculateHaversineDistanceKm, calculatePorterFare, estimatePickupMinutes } =
-      await import("@burgonomics/shared/geo");
+      await import("../../../core/geo");
 
     if (porterApiReady()) {
       try {
