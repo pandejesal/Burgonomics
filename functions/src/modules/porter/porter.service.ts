@@ -1203,6 +1203,9 @@ export async function rebookPorterRider(
   const order = (orderSnap.exists ? orderSnap.data() : undefined) as any;
   const rebookable =
     order?.needsRebook === true ||
+    // Failed dispatches whose auto-rebook flag was cleared after exhausting
+    // its attempts (autoRebookDispatchWorker) must stay manually rebookable.
+    order?.dispatchStatus === "dispatch_failed" ||
     ["rider_cancelled", "needs_review", "dispatch_failed"].includes(order?.deliveryStatus);
   if (!rebookable) {
     const err: any = new Error(
@@ -1322,6 +1325,11 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
   const updateData = {
     deliveryOtpAttempts: 0,
     deliveryOtpLockedUntil: null,
+    // P2: burn the OTP after successful verification — the HMAC hash (and any
+    // legacy plaintext copy) must not outlive the handover, otherwise a
+    // delivered order keeps a reusable secret on its document forever.
+    deliveryOtpHash: null,
+    deliveryOtp: null,
     status: {
       code: "DELIVERED",
       label: "Delivered",

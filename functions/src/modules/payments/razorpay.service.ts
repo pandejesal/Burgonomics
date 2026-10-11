@@ -7,6 +7,7 @@ import {
   verifyRazorpaySignature,
   computeHmacSha256,
   getOtpHmacSecret,
+  isSafeDocId,
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess } from "../../core/middleware";
@@ -154,6 +155,85 @@ async function resolveBranchId(params: CreateOrderParams): Promise<string> {
 }
 
 /**
+ * PAYMENTS_CONTRACT_SPEC §1 gate: the internal orders/{orderId} doc must
+ * EXIST, be UNPAID, and belong to the CALLER before any payable gateway
+ * order is minted. 404 for an unknown id, 409 for paid/foreign orders, 503
+ * when the check itself is unavailable (fail closed — a checkout that cannot
+ * prove ownership never opens).
+ */
+async function assertPayableOrderDoc(orderId: string, customerId: string): Promise<void> {
+  if (!db || typeof db.collection !== "function") {
+    const err: any = new Error("Order verification is temporarily unavailable — please retry checkout.");
+    err.statusCode = 503;
+    err.code = "ORDER_VERIFY_UNAVAILABLE";
+    throw err;
+  }
+  let snap: any;
+  try {
+    snap = await db.collection("orders").doc(orderId).get();
+  } catch (err: any) {
+    console.warn("[Payments] order-doc lookup failed, refusing checkout:", err?.message || err);
+    const unavailable: any = new Error("Order verification is temporarily unavailable — please retry checkout (you will not be charged twice).");
+    unavailable.statusCode = 503;
+    unavailable.code = "ORDER_VERIFY_UNAVAILABLE";
+    throw unavailable;
+  }
+  if (!snap?.exists) {
+    const err: any = new Error(`Order ${orderId} not found — start checkout from an existing cart.`);
+    err.statusCode = 404;
+    err.code = "ORDER_NOT_FOUND";
+    throw err;
+  }
+  const data = (snap.data() || {}) as any;
+  const paid =
+    data.paymentStatus === "completed" ||
+    data["payment.status"] === "completed" ||
+    data.payment?.status === "completed";
+  if (paid) {
+    const err: any = new Error("This order is already paid — refusing to mint a second gateway order.");
+    err.statusCode = 409;
+    err.code = "ORDER_ALREADY_PAID";
+    throw err;
+  }
+  // Ownership: an authenticated customer may only pay for THEIR order; a
+  // guest may only pay an order that carries no other customer's id. Never
+  // trust the requested customerId here — the route binds it to the token.
+  const owner =
+    typeof data.customerId === "string" && data.customerId ? data.customerId : "guest";
+  if (owner !== customerId) {
+    const err: any = new Error("This order belongs to a different customer — refusing checkout.");
+    err.statusCode = 409;
+    err.code = "ORDER_NOT_OWNED";
+    throw err;
+  }
+}
+
+/**
+ * Loads the SERVER-WRITTEN payment intent for a Razorpay order id. This is
+ * the authoritative binding rzp order -> internal orderId -> server-priced
+ * amount (PAYMENTS_CONTRACT_SPEC §2). Returns null when nothing trustworthy
+ * is stored — never a client-written doc (the razorpayOrderId field must
+ * match exactly, so a datastore query shim returning junk is ignored).
+ */
+async function loadPaymentIntent(razorpayOrderId: string): Promise<any | null> {
+  if (!razorpayOrderId || !db || typeof db.collection !== "function") return null;
+  try {
+    const snap = await db
+      .collection("payment_intents")
+      .where("razorpayOrderId", "==", razorpayOrderId)
+      .limit(1)
+      .get();
+    const doc = snap?.docs?.[0];
+    const data = (doc ? (doc.data() as any) : undefined) as any;
+    if (!data || data.razorpayOrderId !== razorpayOrderId) return null;
+    return data;
+  } catch (err: any) {
+    console.warn("[Payments] payment-intent lookup failed:", err?.message || err);
+    return null;
+  }
+}
+
+/**
  * Loop 62/120: Grill-Coins redemption is server-checked, never trusted.
  * The old code passed client-supplied loyaltyPointsToRedeem straight into
  * pricing (shape-only validation) and nothing ever debited coins — any
@@ -245,6 +325,13 @@ export async function createPaymentOrder(params: CreateOrderParams) {
 
   const branchId = await resolveBranchId(params);
 
+  // PAYMENTS_CONTRACT_SPEC §1: the internal order doc must exist, be unpaid,
+  // and belong to the caller BEFORE anything else (fail fast ahead of balance
+  // lookups, idempotent reuse, and — critically — the gateway order mint).
+  if (params.orderId) {
+    await assertPayableOrderDoc(params.orderId, params.customerId);
+  }
+
   // Server-verified redemption: the pricing engine only ever sees coins the
   // customer actually holds (guests hold none).
   const loyaltyPointsToRedeem = await resolveRedeemableCoins(
@@ -283,6 +370,10 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           razorpayOrderId: data.razorpayOrderId,
           amountPaise: data.amountPaise,
           amountRupees: data.amountPaise / 100,
+          // Legacy aliases (PAYMENTS_CONTRACT_SPEC §1): old clients read
+          // `orderId` (= the GATEWAY order id) and `amount` (= rupees).
+          orderId: data.razorpayOrderId,
+          amount: data.amountPaise / 100,
           currency: ORDER_CURRENCY,
           receipt: data.receipt,
           pricing: data.pricing,
@@ -326,6 +417,35 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   assertSupportedCurrency(ORDER_CURRENCY);
   const amountPaise = assertPayableAmount(Math.round(Number(pricing.grandTotal) * 100));
   const receipt = `rcpt_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+
+  // PAYMENTS_CONTRACT_SPEC §1: stamp the SERVER-computed `pricing` onto the
+  // order doc at intent time so the webhook + verify amount binding always
+  // has a trustworthy total (previously the field was often missing and the
+  // binding silently skipped). Fail CLOSED: no stamp, no payable order.
+  if (params.orderId && db && typeof db.collection === "function") {
+    try {
+      await db.collection("orders").doc(params.orderId).set(
+        {
+          pricing,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (err: any) {
+      console.warn("[Payments] pricing stamp failed, refusing fresh order:", err?.message || err);
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Failed to stamp server pricing on order ${params.orderId} — refused fresh gateway order`,
+        errorStack: err?.stack,
+        orderId: params.orderId,
+        branchId,
+      });
+      const refused: any = new Error("Payment service is temporarily unavailable — please retry checkout (you will not be charged twice).");
+      refused.statusCode = 503;
+      throw refused;
+    }
+  }
 
   let razorpayOrderId: string;
 
@@ -373,6 +493,11 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       receipt,
       pricing,
       orderId: params.orderId || null,
+      // Branch/orderType ride along so a verify that finds no orders/{orderId}
+      // doc (legacy client verifying before creating it) can rebuild the doc
+      // from SERVER-owned data only (spec §2 ghost-order guard).
+      branchId,
+      orderType: params.orderType,
       customerId: params.customerId,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAtMs: nowMs,
@@ -414,6 +539,9 @@ export async function createPaymentOrder(params: CreateOrderParams) {
               razorpayOrderId: winner.razorpayOrderId,
               amountPaise: winner.amountPaise,
               amountRupees: winner.amountPaise / 100,
+              // Legacy aliases (spec §1) — same shape as the read-hit path.
+              orderId: winner.razorpayOrderId,
+              amount: winner.amountPaise / 100,
               currency: ORDER_CURRENCY,
               receipt: winner.receipt,
               pricing: winner.pricing,
@@ -442,6 +570,10 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     razorpayOrderId,
     amountPaise,
     amountRupees: pricing.grandTotal,
+    // Legacy aliases (PAYMENTS_CONTRACT_SPEC §1): `orderId` here is the
+    // GATEWAY order id (what old checkout code read), `amount` is rupees.
+    orderId: razorpayOrderId,
+    amount: pricing.grandTotal,
     currency: ORDER_CURRENCY,
     receipt,
     pricing,
@@ -450,7 +582,8 @@ export async function createPaymentOrder(params: CreateOrderParams) {
 }
 
 export interface VerifyPaymentParams {
-  orderId: string;
+  /** Internal order id. OPTIONAL: legacy checkout shims verify with gateway ids only — the internal id then resolves through the payment intent (spec §2). */
+  orderId?: string;
   razorpayOrderId: string;
   razorpayPaymentId: string;
   razorpaySignature: string;
@@ -468,13 +601,28 @@ export interface VerifyPaymentParams {
  * ops and throws — the order is never flipped to CONFIRMED on these paths.
  * Transfer contention resolves to an immediate 202 retry signal (no blocking
  * poll — the client retries verify with the same key).
+ *
+ * PAYMENTS_CONTRACT_SPEC §2:
+ *  - the orders/{orderId} doc need NOT pre-exist: the SERVER-written payment
+ *    intent (keyed by razorpayOrderId) is the authoritative binding rzp order
+ *    -> internal orderId -> server-priced amount. Without an intent, a
+ *    missing order doc is still a 404 ghost refusal (never resurrected).
+ *  - the response payload (order object, delivery OTP, transfer receipt) is
+ *    returned ONLY to the order's owner: the authenticated caller whose uid
+ *    matches the order's customerId/userId, or an unauthenticated guest whose
+ *    matching intent carries no registered customer. Everyone else gets
+ *    `{ ok: true }` with no order data. `caller === undefined` means a
+ *    trusted internal call (scheduler/tests — same convention as StaffCaller).
  */
-export async function verifyPayment(params: VerifyPaymentParams) {
+export async function verifyPayment(
+  params: VerifyPaymentParams,
+  caller?: { uid?: string } | null
+) {
   // ZERO-MOCK production guard: a live checkout must never be "verified" by
   // the mock short-circuit below.
   assertLivePaymentsContext("verifyPayment");
 
-  const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
+  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
 
   // 1. Signature verification
   let isValid = false;
@@ -496,7 +644,7 @@ export async function verifyPayment(params: VerifyPaymentParams) {
         severity: "high",
         message:
           "RAZORPAY_KEY_SECRET is unset — payment signature verification is unavailable, refusing verify (fail-closed)",
-        orderId,
+        orderId: params.orderId,
         razorpayPaymentId,
       }).catch(() => undefined);
       const unavailable: any = new Error(
@@ -520,7 +668,7 @@ export async function verifyPayment(params: VerifyPaymentParams) {
       source: "payments",
       severity: "high",
       message: "Razorpay HMAC payment signature verification failed",
-      orderId,
+      orderId: params.orderId,
       razorpayPaymentId,
     });
     const badSig: any = new Error("Invalid payment signature");
@@ -529,43 +677,108 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     throw badSig;
   }
 
-  // 2. Fetch order to perform Route split. Unknown orderId is a 404 —
-  // the old code built `orderData = {}` and resurrected a partial CONFIRMED
-  // doc (payment fields, no items/pricing) for a typo'd or deleted id.
+  // 2. Payment-intent binding (spec §2): the server-written intent ties the
+  // gateway order to the internal orderId + server-priced amount. Missing or
+  // mismatched intents degrade to the order-doc path below — and a missing
+  // order doc WITHOUT an intent is refused as a ghost (404).
+  const intent = await loadPaymentIntent(razorpayOrderId);
+  let orderId = params.orderId || "";
+  if (!orderId) {
+    // Legacy shape: no internal id supplied — resolve it through the intent.
+    orderId = typeof intent?.orderId === "string" ? intent.orderId : "";
+    if (!orderId || !isSafeDocId(orderId)) {
+      const ghost: any = new Error(
+        "No payment intent found for this gateway order — refusing to verify a ghost order"
+      );
+      ghost.statusCode = 404;
+      ghost.code = "ORDER_NOT_FOUND";
+      throw ghost;
+    }
+  } else if (
+    intent &&
+    typeof intent.orderId === "string" &&
+    intent.orderId &&
+    intent.orderId !== orderId
+  ) {
+    // The payment intent is bound to a DIFFERENT internal order — never
+    // confirm this one with that payment.
+    const bound: any = new Error(
+      "This payment belongs to a different order — verification refused. Contact support if money left your account."
+    );
+    bound.statusCode = 409;
+    bound.code = "ORDER_MISMATCH";
+    throw bound;
+  }
+
+  // 3. Resolve the order doc. A missing doc is rebuilt ONLY from a matching
+  // server-written intent (legacy client verified before creating it);
+  // anything else stays the B2-S1 ghost refusal.
   const orderRef = db.collection("orders").doc(orderId);
   const orderSnap = await orderRef.get();
-  if (!orderSnap.exists) {
-    const ghost: any = new Error(
-      `Order ${orderId} not found — refusing to verify payment against a ghost order`
-    );
-    ghost.statusCode = 404;
-    ghost.code = "ORDER_NOT_FOUND";
-    throw ghost;
+  let orderData: Record<string, any> = {};
+  if (orderSnap.exists) {
+    orderData = (orderSnap.data() || {}) as Record<string, any>;
+  } else {
+    if (!intent || intent.orderId !== orderId) {
+      const ghost: any = new Error(
+        `Order ${orderId} not found — refusing to verify payment against a ghost order`
+      );
+      ghost.statusCode = 404;
+      ghost.code = "ORDER_NOT_FOUND";
+      throw ghost;
+    }
+    // Rebuild from SERVER-owned intent data only (never client input): the
+    // intent already binds rzp order -> orderId -> server-priced amount.
+    orderData = {
+      branchId: typeof intent.branchId === "string" ? intent.branchId : null,
+      orderType: typeof intent.orderType === "string" ? intent.orderType : null,
+      customerId: typeof intent.customerId === "string" ? intent.customerId : "guest",
+      pricing: intent.pricing || {},
+    };
+    try {
+      await orderRef.create({
+        ...orderData,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (err: any) {
+      // Lost a race with the client creating its own pending doc — use the
+      // winner's doc (it carries the same orderId binding).
+      const again = await orderRef.get();
+      if (!again.exists) throw err;
+      orderData = (again.data() || {}) as Record<string, any>;
+    }
   }
-  const orderData = orderSnap.data() || {};
 
   // Live gateway truth check (fail-closed on money mismatch, no auto-capture).
-  // Runs only in live mode AND when the order carries a stored server-side
-  // total to compare against. Legacy/test docs without pricing keep the
-  // legacy path — the HMAC signature above still binds payment↔order, and the
-  // transfer claim below still serializes payouts. Mock mode has no gateway
-  // truth to fetch, so it keeps its short-circuit.
-  const storedGrandTotal = Number(orderData.pricing?.grandTotal);
+  // Expected paise = the stored server-priced total when the order doc has
+  // one, else the SERVER-priced intent amount (spec §2: amount must match the
+  // intent). Legacy docs with neither keep the legacy path — the HMAC
+  // signature above still binds payment↔order, and the transfer claim below
+  // still serializes payouts. Mock mode has no gateway truth to fetch, so it
+  // keeps its short-circuit.
+  const storedGrandTotal = Number(
+    (orderData.pricing as any)?.grandTotal ?? (orderData.totals as any)?.grandTotal
+  );
   const hasStoredTotal =
     Number.isFinite(storedGrandTotal) && storedGrandTotal > 0;
+  const intentPaiseRaw = Number(intent?.amountPaise);
+  const intentPaise =
+    Number.isFinite(intentPaiseRaw) && intentPaiseRaw > 0 ? intentPaiseRaw : null;
+  const expectedPaise = hasStoredTotal ? Math.round(storedGrandTotal * 100) : intentPaise;
   let capturedAmountPaise: number | undefined;
-  if (!config.mock.paymentGateway && hasStoredTotal) {
+  if (!config.mock.paymentGateway && expectedPaise !== null) {
     capturedAmountPaise = await assertLivePaymentMatchesOrder({
       orderRef,
       orderId,
       orderData,
       razorpayOrderId,
       razorpayPaymentId,
-      expectedPaise: Math.round(storedGrandTotal * 100),
+      expectedPaise,
     });
   }
 
-  // 3. Execute the Razorpay Route split. Claim-then-work lives inside
+  // 4. Execute the Razorpay Route split. Claim-then-work lives inside
   // executeRouteSplit, which is SHARED with the authoritative
   // `payment.captured` webhook — both channels can fire for one payment and
   // the underlying `payments.transfer` POST is not idempotent.
@@ -599,8 +812,9 @@ export async function verifyPayment(params: VerifyPaymentParams) {
   // below — a payout bookkeeping problem must never fail a charged customer.
   const transferResult = splitOutcome.state === "transferred" ? splitOutcome.transfer : null;
 
-  // 4+5. Confirm state + audit (shared by the normal and race-loser paths).
-  return finishVerifiedPayment({
+  // 5+6. Confirm state + audit (shared by the normal and race-loser paths),
+  // then gate the response on ownership (spec §2).
+  const finished = await finishVerifiedPayment({
     orderRef,
     orderData,
     orderId,
@@ -609,6 +823,50 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     transferResult,
     capturedAmountPaise,
   });
+
+  const orderSummary = {
+    id: orderId,
+    orderId,
+    paymentStatus: "completed",
+    status: {
+      code: "CONFIRMED",
+      label: "Order confirmed",
+      kind: "upcoming",
+      terminal: false,
+    },
+    branchId: (orderData as any).branchId ?? null,
+    customerId: (orderData as any).customerId ?? null,
+    orderType: (orderData as any).orderType ?? null,
+    pricing: (orderData as any).pricing ?? intent?.pricing ?? null,
+    deliveryOtp: finished.deliveryOtp ?? null,
+  };
+
+  // Ownership gate (spec §2): never leak the order object (or the delivery
+  // OTP) to a non-owner. undefined caller = trusted internal path (tests,
+  // schedulers) and keeps the full payload; the HTTP route always passes
+  // uid-or-null, so an anonymous request can only ever reach the guest arm.
+  let owned: boolean;
+  if (caller === undefined) {
+    owned = true;
+  } else if (caller?.uid) {
+    owned =
+      (orderData as any).customerId === caller.uid ||
+      (orderData as any).userId === caller.uid;
+  } else {
+    // Unauthenticated guest: only a matching guest intent (same internal
+    // order, no registered customer on it) proves this verify belongs to
+    // the caller.
+    owned =
+      !!intent &&
+      intent.orderId === orderId &&
+      (!intent.customerId || intent.customerId === "guest") &&
+      ((orderData as any).customerId == null ||
+        (orderData as any).customerId === "guest");
+  }
+  if (!owned) {
+    return { ok: true as const };
+  }
+  return { ok: true as const, ...finished, order: orderSummary };
 }
 
 /** Stale-lease TTL for the Route split claim (shared with the retry worker). */
@@ -758,6 +1016,33 @@ export async function executeRouteSplit(args: {
       { merge: true }
     );
     return { state: "transferred", transfer: attempt.result };
+  }
+
+  if ((attempt as any).unknown) {
+    // Outcome UNKNOWN (gateway timeout, ambiguous network failure, or the
+    // pre-POST reconcile lookup itself failed): a blind retry could double-
+    // pay the branch. Park for ops reconciliation — the claim lease is
+    // released so the order is not wedged, and attemptRouteTransfer always
+    // reconciles existing transfers before any future POST.
+    const unknownError = attempt.error || "Route transfer outcome unknown";
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Razorpay Route transfer outcome UNKNOWN for order ${orderId}: ${unknownError} — parked in needs_reconciliation (no blind retry)`,
+      orderId,
+      branchId,
+      razorpayPaymentId,
+    }).catch(() => undefined);
+    await orderRef.set(
+      {
+        routeTransferStatus: "needs_reconciliation",
+        routeTransferError: unknownError,
+        routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { state: "flagged", error: unknownError };
   }
 
   if (attempt.skipped) {

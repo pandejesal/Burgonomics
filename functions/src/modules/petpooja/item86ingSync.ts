@@ -296,11 +296,74 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
 
   const rawStatus = payload.status || payload.order_status;
   const canonicalStatus = normalizePetpoojaStatus(rawStatus);
+  const orderData = (orderDoc.data() || {}) as Record<string, any>;
+
+  // ---- Replay defense (finding: duplicate POS redeliveries) ----
+  // When the POS supplies an event id, an id already processed on this order
+  // within the freshness window is a REDelivery — applying it again re-runs
+  // side effects (refund-request parking) and rewrites status. The window
+  // bounds how long the marker is authoritative (same convention as the
+  // dispatch webhook freshness guard).
+  const eventId =
+    payload.id != null && payload.id !== ""
+      ? String(payload.id)
+      : typeof payload.event_id === "string" && payload.event_id
+        ? payload.event_id
+        : null;
+  const EVENT_FRESHNESS_MS = 15 * 60 * 1000;
+  if (eventId) {
+    const lastId = orderData.petpoojaWebhookEventId;
+    const lastRaw = orderData.petpoojaWebhookReceivedAtMs;
+    const lastMs =
+      typeof lastRaw === "number" && Number.isFinite(lastRaw)
+        ? lastRaw
+        : lastRaw && typeof lastRaw.toMillis === "function"
+          ? lastRaw.toMillis()
+          : 0;
+    if (lastId === eventId && lastMs > 0 && Date.now() - lastMs < EVENT_FRESHNESS_MS) {
+      console.warn(
+        `[Petpooja Webhook] Replay of event ${eventId} for order ${orderId} inside freshness window — ignored`
+      );
+      return;
+    }
+  }
+
+  // ---- Terminal-state guard (mirrors dispatch.webhooks delivery guard) ----
+  // POS retries replay stale kitchen updates OUT OF ORDER: a late "accepted"
+  // would resurrect a DELIVERED order as CONFIRMED, and a late CANCELLED
+  // would cancel a handed-over order AND park a refund — moving money on a
+  // replay. A terminal order (DELIVERED or CANCELLED) is never moved by any
+  // later event. Legacy bare-string statuses are honored too.
+  const currentStatus = orderData.status;
+  const currentCode =
+    typeof currentStatus === "string" ? currentStatus : (currentStatus?.code as string | undefined);
+  const currentKind =
+    typeof currentStatus === "object" && currentStatus ? (currentStatus.kind as string | undefined) : undefined;
+  const terminalNow =
+    (typeof currentStatus === "object" && currentStatus?.terminal === true) ||
+    currentKind === "completed" ||
+    currentKind === "cancelled" ||
+    (typeof currentCode === "string" &&
+      ["DELIVERED", "CANCELLED"].includes(currentCode.toUpperCase())) ||
+    orderData.deliveryStatus === "delivered";
+  if (terminalNow) {
+    console.warn(
+      `[Petpooja Webhook] Ignoring kitchen status "${String(rawStatus)}" for TERMINAL order ${orderId} ` +
+        `(current: ${currentCode || currentKind || "unknown"}) — no rewind, no refund side effects`
+    );
+    return;
+  }
 
   const updateData: Record<string, any> = {
     petpoojaKitchenStatus: rawStatus,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+  if (eventId) {
+    // Replay marker rides on the order doc so a redelivery of the SAME event
+    // id short-circuits above (only while fresh).
+    updateData.petpoojaWebhookEventId = eventId;
+    updateData.petpoojaWebhookReceivedAtMs = Date.now();
+  }
 
   // Canonical object form (both apps + triggers accept it; bare strings with
   // lowercase codes break Delivery tracking).
@@ -321,7 +384,6 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
     updateData.cancellationReason =
       payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS";
 
-    const orderData = orderDoc.data()!;
     const payment = orderData.payment;
     // Product decision 2026-09-23: kitchen-cancelled orders PARK a refund
     // request for staff approval instead of auto-refunding. The old code
@@ -337,7 +399,11 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
           .limit(1)
           .get();
         if (existing.empty) {
-          await db.collection("refunds").doc().set({
+          // DETERMINISTIC doc id: two concurrent replays of the same cancel
+          // used to both pass the `existing.empty` probe above (read-then-
+          // write race) and park TWO PENDING refunds for one payment. One
+          // order id can only ever name ONE POS-cancel refund request.
+          await db.collection("refunds").doc(`refund_pos_cancel_${orderId}`).set({
             orderId,
             branchId: orderData.branchId ?? null,
             razorpayPaymentId: payment.razorpayPaymentId,

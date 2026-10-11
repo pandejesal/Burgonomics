@@ -78,3 +78,13 @@ export function getRazorpayKeyId(): string {
 export function __resetRazorpayClientForTests(): void {
   cachedClient = null;
 }
+
+/**
+ * Test seam: inject a stub SDK instance so the reconcile-before-POST and
+ * transfer-POST paths in `routeTransfers.ts` can be exercised without a
+ * network round-trip. Pass null to fall back to the real client builder.
+ * (Same convention as `__setPaymentsFetchForTests` in razorpay.service.ts.)
+ */
+export function __setRazorpayClientForTests(client: any): void {
+  cachedClient = client;
+}

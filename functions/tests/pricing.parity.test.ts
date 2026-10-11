@@ -35,6 +35,12 @@ const { mockDb, getAllCalls } = vi.hoisted(() => {
       if (docId === "PERC150") {
         return { exists: true, data: () => ({ discount: 150, type: "percent", active: true }), id: docId };
       }
+      if (docId === "NEG50") {
+        return { exists: true, data: () => ({ discount: -50, type: "flat", active: true }), id: docId };
+      }
+      if (docId === "FLAT500") {
+        return { exists: true, data: () => ({ discount: 500, type: "flat", active: true }), id: docId };
+      }
       return { exists: false, data: () => ({}), id: docId };
     }
     return { exists: false, data: () => ({}), id: docId };
@@ -152,6 +158,29 @@ describe("pricing parity — 20 baskets", () => {
       branchId: "b1",
       orderType: "takeaway",
       couponCode: "PERC150",
+    });
+    expect(r.discount).toBeLessThanOrEqual(99);
+    expect(r.grandTotal).toBeGreaterThanOrEqual(0);
+  });
+
+  it("corrupt negative flat coupon never inflates the bill (floors at 0)", async () => {
+    const r = await calculateOrderPricing({
+      items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }],
+      branchId: "b1",
+      orderType: "takeaway",
+      couponCode: "NEG50",
+    });
+    expect(r.discount).toBe(0);
+    // Full price, not 99 - (-50) = 149.
+    expect(r.grandTotal).toBe(Math.round(99 + 15 + r.gst));
+  });
+
+  it("flat coupon larger than the subtotal is clamped to the subtotal", async () => {
+    const r = await calculateOrderPricing({
+      items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }],
+      branchId: "b1",
+      orderType: "takeaway",
+      couponCode: "FLAT500",
     });
     expect(r.discount).toBeLessThanOrEqual(99);
     expect(r.grandTotal).toBeGreaterThanOrEqual(0);

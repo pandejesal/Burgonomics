@@ -1,0 +1,206 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Finding 5 regressions: item86ingSync's Petpooja status webhook must never
+// rewind a TERMINAL order (DELIVERED/CANCELLED), must dedupe replays by event
+// id inside a freshness window, and must park at most ONE POS-cancel refund
+// request per order even under concurrent replays.
+const { mockDb, savedDocs } = vi.hoisted(() => {
+  const savedDocs: Record<string, any> = {};
+  let autoId = 0;
+  const docRef = (col: string, id: string) => {
+    const path = `${col}/${id}`;
+    return {
+      id,
+      path,
+      get: vi.fn(async () => ({
+        exists: Object.prototype.hasOwnProperty.call(savedDocs, path),
+        data: () => savedDocs[path],
+        ref: docRef(col, id),
+      })),
+      set: vi.fn(async (data: any, opts?: any) => {
+        savedDocs[path] =
+          opts?.merge && savedDocs[path] ? { ...savedDocs[path], ...data } : data;
+      }),
+    };
+  };
+  const query = (col: string) => {
+    const filters: Array<[string, string, any]> = [];
+    const q: any = {
+      where: (f: string, op: string, v: any) => {
+        filters.push([f, op, v]);
+        return q;
+      },
+      limit: () => q,
+      get: vi.fn(async () => {
+        const docs = Object.keys(savedDocs)
+          .filter(
+            (p) =>
+              p.startsWith(`${col}/`) &&
+              filters.every(([f, op, v]) =>
+                op === "==" ? savedDocs[p]?.[f] === v : false
+              )
+          )
+          .map((p) => {
+            const id = p.slice(col.length + 1);
+            return { id, ref: docRef(col, id), exists: true, data: () => savedDocs[p] };
+          });
+        return { docs, empty: docs.length === 0 };
+      }),
+    };
+    return q;
+  };
+  const mockDb: any = {
+    collection: (col: string) => ({
+      doc: (id?: string) => docRef(col, id || `auto_${++autoId}`),
+      where: query(col).where,
+    }),
+    runTransaction: vi.fn(async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      })
+    ),
+  };
+  return { mockDb, savedDocs };
+});
+
+vi.mock("firebase-admin", () => {
+  const FieldValue = {
+    serverTimestamp: () => "MOCK_TIMESTAMP",
+    increment: (n: number) => n,
+    arrayUnion: (item: any) => [item],
+    delete: () => "MOCK_DELETE",
+  };
+  const firestoreFn: any = vi.fn(() => mockDb);
+  firestoreFn.FieldValue = FieldValue;
+  return {
+    default: {
+      firestore: firestoreFn,
+      auth: vi.fn(() => ({})),
+      messaging: vi.fn(() => ({})),
+      initializeApp: vi.fn(),
+      apps: [{ name: "mock" }],
+    },
+    firestore: firestoreFn,
+    auth: vi.fn(() => ({})),
+    messaging: vi.fn(() => ({})),
+    initializeApp: vi.fn(),
+    apps: [{ name: "mock" }],
+  };
+});
+
+import { handlePetpoojaWebhook } from "../src/modules/petpooja/item86ingSync";
+
+const seedDelivered = (id: string, extra: Record<string, any> = {}) => {
+  savedDocs[`orders/${id}`] = {
+    id,
+    branchId: "branch_t1",
+    status: { code: "DELIVERED", label: "Delivered", kind: "completed", terminal: true },
+    payment: { razorpayPaymentId: "pay_t1" },
+    ...extra,
+  };
+};
+
+const seedInProgress = (id: string, extra: Record<string, any> = {}) => {
+  savedDocs[`orders/${id}`] = {
+    id,
+    branchId: "branch_t1",
+    status: { code: "CONFIRMED", label: "Order confirmed", kind: "upcoming", terminal: false },
+    payment: { razorpayPaymentId: "pay_t1" },
+    ...extra,
+  };
+};
+
+const refundDocs = () =>
+  Object.keys(savedDocs).filter((p) => p.startsWith("refunds/"));
+
+describe("Petpooja status webhook — terminal-state guard (finding 5)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+  });
+
+  it("ignores a late 'accepted' after DELIVERED — no rewind", async () => {
+    seedDelivered("ord_1");
+    await handlePetpoojaWebhook({ order_id: "ord_1", status: 2 });
+    expect(savedDocs["orders/ord_1"].status).toMatchObject({ code: "DELIVERED", terminal: true });
+    // No side-channel rewrite either: kitchen status marker stays absent.
+    expect(savedDocs["orders/ord_1"].petpoojaKitchenStatus).toBeUndefined();
+  });
+
+  it("ignores a late CANCELLED after DELIVERED — no refund parked, no money movement", async () => {
+    seedDelivered("ord_2");
+    await handlePetpoojaWebhook({ order_id: "ord_2", status: -1, cancel_reason: "late replay" });
+    expect(savedDocs["orders/ord_2"].status).toMatchObject({ code: "DELIVERED" });
+    expect(refundDocs()).toEqual([]);
+    expect(savedDocs["orders/ord_2"]["payment.refundStatus"]).toBeUndefined();
+  });
+
+  it("honors legacy bare-string terminal statuses too", async () => {
+    savedDocs["orders/ord_3"] = {
+      id: "ord_3",
+      branchId: "branch_t1",
+      status: "DELIVERED",
+      payment: { razorpayPaymentId: "pay_t3" },
+    };
+    await handlePetpoojaWebhook({ order_id: "ord_3", status: -1 });
+    expect(savedDocs["orders/ord_3"].status).toBe("DELIVERED");
+    expect(refundDocs()).toEqual([]);
+  });
+
+  it("still parks a refund request for a LEGITIMATE kitchen cancel (non-terminal order)", async () => {
+    seedInProgress("ord_4");
+    await handlePetpoojaWebhook({ order_id: "ord_4", status: -1, cancel_reason: "item 86ed" });
+    expect(savedDocs["orders/ord_4"].status).toMatchObject({ code: "CANCELLED", terminal: true });
+    expect(refundDocs()).toEqual(["refunds/refund_pos_cancel_ord_4"]);
+    expect(savedDocs["refunds/refund_pos_cancel_ord_4"]).toMatchObject({
+      orderId: "ord_4",
+      status: "PENDING",
+      reason: "POS_CANCELLED",
+    });
+    expect(savedDocs["orders/ord_4"]["payment.refundStatus"]).toBe("PENDING_APPROVAL");
+  });
+
+  it("parks exactly ONE refund doc under CONCURRENT replayed cancels", async () => {
+    seedInProgress("ord_5");
+    await Promise.all([
+      handlePetpoojaWebhook({ order_id: "ord_5", status: -1 }),
+      handlePetpoojaWebhook({ order_id: "ord_5", status: -1 }),
+    ]);
+    expect(refundDocs()).toEqual(["refunds/refund_pos_cancel_ord_5"]);
+  });
+});
+
+describe("Petpooja status webhook — event-id replay defense (finding 5)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+  });
+
+  it("dedupes a redelivered event id inside the 15-min freshness window", async () => {
+    seedInProgress("ord_r1");
+    await handlePetpoojaWebhook({ order_id: "ord_r1", status: 5, id: "evt_100" });
+    expect(savedDocs["orders/ord_r1"].status).toMatchObject({ code: "READY_FOR_PICKUP" });
+    expect(savedDocs["orders/ord_r1"].petpoojaKitchenStatus).toBe(5);
+
+    // Redelivery of the SAME event: no re-apply (status/kitchen marker frozen).
+    savedDocs["orders/ord_r1"].petpoojaKitchenStatus = "tampered";
+    await handlePetpoojaWebhook({ order_id: "ord_r1", status: 2, id: "evt_100" });
+    expect(savedDocs["orders/ord_r1"].petpoojaKitchenStatus).toBe("tampered");
+    expect(savedDocs["orders/ord_r1"].status).toMatchObject({ code: "READY_FOR_PICKUP" });
+  });
+
+  it("applies a same-id event OUTSIDE the freshness window (marker is bounded)", async () => {
+    seedInProgress("ord_r2");
+    savedDocs["orders/ord_r2"].petpoojaWebhookEventId = "evt_200";
+    savedDocs["orders/ord_r2"].petpoojaWebhookReceivedAtMs = Date.now() - 16 * 60 * 1000;
+    await handlePetpoojaWebhook({ order_id: "ord_r2", status: 5, id: "evt_200" });
+    expect(savedDocs["orders/ord_r2"].status).toMatchObject({ code: "READY_FOR_PICKUP" });
+  });
+
+  it("applies distinct event ids in sequence (no false dedupe)", async () => {
+    seedInProgress("ord_r3");
+    await handlePetpoojaWebhook({ order_id: "ord_r3", status: 5, id: "evt_a" });
+    await handlePetpoojaWebhook({ order_id: "ord_r3", status: 10, id: "evt_b" });
+    expect(savedDocs["orders/ord_r3"].status).toMatchObject({ code: "DELIVERED", terminal: true });
+    expect(savedDocs["orders/ord_r3"].petpoojaWebhookEventId).toBe("evt_b");
+  });
+});

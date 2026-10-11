@@ -26,6 +26,7 @@ import {
   verifyPayment,
   autoRefund,
   retryPendingRouteTransfersWorker,
+  type CreateOrderParams,
 } from "./modules/payments/razorpay.service";
 import { handleRazorpayWebhook } from "./modules/payments/webhookHandler";
 import { disposeRefundRequest } from "./modules/payments/refundRequests";
@@ -98,6 +99,7 @@ import { adjustCustomerCoins } from "./modules/customers/customerCoins";
 import { assertProductionKeys } from "./config/env";
 import {
   validateBody,
+  normalizeOrderType,
   createPaymentOrderSchema,
   verifyPaymentSchema,
   refundSchema,
@@ -295,20 +297,55 @@ app.get("/config/app", async (_req, res) => {
 
 app.post("/payments/createPaymentOrder", optionalAuth, validateBody(createPaymentOrderSchema), async (req: AuthenticatedRequest, res) => {
   try {
-    const customerId = req.user?.uid || req.body.customerId || "guest";
-    const result = await createPaymentOrder({ ...req.body, customerId });
+    // P0 (auth-bound customer identity): an authenticated caller ALWAYS pays
+    // as themselves — the body customerId is never honoured (it used to let
+    // an anonymous caller debit ANOTHER user's loyalty coins). Unauthenticated
+    // callers are "guest" only, never a body-supplied id.
+    const customerId = req.user?.uid || "guest";
+    // `fulfillment` is a legacy alias for orderType (spec §1) — normalize and
+    // strip before the service sees the body.
+    const { fulfillment: _fulfillmentAlias, ...rest } = req.body as Record<string, any>;
+    const orderType = normalizeOrderType(req.body as any);
+    // validateBody(createPaymentOrderSchema) guarantees items/orderType at
+    // runtime; the rest-spread widens to Record<string, any>, hence the cast.
+    const result = await createPaymentOrder({ ...rest, orderType, customerId } as CreateOrderParams);
     res.status(200).json(result);
   } catch (err: any) {
     // Pass through service status codes (400 validation, 503 retryable
     // outage — the client retries the SAME idempotencyKey, never a fresh one).
-    const status = err.statusCode === 400 || err.statusCode === 503 ? err.statusCode : 500;
-    res.status(status).json({ error: err.message || "Failed to create payment order" });
+    const status = err.statusCode === 400 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 503 ? err.statusCode : 500;
+    res.status(status).json({ error: err.message || "Failed to create payment order", ...(err.code ? { code: err.code } : {}) });
   }
 });
 
 app.post("/payments/verifyPayment", optionalAuth, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
   try {
-    const result = await verifyPayment(req.body);
+    const body = req.body as Record<string, any>;
+    // Legacy shape { paymentId, orderId, signature }: the lone orderId is the
+    // GATEWAY order id — the internal id resolves server-side through the
+    // payment intent (spec §2). Canonical shape carries both ids.
+    const params =
+      typeof body.razorpayPaymentId === "string"
+        ? {
+            orderId: body.orderId as string,
+            razorpayOrderId: body.razorpayOrderId as string,
+            razorpayPaymentId: body.razorpayPaymentId as string,
+            razorpaySignature: body.razorpaySignature as string,
+          }
+        : {
+            orderId: "",
+            razorpayOrderId: body.orderId as string,
+            razorpayPaymentId: body.paymentId as string,
+            razorpaySignature: body.signature as string,
+          };
+    // Ownership gating (spec §2): null = unauthenticated caller (guest) — the
+    // response then carries NO order payload unless a matching guest intent
+    // binds the payment. undefined would mean "trusted internal path", which
+    // the HTTP surface can never produce.
+    const result = await verifyPayment(
+      params,
+      req.user?.uid ? { uid: req.user.uid } : null
+    );
     res.status(200).json(result);
   } catch (err: any) {
     // Pass through service status codes — notably 202 TRANSFER_IN_PROGRESS

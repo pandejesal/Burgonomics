@@ -2,6 +2,7 @@ import { db } from "../../core/firebase";
 import { captureErrorSnapshot, serviceError } from "../../core/errors";
 import { truncatePushText } from "../notifications/templates";
 import { autoRefund } from "../payments/razorpay.service";
+import { creditTicketLoyaltyCoins } from "../customers/customerCoins";
 import * as admin from "firebase-admin";
 
 /**
@@ -54,7 +55,15 @@ async function assertTicketSpamGuards(customerId: string): Promise<void> {
   try {
     const col = db.collection("support_tickets") as any;
     if (typeof col.where !== "function") return; // non-Firestore harness
-    const snap = await col.where("customerId", "==", customerId).limit(25).get();
+    // ORDER BY createdAt DESC before the limit: without it Firestore returns
+    // an ARBITRARY 25 docs (default order is document id), so a customer
+    // with a long history could have every RECENT ticket fall outside the
+    // sample and sail past the 3-per-10m ceiling entirely.
+    const snap = await col
+      .where("customerId", "==", customerId)
+      .orderBy("createdAt", "desc")
+      .limit(25)
+      .get();
     const docs = snap?.docs || [];
     const now = Date.now();
     let recent = 0;
@@ -513,16 +522,28 @@ export async function resolveTicket(input: ResolveTicketInput) {
         400
       );
     }
-    await db
-      .collection("users")
-      .doc(ticket.customerId)
-      .set(
-        {
-          loyaltyPoints: admin.firestore.FieldValue.increment(amount),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+    // Loop 33/120 fix (finding: wrong collection / no ledger): the credit
+    // lands on `customers/{uid}.loyaltyPoints` — the balance the redeem
+    // gate, staff adjustments, and redemption debits all read — WITH a
+    // coin_transactions audit row. The old `users/{uid}` write credited a
+    // collection nothing reads and left no ledger trail at all.
+    try {
+      await creditTicketLoyaltyCoins({
+        customerId: ticket.customerId,
+        ticketId,
+        ticketNumber: ticket.ticketNumber,
+        amount,
+        actorUid: actorId,
+        actorName: resolvedByName,
+      });
+    } catch (err: any) {
+      if (err?.code === "TICKET_LOYALTY_CUSTOMER_MISSING") {
+        // Refuse loudly (Loop 33/120): never resolve a ticket as credited
+        // when the money-equivalent points went nowhere.
+        throw serviceError("TICKET_LOYALTY_CUSTOMER_MISSING", err.message, 404);
+      }
+      throw err;
+    }
   }
 
   const resolution = {

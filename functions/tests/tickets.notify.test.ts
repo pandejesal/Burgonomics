@@ -49,6 +49,9 @@ const hoisted = vi.hoisted(() => {
           clauses.push({ f: f2, v: v2 });
           return q;
         },
+        // Spam guard orders by createdAt before limiting — order does not
+        // change the matched set, so the shim just returns the chain.
+        orderBy: (_field: string, _dir?: string) => q,
         limit: (_n: number) => ({ get: vi.fn(async () => runQuery(path, clauses)) }),
         get: vi.fn(async () => runQuery(path, clauses)),
       };

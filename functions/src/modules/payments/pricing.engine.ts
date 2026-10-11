@@ -325,7 +325,10 @@ export async function calculateOrderPricing(
                   : (c.discount ?? c.value ?? c.amount ?? 0);
               // respect coupon maxDiscount cap if set
               const capped = c.maxDiscount ? Math.min(raw, c.maxDiscount) : raw;
-              discount = Math.min(capped, foodSubtotal);
+              // P2 clamp: a corrupt negative discount (console edit / bad
+              // import) must never INFLATE the bill — discount floors at 0
+              // and ceilings at the food subtotal.
+              discount = Math.max(0, Math.min(capped, foodSubtotal));
             }
           }
     }

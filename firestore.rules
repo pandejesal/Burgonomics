@@ -1,8 +1,11 @@
-// CANONICAL Firestore rules — deployed by firebase.json at this root.
-// burgonomics-partner/firestore.rules and
-// burgonomics-foundation-core/firestore.rules are byte-identical MIRRORS for
-// the app-local emulators. NEVER edit a mirror: change this file, re-sync
-// both mirrors, and re-run the rules suite (core: node scripts/test-rules.mjs).
+// CANONICAL Firestore rules — the ROOT copy deployed to production by the
+// root firebase.json (firestore config). The copies in
+// burgonomics-foundation-core/firestore.rules (emulator target of the rules
+// suite, scripts/test-rules.mjs) and burgonomics-partner/firestore.rules
+// (reference mirror only — the partner app has no firebase.json deploy
+// target) are byte-identical MIRRORS. NEVER edit a mirror: change this file,
+// re-sync both mirrors, and re-run the rules suite (core:
+// node scripts/test-rules.mjs).
 rules_version = '2';
 
 service cloud.firestore {
@@ -86,16 +89,55 @@ service cloud.firestore {
         && resource.data.orderType == 'delivery';
     }
 
+    // Orders CREATE (both lanes): keys a client must never plant at birth.
+    // OTP proof fields are server-minted by POST /orders/verifyDeliveryOtp;
+    // refund/pricing/dispatch fields resolve server-side (Admin SDK /
+    // functions); petpoojaOrderId is webhook-owned (menuSyncWebhook).
+    function orderCreateForbiddenKeys() {
+      return [
+        'deliveryOtp', 'deliveryOtpHash', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
+        'refund', 'refundStatus', 'refundId', 'refundAmount',
+        'pricing', 'pricingSnapshot', 'petpoojaOrderId', 'dispatchStatus',
+        'routeTransferStatus'
+      ];
+    }
+
+    // Orders CREATE (both lanes): the canonical initial status meta only.
+    // Core ordersService.createOrder writes resolveStatus('PLACED') =
+    // {code:'PLACED',label,kind:'upcoming',terminal:false}; partner
+    // ManualOrderCreateModal writes toDeliveryStatusMeta('pending') =
+    // the same {code:'PLACED',…} shape (utils/orderContract.ts PARTNER_TO_DELIVERY).
+    // Planted terminal/in-flight statuses at birth are denied.
+    function orderCreateInitialStatus() {
+      return request.resource.data.status is map
+        && request.resource.data.status.code == 'PLACED'
+        && request.resource.data.status.terminal != true
+        && request.resource.data.status.keys().hasOnly(['code', 'label', 'kind', 'terminal']);
+    }
+
     // =========================================================================
     // CRM: CUSTOMERS & GLOBAL LOYALTY (Brand-wide)
     // =========================================================================
 
     match /customers/{customerId} {
       allow read: if isUser(customerId) || isAdmin();
+      // Escalation denylist aligned with users/{userId} (below). Grep of
+      // both app sources found NO client writer to customers/* (core
+      // loyaltyStore.ts:79 only reads; partner useCustomers/useCustomer only
+      // read; grill-coin adjustments go through server functions), so
+      // blocking claim-like/PII/projection fields at birth breaks no flow —
+      // server writes bypass rules via the Admin SDK.
       allow create: if isUser(customerId)
-        && (!('loyaltyPoints' in request.resource.data) || request.resource.data.loyaltyPoints == 0);
-      allow update: if (isUser(customerId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['loyaltyPoints', 'role', 'isStaff']))
-        || isBrandOwner();
+        && !request.resource.data.keys().hasAny([
+          'loyaltyPoints', 'grillCoins', 'role', 'isStaff', 'isBrandOwner',
+          'isBrandAdmin', 'isSuperAdmin', 'isAdmin', 'isOwner',
+          'phone', 'email', 'createdAt'
+        ]);
+      allow update: if (isUser(customerId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'loyaltyPoints', 'grillCoins', 'role', 'isStaff', 'isBrandOwner',
+        'isBrandAdmin', 'isSuperAdmin', 'isAdmin', 'isOwner',
+        'phone', 'email', 'createdAt'
+      ])) || isBrandOwner();
       allow delete: if false;
 
       match /addresses/{addressId} {
@@ -128,10 +170,14 @@ service cloud.firestore {
         allow delete: if isUser(userId);
       }
 
+      // Shadow-order subcollection: grep of both app sources + functions/
+      // found NO client or function writer/reader of users/{uid}/orders
+      // (only users/{uid}/notifications is used client-side). Writes are
+      // therefore server-only (Admin SDK bypasses rules); the identity-only
+      // create here was an unused privilege.
       match /orders/{orderId} {
         allow read: if isUser(userId) || isAdmin();
-        allow create: if isUser(userId);
-        allow update, delete: if false;
+        allow create, update, delete: if false;
       }
     }
 
@@ -146,9 +192,49 @@ service cloud.firestore {
         ownsBranch(resource.data.branchId)
       );
 
+      // Loop-hardening: the old identity-only create (`customerId == uid ||
+      // userId == uid`) let any authenticated user birth an order with
+      // arbitrary totals/paymentStatus/status — or stamp a VICTIM's id in
+      // one identity field while owning the other. Two accepted shapes,
+      // both verified against the live client payloads:
+      //  1) Customer app (core ordersService.createOrder, src/features/
+      //     orders/services/ordersService.ts:331-351) stamps BOTH customerId
+      //     AND userId to request.auth.uid.
+      //  2) Partner POS walk-in (partner ManualOrderCreateModal.tsx:144-181)
+      //     stamps the literal 'cust_walkin' customerId; the POS lane stamps
+      //     userId to the staff operator uid. Walk-in creates are gated to
+      //     the operator's own outlet (isBranchOwner + ownsBranch) and never
+      //     carry privileged server-owned keys at birth. Both lanes are
+      //     pinned to the initial PLACED status shape; customer-lane
+      //     paymentStatus stays pending-only (core writes no top-level
+      //     paymentStatus at all — the paid state lives nested in
+      //     `payment.status`, set after server-side gateway verification),
+      //     while the walk-in lane may be born 'completed' (cash tendered at
+      //     the counter) — 'failed' is never a birth state.
       allow create: if isAuthenticated() && (
-        request.resource.data.customerId == request.auth.uid ||
-        request.resource.data.userId == request.auth.uid
+        (
+          request.resource.data.customerId == request.auth.uid &&
+          request.resource.data.userId == request.auth.uid &&
+          orderCreateInitialStatus() &&
+          !request.resource.data.keys().hasAny(orderCreateForbiddenKeys()) &&
+          (
+            !('paymentStatus' in request.resource.data) ||
+            request.resource.data.paymentStatus in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
+          )
+        ) || (
+          request.resource.data.customerId == 'cust_walkin' &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.branchId is string &&
+          request.resource.data.branchId.size() > 0 &&
+          isBranchOwner() &&
+          ownsBranch(request.resource.data.branchId) &&
+          orderCreateInitialStatus() &&
+          !request.resource.data.keys().hasAny(orderCreateForbiddenKeys()) &&
+          (
+            !('paymentStatus' in request.resource.data) ||
+            request.resource.data.paymentStatus in ['pending', 'completed']
+          )
+        )
       );
 
       allow update: if isBrandOwner() || (
@@ -194,7 +280,16 @@ service cloud.firestore {
     // =========================================================================
 
     match /branches/{branchId} {
-      allow read: if true;
+      // Hardened: was `if true`. Grep evidence — the customer app NEVER
+      // reads branches/* (its store directory is stores/*, separately
+      // public); every branches reader is an authenticated partner hook
+      // (useBranches/useTickets/useAnalytics/useBranchMenu). Anonymous
+      // exposure of branch config (petpoojaStoreId, city/coords, hours) is
+      // therefore closed. RESIDUAL RISK (recorded per audit): branch docs
+      // carry Petpooja linkage fields — NEVER store secrets (API keys,
+      // petpooja credentials/tokens, razorpay key secrets) on branches/*
+      // docs; this rule makes them readable by ANY signed-in user.
+      allow read: if isAuthenticated();
       allow create: if isBrandOwner();
       allow update: if isBrandOwner() || (
         ownsBranch(branchId) &&
@@ -209,14 +304,28 @@ service cloud.firestore {
     // Staff may only touch availability fields — never prices or identity.
     match /products/{productId} {
       allow read: if true;
+      // Branch-owner create keeps price/name/description/category fields
+      // writable: the partner combo builder legitimately creates products
+      // client-side (useBranchMenu.createComboMeal, src/features/menu/
+      // hooks/useBranchMenu.ts:259-282 — price/originalPrice/name/
+      // description/categoryId/categoryName/branchId/restId are its payload).
+      // What a branch operator may NOT plant at birth: margin data
+      // (costPrice), discount-manipulation fields (compareAtPrice,
+      // discountPercentage), or a fabricated petpoojaItemId — the combo
+      // builder itself refuses to fabricate one because a fake id in the
+      // shared id space could 86 an unrelated POS item (see its Loop-6
+      // comment). Brand-owner creates are unrestricted (catalog imports).
       allow create: if isBrandOwner() || (
-        isBranchOwner() && ownsBranch(request.resource.data.branchId)
+        isBranchOwner() && ownsBranch(request.resource.data.branchId) &&
+        !request.resource.data.keys().hasAny([
+          'costPrice', 'compareAtPrice', 'discountPercentage', 'petpoojaItemId'
+        ])
       );
       allow update: if isBrandOwner() || (
         isBranchOwner() &&
         ownsBranch(resource.data.branchId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'price', 'compareAtPrice', 'discountPercentage', 'name', 'description',
+          'price', 'costPrice', 'compareAtPrice', 'discountPercentage', 'name', 'description',
           'categoryId', 'categoryName', 'branchId', 'restId', 'petpoojaItemId', 'id'
         ])
       );
@@ -336,6 +445,10 @@ service cloud.firestore {
       // refundAmount, refundResult, couponCode, amount) at birth; those are
       // server-owned via POST /tickets/* (functions), never through a client
       // write that could escalate/resolve its own ticket.
+      // Hardening: 'priority' and 'assignedTo' removed from the allowlist —
+      // grep found NO client create path (partner useTickets.createTicket
+      // goes through POST /tickets/create via partnerFunctionsApi; the core
+      // app never writes tickets), so the fields are server-stamped only.
       allow create: if isAuthenticated()
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.branchId is string
@@ -343,7 +456,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
           'ticketNumber', 'subject', 'description', 'message', 'title',
           'category', 'type', 'branchId', 'orderId', 'customerId', 'customerName',
-          'customerPhone', 'status', 'priority', 'assignedTo', 'targetTier',
+          'customerPhone', 'status', 'targetTier',
           'branchReminderSent', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.status == 'open';
@@ -367,7 +480,8 @@ service cloud.firestore {
         isAuthenticated() && resource.data.customerId == request.auth.uid
       );
       // Loop 7: same create allowlist + staff update mask as support_tickets
-      // (legacy collection, same threat model).
+      // (legacy collection, same threat model). 'priority'/'assignedTo' are
+      // server-stamped only (POST /tickets/create) — see support_tickets note.
       allow create: if isAuthenticated()
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.branchId is string
@@ -375,7 +489,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
           'ticketNumber', 'subject', 'description', 'message', 'title',
           'category', 'type', 'branchId', 'orderId', 'customerId', 'customerName',
-          'customerPhone', 'status', 'priority', 'assignedTo', 'targetTier',
+          'customerPhone', 'status', 'targetTier',
           'branchReminderSent', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.status == 'open';
@@ -464,8 +578,23 @@ service cloud.firestore {
       );
       allow create: if isAuthenticated()
         && request.auth.uid in request.resource.data.participantIds;
+      // Field mask (audit): thread metadata is NOT freely updatable —
+      // participantIds/participantNames (membership) and identity fields
+      // may not be REWRITTEN by a participant. The only legit client update
+      // is the reply metadata written by partner chatService.sendMessage
+      // (src/services/chatService.ts:156-160). The ensure-thread merge
+      // (chatService.ts:139-154 / useChats.ts:87-96) writes membership fields
+      // back with values read from the SAME doc, so they are unchanged and
+      // do not appear in diff().affectedKeys(); only an actual membership
+      // rewrite trips the mask. getOrCreateBranchChannel's background
+      // membership refresh on an EXISTING channel is denied and degrades
+      // gracefully (useChats.ts:104-109 catches and warns; the channel
+      // still opens).
       allow update: if isBrandOwner() || (
-        isAuthenticated() && request.auth.uid in resource.data.participantIds
+        isAuthenticated() && request.auth.uid in resource.data.participantIds &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastMessageText', 'lastMessageSender', 'lastMessageAt', 'updatedAt'
+        ])
       );
       allow delete: if false;
     }

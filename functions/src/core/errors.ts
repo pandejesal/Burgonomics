@@ -173,6 +173,9 @@ async function dispatchDeveloperAlert(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: alertText }),
+        // P2: captureErrorSnapshot awaits this on inline request paths — a
+        // hung Slack webhook must not hold the caller until platform timeout.
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
       console.warn("[Errors] Failed to send Slack alert:", err);
@@ -186,6 +189,7 @@ async function dispatchDeveloperAlert(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: alertText }),
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
       console.warn("[Errors] Failed to send Discord alert:", err);

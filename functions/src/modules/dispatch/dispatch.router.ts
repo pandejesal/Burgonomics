@@ -621,6 +621,11 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
         {
           dispatchStatus: "manual_pending",
           dispatchClaimedAt: null,
+          // The staff paste lane now owns this order: clear any auto-rebook
+          // flag/trigger so the scheduled worker cannot race the paste flow
+          // with a second (automatic) booking.
+          needsRebook: false,
+          rebookTrigger: null,
           dispatchQuote: quoteSnapshot,
           dispatchAttempts: attempts,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -770,6 +775,10 @@ export async function dispatchRebook(params: DispatchBookParams): Promise<any> {
   }
   const rebookable =
     order?.needsRebook === true ||
+    // `dispatchStatus` covers failed dispatches whose `needsRebook` flag the
+    // auto-rebook worker clears after exhausting its attempts (see
+    // autoRebookDispatchWorker) — staff must still be able to rebook those.
+    order?.dispatchStatus === "dispatch_failed" ||
     ["rider_cancelled", "needs_review", "dispatch_failed"].includes(order?.deliveryStatus);
   if (!rebookable) {
     const err: any = new Error(
@@ -812,11 +821,42 @@ function excludedProvidersFor(order: any): ProviderId[] {
 }
 
 /**
+ * Clears `needsRebook` for an order the worker will never act on (terminal,
+ * staff-owned, or exhausted). Without this, poison rows keep matching the
+ * `needsRebook == true` scan forever and, past AUTO_REBOOK_QUERY_LIMIT of
+ * them, crowd every legitimate rebook out of the window — the starvation
+ * half of the auto-rebook livelock. Manual rebook stays open afterwards via
+ * the deliveryStatus/dispatchStatus guards in dispatchRebook.
+ */
+async function clearRebookFlag(doc: any, extra: Record<string, any> = {}): Promise<void> {
+  try {
+    await doc.ref.set(
+      {
+        needsRebook: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...extra,
+      },
+      { merge: true }
+    );
+  } catch (writeErr: any) {
+    console.error("[Auto Rebook] flag-clear write failed:", writeErr?.message || writeErr);
+  }
+}
+
+/**
  * Scheduled (5-min) auto-rebook: scans `needsRebook` orders and re-enters §3
  * for the ones a CARRIER (or a dispatch failure) flagged. Staff cancels are
  * filtered out by trigger, terminal states are filtered out defensively, and
  * every automatic attempt is counted so a poison order stops after
  * AUTO_REBOOK_MAX_ATTEMPTS instead of paying for riders forever.
+ *
+ * Every order the worker skips or exhausts has its `needsRebook` flag
+ * cleared, so it drops out of the scan window on the next run instead of
+ * starving actionable orders once the window (AUTO_REBOOK_QUERY_LIMIT) is
+ * full. Note: FIFO ordering of the window would need a composite
+ * `orders(needsRebook, updatedAt)` index, which is not in
+ * firestore.indexes.json (outside this module's ownership) — draining the
+ * window is what actually prevents the starvation/livelock.
  */
 export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult> {
   const result: AutoRebookWorkerResult = {
@@ -848,9 +888,12 @@ export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult
 
     const trigger = order.rebookTrigger;
     // Only automatic triggers: `staff_cancelled` (and legacy rows with no
-    // trigger) stay with staff — the worker never re-dispatches them.
+    // trigger) stay with staff — the worker never re-dispatches them. The
+    // flag is cleared so the row leaves the scan window (staff rebook stays
+    // open via the rider_cancelled/dispatch_failed deliveryStatus guards).
     if (trigger !== "carrier_cancelled" && trigger !== "dispatch_failed") {
       result.skipped++;
+      await clearRebookFlag(doc);
       continue;
     }
     // Defensive terminal guard: never pay for a rider on a done/cancelled order.
@@ -861,6 +904,7 @@ export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult
       order.status?.code === "DELIVERED"
     ) {
       result.skipped++;
+      await clearRebookFlag(doc);
       continue;
     }
     const attempts = Number.isInteger(order.autoRebookAttempts)
@@ -868,6 +912,7 @@ export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult
       : 0;
     if (attempts >= AUTO_REBOOK_MAX_ATTEMPTS) {
       result.exhausted++;
+      await clearRebookFlag(doc, { autoRebookExhaustedAt: admin.firestore.FieldValue.serverTimestamp() });
       continue;
     }
 
@@ -886,11 +931,21 @@ export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult
       }
       result.failed++;
       const nextAttempts = attempts + 1;
+      const exhaustedNow = nextAttempts >= AUTO_REBOOK_MAX_ATTEMPTS;
       try {
         await doc.ref.set(
           {
             autoRebookAttempts: nextAttempts,
             autoRebookLastError: String(err?.message || err).slice(0, 300),
+            // On the final failed attempt the flag is cleared so the order
+            // stops matching the scan window; staff rebook stays open via
+            // dispatchRebook's dispatchStatus === "dispatch_failed" guard.
+            ...(exhaustedNow
+              ? {
+                  needsRebook: false,
+                  autoRebookExhaustedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }
+              : {}),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
@@ -901,7 +956,7 @@ export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult
           writeErr?.message || writeErr
         );
       }
-      if (nextAttempts >= AUTO_REBOOK_MAX_ATTEMPTS) {
+      if (exhaustedNow) {
         result.exhausted++;
         try {
           await captureErrorSnapshot({

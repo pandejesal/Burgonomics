@@ -241,7 +241,12 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         const orderRef = db.collection("orders").doc(orderId);
         const orderSnap = await orderRef.get();
         const orderData = (orderSnap.exists ? orderSnap.data() : undefined) as any;
-        const storedTotal = Number(orderData?.pricing?.grandTotal);
+        // Server-stamped `pricing` (createPaymentOrder stamps it at intent
+        // time, spec §1) is the primary binding; legacy orders that only
+        // carry `totals` still bind instead of silently skipping.
+        const storedTotal = Number(
+          orderData?.pricing?.grandTotal ?? orderData?.totals?.grandTotal
+        );
         const storedPaise =
           Number.isFinite(storedTotal) && storedTotal > 0 ? Math.round(storedTotal * 100) : null;
         const capturedPaise =

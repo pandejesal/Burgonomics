@@ -27,6 +27,12 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
     collection: (colName: string) => ({
       doc: (docId?: string) => docRef(colName, docId || `mock_${Math.random().toString(36).slice(2, 8)}`),
     }),
+    runTransaction: vi.fn(async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      })
+    ),
   };
   return { mockDb, savedDocs };
 });
@@ -114,11 +120,15 @@ describe("resolveTicket (real money paths)", () => {
     expect(savedDocs["support_tickets/tk_cod"].status).toBeUndefined();
   });
 
-  it("applies loyalty credit exactly once to the customer profile", async () => {
+  it("applies loyalty credit exactly once to the customer's REAL balance, with a ledger row", async () => {
     savedDocs["support_tickets/tk_loyal"] = {
       ticketNumber: "TICK-2026-0004",
       customerId: "cust_9",
     };
+    // The wallet lives on customers/{uid}.loyaltyPoints (redeem gate +
+    // staff adjustments + redemption debits all read it) — the old code
+    // credited users/{uid}, which nothing reads.
+    savedDocs["customers/cust_9"] = { loyaltyPoints: 50 };
     const res = await resolveTicket({
       ...BASE,
       ticketId: "tk_loyal",
@@ -127,6 +137,32 @@ describe("resolveTicket (real money paths)", () => {
     });
     expect(res.success).toBe(true);
     expect(savedDocs["support_tickets/tk_loyal"].status).toBe("resolved");
+    expect(savedDocs["customers/cust_9"].loyaltyPoints).toBe(150);
+    // Audit trail: one coin_transactions ledger row per credit.
+    const ledger = savedDocs["coin_transactions/coin_ticket_credit_tk_loyal"];
+    expect(ledger).toMatchObject({
+      customerId: "cust_9",
+      delta: 100,
+      balanceAfter: 150,
+      type: "ticket_credit",
+      ticketId: "tk_loyal",
+    });
+    // Never the wrong collection again.
+    expect(savedDocs["users/cust_9"]).toBeUndefined();
+  });
+
+  it("refuses loyalty credit when the customer profile doc is missing (no void credit)", async () => {
+    savedDocs["support_tickets/tk_loyal_missing"] = {
+      ticketNumber: "TICK-2026-0012",
+      customerId: "cust_ghost",
+    };
+    await expect(
+      resolveTicket({ ...BASE, ticketId: "tk_loyal_missing", action: "loyalty_credit", amount: 100 })
+    ).rejects.toThrow(/not found/);
+    expect(savedDocs["support_tickets/tk_loyal_missing"].status).toBeUndefined();
+    expect(
+      Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/"))
+    ).toEqual([]);
   });
 
   it("refuses unbounded loyalty credit mint (over 5000)", async () => {

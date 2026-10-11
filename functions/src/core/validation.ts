@@ -28,35 +28,81 @@ const pricingLineItemSchema = z.object({
     .optional(),
 });
 
+// PAYMENTS_CONTRACT_SPEC §1: `orderType` stays canonical; `fulfillment` is a
+// backward-compatible alias with two legacy spellings mapped onto the canonical
+// enum ("pickup" -> takeaway, "dine-in" -> dinein).
+const canonicalOrderType = z.enum(["delivery", "takeaway", "dinein"]);
+const fulfillmentAlias = z.enum(["delivery", "takeaway", "dinein", "pickup", "dine-in"]);
+
+/** Maps the wire shapes ({orderType} | legacy {fulfillment}) to the canonical enum. */
+export function normalizeOrderType(input: {
+  orderType?: "delivery" | "takeaway" | "dinein";
+  fulfillment?: "delivery" | "takeaway" | "dinein" | "pickup" | "dine-in";
+}): "delivery" | "takeaway" | "dinein" {
+  if (input.orderType) return input.orderType;
+  switch (input.fulfillment) {
+    case "pickup":
+      return "takeaway";
+    case "dine-in":
+      return "dinein";
+    default:
+      // Schema-guaranteed: delivery | takeaway | dinein.
+      return input.fulfillment as "delivery" | "takeaway" | "dinein";
+  }
+}
+
 export const createPaymentOrderSchema = z
   .object({
     items: z.array(pricingLineItemSchema).min(1).max(100),
     branchId: z.string().min(1).optional(),
     storeId: z.string().min(1).optional(),
-    orderType: z.enum(["delivery", "takeaway", "dinein"]),
+    orderType: canonicalOrderType.optional(),
+    fulfillment: fulfillmentAlias.optional(),
     deliveryFee: optionalNonNegative,
     packagingFee: optionalNonNegative,
     couponCode: z.string().trim().max(64).optional(),
     loyaltyPointsToRedeem: z.number().int().min(0).max(100000).optional(),
+    // Kept for shape compatibility ONLY — the route binds customerId from the
+    // verified token (or "guest"); a body customerId is never honoured.
     customerId: z.string().optional(),
-    orderId: z.string().optional(),
+    // REQUIRED (PAYMENTS_CONTRACT_SPEC §1): the server verifies the internal
+    // orders/{orderId} doc exists AND is unpaid AND owned by the caller
+    // BEFORE minting a payable gateway order. No internal id, no checkout.
+    orderId: nonEmptyString,
     idempotencyKey: z.string().min(8).max(128).optional(),
   })
   .refine((d) => d.branchId || d.storeId, {
     message: "branchId or storeId is required",
+  })
+  .refine((d) => !!d.orderType || !!d.fulfillment, {
+    message: "orderType (or fulfillment alias) is required",
   });
 
-export const verifyPaymentSchema = z.object({
-  orderId: nonEmptyString,
-  razorpayOrderId: nonEmptyString,
-  razorpayPaymentId: nonEmptyString,
-  // Empty is ALLOWED through validation on purpose: a missing/blank
-  // signature is an auth failure, not a malformed body, and must answer
-  // 401 INVALID_SIGNATURE from the HMAC layer (verifyRazorpaySignature
-  // refuses any falsy signature before touching an order) instead of a
-  // generic 400 validation error.
-  razorpaySignature: z.string(),
-});
+// PAYMENTS_CONTRACT_SPEC §2: canonical wire names, plus the legacy
+// checkout-shim body { paymentId, orderId, signature, method } where the lone
+// orderId is the GATEWAY order id (the internal order id resolves server-side
+// through the payment-intent record keyed by razorpayOrderId). `method` is
+// accepted and ignored — old clients always sent it.
+export const verifyPaymentSchema = z
+  .object({
+    orderId: nonEmptyString,
+    razorpayOrderId: nonEmptyString,
+    razorpayPaymentId: nonEmptyString,
+    // Empty is ALLOWED through validation on purpose: a missing/blank
+    // signature is an auth failure, not a malformed body, and must answer
+    // 401 INVALID_SIGNATURE from the HMAC layer (verifyRazorpaySignature
+    // refuses any falsy signature before touching an order) instead of a
+    // generic 400 validation error.
+    razorpaySignature: z.string(),
+  })
+  .or(
+    z.object({
+      paymentId: nonEmptyString,
+      orderId: nonEmptyString,
+      signature: z.string(),
+      method: z.string().max(32).optional(),
+    })
+  );
 
 export const refundSchema = z.object({
   orderId: nonEmptyString,

@@ -339,6 +339,34 @@ describe("Porter Logistics Service", () => {
       expect(savedDocs["orders/order_otp_103"]?.deliveryVerifiedBy).toBe("customer_otp");
     });
 
+    it("burns the OTP (hash + legacy plaintext) on success — no replay after handover", async () => {
+      savedDocs["orders/order_otp_burn_hash"] = {
+        id: "order_otp_burn_hash",
+        deliveryOtpHash: computeHmacSha256("2468", TEST_OTP_SECRET),
+        status: "out_for_delivery",
+      };
+      savedDocs["orders/order_otp_burn_legacy"] = {
+        id: "order_otp_burn_legacy",
+        deliveryOtp: "1357",
+        status: "out_for_delivery",
+      };
+
+      await verifyDeliveryOtp({ orderId: "order_otp_burn_hash", otp: "2468" });
+      await verifyDeliveryOtp({ orderId: "order_otp_burn_legacy", otp: "1357" });
+
+      // The secret no longer outlives the handover on either order shape.
+      expect(savedDocs["orders/order_otp_burn_hash"]?.deliveryOtpHash).toBeNull();
+      expect(savedDocs["orders/order_otp_burn_legacy"]?.deliveryOtp).toBeNull();
+
+      // Replaying the same OTP on the delivered order now fails closed.
+      await expect(
+        verifyDeliveryOtp({ orderId: "order_otp_burn_hash", otp: "2468" })
+      ).rejects.toThrow(/No delivery OTP found/);
+      await expect(
+        verifyDeliveryOtp({ orderId: "order_otp_burn_legacy", otp: "1357" })
+      ).rejects.toThrow(/No delivery OTP found/);
+    });
+
     it("denies OTP verification and dispatch for staff outside the order branch", async () => {
       savedDocs["orders/order_branch_a"] = {
         id: "order_branch_a",

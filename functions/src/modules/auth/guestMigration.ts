@@ -456,17 +456,18 @@ export async function migrateGuestAccount(
   }
 
   // 4. LOYALTY & WALLET BONUS INTEGRITY (50 Grill Coins First Order / Welcome Bonus)
-  // Advisory eligibility read first (cheap early-out), then the atomic
-  // awardWelcomeBonus() create() serializes concurrent callers. The ledger is
-  // keyed by the OTP-VERIFIED phone only — an unverified body phone mints
-  // nothing (falls back to the once-per-UID key, still idempotent).
+  // Advisory eligibility read first (cheap early-out). THE AWARD ITSELF IS
+  // DEFERRED TO STEP 6.5, AFTER the relink batch commits (finding: welcome-
+  // bonus ledger-before-batch loss): the ledger row used to be create()d
+  // HERE, before the batch — any failure between this create() and the batch
+  // commit stranded a "granted" ledger row with NO balance increment, and
+  // every retry then read "already claimed" and could never recover the lost
+  // coins. The ledger is keyed by the OTP-VERIFIED phone only — an unverified
+  // body phone mints nothing (falls back to the once-per-UID key, still
+  // idempotent).
   const WELCOME_BONUS_COINS = 50;
   const eligibility = await verifyBonusEligibility(verifiedPhone ?? undefined, permanentUid);
-
-  if (eligibility.eligible) {
-    bonusCoins = await awardWelcomeBonus(permanentUid, verifiedPhone ?? undefined, WELCOME_BONUS_COINS);
-    welcomeBonusAwarded = bonusCoins > 0;
-  }
+  const welcomeBonusEligible = eligibility.eligible;
 
   // 5. UPDATE PERMANENT USER PROFILE (phone = verified only)
   const userUpdates: Record<string, any> = {
@@ -477,29 +478,7 @@ export async function migrateGuestAccount(
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
-  if (welcomeBonusAwarded) {
-    userUpdates.hasClaimedWelcomeBonus = true;
-  }
-
   ops.push({ kind: "set", ref: permanentUserRef, data: userUpdates, merge: true });
-
-  if (welcomeBonusAwarded) {
-    // Readiness-1: credit the SPENDABLE currency. The old code incremented
-    // users.grillCoins — a write-only dead field nothing reads (pricing
-    // clamp, client display, and debits all use customers.loyaltyPoints),
-    // so bonuses were unspendable. Merge-set increment creates the doc when
-    // missing; the deterministic ledger row (awardWelcomeBonus) plus the
-    // eligibility pre-check keep it once-per-phone.
-    ops.push({
-      kind: "set",
-      ref: db.collection("customers").doc(permanentUid),
-      data: {
-        loyaltyPoints: admin.firestore.FieldValue.increment(WELCOME_BONUS_COINS),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      merge: true,
-    });
-  }
 
   // 6. GUEST CART MIGRATION
   const guestCartId = guestSessionId ? `guest_${guestSessionId}` : anonymousUid ? `anon_${anonymousUid}` : null;
@@ -538,6 +517,87 @@ export async function migrateGuestAccount(
     }
     // eslint-disable-next-line no-await-in-loop
     await batch.commit();
+  }
+
+  // 6.5. WELCOME-BONUS AWARD — AFTER the relink batch, in ONE transaction.
+  // Ledger row + SPENDABLE balance (customers.loyaltyPoints — the field the
+  // pricing clamp, client display, and debits all read; never the dead
+  // users.grillCoins) + claim flag commit together, so no crash window can
+  // strand a "granted" ledger row without the coins. The deterministic ledger
+  // id keeps the award exactly-once: a race loser or retry reads the row and
+  // grants nothing. A failed migration above throws BEFORE this point, so a
+  // guest whose migration never committed is never burned out of the bonus.
+  if (welcomeBonusEligible) {
+    const normalizedPhone = normalizePhoneIN(verifiedPhone ?? undefined);
+    const txId = normalizedPhone
+      ? `welcome_bonus_phone_${normalizedPhone.replace(/\D/g, "")}`
+      : `welcome_bonus_uid_${permanentUid}`;
+    const ledgerRef = db.collection("coin_transactions").doc(txId);
+    const customerRef = db.collection("customers").doc(permanentUid);
+    const ledgerRow = {
+      id: txId,
+      customerId: permanentUid,
+      phone: normalizedPhone,
+      amount: WELCOME_BONUS_COINS,
+      type: "welcome_bonus",
+      description: "Welcome Bonus: First Sign-In Grill Coins",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    const balanceAndFlag = () => ({
+      loyaltyPoints: admin.firestore.FieldValue.increment(WELCOME_BONUS_COINS),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    try {
+      if (db && typeof (db as any).runTransaction === "function") {
+        await (db as any).runTransaction(async (tx: any) => {
+          const ledgerSnap = await tx.get(ledgerRef as any);
+          if (ledgerSnap.exists) {
+            return; // already granted (concurrent winner / prior migration)
+          }
+          // Non-merge set AFTER an absence read: Firestore validates the read
+          // set at commit, so a row created between the read and the commit
+          // forces a retry — where the exists check turns this into a no-op.
+          // create()-grade exactly-once, with balance + flag in the same
+          // atomic unit.
+          tx.set(ledgerRef as any, ledgerRow);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tx.set(customerRef as any, balanceAndFlag() as any, { merge: true });
+          tx.set(
+            permanentUserRef as any,
+            {
+              hasClaimedWelcomeBonus: true,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        });
+        bonusCoins = WELCOME_BONUS_COINS;
+        welcomeBonusAwarded = true;
+      } else {
+        // Datastore shim without runTransaction: same order, best-effort.
+        await ledgerRef.create(ledgerRow);
+        await customerRef.set(balanceAndFlag(), { merge: true });
+        await permanentUserRef.set(
+          {
+            hasClaimedWelcomeBonus: true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        bonusCoins = WELCOME_BONUS_COINS;
+        welcomeBonusAwarded = true;
+      }
+    } catch (err: any) {
+      if (err?.code === 6 || err?.message?.includes("ALREADY_EXISTS")) {
+        // Race loser against a concurrent claim — not an error, no award.
+        console.log(`[Auth] Welcome bonus already granted (${txId}) — skipping duplicate.`);
+        bonusCoins = 0;
+        welcomeBonusAwarded = false;
+      } else {
+        throw err;
+      }
+    }
   }
 
   return {

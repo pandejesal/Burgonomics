@@ -295,12 +295,15 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       expect(updatedUser.hasClaimedWelcomeBonus).toBe(true);
 
       // Readiness-1: the bonus credits the SPENDABLE ledger field
-      // (customers.loyaltyPoints), never the dead users.grillCoins.
-      const coinCredit = batchSets.find(
-        (s: any) => s.ref?.path === `customers/${permanentUid}`
-      );
-      expect(coinCredit).toBeDefined();
-      expect(coinCredit.data.loyaltyPoints).toBe(50);
+      // (customers.loyaltyPoints), never the dead users.grillCoins. The
+      // award is DEFERRED until after the relink batch commits (finding:
+      // ledger-before-batch loss), so it lands outside batchSets now.
+      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
+      // Exactly one deterministic ledger row, alongside the balance. No
+      // OTP-verified caller phone here, so the row is UID-keyed.
+      expect(
+        savedDocs[`coin_transactions/welcome_bonus_uid_${permanentUid}`]
+      ).toMatchObject({ type: "welcome_bonus", amount: 50, customerId: permanentUid });
       const deadWrites = batchSets.filter(
         (s: any) =>
           typeof s.ref?.path === "string" &&
@@ -309,6 +312,70 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
           "grillCoins" in s.data
       );
       expect(deadWrites).toHaveLength(0);
+    });
+
+    it("a FAILED relink batch never strands the welcome bonus (retry awards it in full)", async () => {
+      // Finding: the ledger row used to be create()d BEFORE the batch — a
+      // failed commit left a "granted" ledger row with no coins, and every
+      // retry read "already claimed". The award now runs after the commit.
+      const guestSessionId = "sess_guest_batchfail_1";
+      const permanentUid = "usr_batchfail_1";
+      savedDocs["orders/ord_batchfail_1"] = {
+        id: "ord_batchfail_1",
+        guestSessionId,
+        customerId: "guest",
+        total: 199,
+      };
+
+      const realBatch = (mockDb as any).batch;
+      (mockDb as any).batch = () => {
+        const b = realBatch();
+        b.commit = async () => {
+          throw new Error("simulated commit failure");
+        };
+        return b;
+      };
+      try {
+        await expect(
+          migrateGuestAccount({ guestSessionId, permanentUid }, { uid: permanentUid })
+        ).rejects.toThrow(/simulated commit failure/);
+      } finally {
+        (mockDb as any).batch = realBatch;
+      }
+
+      // Nothing was stranded: no ledger row, no balance, no claim flag.
+      expect(
+        Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/welcome_bonus_"))
+      ).toEqual([]);
+      expect(savedDocs[`customers/${permanentUid}`]).toBeUndefined();
+      expect(savedDocs[`users/${permanentUid}`]?.hasClaimedWelcomeBonus).toBeUndefined();
+
+      // The test mock applies batch ops EAGERLY at update() time, so undo
+      // them to simulate a commit that truly never landed on the server.
+      savedDocs["orders/ord_batchfail_1"].customerId = "guest";
+      delete savedDocs["orders/ord_batchfail_1"].migratedAt;
+
+      // Retry (batch healthy again): relink + FULL bonus, exactly once.
+      const retry = await migrateGuestAccount(
+        { guestSessionId, permanentUid },
+        { uid: permanentUid }
+      );
+      expect(retry.success).toBe(true);
+      expect(retry.migratedOrdersCount).toBe(1);
+      expect(retry.welcomeBonusAwarded).toBe(true);
+      expect(retry.bonusCoins).toBe(50);
+      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
+      expect(
+        savedDocs[`coin_transactions/welcome_bonus_uid_${permanentUid}`]
+      ).toMatchObject({ type: "welcome_bonus", amount: 50 });
+
+      // A THIRD run (double-submit) grants nothing further.
+      const third = await migrateGuestAccount(
+        { guestSessionId, permanentUid },
+        { uid: permanentUid }
+      );
+      expect(third.welcomeBonusAwarded).toBe(false);
+      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
     });
 
     it("refuses to migrate orders from an identified (non-anonymous) account", async () => {

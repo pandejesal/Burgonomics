@@ -39,3 +39,6 @@ burgonomics-foundation-core/
 burgonomics-partner/
 # Agent session traces
 scripts/session_*.json
+
+# Autonomous audit artifacts (local evidence: ledger, bug register, logs, screenshots)
+audit-results/

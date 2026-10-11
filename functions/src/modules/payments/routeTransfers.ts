@@ -15,6 +15,87 @@ export interface RouteTransferAttempt {
   skipped?: boolean;
   result?: any;
   error?: string;
+  /**
+   * TRUE when the attempt's outcome is UNKNOWN (gateway timeout, ambiguous
+   * network failure, or a failed pre-POST reconcile lookup). Callers MUST
+   * park the order in `needs_reconciliation` — never blind-retry a money
+   * POST that may have already landed.
+   */
+  unknown?: boolean;
+  /** TRUE when an equivalent existing transfer was found and reused (no POST). */
+  reconciled?: boolean;
+}
+
+/**
+ * Explicit gateway request timeouts. Both are WELL under the 10-minute
+ * transfer-claim lease: a hung-but-landed POST surfaces as `unknown` here
+ * long before a stale-lease takeover could re-POST it, and the takeover
+ * itself reconciles existing transfers first (below).
+ */
+const TRANSFER_POST_TIMEOUT_MS = 30_000;
+const TRANSFER_RECONCILE_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err: any = new Error(`${label} timed out after ${ms}ms — outcome unknown`);
+      err.code = "GATEWAY_TIMEOUT";
+      reject(err);
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+/**
+ * Reconcile-before-(re)POST: `payments.transfer` is NOT idempotent, so before
+ * ANY POST (first attempt, retry worker, stale-lease takeover) we list the
+ * payment's existing transfers and return an equivalent one (same internal
+ * orderId in notes + same live paise amount, not failed/reversed) so callers
+ * record it instead of double-paying the branch.
+ *
+ * Throws when the lookup itself fails — callers then treat the outcome as
+ * UNKNOWN and park rather than POSTing blind.
+ */
+export async function findExistingTransferForPayment(
+  razorpay: any,
+  paymentId: string,
+  want: { splitPaise: number; orderId: string }
+): Promise<any | null> {
+  if (!razorpay?.payments?.fetchTransfer) return null; // SDK without the endpoint — skip reconcile
+  const res = await withTimeout(
+    Promise.resolve(razorpay.payments.fetchTransfer(paymentId)),
+    TRANSFER_RECONCILE_TIMEOUT_MS,
+    "Razorpay payments.fetchTransfer"
+  );
+  const items = Array.isArray(res?.items)
+    ? res.items
+    : Array.isArray(res)
+      ? (res as any[])
+      : [];
+  for (const t of items) {
+    if (!t || typeof t.amount !== "number") continue;
+    if (t.status === "failed" || t.status === "reversed") continue;
+    if (Number(t.amount) !== want.splitPaise) continue;
+    // Our transfers always stamp notes.orderId (buildRouteTransferPayload) —
+    // a transfer without OUR marker is never assumed to be ours.
+    if (t?.notes?.orderId === want.orderId) return t;
+  }
+  return null;
+}
+
+/** SDK/API errors that PROVE the transfer did not happen (safe to retry). */
+function isDefiniteGatewayRejection(err: any): boolean {
+  const status = Number(err?.statusCode);
+  return Number.isInteger(status) && status >= 400 && status < 500;
 }
 
 /**
@@ -159,6 +240,30 @@ export async function attemptRouteTransfer(
     }
 
     const razorpay = getRazorpayClient();
+
+    // Reconcile BEFORE (re)POSTing: if an equivalent transfer already exists
+    // (a hung-but-landed POST, a stale-lease takeover racing a completed
+    // one), reuse its receipt — never double-pay the branch. A FAILED
+    // lookup is outcome-UNKNOWN: refuse to POST blind (park callers do
+    // needs_reconciliation).
+    try {
+      const existing = await findExistingTransferForPayment(razorpay, paymentId, {
+        splitPaise,
+        orderId,
+      });
+      if (existing) {
+        return { ok: true, reconciled: true, result: existing };
+      }
+    } catch (err: any) {
+      return {
+        ok: false,
+        unknown: true,
+        error:
+          `Transfer reconciliation failed (${err?.message || err}) — outcome unknown, ` +
+          `refusing to risk a duplicate payout; park for reconciliation`,
+      };
+    }
+
     const transfers = buildRouteTransferPayload(
       razorpayAccountId,
       splitPaise,
@@ -167,9 +272,40 @@ export async function attemptRouteTransfer(
       pricingSplit.brandRoyaltyPaise ?? pricingSplit.brandRoyaltyAmount
     );
 
-    const result = await razorpay.payments.transfer(paymentId, {
-      transfers,
-    });
+    let result: any;
+    try {
+      // Explicit timeout well under the 10-min claim lease: a hung POST must
+      // surface as `unknown` (callers park in needs_reconciliation) long
+      // before a stale-lease takeover could double-POST it — and any future
+      // attempt reconciles first anyway.
+      result = await withTimeout(
+        Promise.resolve(razorpay.payments.transfer(paymentId, { transfers })),
+        TRANSFER_POST_TIMEOUT_MS,
+        "Razorpay payments.transfer"
+      );
+    } catch (err: any) {
+      if (err?.code === "GATEWAY_TIMEOUT") {
+        return {
+          ok: false,
+          unknown: true,
+          error: `${err.message} — a retry will reconcile existing transfers before re-POSTing`,
+        };
+      }
+      if (isDefiniteGatewayRejection(err)) {
+        // A 4xx rejection proves nothing moved — safe for the normal
+        // pending_retry lane.
+        return { ok: false, error: (err as any)?.message || String(err) };
+      }
+      // Ambiguous failure (network reset, 5xx, unreadable error): the POST
+      // may have landed. NEVER blind-retry — park for reconciliation.
+      return {
+        ok: false,
+        unknown: true,
+        error:
+          `Transfer POST failed ambiguously (${(err as any)?.message || err}) — outcome unknown, ` +
+          `a retry will reconcile existing transfers before re-POSTing`,
+      };
+    }
     return { ok: true, result };
   } catch (err: any) {
     return { ok: false, error: (err as any)?.message || String(err) };
@@ -367,6 +503,31 @@ export async function retryPendingRouteTransfersWorker() {
             // never failed over a missing payout.
             routeTransferNeedsManualSettlement: true,
             routeTransferError: attempt.error,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return false;
+      }
+
+      if (attempt.unknown) {
+        // Outcome UNKNOWN (timeout / ambiguous failure / reconcile lookup
+        // failed): a blind retry could double-pay. Park for ops — the claim
+        // lease is released and attemptRouteTransfer reconciles existing
+        // transfers before any future POST.
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Route transfer outcome UNKNOWN for order ${orderId} — parked in needs_reconciliation (no blind retry): ${attempt.error}`,
+          orderId,
+          branchId,
+          razorpayPaymentId: paymentId,
+        }).catch(() => undefined);
+        await doc.ref.set(
+          {
+            routeTransferStatus: "needs_reconciliation",
+            routeTransferError: attempt.error,
+            routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }

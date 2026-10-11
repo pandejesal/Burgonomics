@@ -40,11 +40,30 @@ export function normalizeCustomerPhone(raw: any): string {
   return "";
 }
 
-/** `yyyy-mm-dd HH:mm:ss` (local) + date/time parts required by Save Order. */
-function petpoojaClock(now: Date = new Date()) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const time = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+/**
+ * KOT timestamps must be IST wall-clock time regardless of where the
+ * function runs. The old local-zone formatting shifted every preorder/
+ * created timestamp by the deploy region's offset (finding: petpoojaClock
+ * timezone) — kitchens plan around these fields.
+ */
+const PETPOOJA_TZ = "Asia/Kolkata";
+
+export function petpoojaClock(now: Date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: PETPOOJA_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "00";
+  // Some ICU builds render midnight as hour "24" with hourCycle h23 off.
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  const date = `${get("year")}-${get("month")}-${get("day")}`;
+  const time = `${hour}:${get("minute")}:${get("second")}`;
   return { preorderDate: date, preorderTime: time, createdOn: `${date} ${time}` };
 }
 
@@ -181,14 +200,79 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
   assertLivePetpoojaContext(`KOT push for order ${orderId}`);
 
   // Idempotency: petpoojaOrderId is written ONLY on a successful push, so
-  // "synced + petpoojaOrderId" IS the already-pushed marker. Replays (a
+  // its presence IS the already-pushed marker — independent of the status
+  // field, which later bookkeeping may have moved off "synced". Replays (a
   // second Razorpay event, a double-tapped KDS button, the retry worker
   // racing a completed push) must never fire a duplicate KOT at the kitchen.
-  if (order.petpoojaStatus === "synced" && order.petpoojaOrderId) {
+  if (order.petpoojaOrderId) {
     console.warn(
       `[Petpooja KOT Push] Order ${orderId} already pushed (${order.petpoojaOrderId}) — deduped, no duplicate KOT`
     );
     return true;
+  }
+
+  // Transactional claim (finding: duplicate-KOT race): the read above is
+  // NOT a lock — `payment.captured` + `order.paid` webhooks, a KDS double
+  // tap, and the retry worker can all pass the dedupe concurrently and each
+  // POST a KOT, ringing the kitchen N times for one paid order. This claim
+  // serializes them exactly like the scheduler's pending_retry lease, on a
+  // DEDICATED field (petpoojaPushClaimedAt) so the scheduler's own
+  // petpoojaClaimedAt lease (taken BEFORE it calls this function) is never
+  // mistaken for a competing push. Datastores without runTransaction keep
+  // the read-based dedupe above (best effort, same as the scheduler).
+  const PUSH_CLAIM_TTL_MS = 10 * 60 * 1000;
+  if (db && typeof (db as any).runTransaction === "function") {
+    let claim: "claimed" | "dup" | "busy" | "gone";
+    try {
+      claim = await (db as any).runTransaction(async (tx: any) => {
+        const fresh = await tx.get(orderDoc.ref);
+        const data = (fresh.exists ? fresh.data() : undefined) as any;
+        if (!data) return "gone";
+        // A racing caller finished the push while we were reading — reuse
+        // its outcome, never POST a second KOT.
+        if (data.petpoojaOrderId) return "dup";
+        // Numeric-first lease read (same trap as the scheduler): a
+        // serverTimestamp sentinel has no toMillis and would read as 0,
+        // causing instant false takeover and a duplicate KOT POST.
+        const claimedRaw = data.petpoojaPushClaimedAt;
+        const claimedAt =
+          typeof claimedRaw === "number" && Number.isFinite(claimedRaw)
+            ? claimedRaw
+            : claimedRaw && typeof claimedRaw.toMillis === "function"
+              ? claimedRaw.toMillis()
+              : 0;
+        if (data.petpoojaPushClaimedAt && Date.now() - claimedAt < PUSH_CLAIM_TTL_MS) {
+          return "busy"; // another push is in flight right now — yield to it
+        }
+        tx.set(orderDoc.ref, { petpoojaPushClaimedAt: Date.now() }, { merge: true });
+        return "claimed";
+      });
+    } catch (err: any) {
+      console.warn(
+        `[Petpooja KOT Push] claim transaction failed for order ${orderId} — skipping push:`,
+        err?.message || err
+      );
+      return false;
+    }
+    if (claim === "dup") {
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} already pushed by a concurrent caller — deduped, no duplicate KOT`
+      );
+      return true;
+    }
+    if (claim === "busy") {
+      // The in-flight owner either completes (KOT at the kitchen) or its
+      // catch below parks pending_retry for the retry worker — either way
+      // this caller must not stack a second POST on top of it.
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} push already in flight — yielding to the owner`
+      );
+      return true;
+    }
+    if (claim === "gone") {
+      console.warn(`[Petpooja KOT Push] Order ${orderId} vanished before push — refusing`);
+      return false;
+    }
   }
 
   // Mock Mode Return
@@ -203,6 +287,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         kotPrinted: true,
         kotPrintedAt: admin.firestore.FieldValue.serverTimestamp(),
         kotPushedAt: admin.firestore.FieldValue.serverTimestamp(),
+        petpoojaPushClaimedAt: null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -293,6 +378,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
           kotPrinted: true,
           kotPrintedAt: admin.firestore.FieldValue.serverTimestamp(),
           kotPushedAt: admin.firestore.FieldValue.serverTimestamp(),
+          petpoojaPushClaimedAt: null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -303,23 +389,74 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     }
   } catch (err: any) {
     console.warn(`[Petpooja KOT Push Error] Order ${orderId}: ${err.message}`);
-    const currentRetry = (order.petpoojaRetryCount || 0) + 1;
 
-    await orderDoc.ref.set(
-      {
-        petpoojaStatus: "pending_retry",
-        petpoojaSyncStatus: "pending_retry",
-        petpoojaRetryCount: currentRetry,
-        lastPetpoojaError: err.message,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    // Guarded re-read (finding: duplicate-KOT race): if a racing caller's
+    // push landed while ours failed, the order IS at the kitchen — never
+    // regress it to pending_retry (the retry would ring the kitchen twice)
+    // and never lose the winner's synced state. The transaction also reads
+    // the FRESH retry count so two concurrent failures don't both write +1
+    // off the same stale base. Releases our claim either way.
+    let pushedByRacer = false;
+    let parked = false;
+    const fallbackRetry = (order.petpoojaRetryCount || 0) + 1;
+    let retryForSnapshot = fallbackRetry;
+    if (db && typeof (db as any).runTransaction === "function") {
+      try {
+        const outcome = await (db as any).runTransaction(async (tx: any) => {
+          const fresh = await tx.get(orderDoc.ref);
+          const data = (fresh.exists ? fresh.data() : undefined) as any;
+          if (data?.petpoojaOrderId) return "won";
+          const freshRetry = (Number(data?.petpoojaRetryCount) || 0) + 1;
+          retryForSnapshot = freshRetry;
+          tx.set(
+            orderDoc.ref,
+            {
+              petpoojaStatus: "pending_retry",
+              petpoojaSyncStatus: "pending_retry",
+              petpoojaRetryCount: freshRetry,
+              lastPetpoojaError: err.message,
+              petpoojaPushClaimedAt: null,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          return "parked";
+        });
+        if (outcome === "won") pushedByRacer = true;
+        if (outcome === "parked") parked = true;
+      } catch (txErr: any) {
+        // Transactional write failed — fall back to the legacy write below.
+        console.warn(
+          `[Petpooja KOT Push] guarded failure write failed for order ${orderId}:`,
+          txErr?.message || txErr
+        );
+      }
+    }
+    if (pushedByRacer) {
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} was pushed by a concurrent caller — keeping synced state, no pending_retry`
+      );
+      return true;
+    }
+
+    if (!parked) {
+      await orderDoc.ref.set(
+        {
+          petpoojaStatus: "pending_retry",
+          petpoojaSyncStatus: "pending_retry",
+          petpoojaRetryCount: fallbackRetry,
+          lastPetpoojaError: err.message,
+          petpoojaPushClaimedAt: null,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
 
     await captureErrorSnapshot({
       source: "petpooja",
       severity: "medium",
-      message: `Petpooja KOT Push failed for order ${orderId} (Attempt ${currentRetry}): ${err.message}`,
+      message: `Petpooja KOT Push failed for order ${orderId} (Attempt ${retryForSnapshot}): ${err.message}`,
       orderId,
       branchId,
     });
