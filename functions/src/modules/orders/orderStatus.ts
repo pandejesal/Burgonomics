@@ -11,8 +11,11 @@ import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware
  * canonical partner status first.
  *
  * Every bump is branch-checked: cross-branch status flips (including silent
- * cancels via 'cancelled') are 403. Recall (backward moves) is allowed —
- * recency, not direction, is enforced; the KDS UI owns the workflow.
+ * cancels via 'cancelled') are 403. Recall (backward moves) between non-terminal
+ * states is allowed — the KDS UI owns the workflow — but every bump now runs in
+ * a transaction that (a) freezes terminal orders (delivered/cancelled/…) and
+ * (b) honours the client's `expectedStatus` precondition, so a stale screen or
+ * a delayed second tap can no longer reverse a newer status.
  */
 
 export type BumpStatus =
@@ -51,6 +54,8 @@ const PARTNER_TO_DELIVERY: Record<string, DeliveryStatusMeta> = {
 export interface BumpOrderStatusParams {
   orderId: string;
   status: BumpStatus;
+  /** Status.code the caller's screen currently shows; mismatch → 409 STALE_ORDER_STATUS. */
+  expectedStatus?: string;
   cancellationReason?: string;
   timelineEvent?: { title: string; actor?: string; description?: string };
   caller?: StaffCaller;
@@ -65,15 +70,15 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
   }
 
   const orderRef = db.collection("orders").doc(orderId);
-  const snap = await orderRef.get();
-  if (!snap.exists) {
+  const preSnap = await orderRef.get();
+  if (!preSnap.exists) {
     throw serviceError("ORDER_NOT_FOUND", `Order ${orderId} not found`, 404);
   }
-  const order = (snap.data() || {}) as any;
-  if (caller) await assertOrderBranchAccess(caller, order);
+  const preOrder = (preSnap.data() || {}) as any;
+  if (caller) await assertOrderBranchAccess(caller, preOrder);
 
   let finalMeta = { ...meta };
-  const fulfillment = (order.fulfillmentType || order.orderType || order.fulfillment || "delivery").toLowerCase();
+  const fulfillment = (preOrder.fulfillmentType || preOrder.orderType || preOrder.fulfillment || "delivery").toLowerCase();
   if (fulfillment === "dinein") {
     if (canonical === "ready") {
       finalMeta = { code: "READY_TO_SERVE", label: "Ready to serve", kind: "in_progress", terminal: false };
@@ -97,6 +102,39 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
       timestamp: new Date().toISOString(),
     });
   }
-  await orderRef.set(payload, { merge: true });
+
+  // Optimistic-concurrency + terminal guard, enforced inside a transaction so
+  // two staff racing on the same order cannot both win (last-write-wins used to
+  // let a delayed second tap silently reverse a newer state).
+  const expected = params.expectedStatus?.trim();
+  await db.runTransaction(async (tx) => {
+    const live = await tx.get(orderRef);
+    if (!live.exists) {
+      throw serviceError("ORDER_NOT_FOUND", `Order ${orderId} not found`, 404);
+    }
+    const current = ((live.data() || {}) as any).status || {};
+    // A terminal order (delivered/cancelled/completed/picked up) is frozen:
+    // stale taps must never regress it, and a delivered order is not
+    // cancellable from a KDS screen.
+    if (current.terminal === true) {
+      throw serviceError(
+        "ORDER_STATUS_CONFLICT",
+        `Order ${orderId} is already ${current.code || "closed"}; status can no longer be changed`,
+        409,
+      );
+    }
+    // The client told us which state its screen was showing. If the stored
+    // state has moved on (another staff member acted, a webhook landed), this
+    // bump is stale and must not be applied.
+    if (expected && current.code !== expected) {
+      throw serviceError(
+        "STALE_ORDER_STATUS",
+        `Order ${orderId} moved to ${current.code || "unknown"} since the screen loaded; refresh before acting`,
+        409,
+      );
+    }
+    tx.update(orderRef, payload);
+  });
+
   return { orderId, status: meta };
 }

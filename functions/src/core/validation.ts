@@ -245,6 +245,13 @@ export const orderBumpSchema = z.object({
     "ready_for_pickup",
   ]),
   cancellationReason: z.string().trim().min(1).max(500).optional(),
+  /**
+   * Optimistic-concurrency precondition (partner KDS/detail send the
+   * status.code their screen is showing). When present the server only applies
+   * the bump if it still matches — a stale screen or a delayed double-tap can
+   * no longer overwrite a newer status written by another staff member.
+   */
+  expectedStatus: z.string().trim().max(64).optional(),
   timelineEvent: z
     .object({
       title: z.string().trim().min(1).max(120),
