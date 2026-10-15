@@ -160,6 +160,79 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     expect(doc.petpoojaOrderId).toBeUndefined();
   });
 
+  it("an ack with an EMPTY order id is NOT success — never fabricates an id, never claims the KOT printed", async () => {
+    // The EXACT live sandbox response, verbatim. Petpooja answers this to
+    // every relay: success:"1" with all ids empty. The old code took it as a
+    // win, invented `pp_<epoch>` and stamped kotPrinted:true — telling the
+    // kitchen a KOT had printed that Petpooja never registered, and then
+    // skipping every later retry because the fake id looked like a real one.
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      json: async () => ({
+        success: "1",
+        message: "Your order is saved.",
+        restID: "",
+        clientOrderID: "",
+        orderID: "",
+        code: 200,
+      }),
+    });
+
+    const pushed = await pushOrderToPetpooja("kot_1");
+    expect(pushed).toBe(false);
+
+    const doc = savedDocs["orders/kot_1"];
+    // Parked for the retry worker instead of lied about.
+    expect(doc.petpoojaStatus).toBe("pending_retry");
+    expect(doc.petpoojaRetryCount).toBe(1);
+    // The two guarantees that make the order recoverable.
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.kotPrinted).toBeUndefined();
+    expect(doc.petpoojaSyncStatus).not.toBe("synced");
+    // The raw POS body is preserved for diagnosis.
+    expect(doc.lastPetpoojaError).toMatch(/returned no order id/);
+  });
+
+  it("echoes the POS's capitalised orderID when it does send one", async () => {
+    // Petpooja spells the field `orderID` in its own responses; the old code
+    // only read snake_case, so a REAL id would have been thrown away and
+    // replaced by a fabricated one.
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      json: async () => ({ success: "1", message: "Your order is saved.", orderID: "PP-9911" }),
+    });
+
+    const pushed = await pushOrderToPetpooja("kot_1");
+    expect(pushed).toBe(true);
+    const doc = savedDocs["orders/kot_1"];
+    expect(doc.petpoojaOrderId).toBe("PP-9911");
+    expect(doc.petpoojaStatus).toBe("synced");
+    expect(doc.kotPrinted).toBe(true);
+  });
+
+  it("a second push after an empty-id park RETRIES instead of deduping out", async () => {
+    // The recoverability guarantee: because no fake id was written, the
+    // dedupe at the top of pushOrderToPetpooja does not treat the order as
+    // already-pushed, so the retry worker can still deliver the KOT.
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      json: async () => ({ success: "1", orderID: "" }),
+    });
+    await pushOrderToPetpooja("kot_1");
+    expect(savedDocs["orders/kot_1"].petpoojaStatus).toBe("pending_retry");
+
+    // Retry worker finds it and the POS now returns a real id.
+    savedDocs["orders/kot_1"].petpoojaPushClaimedAt = Date.now() - 11 * 60 * 1000;
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      json: async () => ({ success: "1", orderID: "PP-4242" }),
+    });
+    const retried = await pushOrderToPetpooja("kot_1");
+    expect(retried).toBe(true);
+    expect(savedDocs["orders/kot_1"].petpoojaOrderId).toBe("PP-4242");
+    expect(savedDocs["orders/kot_1"].petpoojaStatus).toBe("synced");
+  });
+
   it("two truly concurrent pushes produce exactly ONE KOT POST", async () => {
     let release: (v: any) => void = () => undefined;
     fetchMock.mockImplementationOnce(

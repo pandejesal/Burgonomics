@@ -67,7 +67,7 @@ export async function captureErrorSnapshot(
         return `${(local || "").slice(0, 2)}****@${domain}`;
       }
     );
-  const fullSnapshot: DevErrorSnapshot = {
+  const maskedSnapshot: DevErrorSnapshot = {
     ...snapshot,
     message: scrubbedMessage,
     customerId: snapshot.customerId ? maskIdentifier(snapshot.customerId) : undefined,
@@ -82,6 +82,18 @@ export async function captureErrorSnapshot(
     id: snapshotId,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+
+  // Firestore rejects an explicitly-`undefined` field value, so every optional
+  // key has to be OMITTED rather than set to undefined — including any key a
+  // caller passed as `undefined` through the `...snapshot` spread above.
+  // Writing the object as-is made EVERY snapshot insert throw
+  // `Cannot use "undefined" as a Firestore value (found in field "customerId")`.
+  // That throw was swallowed by the catch below, so no `dev_error_snapshots`
+  // row was ever persisted for a Petpooja failure — the "manual review
+  // required" / "KOT push failed" trail ops relies on silently did not exist.
+  const fullSnapshot = Object.fromEntries(
+    Object.entries(maskedSnapshot).filter(([, value]) => value !== undefined)
+  ) as DevErrorSnapshot;
 
   try {
     if (db && typeof db.collection === "function") {

@@ -138,8 +138,25 @@ import {
   deleteAccountSchema,
 } from "./core/validation";
 
-// Enforce live production keys check on deployment
-assertProductionKeys();
+// Live production-key enforcement.
+//
+// DELIBERATELY LAZY (runs on the first request, not at module import).
+// Import-time enforcement made every `firebase deploy` fail: Firebase's
+// deploy-time source analysis loads this module in a bare node process with no
+// env injected, so `assertProductionKeys()` threw and the CLI reported
+// "User code failed to load. Cannot determine backend specification. Timeout
+// after 10000" — no backend could ever ship. The fail-closed guarantee is
+// unchanged: a booted process refuses to serve while production keys are
+// missing — and because the flag flips only after a PASSING check, it keeps
+// refusing on every later request too (in dev the check is a no-op by design).
+let productionKeysAsserted = false;
+function enforceProductionKeysOnce(): void {
+  if (productionKeysAsserted) return;
+  // Assert BEFORE flipping the flag: if assertProductionKeys() throws, the
+  // guard must keep failing closed on every subsequent request, not fall open.
+  assertProductionKeys();
+  productionKeysAsserted = true;
+}
 
 // Rate limiting middleware
 // F4: provider webhooks arrive from shared egress IPs and monitors poll
@@ -167,6 +184,18 @@ const limiter = rateLimit({
 });
 
 const app = express();
+
+// Fail-closed production-key guard (see enforceProductionKeysOnce above): the
+// first request through this process boots the assert, so a misconfigured
+// production deploy refuses to serve instead of silently running in mock mode.
+app.use((req, res, next) => {
+  try {
+    enforceProductionKeysOnce();
+    next();
+  } catch (err: any) {
+    res.status(503).json({ error: err?.message || "Production keys not configured" });
+  }
+});
 
 // Whitelisted CORS origins (Strict 60-30-10 & Production Security)
 const allowedOrigins = [
@@ -610,8 +639,8 @@ app.post(
 );
 
 // MT-01: sandbox 5-scenario relay (dine-in KOT / modifiers / delivery GST+fee /
-// cancel+discount / bulk). Degrades to a `pp_test_*` order id whenever the
-// live POS is unreachable or unconfigured — never fails the smoke test.
+// cancel+discount / bulk). Falls back to a `pp_test_*` order id ONLY in mock
+// mode; a live relay must return a real Petpooja order id or it throws.
 app.post(
   "/petpooja/testRunner",
   requireAuth,

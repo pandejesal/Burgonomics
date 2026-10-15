@@ -259,8 +259,62 @@ export async function resolveBranchIdForRestId(restId: string): Promise<string |
   return null;
 }
 
+/**
+ * Petpooja's Configuration page points BOTH "Get Store Status" and "Update
+ * Store Status" at this same webhook, and those payloads carry no order id —
+ * e.g. `{"restID":"31z58ciw0h","status":"1"}`. Recognise that shape so the
+ * order-lifecycle path does not throw on it (it used to answer HTTP 500, which
+ * Petpooja reads as a broken webhook and retries or disables).
+ *
+ * Only consulted when no order id is present: a real order event also carries
+ * `restID` + `status`, so this must never be allowed to shadow one.
+ */
+function isStoreStatusPayload(payload: any): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const restId = payload.rest_id ?? payload.restId ?? payload.restID ?? payload.restaurantid;
+  const status = payload.status ?? payload.store_status ?? payload.storeStatus;
+  return Boolean(restId) && status !== undefined && status !== null && status !== "";
+}
+
 export async function handlePetpoojaWebhook(payload: any): Promise<void> {
   const orderId = payload.order_id || payload.clientOrderID || payload.client_order_id;
+
+  if (!orderId && isStoreStatusPayload(payload)) {
+    const restId = String(
+      payload.rest_id ?? payload.restId ?? payload.restID ?? payload.restaurantid
+    );
+    const rawStatus = payload.status ?? payload.store_status ?? payload.storeStatus;
+    const branchId = await resolveBranchIdForRestId(restId);
+    console.log(
+      `[Petpooja Webhook] Store-status ping restID=${restId} status=${JSON.stringify(
+        rawStatus
+      )} ${branchId ? `branch=${branchId}` : "branch=UNLINKED"}`
+    );
+    // Recorded, not applied. Petpooja's status encoding for this webhook is
+    // unverified, and closing a live outlet on a guessed value is worse than
+    // not acting; the recording gives the real encoding to confirm against.
+    try {
+      await db
+        .collection("petpooja_store_status_events")
+        .doc(`ss_${restId}`)
+        .set(
+          {
+            restId,
+            branchId: branchId ?? null,
+            rawStatus: rawStatus ?? null,
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+    } catch (err) {
+      console.warn(
+        "[Petpooja Webhook] Failed to record store-status event:",
+        (err as any)?.message || err
+      );
+    }
+    return;
+  }
+
   if (!orderId) {
     throw new Error("Missing order_id in Petpooja status webhook payload");
   }

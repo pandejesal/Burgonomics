@@ -22,6 +22,9 @@ function getCallbackUrl(): string {
  */
 const DUMMY_PHONES = new Set(["1234567890", "9876543210", "0000000000", "1111111111"]);
 
+/** Petpooja's save_order payload prices are strings with 2 decimals. */
+const money = (n: number): string => (Number.isFinite(n) ? Number(n).toFixed(2) : "0.00");
+
 export function normalizeCustomerPhone(raw: any): string {
   if (typeof raw !== "string") return "";
   const trimmed = raw.trim();
@@ -69,29 +72,63 @@ export function petpoojaClock(now: Date = new Date()) {
 
 export function formatPetpoojaOrderPayload(order: any, branch: any, resId: string) {
   const fulfillment = (order.fulfillmentType || order.orderType || "DELIVERY").toUpperCase();
-  const orderType =
-    fulfillment === "DELIVERY"
-      ? "1"
-      : fulfillment === "TAKEAWAY" || fulfillment === "PICKUP"
-      ? "2"
-      : "3";
+  // Official V2.1.0 order_type is a letter code: H (home delivery),
+  // P (parcel/takeaway), D (dine-in). The numeric 1/2/3 form the old code sent
+  // is not part of the documented contract — both are emitted so the POS
+  // parser reads whichever it implements.
+  const orderTypeCode =
+    fulfillment === "DELIVERY" ? "H" : fulfillment === "TAKEAWAY" || fulfillment === "PICKUP" ? "P" : "D";
+  const orderTypeLegacy = fulfillment === "DELIVERY" ? "1" : fulfillment === "TAKEAWAY" || fulfillment === "PICKUP" ? "2" : "3";
 
   const paymentMethod = (order.paymentMethod || "").toUpperCase();
-  const paymentType = paymentMethod === "COD" || paymentMethod === "CASH" ? "COD" : "Prepaid";
+  // Petpooja accepts COD / CARD / ONLINE. "Prepaid" is NOT a valid value —
+  // anything that is not cash on delivery is an online (captured) payment.
+  const paymentType = paymentMethod === "COD" || paymentMethod === "CASH" ? "COD" : "ONLINE";
 
-  const orderItems = (order.items || []).map((item: any) => ({
-    item_id: item.petpoojaItemId || item.itemId || item.id,
-    item_name: item.name,
-    price: item.basePrice || item.price || 0,
-    quantity: item.quantity || 1,
-    final_price: (item.price || item.basePrice || 0) * (item.quantity || 1),
-    addons: (item.modifiers || item.selectedAddons || []).map((mod: any) => ({
+  const orderItems = (order.items || []).map((item: any) => {
+    const unit = item.basePrice || item.price || 0;
+    const qty = item.quantity || 1;
+    const addons = (item.modifiers || item.selectedAddons || []).map((mod: any) => ({
+      // official AddonItem names: id / name / group_name / price
+      id: mod.id || mod.optionId || "addon",
+      name: mod.name,
+      group_name: mod.groupName || "Addons",
+      price: money(mod.price || 0),
+      // legacy spelling the POS parser may still read
       addon_id: mod.id || mod.optionId || "addon",
       addon_name: mod.name,
-      price: mod.price || 0,
-    })),
-    item_attribute: item.isVeg !== false ? "1" : "2",
-  }));
+    }));
+    const lineTotal = unit * qty;
+
+    return {
+      // ---- official V2.1.0 OrderItem names ----
+      id: item.petpoojaItemId || item.itemId || item.id,
+      name: item.name,
+      price: money(unit),
+      final_price: money(lineTotal),
+      quantity: String(qty),
+      gst_liability: "restaurant",
+      tax_inclusive: true,
+      variation_id: item.petpoojaVariationId || item.variationId || "",
+      variation_name: item.petpoojaVariationName || item.variationName || "",
+      AddonItem: addons,
+      // ---- legacy spellings ----
+      // The flat contract in the official PDF names this key `addon_items`.
+      // It was never emitted, so a POS implementing the documented contract
+      // saw every line item as addon-free. Sent alongside the other spellings
+      // because the multi-contract relay exists precisely to satisfy
+      // whichever contract the target implements.
+      addon_items: addons,
+      item_id: item.petpoojaItemId || item.itemId || item.id,
+      item_name: item.name,
+      addons: addons.map((a: { id: string; name: string; price: string }) => ({
+        addon_id: a.id,
+        addon_name: a.name,
+        price: a.price,
+      })),
+      item_attribute: item.isVeg !== false ? "1" : "2",
+    };
+  });
 
   const pricing = order.pricing || {};
   const gstAmount = pricing.gst || order.taxAmount || order.tax || 0;
@@ -113,56 +150,96 @@ export function formatPetpoojaOrderPayload(order: any, branch: any, resId: strin
     // callback_url tells Petpooja where to POST KOT status updates
     // (accept/reject/ready/delivered). Without it our webhook is unreachable.
     callback_url: getCallbackUrl(),
+    // The API guide's flat contract marks customer `name` and `address` as
+    // REQUIRED top-level fields; they are mirrored inside orderinfo.Customer.
+    // Unknown keys are ignored by the live API, so both spellings are safe.
+    name: order.customerName || order.customer?.name || "Customer",
+    phone: customerPhone,
+    email: order.customerEmail || order.customer?.email || "",
+    latitude: "",
+    longitude: "",
+    res_name: branch?.name || "Burgonomics",
+    address: branch?.address || "",
+    contact_information: branch?.phone || "",
+    restID: resId,
     orderinfo: {
-      orderID: order.orderNumber || order.id,
-      clientOrderID: order.id,
-      // Fail-closed: resID must be the verified branch.petpoojaStoreId.
-      // No fallback chain — wrong resID sends KOT to wrong kitchen.
-      resID: resId,
-      // Published V2.1.0 spec names this key `restID` (menu sharing code);
-      // we send BOTH spellings with the SAME verified value — the POS reads
-      // whichever it implements, and neither can point at another outlet.
-      restID: resId,
-      order_type: orderType,
-      payment_type: paymentType,
-      total: grandTotal,
-      tax: gstAmount,
-      tax_total: gstAmount,
-      discount: discountAmount,
-      // Discounts are sent as discount_type + discount_total (spec §8) —
-      // `discount` stays for backwards compatibility with the POS parser.
-      discount_type: "F",
-      discount_total: discountAmount,
-      delivery_charges: deliveryFee,
-      packing_charges: packagingFee,
-      // Required-by-spec clock fields. advanced_order "N" = immediate order
-      // (we never schedule), so preorder_* describe "now", never a fake slot.
-      advanced_order: "N",
-      preorder_date: preorderDate,
-      preorder_time: preorderTime,
-      created_on: createdOn,
-      // Delivery/packing charges carry no separate tax in our pricing engine.
-      dc_tax_percentage: "0",
-      pc_tax_percentage: "0",
-      // Riders are always third-party (Porter/Borzo/Shadowfax), never ours.
-      enable_delivery: "0",
-      ...(tableNo ? { table_no: tableNo } : {}),
-      customer_name: order.customerName || order.customer?.name || "Customer",
-      // Never invent a phone number: an empty string fails visibly at Petpooja
-      // instead of dispatching a rider to a fake contact. Counter orders must
-      // capture a real number (Partner modal enforces this for delivery).
-      customer_phone: customerPhone,
-      // Delivery app saves the address at `deliveryAddress` (full/line1
-      // parts), counter/legacy orders at `address.street` — read both so the
-      // rider never gets a KOT with an empty address. Never invent one.
-      customer_address:
-        orderType === "1"
-          ? order.deliveryAddress?.full ||
-            order.deliveryAddress?.line1 ||
-            order.address?.street ||
-            order.customerAddress ||
-            ""
-          : "",
+      // Official V2.1.0 shape: Customer / Order / OrderItem / Tax / Discount.
+      Customer: {
+        name: order.customerName || order.customer?.name || "Customer",
+        phone: customerPhone,
+        address:
+          orderTypeLegacy === "1"
+            ? order.deliveryAddress?.full ||
+              order.deliveryAddress?.line1 ||
+              order.address?.street ||
+              order.customerAddress ||
+              ""
+            : "",
+        email: order.customerEmail || order.customer?.email || "",
+      },
+      Order: {
+        orderID: order.orderNumber || order.id,
+        clientOrderID: order.id,
+        // Fail-closed: resID must be the verified branch.petpoojaStoreId.
+        // No fallback chain — wrong resID sends KOT to wrong kitchen.
+        resID: resId,
+        // Published V2.1.0 spec names this key `restID` (menu sharing code);
+        // we send BOTH spellings with the SAME verified value — the POS reads
+        // whichever it implements, and neither can point at another outlet.
+        restID: resId,
+        // Documented letter code (H/P/D) — the numeric form stays as a legacy
+        // alias for POS parsers that still read it.
+        order_type: orderTypeCode,
+        order_type_legacy: orderTypeLegacy,
+        // Petpooja accepts COD / CARD / ONLINE only.
+        payment_type: paymentType,
+        total: money(grandTotal),
+        tax: money(gstAmount),
+        tax_total: money(gstAmount),
+        discount: money(discountAmount),
+        // Discounts are sent as discount_type + discount_total (spec §8).
+        discount_type: "F",
+        discount_total: money(discountAmount),
+        delivery_charges: money(deliveryFee),
+        packing_charges: money(packagingFee),
+        // Required-by-spec clock fields. advanced_order "N" = immediate order
+        // (we never schedule), so preorder_* describe "now", never a fake slot.
+        advanced_order: "N",
+        preorder_date: preorderDate,
+        preorder_time: preorderTime,
+        created_on: createdOn,
+        // Delivery/packing charges carry no separate tax in our pricing engine.
+        dc_tax_percentage: "0",
+        pc_tax_percentage: "0",
+        // Riders are always third-party (Porter/Borzo/Shadowfax), never ours.
+        enable_delivery: "0",
+        ...(tableNo ? { table_no: tableNo } : {}),
+        // legacy flat customer keys
+        customer_name: order.customerName || order.customer?.name || "Customer",
+        // Never invent a phone number: an empty string fails visibly at Petpooja
+        // instead of dispatching a rider to a fake contact. Counter orders must
+        // capture a real number (Partner modal enforces this for delivery).
+        customer_phone: customerPhone,
+        // Delivery app saves the address at `deliveryAddress` (full/line1
+        // parts), counter/legacy orders at `address.street` — read both so the
+        // rider never gets a KOT with an empty address. Never invent one.
+        customer_address:
+          orderTypeLegacy === "1"
+            ? order.deliveryAddress?.full ||
+              order.deliveryAddress?.line1 ||
+              order.address?.street ||
+              order.customerAddress ||
+              ""
+            : "",
+      },
+      OrderItem: orderItems,
+      // Official Tax[] shape: id / title / type / price / tax.
+      Tax: [
+        { id: "cgst", title: "CGST", type: "P", price: "2.5%", tax: money(gstAmount / 2) },
+        { id: "sgst", title: "SGST", type: "P", price: "2.5%", tax: money(gstAmount / 2) },
+      ],
+      Discount: { id: "", title: "Discount", type: "F", price: money(discountAmount) },
+      // legacy tax_details the POS parser may still read
       tax_details: [
         {
           tax_name: "CGST",
@@ -327,7 +404,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
 
     // Debug visibility: missing contact or zero totals push a broken KOT that
     // looks successful. Flag loudly instead of masking with fallbacks.
-    if (!payload.orderinfo.customer_phone) {
+    if (!payload.orderinfo.Order.customer_phone) {
       await captureErrorSnapshot({
         source: "petpooja",
         severity: "medium",
@@ -336,7 +413,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         branchId,
       });
     }
-    if (!(payload.orderinfo.total > 0)) {
+    if (!(Number(payload.orderinfo.Order.total) > 0)) {
       await captureErrorSnapshot({
         source: "petpooja",
         severity: "medium",
@@ -369,10 +446,22 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     // true / "success"). Accept all three — a missed ack loses the KOT.
     const ok =
       result.success === "1" || result.success === 1 || result.success === true || result.status === "success";
-    if (ok) {
+
+    // An ack WITHOUT an order id is NOT a successful relay. Petpooja's live
+    // sandbox answers {"success":"1","message":"Your order is saved.",
+    // "restID":"","clientOrderID":"","orderID":"","code":200} for every
+    // request. Treating that as success fabricated a `pp_<epoch>` id and
+    // stamped kotPrinted:true, so the kitchen believed a KOT had printed that
+    // Petpooja never registered. Worse, the fabricated id is a truthy
+    // `petpoojaOrderId`, so the dedupe at the top of this function skipped
+    // every later retry — the order could never be recovered. Echo only the
+    // POS's own id, under any spelling it uses; never invent one.
+    const petpoojaOrderId =
+      result.petpooja_order_id || result.order_id || result.orderID || result.orderId || "";
+    if (ok && petpoojaOrderId) {
       await orderDoc.ref.set(
         {
-          petpoojaOrderId: result.petpooja_order_id || result.order_id || `pp_${Date.now()}`,
+          petpoojaOrderId,
           petpoojaStatus: "synced",
           petpoojaSyncStatus: "synced",
           kotPrinted: true,
@@ -384,9 +473,16 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         { merge: true }
       );
       return true;
-    } else {
-      throw new Error(result.message || "Petpooja KOT push rejected by POS server");
     }
+    if (ok) {
+      // Park for the retry worker via the catch below rather than lying.
+      throw new Error(
+        `Petpooja acked order ${orderId} (success:"1") but returned no order id — refusing to mark the KOT printed. Raw response: ${JSON.stringify(
+          result
+        ).slice(0, 300)}`
+      );
+    }
+    throw new Error(result.message || "Petpooja KOT push rejected by POS server");
   } catch (err: any) {
     console.warn(`[Petpooja KOT Push Error] Order ${orderId}: ${err.message}`);
 

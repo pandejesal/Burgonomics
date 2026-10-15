@@ -1,0 +1,82 @@
+{
+  "generatedAt": "2026-10-15",
+  "purpose": "Prove that the Petpooja staging save_order endpoint acks every payload without validating or persisting, which is why no orderID is ever returned and the dashboard Order List stays empty.",
+  "account": {
+    "sandboxEmail": "burgonomicsind@gmail.com",
+    "restaurant": "5439 - Burgonomics DEMO [135148]",
+    "menuSharingCode": "31z58ciw0h",
+    "restaurantId": "5439"
+  },
+  "endpoint": "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+  "cannedResponse": {
+    "success": "1",
+    "message": "Your order is saved.",
+    "restID": "",
+    "clientOrderID": "",
+    "orderID": "",
+    "code": 200
+  },
+  "observation": "The response is byte-identical for every request. clientOrderID is never echoed even though it is unique per request, and restID is never echoed for either identifier spelling.",
+  "tests": [
+    {
+      "id": "placeholders",
+      "description": "Original 5 required scenarios using guide placeholder item ids 101/201/301/302",
+      "restID": "31z58ciw0h",
+      "httpStatus": 200,
+      "petpoojaOrderId": null,
+      "verdict": "NOT FULFILLED"
+    },
+    {
+      "id": "real_items",
+      "description": "Cart built from the restaurant's OWN catalog: 30791 Tandoori Dahi Kebab @350 + 30778 Tandoori Dahi Ke Sholey @350, tax ids 3928/3929",
+      "restID": "31z58ciw0h",
+      "httpStatus": 200,
+      "petpoojaOrderId": null,
+      "verdict": "NOT FULFILLED"
+    },
+    {
+      "id": "restid_numeric",
+      "description": "Same order with numeric restaurantid 5439 instead of the sharing code",
+      "restID": "5439",
+      "httpStatus": 200,
+      "petpoojaOrderId": null,
+      "verdict": "NOT FULFILLED"
+    },
+    {
+      "id": "control_invalid",
+      "description": "CONTROL: deliberately invalid order - restID THIS_RES_ID_DOES_NOT_EXIST_999, item id 999999999 that exists nowhere, quantity 999, total 999999.00",
+      "restID": "THIS_RES_ID_DOES_NOT_EXIST_999",
+      "httpStatus": 200,
+      "response": "{\"success\":\"1\",\"message\":\"Your order is saved.\",\"restID\":\"\",\"clientOrderID\":\"\",\"orderID\":\"\",\"code\":200}",
+      "verdict": "STUB CONFIRMED",
+      "significance": "A functioning order service must reject an unknown restaurant and an unknown item. This was accepted with success:\"1\", proving the endpoint does not validate and does not persist."
+    }
+  ],
+  "menuApi": {
+    "endpoint": "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/mapped_restaurant_menus",
+    "httpStatus": 200,
+    "response": "{\"success\":\"0\",\"message\":\"unable to fetch Object from s3 bucket\",\"validation_errors\":\"\"}",
+    "significance": "The outlet's menu file is not provisioned in Petpooja's S3 bucket."
+  },
+  "catalogCapturedFromMenuPush": {
+    "source": "Petpooja menu PUSH payload delivered to our /petpooja/menu-sync endpoint",
+    "items": 166,
+    "categories": 21,
+    "taxes": [
+      { "taxid": "3928", "taxname": "CGST", "tax": "2.5" },
+      { "taxid": "3929", "taxname": "SGST", "tax": "2.5" }
+    ],
+    "attributes": [
+      { "attributeid": "1", "attribute": "veg" },
+      { "attributeid": "2", "attribute": "non-veg" }
+    ],
+    "addonGroups": 0,
+    "itemsAllowingAddons": 0,
+    "variations": 0,
+    "variationCapableItems": 81,
+    "itemsCarryingVariationDefinitions": 0,
+    "discounts": 0,
+    "groupCategories": 0,
+    "significance": "Three of the five scenarios Petpooja asked for cannot be produced against this outlet as configured: Addons+Tax needs at least one item with addons (all 166 have itemallowaddon=0 and addongroups is empty); Discount+Tax needs at least one discount (discounts is empty); Addon and Variation+Tax needs both, and additionally no variation definitions were shared despite 81 items having itemallowvariation=1."
+  }
+}

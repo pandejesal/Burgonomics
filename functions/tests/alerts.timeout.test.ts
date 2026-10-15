@@ -118,3 +118,61 @@ describe("alert webhook timeouts (P2 finding 13)", () => {
     expect(setCalls).toHaveLength(1);
   });
 });
+
+/**
+ * Live finding (2026-10-15): every Petpooja snapshot insert threw
+ * `Cannot use "undefined" as a Firestore value (found in field "customerId")`
+ * — the four optional refs and `context` were written as explicit `undefined`
+ * whenever a caller omitted them. The throw was swallowed by
+ * captureErrorSnapshot's own catch, so NO dev_error_snapshots row was ever
+ * persisted for a Petpooja failure: the "manual review required" / "KOT push
+ * failed" trail ops depends on silently did not exist, while the endpoint
+ * still answered 200. Firestore rejects explicit undefined, so the key must
+ * be omitted entirely.
+ */
+describe("captureErrorSnapshot — never writes an undefined field value", () => {
+  it("omits absent optional refs instead of writing undefined", async () => {
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: "Petpooja 86ing webhook arrived without item_id",
+    });
+
+    expect(setCalls).toHaveLength(1);
+    const written = setCalls[0];
+    const undefinedKeys = Object.entries(written)
+      .filter(([, value]) => value === undefined)
+      .map(([key]) => key);
+    expect(undefinedKeys).toEqual([]);
+    // The specific keys that used to be written as undefined.
+    expect(Object.prototype.hasOwnProperty.call(written, "customerId")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(written, "razorpayPaymentId")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(written, "porterOrderId")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(written, "petpoojaOrderId")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(written, "context")).toBe(false);
+    expect(written.id).toMatch(/^err_/);
+  });
+
+  it("still persists and masks the refs a caller does supply", async () => {
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: "KOT push failed for order ord_1",
+      orderId: "ord_1",
+      branchId: "br_1",
+      petpoojaOrderId: "PP-123456",
+      context: { attempt: 1, phone: "+919825000001", token: "SHOULD_BE_DROPPED" },
+    });
+
+    const written = setCalls[0];
+    expect(written.petpoojaOrderId).toBe("PP****56");
+    expect(written.orderId).toBe("ord_1");
+    expect(written.branchId).toBe("br_1");
+    // Forbidden context keys dropped, safe ones kept.
+    expect(written.context).toEqual({ attempt: 1 });
+    const undefinedKeys = Object.entries(written)
+      .filter(([, value]) => value === undefined)
+      .map(([key]) => key);
+    expect(undefinedKeys).toEqual([]);
+  });
+});

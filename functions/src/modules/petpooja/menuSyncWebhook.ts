@@ -27,7 +27,7 @@ export interface PetpoojaMenuItem {
  * 86-ing in both directions. Legacy `petpooja_products` /
  * `petpooja_categories` / `menu/{branch}/…` collections are deprecated.
  */
-export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller): Promise<{
+export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, incomingMenu?: any): Promise<{
   itemCount: number;
   categoriesCount: number;
 }> {
@@ -72,7 +72,13 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller): 
 
   let menuData: any;
 
-  if (config.mock.petpoojaPos) {
+  if (incomingMenu && Array.isArray(incomingMenu.items)) {
+    // A Petpooja menu PUSH already carries the catalog — ingest it directly.
+    // Re-fetching would hit the Menu API's S3 lookup, which fails with
+    // "unable to fetch Object from s3 bucket" whenever the outlet's menu file
+    // has not been provisioned yet.
+    menuData = incomingMenu;
+  } else if (config.mock.petpoojaPos) {
     menuData = {
       status: "success",
       categories: [
@@ -324,6 +330,46 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller): 
 }
 
 /**
+ * Extracts the Petpooja restID (menu sharing code) from a menu payload.
+ *
+ * The Menu API's fetch response puts the code in `restaurants[].details`.
+ * A **menu PUSH webhook** uses exactly the same shape — the code lives in
+ * `restaurants[0].details.menusharingcode`, NOT in a top-level `rest_id`.
+ * Reading only `rest_id` made every push throw "Missing rest_id" and answer
+ * HTTP 400 (observed live: dashboard reported
+ * `{"error":"","http_code":400}` for a perfectly valid push).
+ *
+ * Order matters: an explicit top-level `rest_id` still wins when a payload
+ * carries one (legacy callers / Update Order Status), then the push's
+ * `menusharingcode`, then the numeric `restaurantid`.
+ */
+export function extractMenuRestId(payload: any): string | null {
+  const p = payload || {};
+  const explicit = p.rest_id || p.res_id || p.restID || p.restId;
+  if (explicit) return String(explicit);
+
+  const restaurants = Array.isArray(p.restaurants) ? p.restaurants : [];
+  for (const r of restaurants) {
+    const details = r?.details || {};
+    const code =
+      details.menusharingcode ||
+      details.menu_sharing_code ||
+      details.restID ||
+      r?.menusharingcode ||
+      r?.restID;
+    if (code) return String(code);
+  }
+  // Last resort: the numeric Petpooja restaurant id (e.g. "5439"). It is a
+  // weaker join key than the sharing code but still better than dropping the
+  // push — resolveBranchIdForRestId matches on petpoojaStoreId, and ops links
+  // outlets with the sharing code, so this only fires once linked.
+  for (const r of restaurants) {
+    if (r?.restaurantid) return String(r.restaurantid);
+  }
+  return null;
+}
+
+/**
  * Webhook handler for external menu pushes from Petpooja desktop POS.
  */
 export async function handlePetpoojaMenuWebhook(payload: any): Promise<{
@@ -331,7 +377,7 @@ export async function handlePetpoojaMenuWebhook(payload: any): Promise<{
   itemCount: number;
 }> {
   const p = payload || {};
-  const restId = p.rest_id || p.res_id || p.restID || p.restId;
+  const restId = extractMenuRestId(p);
   if (!restId) {
     throw new Error("Missing rest_id in Petpooja menu webhook payload");
   }
@@ -353,7 +399,7 @@ export async function handlePetpoojaMenuWebhook(payload: any): Promise<{
     return { success: false, itemCount: 0 };
   }
 
-  const result = await syncPetpoojaMenu(branchId);
+  const result = await syncPetpoojaMenu(branchId, undefined, p);
   return {
     success: true,
     itemCount: result.itemCount,

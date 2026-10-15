@@ -143,18 +143,22 @@ describe("Petpooja POS Bridge Service", () => {
       const branch = { id: "branch_surat_01", petpoojaStoreId: "PP_SURAT_01" };
       const payload = formatPetpoojaOrderPayload(order, branch, "PP_SURAT_01");
 
-      expect(payload.orderinfo.orderID).toBe("BUR-1001");
-      expect(payload.orderinfo.resID).toBe("PP_SURAT_01");
-      expect(payload.orderinfo.order_type).toBe("1"); // 1 = Delivery
-      expect(payload.orderinfo.payment_type).toBe("Prepaid");
-      expect(payload.orderinfo.total).toBe(527.9);
-      expect(payload.orderinfo.tax).toBe(24.9);
-      expect(payload.orderinfo.discount).toBe(50);
-      expect(payload.orderinfo.delivery_charges).toBe(40);
-      expect(payload.orderinfo.packing_charges).toBe(15);
-      expect(payload.orderinfo.customer_name).toBe("Aarav Mehta");
-      expect(payload.orderinfo.customer_phone).toBe("+919825100001");
-      expect(payload.orderinfo.customer_address).toBe("123 Adajan Main Rd");
+      expect(payload.orderinfo.Order.orderID).toBe("BUR-1001");
+      expect(payload.orderinfo.Order.resID).toBe("PP_SURAT_01");
+      expect(payload.orderinfo.Order.restID).toBe("PP_SURAT_01");
+      // Official V2.1.0 order_type is a letter code (H/P/D), not 1/2/3.
+      expect(payload.orderinfo.Order.order_type).toBe("H"); // H = home delivery
+      // Petpooja accepts COD / CARD / ONLINE — "Prepaid" is not a valid value.
+      expect(payload.orderinfo.Order.payment_type).toBe("ONLINE");
+      expect(payload.orderinfo.Order.total).toBe("527.90");
+      expect(payload.orderinfo.Order.tax).toBe("24.90");
+      expect(payload.orderinfo.Order.discount).toBe("50.00");
+      expect(payload.orderinfo.Order.delivery_charges).toBe("40.00");
+      expect(payload.orderinfo.Order.packing_charges).toBe("15.00");
+      // Official Customer object carries the contact, not the flat order key.
+      expect(payload.orderinfo.Customer.name).toBe("Aarav Mehta");
+      expect(payload.orderinfo.Customer.phone).toBe("+919825100001");
+      expect(payload.orderinfo.Customer.address).toBe("123 Adajan Main Rd");
 
       // Verify GST split (2.5% CGST + 2.5% SGST)
       expect(payload.orderinfo.tax_details).toHaveLength(2);
@@ -163,11 +167,27 @@ describe("Petpooja POS Bridge Service", () => {
       expect(payload.orderinfo.tax_details[1].tax_name).toBe("SGST");
       expect(payload.orderinfo.tax_details[1].tax_percent).toBe(2.5);
 
-      // Verify item mapping with addons
+      // Official Tax[] shape (id/title/type/price/tax) is emitted alongside.
+      expect(payload.orderinfo.Tax).toHaveLength(2);
+      expect(payload.orderinfo.Tax[0].title).toBe("CGST");
+      expect(payload.orderinfo.Tax[0].type).toBe("P");
+      expect(payload.orderinfo.Tax[0].tax).toBe("12.45");
+
+      // Verify item mapping with addons — official OrderItem names.
+      expect(payload.orderinfo.OrderItem).toHaveLength(1);
+      expect(payload.orderinfo.OrderItem[0].id).toBe("pp_b1");
+      expect(payload.orderinfo.OrderItem[0].name).toBe("Classic Smash Cheese Burger");
+      expect(payload.orderinfo.OrderItem[0].quantity).toBe("2");
+      expect(payload.orderinfo.OrderItem[0].price).toBe("249.00");
+      expect(payload.orderinfo.OrderItem[0].final_price).toBe("498.00");
+      // Official AddonItem carries id/name/group_name/price.
+      expect(payload.orderinfo.OrderItem[0].AddonItem).toHaveLength(1);
+      expect(payload.orderinfo.OrderItem[0].AddonItem[0].name).toBe("Brioche Bun");
+      expect(payload.orderinfo.OrderItem[0].AddonItem[0].group_name).toBe("Addons");
+      expect(payload.orderinfo.OrderItem[0].AddonItem[0].price).toBe("20.00");
+      // Legacy aliases remain for POS parsers that still read them.
       expect(payload.orderinfo.order_items).toHaveLength(1);
       expect(payload.orderinfo.order_items[0].item_id).toBe("pp_b1");
-      expect(payload.orderinfo.order_items[0].quantity).toBe(2);
-      expect(payload.orderinfo.order_items[0].addons).toHaveLength(1);
       expect(payload.orderinfo.order_items[0].addons[0].addon_name).toBe("Brioche Bun");
     });
 
@@ -186,12 +206,12 @@ describe("Petpooja POS Bridge Service", () => {
       };
 
       const payload1 = formatPetpoojaOrderPayload(takeawayOrder, null, "TEST_RES_ID");
-      expect(payload1.orderinfo.order_type).toBe("2");
-      expect(payload1.orderinfo.payment_type).toBe("COD");
+      expect(payload1.orderinfo.Order.order_type).toBe("P");
+      expect(payload1.orderinfo.Order.payment_type).toBe("COD");
 
       const payload2 = formatPetpoojaOrderPayload(dineInOrder, null, "TEST_RES_ID");
-      expect(payload2.orderinfo.order_type).toBe("3");
-      expect(payload2.orderinfo.payment_type).toBe("Prepaid");
+      expect(payload2.orderinfo.Order.order_type).toBe("D");
+      expect(payload2.orderinfo.Order.payment_type).toBe("ONLINE");
     });
   });
 

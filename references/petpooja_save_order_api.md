@@ -124,6 +124,13 @@ POST https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order
 
 Workflow: gather details → format payload → POST → receive confirmation & track via **callback URL**.
 
+> **⚠️ VERIFIED 2026-10-13 (live sandbox probe) — see §12.** The only reachable
+> `save_order` endpoint is the one the official Apiary docs label **"Dev URL"**:
+> `https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order`
+> (and the same behind `qle1yy2ydc…`). Both are **Petpooja's dev environment**,
+> NOT the assigned sandbox. Every doc example above was probed against them and
+> the results are logged in §12 — do not treat those hosts as the sandbox.
+
 Petpooja contacts (from guide): malvi.vaghela@petpooja.com, rohan.sakhrani@petpooja.com
 
 ---
@@ -156,3 +163,131 @@ Petpooja contacts (from guide): malvi.vaghela@petpooja.com, rohan.sakhrani@petpo
 - [ ] `order_type` mapped correctly from fulfillment mode: delivery=`H`, takeaway/parcel=`P`, dine-in=`D`.
 - [ ] `payment_type` mapped from payment method: online→`ONLINE`, COD→`COD`.
 - [ ] `enable_delivery` = `1` for restaurant rider / `0` for third-party (Porter/Borzo/Shadowfax).
+
+---
+
+## 12. Live sandbox probe results (2026-10-13)
+
+Probed with the real sandbox credentials from `functions/.env` (all three
+authenticated successfully — no auth rejection at any point).
+
+| Probe | Result |
+|---|---|
+| `GET https://developerapi.petpooja.com/` (pre-whitelist) | HTTP 403 — IP-restricted dashboard |
+| `GET https://developerapi.petpooja.com/` (post-whitelist, from reserved IP `137.23.58.8`) | HTTP 200 |
+| `POST developerapi.petpooja.com/V1/save_order` (+ 20 other path guesses) | **HTTP 404** — no API route exists on the dashboard host |
+| `POST 47pfzh5sf2…/V1/save_order` — **complete flat body per the official PDF** (all required fields incl. customer `name` + `address`) | `{"success":"0","message":"Invalid order relay payload "}` |
+| `POST 47pfzh5sf2…/V1/save_order` — flat + `udid`/`device_type` | `{"success":"0","message":"Invalid order relay payload "}` |
+| `POST 47pfzh5sf2…/V1/save_order` — flat + numeric prices | `{"success":"0","message":"Invalid order relay payload "}` |
+| `POST 47pfzh5sf2…/V1/save_order` — flat + `item_discount: 0` | `{"success":"0","message":"Invalid order relay payload "}` |
+| `POST 47pfzh5sf2…/V1/save_order` — flat, no `addon_items` key | `{"success":"0","message":"Invalid order relay payload "}` |
+| `POST qle1yy2ydc…/V1/save_order` — same 7 flat variants | `{"success":"0","message":"Invalid order relay payload "}` (all) |
+| `POST 47pfzh5sf2…/V1/save_order` — `orderinfo` (lowercase, single-nested, any child shape) | `{"success":"1","message":"Your order is saved.","restID":"","clientOrderID":"","orderID":"","code":200}` |
+| `POST 47pfzh5sf2…/V1/save_order` — `OrderInfo` (capital, top-level, official doc shape) | `{"success":"0","message":"Invalid order relay payload "}` |
+| `POST qle1yy2ydc…/V1/mapped_restaurant_menus` | `{"success":"0","message":"unable to fetch Object from s3 bucket"}` — no menu provisioned for the restaurant |
+
+**Findings**
+
+1. The official **API guide PDF** (`API Guide for Placing Orders on Petpooja POS.pdf`,
+   read in full 2026-10-14) documents a **FLAT** body — credentials, `restID`,
+   customer `name`/`address`, order, `order_items[]` and `tax_details[]` all at
+   the top level — and names
+   `https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order`.
+2. **Every** flat variant is rejected by the live API, including a body
+   containing *every* field the PDF marks required (matrix in
+   `scripts/petpooja-flat-matrix.mjs`). The only accepted shape is a lower-case
+   `orderinfo` object wrapping Customer / Order / OrderItem / Tax / Discount.
+   **The PDF does not match the deployed API version.**
+3. The accepted shape returns a canned success with `restID` /
+   `clientOrderID` / `orderID` **always empty** — regardless of where the
+   mapping code is placed (top level, inside `orderinfo`, or inside `OrderInfo`).
+4. The sandbox dashboard's API Documentation tab links to that same Apiary page,
+   exposes no API route, and its **Order List stays empty** after every
+   successful relay.
+5. Conclusion: relays are accepted by Petpooja's **dev environment**, not the
+   assigned sandbox. The sandbox `save_order` endpoint was never published.
+
+**Blocker to raise with Petpooja** — the sandbox endpoint URL (and confirmation
+that the issued `app_key` is bound to the mapping code `31z58ciw0h`) before the
+5 required scenarios can produce fulfilled order IDs.
+
+**Implementation note** — because the PDF and the live API disagree, the relay
+(`functions/src/modules/petpooja/orderPush.ts`, `testRunner.ts`) emits **both**
+contracts: the official flat required fields at the top level AND the
+`orderinfo`-wrapped structure the live API accepts, plus legacy field aliases.
+Unknown keys are ignored, so a POST satisfies whichever contract the target
+implements.
+
+**Tools added (gitignored evidence output):**
+- `scripts/petpooja-sandbox-5scenarios.mjs` — the 5 required scenarios
+- `scripts/petpooja-probe-contract.mjs` — contract probe matrix
+- `scripts/petpooja-verify-contract.mjs` — single contract verification
+- `scripts/petpooja-real-item-probe.mjs` — relays a cart built from the outlet's OWN catalog
+
+---
+
+## 13. Stub proof + outlet configuration gaps (2026-10-15)
+
+Two questions were open after §12: *is the endpoint merely misconfigured*, or
+*is it not an order service at all* — and *does the outlet's own menu support
+the five required scenarios*. Both are now answered.
+
+### 13.1 The endpoint does not validate or persist
+
+`scripts/petpooja-real-item-probe.mjs` relays a cart built from the outlet's
+**own** catalog — real ids `30791 Tandoori Dahi Kebab @350` and
+`30778 Tandoori Dahi Ke Sholey @350`, real tax ids `3928`/`3929` — using the
+exact payload builder the production relay uses. Result: HTTP 200,
+`{"success":"1","message":"Your order is saved.","restID":"","clientOrderID":"","orderID":"","code":200}`.
+Identical when `restID` is the numeric `5439` instead of the sharing code.
+
+The decisive test is a **control**: an order that no order service could accept —
+unknown `restID` `THIS_RES_ID_DOES_NOT_EXIST_999`, item id `999999999` that
+exists nowhere, quantity `999`, total `999999.00`. It too returned
+**HTTP 200 `success:"1"`**.
+
+> An endpoint that accepts a non-existent restaurant and a non-existent item,
+> and never echoes back the unique `clientOrderID` it was sent, is not
+> validating and not persisting anything. Item-id mismatch (§13.2) is therefore
+> **not** the cause of the empty order ids — no payload can succeed here.
+
+Evidence: `scripts/petpooja-endpoint-stub-evidence.json`.
+
+### 13.2 The outlet's own menu cannot express three of the five scenarios
+
+Harvested from the menu Petpooja **pushes to us** for `31z58ciw0h` (166 items,
+21 categories) — the only working view of the outlet's catalog, since
+`mapped_restaurant_menus` returns `unable to fetch Object from s3 bucket`:
+
+| Capability | State in the pushed menu |
+|---|---|
+| Add ons | `addongroups` empty; `itemallowaddon = "0"` on **all 166 items** |
+| Variations | `variations` empty; 81 items set `itemallowvariation = "1"` but carry **no definitions** and an empty `variation_groupname` |
+| Discounts | `discounts` empty |
+| Taxes | `3928` CGST 2.5% + `3929` SGST 2.5% (present, usable) |
+| Attributes | `1` veg, `2` non-veg |
+
+Consequence: **Item+Tax is expressible; Addons+Tax, Discount+Tax and
+Addon+Variation+Tax are not**, and Variation+Tax has no valid variation id to
+reference. Three of the five scenarios Petpooja asked for cannot be demonstrated
+against this outlet as configured — a configuration request for Petpooja, not a
+code defect here.
+
+### 13.3 Relay honesty fixes (deployed 2026-10-15)
+
+Because §13.1 proves every ack is empty, two fabrication paths were removed:
+
+1. `orderPush.ts` — a `success:"1"` response with **no** order id used to be
+   treated as a win: it invented `pp_<epoch>` and stamped `kotPrinted:true`,
+   telling the kitchen a KOT had printed that Petpooja never registered. The
+   fabricated id was then truthy, so the idempotency guard skipped every later
+   retry and the order became unrecoverable. Now an empty id parks the order
+   `pending_retry` and stores the raw POS body in `lastPetpoojaError`. The
+   response's real `orderID` spelling is also read now — the old code only
+   looked for snake_case, so a genuine id would have been discarded.
+2. `core/errors.ts` — four optional refs and `context` were written as explicit
+   `undefined`, which Firestore rejects (`Cannot use "undefined" as a Firestore
+   value`). The throw was swallowed by `captureErrorSnapshot`'s own catch, so
+   **no** `dev_error_snapshots` row was ever written for a Petpooja failure
+   while the endpoint still answered 200 — the ops trail silently did not exist.
+   Undefined keys are now omitted.

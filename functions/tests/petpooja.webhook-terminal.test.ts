@@ -204,3 +204,61 @@ describe("Petpooja status webhook — event-id replay defense (finding 5)", () =
     expect(savedDocs["orders/ord_r3"].petpoojaWebhookEventId).toBe("evt_b");
   });
 });
+
+// Petpooja's Configuration page points BOTH "Get Store Status" and "Update
+// Store Status" at /petpooja/webhook, but those payloads carry no order id
+// ({"restID":"...","status":"1"}), so the order-lifecycle path threw and the
+// endpoint answered HTTP 500 — which Petpooja reads as a broken webhook and
+// retries or disables. Store-status pings must be recognised, not error.
+describe("handlePetpoojaWebhook — store-status pings", () => {
+  it("accepts a store-status payload instead of throwing", async () => {
+    // The exact shape Petpooja's Configuration page sends. Used to be HTTP 500
+    // {"error":"Missing order_id in Petpooja status webhook payload"}.
+    await expect(
+      handlePetpoojaWebhook({ restID: "31z58ciw0h", status: "1" })
+    ).resolves.toBeUndefined();
+  });
+
+  it("records the ping so the status encoding can be confirmed from real traffic", async () => {
+    await handlePetpoojaWebhook({ restID: "31z58ciw0h", status: "1" });
+    const rec = savedDocs["petpooja_store_status_events/ss_31z58ciw0h"];
+    expect(rec).toBeDefined();
+    expect(rec.restId).toBe("31z58ciw0h");
+    expect(rec.rawStatus).toBe("1");
+    // Unlinked outlet: recorded with branchId null, nothing mutated.
+    expect(rec.branchId).toBeNull();
+  });
+
+  it("resolves the branch once the outlet IS linked", async () => {
+    savedDocs["branches/hl-road"] = { petpoojaStoreId: "31z58ciw0h", name: "HL Road" };
+    await handlePetpoojaWebhook({ restID: "31z58ciw0h", status: "1" });
+    expect(savedDocs["petpooja_store_status_events/ss_31z58ciw0h"].branchId).toBe("hl-road");
+  });
+
+  it("does NOT mutate branch ordering state on an unverified encoding", async () => {
+    savedDocs["branches/hl-road"] = {
+      petpoojaStoreId: "31z58ciw0h",
+      acceptingOrdersStatus: "open",
+      status: "active",
+    };
+    await handlePetpoojaWebhook({ restID: "31z58ciw0h", status: "0" });
+    // A guessed encoding must not close a live outlet.
+    expect(savedDocs["branches/hl-road"].acceptingOrdersStatus).toBe("open");
+    expect(savedDocs["branches/hl-road"].status).toBe("active");
+  });
+
+  it("still fails loudly when NO order id and NO store-status shape is present", async () => {
+    // The guard is narrow: an unidentifiable payload must not silently pass.
+    await expect(handlePetpoojaWebhook({ unrelated: true })).rejects.toThrow(
+      /Missing order_id/
+    );
+  });
+
+  it("never shadows a real order event that also carries restID + status", async () => {
+    // Order events carry restID and status too, so the store-status branch must
+    // only be reachable when there is NO order id. The order path parks an
+    // unknown order for review, which proves the event went the order way.
+    await handlePetpoojaWebhook({ order_id: "ord_ss", restID: "31z58ciw0h", status: 2 });
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_ss"]).toBeDefined();
+  });
+});
