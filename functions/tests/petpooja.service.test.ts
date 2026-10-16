@@ -180,15 +180,33 @@ describe("Petpooja POS Bridge Service", () => {
       expect(payload.orderinfo.OrderItem[0].quantity).toBe("2");
       expect(payload.orderinfo.OrderItem[0].price).toBe("249.00");
       expect(payload.orderinfo.OrderItem[0].final_price).toBe("498.00");
-      // Official AddonItem carries id/name/group_name/price.
-      expect(payload.orderinfo.OrderItem[0].AddonItem).toHaveLength(1);
-      expect(payload.orderinfo.OrderItem[0].AddonItem[0].name).toBe("Brioche Bun");
-      expect(payload.orderinfo.OrderItem[0].AddonItem[0].group_name).toBe("Addons");
-      expect(payload.orderinfo.OrderItem[0].AddonItem[0].price).toBe("20.00");
+      // Official AddonItem carries its entries under `details`.
+      expect(payload.orderinfo.OrderItem[0].AddonItem.details).toHaveLength(1);
+      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].name).toBe("Brioche Bun");
+      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].group_name).toBe("Addons");
+      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].price).toBe("20.00");
       // Legacy aliases remain for POS parsers that still read them.
       expect(payload.orderinfo.order_items).toHaveLength(1);
       expect(payload.orderinfo.order_items[0].item_id).toBe("pp_b1");
       expect(payload.orderinfo.order_items[0].addons[0].addon_name).toBe("Brioche Bun");
+
+      // ---- the documented envelope ----
+      // Everything must ALSO be reachable at
+      // `orderinfo.OrderInfo.<Member>.details`. Without these levels the live
+      // endpoint answers success:"1" while parsing nothing and registering no
+      // order — the failure this builder shipped with for weeks.
+      const info = payload.orderinfo.OrderInfo;
+      expect(info.Restaurant.details.restID).toBe("PP_SURAT_01");
+      expect(info.Customer.details.name).toBe("Aarav Mehta");
+      expect(info.Order.details.orderID).toBe("BUR-1001");
+      expect(info.Order.details.order_type).toBe("H");
+      expect(info.OrderItem.details).toHaveLength(1);
+      expect(info.OrderItem.details[0].id).toBe("pp_b1");
+      expect(info.OrderItem.details[0].AddonItem.details).toHaveLength(1);
+      expect(info.Tax.details).toHaveLength(2);
+      expect(info.Tax.details[0].title).toBe("CGST");
+      // Discounts travel as the two Order scalars; the member is declared empty.
+      expect(info.Discount.details).toHaveLength(0);
     });
 
     it("maps takeaway and dine-in fulfillment types correctly", () => {

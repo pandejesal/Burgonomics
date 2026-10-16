@@ -1,0 +1,666 @@
+{
+  "generatedAt": "2026-10-16T11:47:48.453Z",
+  "restID": "31z58ciw0h",
+  "taxIds": {
+    "cgst": {
+      "id": "3928",
+      "rate": 2.5
+    },
+    "sgst": {
+      "id": "3929",
+      "rate": 2.5
+    }
+  },
+  "cart": [
+    {
+      "id": "30791",
+      "name": "Tandoori Dahi Kebab",
+      "price": "350.00"
+    },
+    {
+      "id": "30778",
+      "name": "Tandoori Dahi Ke Sholey",
+      "price": "350.00"
+    }
+  ],
+  "totals": {
+    "itemTotal": 700,
+    "taxTotal": 35,
+    "grandTotal": 735
+  },
+  "results": [
+    {
+      "host": "order",
+      "url": "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+      "variant": "SPEC",
+      "label": "documented orderinfo.OrderInfo.*.details shape",
+      "httpStatus": 200,
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_spec_1792151261574",
+        "orderID": "",
+        "code": 200
+      },
+      "orderId": null,
+      "request": {
+        "app_key": "<app_key:redacted>",
+        "app_secret": "<app_secret:redacted>",
+        "access_token": "<access_token:redacted>",
+        "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+        "orderinfo": {
+          "OrderInfo": {
+            "Restaurant": {
+              "details": {
+                "res_name": "Burgonomics DEMO [135148]",
+                "address": "Ahmedabad",
+                "contact_information": "1234567890",
+                "restID": "31z58ciw0h"
+              }
+            },
+            "Customer": {
+              "details": {
+                "email": "burgonomicsind@gmail.com",
+                "name": "Burgonomics Sandbox Test",
+                "address": "Sandbox test order - Burgonomics DEMO outlet",
+                "phone": "9825000001",
+                "latitude": "",
+                "longitude": ""
+              }
+            },
+            "Order": {
+              "details": {
+                "orderID": "bgx_spec_1792151261574",
+                "preorder_date": "2026-10-16",
+                "preorder_time": "17:17:41",
+                "advanced_order": "N",
+                "order_type": "H",
+                "payment_type": "ONLINE",
+                "table_no": "",
+                "no_of_persons": "",
+                "service_charge": "0",
+                "delivery_charges": "0",
+                "dc_tax_percentage": "0",
+                "dc_tax_amount": "0",
+                "packing_charges": "0",
+                "pc_tax_percentage": "0",
+                "pc_tax_amount": "0",
+                "discount_total": "0",
+                "tax_total": "35.00",
+                "total": "735.00",
+                "description": "spec-shape probe",
+                "created_on": "2026-10-16 17:17:41",
+                "enable_delivery": "0",
+                "min_prep_time": "0",
+                "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+                "collect_cash": "0",
+                "otp": "",
+                "urgent_order": false,
+                "urgent_time": 0
+              }
+            },
+            "OrderItem": {
+              "details": [
+                {
+                  "id": "30791",
+                  "name": "Tandoori Dahi Kebab",
+                  "price": "350.00",
+                  "final_price": "350.00",
+                  "quantity": "1",
+                  "gst_liability": "restaurant",
+                  "item_discount": "",
+                  "item_tax": [
+                    {
+                      "id": "3928",
+                      "name": "CGST",
+                      "tax_percentage": "2.5",
+                      "amount": "8.75"
+                    },
+                    {
+                      "id": "3929",
+                      "name": "SGST",
+                      "tax_percentage": "2.5",
+                      "amount": "8.75"
+                    }
+                  ],
+                  "variation_id": "",
+                  "variation_name": "",
+                  "AddonItem": {
+                    "details": []
+                  }
+                },
+                {
+                  "id": "30778",
+                  "name": "Tandoori Dahi Ke Sholey",
+                  "price": "350.00",
+                  "final_price": "350.00",
+                  "quantity": "1",
+                  "gst_liability": "restaurant",
+                  "item_discount": "",
+                  "item_tax": [
+                    {
+                      "id": "3928",
+                      "name": "CGST",
+                      "tax_percentage": "2.5",
+                      "amount": "8.75"
+                    },
+                    {
+                      "id": "3929",
+                      "name": "SGST",
+                      "tax_percentage": "2.5",
+                      "amount": "8.75"
+                    }
+                  ],
+                  "variation_id": "",
+                  "variation_name": "",
+                  "AddonItem": {
+                    "details": []
+                  }
+                }
+              ]
+            },
+            "Tax": {
+              "details": [
+                {
+                  "id": "3928",
+                  "title": "CGST",
+                  "type": "P",
+                  "price": "2.5%",
+                  "tax": "17.50",
+                  "restaurant_liable_amt": "17.50"
+                },
+                {
+                  "id": "3929",
+                  "title": "SGST",
+                  "type": "P",
+                  "price": "2.5%",
+                  "tax": "17.50",
+                  "restaurant_liable_amt": "17.50"
+                }
+              ]
+            },
+            "Discount": {
+              "details": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "host": "order",
+      "url": "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+      "variant": "CURRENT",
+      "label": "what our builder sends today (control)",
+      "httpStatus": 200,
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "",
+        "clientOrderID": "",
+        "orderID": "",
+        "code": 200
+      },
+      "orderId": null,
+      "request": {
+        "app_key": "<app_key:redacted>",
+        "app_secret": "<app_secret:redacted>",
+        "access_token": "<access_token:redacted>",
+        "restID": "31z58ciw0h",
+        "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+        "orderinfo": {
+          "Customer": {
+            "email": "burgonomicsind@gmail.com",
+            "name": "Burgonomics Sandbox Test",
+            "address": "Sandbox test order - Burgonomics DEMO outlet",
+            "phone": "9825000001",
+            "latitude": "",
+            "longitude": ""
+          },
+          "Order": {
+            "orderID": "bgx_spec_1792151261574",
+            "preorder_date": "2026-10-16",
+            "preorder_time": "17:17:41",
+            "advanced_order": "N",
+            "order_type": "H",
+            "payment_type": "ONLINE",
+            "table_no": "",
+            "no_of_persons": "",
+            "service_charge": "0",
+            "delivery_charges": "0",
+            "dc_tax_percentage": "0",
+            "dc_tax_amount": "0",
+            "packing_charges": "0",
+            "pc_tax_percentage": "0",
+            "pc_tax_amount": "0",
+            "discount_total": "0",
+            "tax_total": "35.00",
+            "total": "735.00",
+            "description": "spec-shape probe",
+            "created_on": "2026-10-16 17:17:41",
+            "enable_delivery": "0",
+            "min_prep_time": "0",
+            "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+            "collect_cash": "0",
+            "otp": "",
+            "urgent_order": false,
+            "urgent_time": 0,
+            "restID": "31z58ciw0h",
+            "resID": "31z58ciw0h"
+          },
+          "OrderItem": [
+            {
+              "id": "30791",
+              "name": "Tandoori Dahi Kebab",
+              "price": "350.00",
+              "final_price": "350.00",
+              "quantity": "1",
+              "gst_liability": "restaurant",
+              "item_discount": "",
+              "item_tax": [
+                {
+                  "id": "3928",
+                  "name": "CGST",
+                  "tax_percentage": "2.5",
+                  "amount": "8.75"
+                },
+                {
+                  "id": "3929",
+                  "name": "SGST",
+                  "tax_percentage": "2.5",
+                  "amount": "8.75"
+                }
+              ],
+              "variation_id": "",
+              "variation_name": "",
+              "AddonItem": {
+                "details": []
+              }
+            },
+            {
+              "id": "30778",
+              "name": "Tandoori Dahi Ke Sholey",
+              "price": "350.00",
+              "final_price": "350.00",
+              "quantity": "1",
+              "gst_liability": "restaurant",
+              "item_discount": "",
+              "item_tax": [
+                {
+                  "id": "3928",
+                  "name": "CGST",
+                  "tax_percentage": "2.5",
+                  "amount": "8.75"
+                },
+                {
+                  "id": "3929",
+                  "name": "SGST",
+                  "tax_percentage": "2.5",
+                  "amount": "8.75"
+                }
+              ],
+              "variation_id": "",
+              "variation_name": "",
+              "AddonItem": {
+                "details": []
+              }
+            }
+          ],
+          "Tax": [
+            {
+              "id": "3928",
+              "title": "CGST",
+              "type": "P",
+              "price": "2.5%",
+              "tax": "17.50",
+              "restaurant_liable_amt": "17.50"
+            },
+            {
+              "id": "3929",
+              "title": "SGST",
+              "type": "P",
+              "price": "2.5%",
+              "tax": "17.50",
+              "restaurant_liable_amt": "17.50"
+            }
+          ],
+          "tax_details": [
+            {
+              "id": "3928",
+              "title": "CGST",
+              "type": "P",
+              "price": "2.5%",
+              "tax": "17.50",
+              "restaurant_liable_amt": "17.50"
+            },
+            {
+              "id": "3929",
+              "title": "SGST",
+              "type": "P",
+              "price": "2.5%",
+              "tax": "17.50",
+              "restaurant_liable_amt": "17.50"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "host": "menu",
+      "url": "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+      "variant": "SPEC",
+      "label": "documented orderinfo.OrderInfo.*.details shape",
+      "httpStatus": 200,
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_spec_1792151261574",
+        "orderID": "",
+        "code": 200
+      },
+      "orderId": null,
+      "request": {
+        "app_key": "<app_key:redacted>",
+        "app_secret": "<app_secret:redacted>",
+        "access_token": "<access_token:redacted>",
+        "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+        "orderinfo": {
+          "OrderInfo": {
+            "Restaurant": {
+              "details": {
+                "res_name": "Burgonomics DEMO [135148]",
+                "address": "Ahmedabad",
+                "contact_information": "1234567890",
+                "restID": "31z58ciw0h"
+              }
+            },
+            "Customer": {
+              "details": {
+                "email": "burgonomicsind@gmail.com",
+                "name": "Burgonomics Sandbox Test",
+                "address": "Sandbox test order - Burgonomics DEMO outlet",
+                "phone": "9825000001",
+                "latitude": "",
+                "longitude": ""
+              }
+            },
+            "Order": {
+              "details": {
+                "orderID": "bgx_spec_1792151261574",
+                "preorder_date": "2026-10-16",
+                "preorder_time": "17:17:41",
+                "advanced_order": "N",
+                "order_type": "H",
+                "payment_type": "ONLINE",
+                "table_no": "",
+                "no_of_persons": "",
+                "service_charge": "0",
+                "delivery_charges": "0",
+                "dc_tax_percentage": "0",
+                "dc_tax_amount": "0",
+                "packing_charges": "0",
+                "pc_tax_percentage": "0",
+                "pc_tax_amount": "0",
+                "discount_total": "0",
+                "tax_total": "35.00",
+                "total": "735.00",
+                "description": "spec-shape probe",
+                "created_on": "2026-10-16 17:17:41",
+                "enable_delivery": "0",
+                "min_prep_time": "0",
+                "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+                "collect_cash": "0",
+                "otp": "",
+                "urgent_order": false,
+                "urgent_time": 0
+              }
+            },
+            "OrderItem": {
+              "details": [
+                {
+                  "id": "30791",
+                  "name": "Tandoori Dahi Kebab",
+                  "price": "350.00",
+                  "final_price": "350.00",
+                  "quantity": "1",
+                  "gst_liability": "restaurant",
+                  "item_discount": "",
+                  "item_tax": [
+                    {
+                      "id": "3928",
+                      "name": "CGST",
+                      "tax_percentage": "2.5",
+                      "amount": "8.75"
+                    },
+                    {
+                      "id": "3929",
+                      "name": "SGST",
+                      "tax_percentage": "2.5",
+                      "amount": "8.75"
+                    }
+                  ],
+                  "variation_id": "",
+                  "variation_name": "",
+                  "AddonItem": {
+                    "details": []
+                  }
+                },
+                {
+                  "id": "30778",
+                  "name": "Tandoori Dahi Ke Sholey",
+                  "price": "350.00",
+                  "final_price": "350.00",
+                  "quantity": "1",
+                  "gst_liability": "restaurant",
+                  "item_discount": "",
+                  "item_tax": [
+                    {
+                      "id": "3928",
+                      "name": "CGST",
+                      "tax_percentage": "2.5",
+                      "amount": "8.75"
+                    },
+                    {
+                      "id": "3929",
+                      "name": "SGST",
+                      "tax_percentage": "2.5",
+                      "amount": "8.75"
+                    }
+                  ],
+                  "variation_id": "",
+                  "variation_name": "",
+                  "AddonItem": {
+                    "details": []
+                  }
+                }
+              ]
+            },
+            "Tax": {
+              "details": [
+                {
+                  "id": "3928",
+                  "title": "CGST",
+                  "type": "P",
+                  "price": "2.5%",
+                  "tax": "17.50",
+                  "restaurant_liable_amt": "17.50"
+                },
+                {
+                  "id": "3929",
+                  "title": "SGST",
+                  "type": "P",
+                  "price": "2.5%",
+                  "tax": "17.50",
+                  "restaurant_liable_amt": "17.50"
+                }
+              ]
+            },
+            "Discount": {
+              "details": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "host": "menu",
+      "url": "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+      "variant": "CURRENT",
+      "label": "what our builder sends today (control)",
+      "httpStatus": 200,
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "",
+        "clientOrderID": "",
+        "orderID": "",
+        "code": 200
+      },
+      "orderId": null,
+      "request": {
+        "app_key": "<app_key:redacted>",
+        "app_secret": "<app_secret:redacted>",
+        "access_token": "<access_token:redacted>",
+        "restID": "31z58ciw0h",
+        "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+        "orderinfo": {
+          "Customer": {
+            "email": "burgonomicsind@gmail.com",
+            "name": "Burgonomics Sandbox Test",
+            "address": "Sandbox test order - Burgonomics DEMO outlet",
+            "phone": "9825000001",
+            "latitude": "",
+            "longitude": ""
+          },
+          "Order": {
+            "orderID": "bgx_spec_1792151261574",
+            "preorder_date": "2026-10-16",
+            "preorder_time": "17:17:41",
+            "advanced_order": "N",
+            "order_type": "H",
+            "payment_type": "ONLINE",
+            "table_no": "",
+            "no_of_persons": "",
+            "service_charge": "0",
+            "delivery_charges": "0",
+            "dc_tax_percentage": "0",
+            "dc_tax_amount": "0",
+            "packing_charges": "0",
+            "pc_tax_percentage": "0",
+            "pc_tax_amount": "0",
+            "discount_total": "0",
+            "tax_total": "35.00",
+            "total": "735.00",
+            "description": "spec-shape probe",
+            "created_on": "2026-10-16 17:17:41",
+            "enable_delivery": "0",
+            "min_prep_time": "0",
+            "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+            "collect_cash": "0",
+            "otp": "",
+            "urgent_order": false,
+            "urgent_time": 0,
+            "restID": "31z58ciw0h",
+            "resID": "31z58ciw0h"
+          },
+          "OrderItem": [
+            {
+              "id": "30791",
+              "name": "Tandoori Dahi Kebab",
+              "price": "350.00",
+              "final_price": "350.00",
+              "quantity": "1",
+              "gst_liability": "restaurant",
+              "item_discount": "",
+              "item_tax": [
+                {
+                  "id": "3928",
+                  "name": "CGST",
+                  "tax_percentage": "2.5",
+                  "amount": "8.75"
+                },
+                {
+                  "id": "3929",
+                  "name": "SGST",
+                  "tax_percentage": "2.5",
+                  "amount": "8.75"
+                }
+              ],
+              "variation_id": "",
+              "variation_name": "",
+              "AddonItem": {
+                "details": []
+              }
+            },
+            {
+              "id": "30778",
+              "name": "Tandoori Dahi Ke Sholey",
+              "price": "350.00",
+              "final_price": "350.00",
+              "quantity": "1",
+              "gst_liability": "restaurant",
+              "item_discount": "",
+              "item_tax": [
+                {
+                  "id": "3928",
+                  "name": "CGST",
+                  "tax_percentage": "2.5",
+                  "amount": "8.75"
+                },
+                {
+                  "id": "3929",
+                  "name": "SGST",
+                  "tax_percentage": "2.5",
+                  "amount": "8.75"
+                }
+              ],
+              "variation_id": "",
+              "variation_name": "",
+              "AddonItem": {
+                "details": []
+              }
+            }
+          ],
+          "Tax": [
+            {
+              "id": "3928",
+              "title": "CGST",
+              "type": "P",
+              "price": "2.5%",
+              "tax": "17.50",
+              "restaurant_liable_amt": "17.50"
+            },
+            {
+              "id": "3929",
+              "title": "SGST",
+              "type": "P",
+              "price": "2.5%",
+              "tax": "17.50",
+              "restaurant_liable_amt": "17.50"
+            }
+          ],
+          "tax_details": [
+            {
+              "id": "3928",
+              "title": "CGST",
+              "type": "P",
+              "price": "2.5%",
+              "tax": "17.50",
+              "restaurant_liable_amt": "17.50"
+            },
+            {
+              "id": "3929",
+              "title": "SGST",
+              "type": "P",
+              "price": "2.5%",
+              "tax": "17.50",
+              "restaurant_liable_amt": "17.50"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "anyFulfilled": false
+}

@@ -217,7 +217,8 @@ export function formatPetpoojaOrderPayload(
       })),
       variation_id: item.petpoojaVariationId || item.variationId || "",
       variation_name: item.petpoojaVariationName || item.variationName || "",
-      AddonItem: addons,
+      // The documented OrderItem carries its add-ons as `AddonItem.details`.
+      AddonItem: { details: addons },
       // ---- legacy spellings ----
       // The flat contract in the official PDF names this key `addon_items`.
       // It was never emitted, so a POS implementing the documented contract
@@ -254,13 +255,120 @@ export function formatPetpoojaOrderPayload(
   const { preorderDate, preorderTime, createdOn } = petpoojaClock();
   const tableNo = order.tableNumber ? String(order.tableNumber).trim() : "";
 
+  // ---------------------------------------------------------------------------
+  // The published Orders API — the OpenAPI `OrderInfo` component and that
+  // spec's Postman example body — carries every member under
+  // `orderinfo.OrderInfo`, and wraps each member in a `details` object, with
+  // OrderItem / Tax / Discount holding a `details` ARRAY:
+  //
+  //   orderinfo.OrderInfo.{Restaurant,Customer,Order,OrderItem,Tax,Discount}
+  //
+  // BOTH levels are REQUIRED. Without them the endpoint still answers
+  // `success:"1"` but parses nothing: it echoes empty restID/clientOrderID and
+  // registers no order. That behaviour was previously misread as "the sandbox
+  // endpoint is a stub" — it was this envelope. The live probe in §12 of
+  // references/petpooja_save_order_api.md shows the difference directly: empty
+  // ids without these levels, our real restID/clientOrderID echoed with them.
+  // ---------------------------------------------------------------------------
+  const restaurantDetails = {
+    // The authoritative restaurant identifier in this contract. Fail-closed:
+    // this is the verified branch.petpoojaStoreId, never a guess.
+    restID: resId,
+    resID: resId,
+    res_name: branch?.name || "Burgonomics",
+    address: branch?.address || "",
+    contact_information: branch?.phone || "",
+  };
+
+  // The delivery app saves the address at `deliveryAddress` (full/line1);
+  // counter/legacy orders at `address.street`. Read both so the rider never
+  // gets a KOT with an empty address. Never invent one.
+  const customerAddress =
+    orderTypeLegacy === "1"
+      ? order.deliveryAddress?.full ||
+        order.deliveryAddress?.line1 ||
+        order.address?.street ||
+        order.customerAddress ||
+        ""
+      : "";
+
+  const customerDetails = {
+    name: order.customerName || order.customer?.name || "Customer",
+    phone: customerPhone,
+    address: customerAddress,
+    email: order.customerEmail || order.customer?.email || "",
+    latitude: "",
+    longitude: "",
+  };
+
+  const orderDetails = {
+    orderID: order.orderNumber || order.id,
+    clientOrderID: order.id,
+    // Documented letter code (H/P/D); the numeric form stays as a legacy alias
+    // for POS parsers that still read it.
+    order_type: orderTypeCode,
+    order_type_legacy: orderTypeLegacy,
+    // Petpooja accepts COD / CARD / ONLINE only.
+    payment_type: paymentType,
+    total: money(grandTotal),
+    tax: money(gstAmount),
+    tax_total: money(gstAmount),
+    discount: money(discountAmount),
+    // Discounts are sent as discount_type + discount_total (spec §8).
+    discount_type: "F",
+    discount_total: money(discountAmount),
+    delivery_charges: money(deliveryFee),
+    packing_charges: money(packagingFee),
+    service_charge: money(0),
+    // advanced_order "N" = immediate order (we never schedule), so preorder_*
+    // describe "now", never a fake slot.
+    advanced_order: "N",
+    preorder_date: preorderDate,
+    preorder_time: preorderTime,
+    created_on: createdOn,
+    // Delivery/packing charges carry no separate tax in our pricing engine.
+    dc_tax_percentage: "0",
+    pc_tax_percentage: "0",
+    min_prep_time: "0",
+    // Riders are always third-party (Porter/Borzo/Shadowfax), never ours.
+    enable_delivery: "0",
+    ...(tableNo ? { table_no: tableNo } : {}),
+    // ---- legacy aliases (absent from the documented contract; ignorable) ----
+    // resID must be the verified branch.petpoojaStoreId — no fallback chain,
+    // because a wrong resID sends the KOT to the wrong kitchen.
+    resID: resId,
+    restID: resId,
+    customer_name: order.customerName || order.customer?.name || "Customer",
+    // Never invent a phone number: an empty string fails visibly at Petpooja
+    // instead of dispatching a rider to a fake contact. Counter orders must
+    // capture a real number (Partner modal enforces this for delivery).
+    customer_phone: customerPhone,
+    customer_address: customerAddress,
+  };
+
+  // Official Tax[] shape: id / title / type / price / tax / restaurant_liable_amt.
+  // The ids must name rows that exist on the outlet; the previous payload sent
+  // the labels "cgst"/"sgst", which match no tax row, and omitted
+  // `restaurant_liable_amt`.
+  const taxDetails = branchTaxes.map((t) => ({
+    id: t.id,
+    title: t.name,
+    type: "P",
+    price: `${t.rate}%`,
+    tax: money(branchTaxes.length > 0 ? gstAmount / branchTaxes.length : 0),
+    restaurant_liable_amt: money(
+      branchTaxes.length > 0 ? gstAmount / branchTaxes.length : 0
+    ),
+  }));
+
   return {
     // callback_url tells Petpooja where to POST KOT status updates
     // (accept/reject/ready/delivered). Without it our webhook is unreachable.
     callback_url: getCallbackUrl(),
-    // The API guide's flat contract marks customer `name` and `address` as
-    // REQUIRED top-level fields; they are mirrored inside orderinfo.Customer.
-    // Unknown keys are ignored by the live API, so both spellings are safe.
+    // The API guide's flat contract marks customer `name`/`address` and
+    // `restID` as required TOP-LEVEL fields; the published API carries them
+    // under orderinfo.OrderInfo instead. Unknown keys are ignored, so both are
+    // safe and either contract is satisfied.
     name: order.customerName || order.customer?.name || "Customer",
     phone: customerPhone,
     email: order.customerEmail || order.customer?.email || "",
@@ -271,95 +379,26 @@ export function formatPetpoojaOrderPayload(
     contact_information: branch?.phone || "",
     restID: resId,
     orderinfo: {
-      // Official V2.1.0 shape: Customer / Order / OrderItem / Tax / Discount.
-      Customer: {
-        name: order.customerName || order.customer?.name || "Customer",
-        phone: customerPhone,
-        address:
-          orderTypeLegacy === "1"
-            ? order.deliveryAddress?.full ||
-              order.deliveryAddress?.line1 ||
-              order.address?.street ||
-              order.customerAddress ||
-              ""
-            : "",
-        email: order.customerEmail || order.customer?.email || "",
+      OrderInfo: {
+        Restaurant: { details: restaurantDetails },
+        Customer: { details: customerDetails },
+        Order: { details: orderDetails },
+        OrderItem: { details: orderItems },
+        Tax: { details: taxDetails },
+        // The contract defines no `Discount` object — discounts are the
+        // `discount_type` + `discount_total` scalars on Order (spec §8) — but
+        // the documented example body includes the member, so it is declared
+        // empty rather than omitted.
+        Discount: { details: [] },
       },
-      Order: {
-        orderID: order.orderNumber || order.id,
-        clientOrderID: order.id,
-        // Fail-closed: resID must be the verified branch.petpoojaStoreId.
-        // No fallback chain — wrong resID sends KOT to wrong kitchen.
-        resID: resId,
-        // Published V2.1.0 spec names this key `restID` (menu sharing code);
-        // we send BOTH spellings with the SAME verified value — the POS reads
-        // whichever it implements, and neither can point at another outlet.
-        restID: resId,
-        // Documented letter code (H/P/D) — the numeric form stays as a legacy
-        // alias for POS parsers that still read it.
-        order_type: orderTypeCode,
-        order_type_legacy: orderTypeLegacy,
-        // Petpooja accepts COD / CARD / ONLINE only.
-        payment_type: paymentType,
-        total: money(grandTotal),
-        tax: money(gstAmount),
-        tax_total: money(gstAmount),
-        discount: money(discountAmount),
-        // Discounts are sent as discount_type + discount_total (spec §8).
-        discount_type: "F",
-        discount_total: money(discountAmount),
-        delivery_charges: money(deliveryFee),
-        packing_charges: money(packagingFee),
-        // Required-by-spec clock fields. advanced_order "N" = immediate order
-        // (we never schedule), so preorder_* describe "now", never a fake slot.
-        advanced_order: "N",
-        preorder_date: preorderDate,
-        preorder_time: preorderTime,
-        created_on: createdOn,
-        // Delivery/packing charges carry no separate tax in our pricing engine.
-        dc_tax_percentage: "0",
-        pc_tax_percentage: "0",
-        // Riders are always third-party (Porter/Borzo/Shadowfax), never ours.
-        enable_delivery: "0",
-        ...(tableNo ? { table_no: tableNo } : {}),
-        // legacy flat customer keys
-        customer_name: order.customerName || order.customer?.name || "Customer",
-        // Never invent a phone number: an empty string fails visibly at Petpooja
-        // instead of dispatching a rider to a fake contact. Counter orders must
-        // capture a real number (Partner modal enforces this for delivery).
-        customer_phone: customerPhone,
-        // Delivery app saves the address at `deliveryAddress` (full/line1
-        // parts), counter/legacy orders at `address.street` — read both so the
-        // rider never gets a KOT with an empty address. Never invent one.
-        customer_address:
-          orderTypeLegacy === "1"
-            ? order.deliveryAddress?.full ||
-              order.deliveryAddress?.line1 ||
-              order.address?.street ||
-              order.customerAddress ||
-              ""
-            : "",
-      },
+      // ---- legacy aliases ----
+      // The members directly under `orderinfo` (the shape this builder used
+      // before the missing OrderInfo level was found) plus the flat-PDF
+      // spellings the POS parser may still read.
+      Customer: customerDetails,
+      Order: orderDetails,
       OrderItem: orderItems,
-      // Official Tax[] shape: id / title / type / price / tax /
-      // restaurant_liable_amt. The ids must name rows that exist on the outlet;
-      // the previous payload sent the labels "cgst"/"sgst", which match no tax
-      // row, and omitted `restaurant_liable_amt`.
-      Tax: branchTaxes.map((t) => ({
-        id: t.id,
-        title: t.name,
-        type: "P",
-        price: `${t.rate}%`,
-        tax: money(branchTaxes.length > 0 ? gstAmount / branchTaxes.length : 0),
-        restaurant_liable_amt: money(
-          branchTaxes.length > 0 ? gstAmount / branchTaxes.length : 0
-        ),
-      })),
-      // The contract carries discounts as `discount_type` + `discount_total`
-      // scalars on Order (spec §8) and defines no `Discount` object; a stray
-      // object carrying a `price` sits in the same namespace as Tax and can be
-      // read as a charge.
-      // legacy tax_details the POS parser may still read
+      Tax: taxDetails,
       tax_details: [
         {
           tax_name: "CGST",
