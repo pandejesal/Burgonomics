@@ -332,6 +332,11 @@ export function formatPetpoojaOrderPayload(
     min_prep_time: "0",
     // Riders are always third-party (Porter/Borzo/Shadowfax), never ours.
     enable_delivery: "0",
+    // The spec documents the callback on Order.details, and that is where the
+    // POS reads the URL it POSTs order-status updates (Accept / Food Ready /
+    // Reject) to. Emitting it only at the top level — as this builder used to —
+    // is consistent with no status callback ever reaching our webhook.
+    callback_url: getCallbackUrl(),
     ...(tableNo ? { table_no: tableNo } : {}),
     // ---- legacy aliases (absent from the documented contract; ignorable) ----
     // resID must be the verified branch.petpoojaStoreId — no fallback chain,

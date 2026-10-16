@@ -219,4 +219,52 @@ describe("fail-closed boot on empty env", () => {
     expect(rBody.status).toHaveBeenCalledWith(401);
     expect(nBody).not.toHaveBeenCalled();
   });
+
+  it("accepts the vendor's credential-less status callback by shape — and nothing else", async () => {
+    const { verifyPetpoojaAuth } = await import("../src/core/middleware");
+    const { config } = await import("../src/config/env");
+    config.petpooja.appKey = "test_pp_app_key";
+
+    // The vendor's own Postman example for the order-status callback sends NO
+    // auth header, only Content-Type. Requiring one 401'd every genuine
+    // callback, so the POS order id it carries never reached us.
+    const rCb: any = { status: vi.fn(() => ({ json: vi.fn() })) };
+    const nCb = vi.fn();
+    verifyPetpoojaAuth(
+      {
+        headers: {},
+        body: { restID: "31z58ciw0h", orderID: "PP-1", status: "Accept" },
+      } as any,
+      rCb,
+      nCb
+    );
+    expect(nCb).toHaveBeenCalledTimes(1);
+    expect(rCb.status).not.toHaveBeenCalled();
+
+    // Store-status pings (same vendor page, same absence of a credential) too.
+    const rSs: any = { status: vi.fn(() => ({ json: vi.fn() })) };
+    const nSs = vi.fn();
+    verifyPetpoojaAuth(
+      { headers: {}, body: { restID: "31z58ciw0h", status: "1" } } as any,
+      rSs,
+      nSs
+    );
+    expect(nSs).toHaveBeenCalledTimes(1);
+    expect(rSs.status).not.toHaveBeenCalled();
+
+    // The allowance is a narrow shape test: everything else keeps the 401.
+    for (const body of [
+      {},
+      { status: "Accept" },
+      { restID: "31z58ciw0h" },
+      { app_key: "test_pp_app_key" },
+      { restID: "31z58ciw0h", status: "" },
+    ]) {
+      const r: any = { status: vi.fn(() => ({ json: vi.fn() })) };
+      const n = vi.fn();
+      verifyPetpoojaAuth({ headers: {}, body } as any, r, n);
+      expect(r.status).toHaveBeenCalledWith(401);
+      expect(n).not.toHaveBeenCalled();
+    }
+  });
 });

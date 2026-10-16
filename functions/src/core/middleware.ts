@@ -256,6 +256,24 @@ export async function requireAppCheck(
  * No mock bypass: an unset appKey denies everything with 401 (never
  * next(), never 500).
  */
+/**
+ * Shape test for the two callbacks Petpooja's own documentation POSTs WITHOUT a
+ * credential header:
+ *   - order status: { restID, orderID, status }   ("Accept" / "Reject" / ...)
+ *   - store status: { restID, status }            (1 / 0)
+ * The vendor's Postman example sends only `Content-Type`, so demanding a header
+ * denied every genuine callback here and the POS order id it carries was lost.
+ * This is a SHAPE test only and claims no integrity: the handler still refuses
+ * anything that does not resolve to a linked branch (and, for an order event, to
+ * an order we are already tracking).
+ */
+function looksLikePetpoojaStatusCallback(body: any): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const restId = body.rest_id ?? body.restId ?? body.restID ?? body.restaurantid;
+  const status = body.status ?? body.order_status ?? body.store_status ?? body.storeStatus;
+  return Boolean(restId) && status !== undefined && status !== null && status !== "";
+}
+
 export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFunction): void {
   const inboundSecret = config.petpooja.appKey;
   if (!inboundSecret) {
@@ -291,6 +309,19 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     (req.headers["authorization"] as string);
 
   if (!tokenHeader || typeof tokenHeader !== "string") {
+    // The vendor's documented callbacks carry no credential header at all (the
+    // Postman example sends only Content-Type). Accept them by SHAPE so a real
+    // status update — the only carrier of a POS-assigned order id — is not
+    // thrown away at this gate; the handler then enforces integrity (restID must
+    // resolve to a linked branch, and an order event to a tracked order).
+    // Anything else without a credential keeps the fail-closed 401.
+    if (looksLikePetpoojaStatusCallback(req.body)) {
+      console.warn(
+        "[Petpooja Auth] accepted an unauthenticated status callback by shape (vendor sends no credential header) — handler integrity checks apply"
+      );
+      next();
+      return;
+    }
     console.warn("[Petpooja Auth] denied: no credential header presented");
     res.status(401).json({ error: "Unauthorized: Missing or invalid Petpooja credentials" });
     return;

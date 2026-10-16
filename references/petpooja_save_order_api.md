@@ -507,3 +507,87 @@ Commit `d87a579`.
 
 Gates: build clean; `482 passed / 2 skipped / 0 failed`.
 
+## 16. Second dig (2026-10-16, late): what the endpoint really is, and four inbound defects
+
+### 16.1 A claim in section 14/15 corrected
+
+**The endpoint DOES authenticate.** A bogus, absent, or header-only credential returns
+
+```
+{"success":"0","message":"Invalid client credentials.","errorCode":"GN_105","validation_errors":""}
+```
+
+Our credentials are valid; §15's remark that the endpoint validates nothing was half
+wrong — it validates the client, not the restaurant. "restID is never validated"
+stands: the real code, `5439`, and `THIS_RES_ID_DOES_NOT_EXIST_999` are all echoed
+verbatim.
+
+### 16.2 Only three routes exist on either host
+
+A sweep of both hosts (POST plus GET, ~24 candidate spellings including
+`store_status`, `updateStoreStatus`, `order_status`, `get_order`, `cancel_order`)
+routed exactly three paths: `save_order`, `update_order_status`, and
+`mapped_restaurant_menus`. Everything else is
+`403 {"message":"Missing Authentication Token"}`. `update_store_status` and
+`update_item_stock` are not deployed at all (the vendor itself marks them
+"unreconciled"), so there is no API by which we can open the store, and no
+order-listing or order-fetch route that could return a POS order id.
+
+One genuine discovery: `update_order_status` IS deployed and authenticated on both
+hosts — the undocumented route matching the sandbox guide's "Update Order Status
+API (cancel)". It accepts `{restID, orderID, status}` and echoes them; it does not
+mint ids.
+
+### 16.3 `orderID` is empty under every request shape
+
+Thirteen variants on the documented envelope — `orderID` omitted, `orderID` empty,
+with `udid`+`device_type`, COD, dine-in with `table_no`, parcel, bare arrays,
+`Tax` omitted, `Discount` omitted, advanced order, delivery enabled, non-zero
+charges — every one returns `orderID:""`. No request shape registers the order, so
+this is not a payload defect.
+
+(`clientOrderID` in the response is simply the echo of the `Order.orderID` we send;
+omit that key and the echo is empty too.)
+
+Evidence: `scripts/petpooja-orderid-sweep.mjs` ->
+`scripts/petpooja-orderid-sweep-evidence.json`, and
+`scripts/petpooja-route-matrix.mjs` -> `scripts/petpooja-route-matrix-evidence.json`.
+
+### 16.4 Four inbound defects fixed (these were ours)
+
+The order-status callback is the only other carrier of the POS order id, and our
+inbound path could not have received one:
+
+1. **Auth mismatch.** We demanded a credential header; the vendor's documented
+   callback sends none, so every real callback 401'd at `verifyPetpoojaAuth`.
+   Fixed: the documented callback shape (`restID` + `status`) is now accepted,
+   everything else keeps the fail-closed 401, and integrity is enforced in the
+   handler rather than by a static header.
+2. **The POS id was never read.** `payload.orderID` was ignored, so a callback was
+   swallowed by the store-status branch. Fixed: `orderID` is read, and a payload
+   carrying it is never treated as a store-status ping.
+3. **Nothing was keyed on the POS id.** Fixed: `resolveOrderByPosOrderId` resolves
+   `orders.petpoojaOrderId == orderID` (single-field equality, so no composite
+   index), and refuses a match outside the `restID`'s branch.
+4. **The callback never persisted the POS id.** Fixed: when a callback teaches us
+   the id, the order stores `petpoojaOrderId` and is promoted
+   `pending_retry -> synced`, so the retry worker stops re-pushing an order the POS
+   has already accepted.
+
+Tests added: four in `petpooja.webhook-terminal.test.ts`, one in
+`env.failclosed.test.ts`.
+
+### 16.5 Still open
+
+- `orderID` is never returned, so the result stands at 0/5: the deliverable is
+  blocked at the vendor endpoint, not in our payload.
+- Four of the five scenarios reference outlet capabilities this DEMO outlet does
+  not expose (`addongroups`, `variations`, `discounts` all empty).
+- `PETPOOJA_ENABLED` is dead config (`functions/src/config/env.ts:38`, no other
+  reference) — a misleading no-op, not an off-switch.
+- Callback signing: the vendor documents no auth for the callback. Ask for a
+  signing secret so the shape allowance can be replaced by HMAC
+  (`verifyPetpoojaSignature`).
+
+Gates: build clean; `487 passed / 2 skipped / 0 failed`.
+

@@ -262,3 +262,94 @@ describe("handlePetpoojaWebhook — store-status pings", () => {
     expect(savedDocs["unmatched_petpooja_orders/upo_ord_ss"]).toBeDefined();
   });
 });
+
+// The documented order-status callback carries the POS-assigned id under
+// `orderID` and no client reference at all. Before this, that key was never
+// read, nothing in the codebase was keyed on `petpoojaOrderId`, and such a
+// payload was swallowed by the store-status branch — so a genuine Accept/Reject
+// could never reach the order it referred to.
+describe("handlePetpoojaWebhook — POS-assigned order id (documented callback shape)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+  });
+
+  it("records the POS id a callback teaches us and promotes the order out of pending_retry", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h", name: "HL Road" };
+    // The outbound relay parks an order here when save_order echoes orderID:"".
+    savedDocs["orders/ord_pos"] = {
+      id: "ord_pos",
+      branchId: "branch_t1",
+      petpoojaStatus: "pending_retry",
+      petpoojaSyncStatus: "pending_retry",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({
+      order_id: "ord_pos",
+      restID: "31z58ciw0h",
+      orderID: "PP-9001",
+      status: "Accept",
+    });
+    const doc = savedDocs["orders/ord_pos"];
+    expect(doc.status).toMatchObject({ code: "CONFIRMED" });
+    expect(doc.petpoojaKitchenStatus).toBe("Accept");
+    expect(doc.petpoojaOrderId).toBe("PP-9001");
+    // Promoted, or the retry worker would keep re-pushing an accepted order.
+    expect(doc.petpoojaStatus).toBe("synced");
+    expect(doc.petpoojaSyncStatus).toBe("synced");
+    // An order event must never be recorded as a store-status ping.
+    expect(savedDocs["petpooja_store_status_events/ss_31z58ciw0h"]).toBeUndefined();
+  });
+
+  it("resolves an order from the POS id alone, with no client reference in the payload", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h", name: "HL Road" };
+    savedDocs["orders/ord_bypos"] = {
+      id: "ord_bypos",
+      branchId: "branch_t1",
+      petpoojaOrderId: "PP-9002",
+      petpoojaStatus: "synced",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    // No order_id / clientOrderID at all — the shape that used to be swallowed.
+    await handlePetpoojaWebhook({
+      restID: "31z58ciw0h",
+      orderID: "PP-9002",
+      status: "Accept",
+    });
+    const doc = savedDocs["orders/ord_bypos"];
+    expect(doc.status).toMatchObject({ code: "CONFIRMED" });
+    expect(doc.petpoojaKitchenStatus).toBe("Accept");
+    expect(doc.petpoojaOrderId).toBe("PP-9002");
+    expect(savedDocs["petpooja_store_status_events/ss_31z58ciw0h"]).toBeUndefined();
+  });
+
+  it("refuses a POS id matching only an order outside the restID's branch", async () => {
+    savedDocs["branches/branch_t2"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_other"] = {
+      id: "ord_other",
+      branchId: "branch_t1",
+      petpoojaOrderId: "PP-9003",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({
+      restID: "31z58ciw0h",
+      orderID: "PP-9003",
+      status: "Accept",
+    });
+    // The wrong branch's order must not be touched...
+    expect(savedDocs["orders/ord_other"].petpoojaKitchenStatus).toBeUndefined();
+    // ...and the event is parked for review instead.
+    expect(savedDocs["unmatched_petpooja_orders/upo_PP-9003"]).toBeDefined();
+  });
+
+  it("parks an unknown POS id rather than rejecting the callback", async () => {
+    await handlePetpoojaWebhook({
+      restID: "31z58ciw0h",
+      orderID: "PP-9999",
+      status: "Accept",
+    });
+    expect(savedDocs["unmatched_petpooja_orders/upo_PP-9999"]).toMatchObject({
+      posOrderId: "PP-9999",
+      status: "needs_review",
+    });
+  });
+});

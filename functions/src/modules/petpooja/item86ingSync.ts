@@ -276,10 +276,63 @@ function isStoreStatusPayload(payload: any): boolean {
   return Boolean(restId) && status !== undefined && status !== null && status !== "";
 }
 
-export async function handlePetpoojaWebhook(payload: any): Promise<void> {
-  const orderId = payload.order_id || payload.clientOrderID || payload.client_order_id;
+/**
+ * Resolve an order from the POS-assigned id Petpooja sends in the callback's
+ * `orderID` field.
+ *
+ * The inbound handler previously never read that key, and nothing in the
+ * codebase was keyed on `petpoojaOrderId` (only the outbound success branch ever
+ * wrote it), so a genuine status update could not find the order it referred to.
+ *
+ * Single-field equality only — `petpoojaOrderId` needs no composite index. When
+ * the callback also names a resolvable branch, a match outside that branch is
+ * refused rather than applied, so a POS id cannot be used to move another
+ * outlet's order.
+ */
+async function resolveOrderByPosOrderId(posOrderId: string, branchId: string | null): Promise<any> {
+  if (!posOrderId) return null;
+  try {
+    const col = db.collection("orders") as any;
+    if (typeof col.where !== "function") return null;
+    const snap = await col.where("petpoojaOrderId", "==", posOrderId).limit(5).get();
+    const docs = snap.docs || [];
+    if (!docs.length) return null;
+    if (branchId) {
+      const match = docs.find((d: any) => ((d.data() || {}) as any).branchId === branchId);
+      if (!match) {
+        console.warn(
+          `[Petpooja Webhook] POS id ${posOrderId} matched only orders outside branch ${branchId} — refused`
+        );
+        return null;
+      }
+      return match;
+    }
+    return docs[0];
+  } catch (err) {
+    console.warn(
+      `[Petpooja Webhook] POS-id lookup failed for ${posOrderId}:`,
+      (err as any)?.message || err
+    );
+    return null;
+  }
+}
 
-  if (!orderId && isStoreStatusPayload(payload)) {
+export async function handlePetpoojaWebhook(payload: any): Promise<void> {
+  // Our own order reference: the Firestore doc id we send as Order.orderID.
+  let orderId = payload.order_id || payload.clientOrderID || payload.client_order_id;
+  // The POS-assigned id the documented order-status callback carries. Read in
+  // addition to `order_id`, because a payload may carry either or both.
+  const posOrderId =
+    payload.orderID != null && payload.orderID !== ""
+      ? String(payload.orderID)
+      : payload.petpooja_order_id != null && payload.petpooja_order_id !== ""
+        ? String(payload.petpooja_order_id)
+        : "";
+
+  // A payload carrying a POS order id is an ORDER event, never a store-status
+  // ping, so it must not be swallowed by the store-status branch below. (A real
+  // order event also carries restID + status, which is that branch's shape.)
+  if (!orderId && !posOrderId && isStoreStatusPayload(payload)) {
     const restId = String(
       payload.rest_id ?? payload.restId ?? payload.restID ?? payload.restaurantid
     );
@@ -315,22 +368,48 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
     return;
   }
 
-  if (!orderId) {
-    throw new Error("Missing order_id in Petpooja status webhook payload");
+  if (!orderId && !posOrderId) {
+    throw new Error(
+      "Missing order_id / orderID in Petpooja status webhook payload"
+    );
   }
 
-  const orderDoc = await db.collection("orders").doc(orderId).get();
-  if (!orderDoc.exists) {
-    console.warn(`[Petpooja Webhook] Order ${orderId} not found in Firestore.`);
+  const restIdRaw = String(
+    payload.rest_id ?? payload.restId ?? payload.restID ?? payload.restaurantid ?? ""
+  );
+
+  // Resolve the order: our own doc id first, then the POS-assigned id. The POS
+  // path is what makes a callback usable at all — the outbound relay only writes
+  // `petpoojaOrderId` when save_order returns one, so a callback that arrives
+  // with the POS id and no client reference must still find its order.
+  let orderDoc: any = null;
+  if (orderId) {
+    const byDocId = await db.collection("orders").doc(String(orderId)).get();
+    if (byDocId.exists) orderDoc = byDocId;
+  }
+  if (!orderDoc && posOrderId) {
+    const branchId = restIdRaw ? await resolveBranchIdForRestId(restIdRaw) : null;
+    orderDoc = await resolveOrderByPosOrderId(posOrderId, branchId);
+    if (!orderDoc) {
+      console.warn(
+        `[Petpooja Webhook] POS id ${posOrderId} did not match a tracked order (restID ${restIdRaw || "absent"}, ${branchId ? `branch ${branchId}` : "UNLINKED"})`
+      );
+    }
+  }
+
+  if (!orderDoc) {
+    const refKey = orderId || posOrderId;
+    console.warn(`[Petpooja Webhook] Order ${refKey} not found in Firestore.`);
     try {
       await db
         .collection("unmatched_petpooja_orders")
-        .doc(`upo_${orderId}`)
+        .doc(`upo_${refKey}`)
         .set(
           {
-            orderId,
+            orderId: orderId ?? null,
+            posOrderId: posOrderId || null,
             rawStatus: payload.status || payload.order_status || null,
-            restId: payload.rest_id || payload.restId || null,
+            restId: restIdRaw || null,
             status: "needs_review",
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -339,14 +418,21 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
       await captureErrorSnapshot({
         source: "petpooja",
         severity: "medium",
-        message: `Petpooja webhook for unknown order ${orderId} parked for review`,
-        orderId,
+        message: `Petpooja webhook for unknown order ${refKey} parked for review`,
+        orderId: refKey,
       });
     } catch (err) {
-      console.warn(`[Petpooja Webhook] Failed to park unknown order ${orderId}:`, (err as any)?.message || err);
+      console.warn(`[Petpooja Webhook] Failed to park unknown order ${refKey}:`, (err as any)?.message || err);
     }
     return;
   }
+
+  // Everything downstream keys on OUR order id (refund lookups, doc writes), so
+  // normalise to the resolved document's id now that the order is known. `ref.id`
+  // is the fallback for a snapshot whose `id` is absent.
+  const resolvedOrderId: string =
+    orderDoc.id || orderDoc.ref?.id || String(orderId ?? posOrderId);
+  orderId = resolvedOrderId;
 
   const rawStatus = payload.status || payload.order_status;
   const canonicalStatus = normalizePetpoojaStatus(rawStatus);
@@ -412,6 +498,15 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
     petpoojaKitchenStatus: rawStatus,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+  // A callback is the only place a POS-assigned id can arrive when save_order
+  // echoed an empty one, so record what we learn here and promote the order out
+  // of `pending_retry` — otherwise the retry worker would keep re-pushing an
+  // order the POS has demonstrably already accepted.
+  if (posOrderId && orderData.petpoojaOrderId !== posOrderId) {
+    updateData.petpoojaOrderId = posOrderId;
+    updateData.petpoojaStatus = "synced";
+    updateData.petpoojaSyncStatus = "synced";
+  }
   if (eventId) {
     // Replay marker rides on the order doc so a redelivery of the SAME event
     // id short-circuits above (only while fresh).
