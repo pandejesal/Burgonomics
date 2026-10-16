@@ -99,28 +99,28 @@ describe("runPetpoojaTestScenario (MT-01 sandbox relay)", () => {
       expect(modifiers.map((m) => m.name)).toEqual(
         expect.arrayContaining(["Extra Cheese", "Brioche Bun Upgrade"])
       );
-      // 219 base + 30 extra cheese + 40 brioche = 289, + 20 packaging + 5% GST.
-      expect(order.pricing.itemTotal).toBe(289);
-      expect(order.pricing.gst).toBe(14.45);
-      expect(order.pricing.grandTotal).toBe(323.45);
+      // 310 base + 30 extra cheese + 40 brioche = 380, + 20 packaging + 5% GST.
+      expect(order.pricing.itemTotal).toBe(380);
+      expect(order.pricing.gst).toBe(19);
+      expect(order.pricing.grandTotal).toBe(419);
     });
 
     it("delivery: 5% GST and delivery fee math", () => {
       const order = buildPetpoojaTestOrder("delivery-gst-fee");
       const { itemTotal, gst, deliveryFee, grandTotal } = order.pricing;
-      expect(itemTotal).toBe(498); // 249 x 2
-      expect(gst).toBe(24.9); // 5% of 498
+      expect(itemTotal).toBe(540); // 270 x 2
+      expect(gst).toBe(27); // 5% of 540
       expect(deliveryFee).toBe(49);
-      expect(grandTotal).toBe(571.9); // 498 + 24.9 + 49
+      expect(grandTotal).toBe(616); // 540 + 27 + 49
     });
 
     it("cancel/refund: discount is applied before GST", () => {
       const order = buildPetpoojaTestOrder("cancel-refund-sync");
       const { itemTotal, discount, gst, grandTotal } = order.pricing;
-      expect(itemTotal).toBe(199);
+      expect(itemTotal).toBe(290);
       expect(discount).toBe(50);
-      expect(gst).toBe(7.45); // 5% of (199 - 50)
-      expect(grandTotal).toBe(156.45); // 149 + 7.45
+      expect(gst).toBe(12); // 5% of (290 - 50)
+      expect(grandTotal).toBe(252); // 240 + 12
     });
 
     it("bulk party order: 12 lines for POS load", () => {

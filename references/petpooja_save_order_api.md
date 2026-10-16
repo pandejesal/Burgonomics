@@ -234,24 +234,45 @@ the five required scenarios*. Both are now answered.
 
 ### 13.1 The endpoint does not validate or persist
 
+Two probes answer this, and neither one ends up shipping the guide's example ids.
+
 `scripts/petpooja-real-item-probe.mjs` relays a cart built from the outlet's
 **own** catalog — real ids `30791 Tandoori Dahi Kebab @350` and
-`30778 Tandoori Dahi Ke Sholey @350`, real tax ids `3928`/`3929` — using the
-exact payload builder the production relay uses. Result: HTTP 200,
+`30778 Tandoori Dahi Ke Sholey @350` — using the production payload builder.
+Result: HTTP 200,
 `{"success":"1","message":"Your order is saved.","restID":"","clientOrderID":"","orderID":"","code":200}`.
-Identical when `restID` is the numeric `5439` instead of the sharing code.
+
+> **Correction (2026-10-16).** An earlier revision of this section claimed that
+> probe sent real tax ids `3928`/`3929`. It did not: `formatPetpoojaV21Payload`
+> hard-coded `11213`/`20375` on item lines and `301`/`302` under `tax_details`,
+> so those are what went out. The claim was wrong and is withdrawn. The probe
+> below exists precisely to close that hole.
+
+`scripts/petpooja-corrected-payload-probe.mjs` builds the body by hand from the
+outlet's catalog and does **not** call the production builder, so no hard-coded
+example id can contaminate it: item ids `30791`/`30778`, tax ids `3928`/`3929` on
+both the item lines and `tax_details`, `order_type:"H"`, tax computed from the
+outlet's own 2.5% + 2.5% rows, and no `Discount` object. Result:
+**HTTP 200, `success:"1"`, `orderID:""`** — still no order id.
+
+The same probe re-tests the flat contract with those real ids: still
+`{"success":"0","message":"Invalid order relay payload "}`. So the flat body is
+rejected on **shape**, not because of bad ids, while the envelope is accepted
+regardless of content.
 
 The decisive test is a **control**: an order that no order service could accept —
 unknown `restID` `THIS_RES_ID_DOES_NOT_EXIST_999`, item id `999999999` that
 exists nowhere, quantity `999`, total `999999.00`. It too returned
 **HTTP 200 `success:"1"`**.
 
-> An endpoint that accepts a non-existent restaurant and a non-existent item,
-> and never echoes back the unique `clientOrderID` it was sent, is not
-> validating and not persisting anything. Item-id mismatch (§13.2) is therefore
-> **not** the cause of the empty order ids — no payload can succeed here.
+> An endpoint that accepts a non-existent restaurant and a non-existent item, and
+> never echoes back the unique `clientOrderID` it was sent, is not validating and
+> not persisting anything. A fully correct payload — the best this integration
+> can construct — behaves identically to garbage. Item-id mismatch (§13.2) is
+> therefore **not** the cause of the empty order ids.
 
-Evidence: `scripts/petpooja-endpoint-stub-evidence.json`.
+Evidence: `scripts/petpooja-endpoint-stub-evidence.json` and
+`scripts/petpooja-corrected-payload-evidence.json`.
 
 ### 13.2 The outlet's own menu cannot express three of the five scenarios
 

@@ -25,6 +25,38 @@ const DUMMY_PHONES = new Set(["1234567890", "9876543210", "0000000000", "1111111
 /** Petpooja's save_order payload prices are strings with 2 decimals. */
 const money = (n: number): string => (Number.isFinite(n) ? Number(n).toFixed(2) : "0.00");
 
+/**
+ * Per-line / per-order tax rows for the KOT.
+ *
+ * Petpooja needs tax ids that exist on the OUTLET. The old payload sent
+ * `id: "cgst"` / `"sgst"` — labels that name no tax row — and omitted
+ * `item_tax` from the lines entirely, so every line arrived untaxed while the
+ * order still declared a tax total.
+ *
+ * A branch may declare its own rows as `petpoojaTaxes: [{id, name, rate}]`
+ * (what the menu sync should write once it captures the outlet's `taxes[]`).
+ * Until a branch does, the rows published by the outlet currently linked are
+ * used — CGST `3928` and SGST `3929`, both 2.5%.
+ */
+const DEFAULT_OUTLET_TAXES = [
+  { id: "3928", name: "CGST", rate: 2.5 },
+  { id: "3929", name: "SGST", rate: 2.5 },
+];
+
+function outletTaxes(branch: any): Array<{ id: string; name: string; rate: number }> {
+  const declared = branch?.petpoojaTaxes;
+  if (Array.isArray(declared) && declared.length > 0) {
+    return declared
+      .filter((t: any) => t && t.id)
+      .map((t: any) => ({
+        id: String(t.id),
+        name: String(t.name || ""),
+        rate: Number(t.rate) || 0,
+      }));
+  }
+  return DEFAULT_OUTLET_TAXES.map((t) => ({ ...t }));
+}
+
 export function normalizeCustomerPhone(raw: any): string {
   if (typeof raw !== "string") return "";
   const trimmed = raw.trim();
@@ -85,6 +117,19 @@ export function formatPetpoojaOrderPayload(order: any, branch: any, resId: strin
   // anything that is not cash on delivery is an online (captured) payment.
   const paymentType = paymentMethod === "COD" || paymentMethod === "CASH" ? "COD" : "ONLINE";
 
+  // Hoisted so each line can carry its own share of the tax: Petpooja expects
+  // `item_tax[]` on the line, and a line's share can only be derived once the
+  // order's tax total is known.
+  const preItems = order.items || [];
+  const preGst = (order.pricing || {}).gst || order.taxAmount || order.tax || 0;
+  const preItemTotal = preItems.reduce(
+    (sum: number, it: any) =>
+      sum + (it.basePrice || it.price || 0) * (it.quantity || 1),
+    0
+  );
+  const branchTaxes = outletTaxes(branch);
+  const branchTaxPct = branchTaxes.reduce((sum, t) => sum + t.rate, 0);
+
   const orderItems = (order.items || []).map((item: any) => {
     const unit = item.basePrice || item.price || 0;
     const qty = item.quantity || 1;
@@ -108,7 +153,24 @@ export function formatPetpoojaOrderPayload(order: any, branch: any, resId: strin
       final_price: money(lineTotal),
       quantity: String(qty),
       gst_liability: "restaurant",
-      tax_inclusive: true,
+      // The outlet's catalog declares `tax_inclusive: false` on its items and
+      // our totals add GST on top, so the payload must say the same. `true` let
+      // the POS back the tax out of the price a second time.
+      tax_inclusive: false,
+      // Petpooja expects the line's own tax. It was omitted entirely, so every
+      // line reached the POS untaxed even though the order carried a tax total.
+      tax_percentage: String(branchTaxPct),
+      item_discount: money(0),
+      item_tax: branchTaxes.map((t) => ({
+        id: t.id,
+        name: t.name,
+        tax_percentage: String(t.rate),
+        amount: money(
+          preItemTotal > 0 && branchTaxes.length > 0
+            ? (preGst * (lineTotal / preItemTotal)) / branchTaxes.length
+            : 0
+        ),
+      })),
       variation_id: item.petpoojaVariationId || item.variationId || "",
       variation_name: item.petpoojaVariationName || item.variationName || "",
       AddonItem: addons,
@@ -233,12 +295,24 @@ export function formatPetpoojaOrderPayload(order: any, branch: any, resId: strin
             : "",
       },
       OrderItem: orderItems,
-      // Official Tax[] shape: id / title / type / price / tax.
-      Tax: [
-        { id: "cgst", title: "CGST", type: "P", price: "2.5%", tax: money(gstAmount / 2) },
-        { id: "sgst", title: "SGST", type: "P", price: "2.5%", tax: money(gstAmount / 2) },
-      ],
-      Discount: { id: "", title: "Discount", type: "F", price: money(discountAmount) },
+      // Official Tax[] shape: id / title / type / price / tax /
+      // restaurant_liable_amt. The ids must name rows that exist on the outlet;
+      // the previous payload sent the labels "cgst"/"sgst", which match no tax
+      // row, and omitted `restaurant_liable_amt`.
+      Tax: branchTaxes.map((t) => ({
+        id: t.id,
+        title: t.name,
+        type: "P",
+        price: `${t.rate}%`,
+        tax: money(branchTaxes.length > 0 ? gstAmount / branchTaxes.length : 0),
+        restaurant_liable_amt: money(
+          branchTaxes.length > 0 ? gstAmount / branchTaxes.length : 0
+        ),
+      })),
+      // The contract carries discounts as `discount_type` + `discount_total`
+      // scalars on Order (spec §8) and defines no `Discount` object; a stray
+      // object carrying a `price` sits in the same namespace as Tax and can be
+      // read as a charge.
       // legacy tax_details the POS parser may still read
       tax_details: [
         {

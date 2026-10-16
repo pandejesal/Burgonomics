@@ -8,9 +8,15 @@
  *   4) Item with Discount + Tax
  *   5) Item with Addon and Variation + Tax
  *
- * Uses the OFFICIAL V2.1.0 flat save_order contract (the same payload builder
- * the Cloud Functions relay uses: functions/src/modules/petpooja/testRunner.ts)
+ * Uses the same payload builder the Cloud Functions relay uses
+ * (functions/src/modules/petpooja/testRunner.ts, compiled into functions/dist)
  * so a scenario relayed here is byte-identical to one relayed by the app.
+ *
+ * Item, addon and variation ids come from the outlet's OWN menu push, never
+ * from the API guide's examples. The guide's figures (item "101", addon "201",
+ * variation "301") shipped here verbatim for months and match nothing in the
+ * outlet. See references/petpooja_save_order_api.md §13.2 for why the addon and
+ * variation cases still cannot resolve on this outlet as configured.
  *
  * Honesty contract: a scenario only "passes" when Petpooja returns
  * success === "1" AND an order id. Any rejection is reported verbatim and the
@@ -79,9 +85,18 @@ const stamp = (d) => {
 };
 
 /**
- * The five required scenarios. Item/addon/variation identifiers follow the
- * sandbox guide's own examples; the restaurant's real ids replace them once the
- * menu has been pushed (Menu Management → Push Menu API).
+ * The five required scenarios.
+ *
+ * Item ids, names and prices are the outlet's real catalog entries (`itemid`
+ * 30652–30816 from the menu Petpooja pushes for `31z58ciw0h`). Tax ids are
+ * resolved by the shared payload builder from the outlet's own `taxes[]`
+ * (3928 CGST + 3929 SGST) — this file no longer names a tax id at all.
+ *
+ * The addon and variation identifiers below have nothing to resolve to: the
+ * outlet publishes `addongroups: []`, `itemallowaddon: "0"` on all 166 items,
+ * and sets `itemallowvariation: "1"` on 81 items with no variation defined. The
+ * lines are kept because these are two of the five required cases, but the
+ * outlet needs addon/variation configuration before the POS can match them.
  */
 const SCENARIOS = [
   {
@@ -90,16 +105,16 @@ const SCENARIOS = [
     orderType: "takeaway",
     items: [
       {
-        id: "101",
-        name: "Veg Smash Burger",
-        price: 199,
+        id: "30791",
+        name: "Tandoori Dahi Kebab",
+        price: 350,
         quantity: 1,
         isVeg: true,
       },
       {
-        id: "102",
-        name: "Peri Peri Fries",
-        price: 99,
+        id: "30787",
+        name: "French Fries",
+        price: 220,
         quantity: 1,
         isVeg: true,
       },
@@ -115,14 +130,15 @@ const SCENARIOS = [
     orderType: "takeaway",
     items: [
       {
-        id: "101",
-        name: "Classic Smash Burger",
-        price: 219,
+        id: "30674",
+        name: "Paneer Achari Tikka [8 Pieces]",
+        price: 310,
         quantity: 1,
-        isVeg: false,
+        isVeg: true,
+        // Not defined on the outlet — see the block comment above.
         modifiers: [
-          { id: "201", name: "Extra Cheese", price: 30 },
-          { id: "202", name: "Brioche Bun Upgrade", price: 40 },
+          { id: "mod_extra_cheese", name: "Extra Cheese", price: 30 },
+          { id: "mod_brioche_bun", name: "Brioche Bun Upgrade", price: 40 },
         ],
       },
     ],
@@ -137,12 +153,13 @@ const SCENARIOS = [
     orderType: "takeaway",
     items: [
       {
-        id: "103",
-        name: "Cheese Smash Burger",
-        price: 249,
+        id: "30672",
+        name: "Tandoori Paneer Tikka [8 Pieces]",
+        price: 270,
         quantity: 1,
-        isVeg: false,
-        variation: { id: "301", name: "Large" },
+        isVeg: true,
+        // Not defined on the outlet — see the block comment above.
+        variation: { id: "var_large", name: "Large" },
       },
     ],
     gstRate: 0.05,
@@ -156,9 +173,9 @@ const SCENARIOS = [
     orderType: "takeaway",
     items: [
       {
-        id: "101",
-        name: "Veg Smash Burger",
-        price: 199,
+        id: "30673",
+        name: "Paneer Malai Tikka [8 Pieces]",
+        price: 290,
         quantity: 1,
         isVeg: true,
       },
@@ -174,13 +191,13 @@ const SCENARIOS = [
     orderType: "takeaway",
     items: [
       {
-        id: "104",
-        name: "Bacon Smash Burger",
-        price: 299,
+        id: "30663",
+        name: "Butter Chicken + Boondi Raita + Choice Of Breads [1 Piece]",
+        price: 249,
         quantity: 1,
         isVeg: false,
-        modifiers: [{ id: "201", name: "Extra Cheese", price: 30 }],
-        variation: { id: "302", name: "Regular" },
+        modifiers: [{ id: "mod_extra_cheese", name: "Extra Cheese", price: 30 }],
+        variation: { id: "var_regular", name: "Regular" },
       },
     ],
     gstRate: 0.05,
@@ -266,8 +283,8 @@ async function main() {
       scenarioId: scenario.id,
       title: scenario.title,
       orderID,
-      total: payload.total,
-      tax_total: payload.tax_total,
+      total: payload.orderinfo?.Order?.total,
+      tax_total: payload.orderinfo?.Order?.tax_total,
       httpStatus: null,
       response: null,
       petpoojaOrderId: null,
@@ -320,7 +337,7 @@ async function main() {
       console.log(
         `--- ${scenario.id} (${scenario.title}) ---\n` +
           `  orderID : ${orderID}\n` +
-          `  total   : ${payload.total}  tax_total: ${payload.tax_total}\n` +
+          `  total   : ${payload.orderinfo?.Order?.total}  tax_total: ${payload.orderinfo?.Order?.tax_total}\n` +
           `  HTTP    : ${res.status}\n` +
           `  body    : ${typeof row.response === "string" ? row.response : JSON.stringify(row.response)}\n` +
           `  verdict : ${row.ok ? `FULFILLED (petpooja order id ${row.petpoojaOrderId})` : "NOT FULFILLED"}\n`

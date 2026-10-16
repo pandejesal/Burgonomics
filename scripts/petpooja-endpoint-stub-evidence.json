@@ -28,7 +28,7 @@
     },
     {
       "id": "real_items",
-      "description": "Cart built from the restaurant's OWN catalog: 30791 Tandoori Dahi Kebab @350 + 30778 Tandoori Dahi Ke Sholey @350, tax ids 3928/3929",
+      "description": "Cart built from the restaurant's OWN catalog: 30791 Tandoori Dahi Kebab @350 + 30778 Tandoori Dahi Ke Sholey @350. CORRECTED 2026-10-16: this run did NOT send tax ids 3928/3929 — the payload builder hard-coded 11213/20375 on item lines and 301/302 under tax_details. See scripts/petpooja-corrected-payload-evidence.json for a run that does send the outlet's real tax ids.",
       "restID": "31z58ciw0h",
       "httpStatus": 200,
       "petpoojaOrderId": null,

@@ -7,17 +7,30 @@ import { getPetpoojaConfig } from "./client";
  * Exercises the five POS integration paths against the Petpooja sandbox
  * (or the local mock sandbox when MOCK_PETPOOJA_POS="true"):
  *
- *   1. dinein-basic-kot        (alias: items_tax)       — burger + fries, dine-in table T-01
- *   2. takeaway-with-modifiers (alias: addons)          — burger + extra cheese + brioche bun
- *   3. delivery-gst-fee        (alias: variations)      — delivery order, 5% GST + delivery fee
+ *   1. dinein-basic-kot        (alias: items_tax)       — two real items, dine-in table T-01
+ *   2. takeaway-with-modifiers (alias: addons)          — real item + two addon lines
+ *   3. delivery-gst-fee        (alias: variations)      — delivery, 5% GST + delivery fee
  *   4. cancel-refund-sync      (alias: discounts)       — cancelled order, discount before GST
- *   5. bulk-party-order        (alias: addon_variation) — 12-line stress order (POS load)
+ *   5. bulk-party-order        (alias: addon_variation) — 12 real lines / high quantity (POS load)
+ *
+ * Every item id, name and price below comes from the outlet's own menu push
+ * (`itemid` 30652–30816) and the tax rows come from the outlet's `taxes[]`
+ * (3928 CGST + 3929 SGST). Nothing is copied from the API guide's illustrative
+ * examples — doing that was the original defect: the runner sent item id "101"
+ * and tax ids "11213"/"20375"/"301"/"302", none of which names anything in
+ * this outlet.
+ *
+ * Scenarios 2 and 5 cannot be matched by the POS as the outlet is currently
+ * configured: it publishes `addongroups: []`, sets `itemallowaddon: "0"` on all
+ * 166 items, and sets `itemallowvariation: "1"` on 81 items while defining no
+ * variation. The lines are still emitted so the relay is exercised, but the
+ * outlet needs addon/variation configuration before they can resolve.
  *
  * Relay policy (fail-closed, mirrors orderPush.ts): a live POS call happens
  * ONLY when mock mode is off AND credentials are configured AND a branchId is
  * supplied (the branchId doubles as the sandbox resID — no fabricated resID
- * fallback chain). Anything else — or any transport/POS rejection — falls
- * back to a deterministic sandbox order id so a QA relay never hard-fails.
+ * fallback chain). When mock mode is off and any of those is missing the relay
+ * THROWS; only mock mode may hand back a synthetic `pp_test_*` id.
  *
  * This module deliberately imports NO Firestore code: it is a self-contained
  * sandbox relay, unit-testable without firebase-admin mocks.
@@ -100,12 +113,15 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
   {
     id: "dinein-basic-kot",
     aliases: ["items_tax"],
-    description: "Single veg burger + fries, dine-in table T-01",
+    description: "Two real outlet items, dine-in table T-01",
     orderType: "dinein",
     tableNumber: "T-01",
     items: [
-      { id: "itm_veg_burger", name: "Veg Smash Burger", price: 199, quantity: 1, isVeg: true },
-      { id: "itm_peri_fries", name: "Peri Peri Fries", price: 99, quantity: 1, isVeg: true },
+      // Real ids and prices from the outlet's own menu push (itemid 30791 /
+      // 30787). The previous scenario shipped `itm_veg_burger`, an identifier
+      // that exists only in this file — no POS could ever match it.
+      { id: "30791", name: "Tandoori Dahi Kebab", price: 350, quantity: 1, isVeg: true },
+      { id: "30787", name: "French Fries", price: 220, quantity: 1, isVeg: true },
     ],
     gstRate: 0.05,
     deliveryFee: 0,
@@ -116,15 +132,22 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
   {
     id: "takeaway-with-modifiers",
     aliases: ["addons"],
-    description: "Burger with extra cheese + brioche bun modifiers, takeaway",
+    description: "Real item plus two addon lines, takeaway",
     orderType: "takeaway",
     items: [
       {
-        id: "itm_classic_burger",
-        name: "Classic Smash Burger",
-        price: 219,
+        id: "30674",
+        name: "Paneer Achari Tikka [8 Pieces]",
+        price: 310,
         quantity: 1,
-        isVeg: false,
+        isVeg: true,
+        // NOT EXPRESSIBLE AS CAPTURED: the demo outlet publishes
+        // `addongroups: []` and sets `itemallowaddon: "0"` on all 166 items, so
+        // it defines no addon that these ids could resolve to. The lines are
+        // kept because "Addons + Tax" is a required scenario, but Petpooja must
+        // configure at least one addon group on this outlet before the POS can
+        // match them. See the escalation notes in
+        // references/petpooja_save_order_api.md §13.
         modifiers: [
           { id: "mod_extra_cheese", name: "Extra Cheese", price: 30 },
           { id: "mod_brioche_bun", name: "Brioche Bun Upgrade", price: 40 },
@@ -140,10 +163,10 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
   {
     id: "delivery-gst-fee",
     aliases: ["variations"],
-    description: "Delivery order with 5% GST + delivery fee math",
+    description: "Two real items, delivery, 5% GST + delivery fee math",
     orderType: "delivery",
     items: [
-      { id: "itm_classic_burger", name: "Classic Smash Burger", price: 249, quantity: 2, isVeg: false },
+      { id: "30672", name: "Tandoori Paneer Tikka [8 Pieces]", price: 270, quantity: 2, isVeg: true },
     ],
     gstRate: 0.05,
     deliveryFee: 49,
@@ -154,10 +177,10 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
   {
     id: "cancel-refund-sync",
     aliases: ["discounts"],
-    description: "Cancelled order with discount — cancel + refund relay to POS",
+    description: "Cancelled order with a flat discount — cancel + refund relay",
     orderType: "delivery",
     items: [
-      { id: "itm_veg_burger", name: "Veg Smash Burger", price: 199, quantity: 1, isVeg: true },
+      { id: "30673", name: "Paneer Malai Tikka [8 Pieces]", price: 290, quantity: 1, isVeg: true },
     ],
     gstRate: 0.05,
     deliveryFee: 0,
@@ -168,21 +191,30 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
   {
     id: "bulk-party-order",
     aliases: ["addon_variation"],
-    description: "High-quantity stress order (12 lines) for POS load testing",
+    description: "High-quantity stress order (12 real lines) for POS load testing",
     orderType: "takeaway",
     items: [
-      { id: "itm_veg_burger", name: "Veg Smash Burger", price: 199, quantity: 2, isVeg: true },
-      { id: "itm_classic_burger", name: "Classic Smash Burger", price: 219, quantity: 2, isVeg: false },
-      { id: "itm_cheese_burger", name: "Cheese Smash Burger", price: 249, quantity: 1, isVeg: false },
-      { id: "itm_bacon_burger", name: "Bacon Smash Burger", price: 299, quantity: 1, isVeg: false },
-      { id: "itm_peri_fries", name: "Peri Peri Fries", price: 99, quantity: 2, isVeg: true },
-      { id: "itm_cheese_fries", name: "Cheese Garlic Fries", price: 119, quantity: 1, isVeg: true },
-      { id: "itm_loaded_fries", name: "Loaded Nacho Fries", price: 149, quantity: 1, isVeg: true },
-      { id: "itm_coleslaw", name: "Creamy Coleslaw", price: 69, quantity: 1, isVeg: true },
-      { id: "itm_choco_shake", name: "Chocolate Shake", price: 129, quantity: 2, isVeg: true },
-      { id: "itm_vanilla_shake", name: "Vanilla Shake", price: 119, quantity: 1, isVeg: true },
-      { id: "itm_iced_tea", name: "Iced Lemon Tea", price: 89, quantity: 1, isVeg: true },
-      { id: "itm_brownie", name: "Choco Lava Brownie", price: 99, quantity: 2, isVeg: true },
+      { id: "30791", name: "Tandoori Dahi Kebab", price: 350, quantity: 2, isVeg: true },
+      { id: "30778", name: "Tandoori Dahi Ke Sholey", price: 350, quantity: 2, isVeg: true },
+      { id: "30674", name: "Paneer Achari Tikka [8 Pieces]", price: 310, quantity: 1, isVeg: true },
+      { id: "30789", name: "Crispy Corn Salt And Pepper", price: 300, quantity: 1, isVeg: true },
+      { id: "30673", name: "Paneer Malai Tikka [8 Pieces]", price: 290, quantity: 2, isVeg: true },
+      { id: "30790", name: "Corn Salt And Pepper", price: 280, quantity: 1, isVeg: true },
+      { id: "30672", name: "Tandoori Paneer Tikka [8 Pieces]", price: 270, quantity: 1, isVeg: true },
+      { id: "30676", name: "Paneer Kali Mirch Tikka [8 Pieces]", price: 249, quantity: 1, isVeg: true },
+      // One non-veg line, so `item_attribute` "2" is exercised rather than
+      // assumed — the catalog carries 37 non-veg items but the old scenario
+      // only ever sent veg.
+      {
+        id: "30663",
+        name: "Butter Chicken + Boondi Raita + Choice Of Breads [1 Piece]",
+        price: 249,
+        quantity: 2,
+        isVeg: false,
+      },
+      { id: "30787", name: "French Fries", price: 220, quantity: 1, isVeg: true },
+      { id: "30786", name: "Cheese Balls", price: 200, quantity: 1, isVeg: true },
+      { id: "30785", name: "Onion Rings", price: 160, quantity: 1, isVeg: true },
     ],
     gstRate: 0.05,
     deliveryFee: 0,
@@ -263,14 +295,47 @@ function petpoojaOrderType(orderType: ScenarioOrderType): string {
 
 const money = (n: number): string => n.toFixed(2);
 
-/** "yyyy-mm-dd H:i:s" — the exact `created_on` / preorder format Petpooja wants. */
+/**
+ * "yyyy-mm-dd H:i:s" — the exact `created_on` / preorder format Petpooja wants,
+ * rendered in IST.
+ *
+ * These are Indian wall-clock fields. The runtime's local zone is UTC, so the
+ * previous `getHours()` version wrote a UTC time into an IST column and shifted
+ * every relayed order by 5h30m — a late-evening order landed on the POS dated
+ * the previous day.
+ */
 function petpoojaTimestamp(at: Date): string {
-  const p = (v: number) => String(v).padStart(2, "0");
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at);
+  const g = (t: string) => parts.find((x) => x.type === t)?.value ?? "00";
   return (
-    `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())} ` +
-    `${p(at.getHours())}:${p(at.getMinutes())}:${p(at.getSeconds())}`
+    `${g("year")}-${g("month")}-${g("day")} ` +
+    `${g("hour")}:${g("minute")}:${g("second")}`
   );
 }
+
+/**
+ * The outlet's own tax rows, exactly as Petpooja publishes them in the menu
+ * push for this restaurant (`taxes[]` in the captured catalog).
+ *
+ * The API guide's illustrative numbers were shipped verbatim in this file for
+ * months — `11213`/`20375` on item lines and `301`/`302` under `tax_details` —
+ * and none of them names a tax row that exists in the outlet. Every relay
+ * therefore declared taxes the POS had never heard of. Read the real ones from
+ * the outlet's catalog; do not copy figures out of the guide.
+ */
+const OUTLET_TAX = {
+  cgst: { id: "3928", name: "CGST", rate: "2.5" },
+  sgst: { id: "3929", name: "SGST", rate: "2.5" },
+} as const;
 
 /**
  * Builds the save_order body Petpooja actually accepts.
@@ -334,12 +399,27 @@ export function formatPetpoojaV21Payload(
       final_price: money(item.price * item.quantity + modifierTotal),
       quantity: String(item.quantity),
       gst_liability: "restaurant",
-      tax_inclusive: true,
+      // The outlet's catalog declares `tax_inclusive: false` on its items and
+      // the totals here add GST on top of the item price, so the payload must
+      // say the same. It previously claimed `true`, which tells the POS the
+      // price already contains the tax and lets it back the GST out a second
+      // time.
+      tax_inclusive: false,
       tax_percentage: String(gstRatePct),
       item_discount: money(0),
       item_tax: [
-        { id: "11213", name: "CGST", tax_percentage: "2.5", amount: money(lineHalf) },
-        { id: "20375", name: "SGST", tax_percentage: "2.5", amount: money(lineHalf) },
+        {
+          id: OUTLET_TAX.cgst.id,
+          name: OUTLET_TAX.cgst.name,
+          tax_percentage: OUTLET_TAX.cgst.rate,
+          amount: money(lineHalf),
+        },
+        {
+          id: OUTLET_TAX.sgst.id,
+          name: OUTLET_TAX.sgst.name,
+          tax_percentage: OUTLET_TAX.sgst.rate,
+          amount: money(lineHalf),
+        },
       ],
       variation_id: item.variation?.id || "",
       variation_name: item.variation?.name || "",
@@ -358,18 +438,18 @@ export function formatPetpoojaV21Payload(
 
   const taxLines = [
     {
-      id: "301",
-      title: "CGST",
+      id: OUTLET_TAX.cgst.id,
+      title: OUTLET_TAX.cgst.name,
       type: "P",
-      price: `${gstRatePct / 2}%`,
+      price: `${OUTLET_TAX.cgst.rate}%`,
       tax: money(halfGst),
       restaurant_liable_amt: money(halfGst),
     },
     {
-      id: "302",
-      title: "SGST",
+      id: OUTLET_TAX.sgst.id,
+      title: OUTLET_TAX.sgst.name,
       type: "P",
-      price: `${gstRatePct / 2}%`,
+      price: `${OUTLET_TAX.sgst.rate}%`,
       tax: money(halfGst),
       restaurant_liable_amt: money(halfGst),
     },
@@ -416,10 +496,16 @@ export function formatPetpoojaV21Payload(
         preorder_date: stamp.slice(0, 10),
         preorder_time: stamp.slice(11),
         created_on: stamp,
-        dc_tax_percentage: "5",
-        pc_tax_percentage: "5",
+        // Delivery/packing charges carry no separate tax in our pricing engine;
+        // production sends "0" here. The runner sent "5", claiming a 5% tax on
+        // charges the totals never included.
+        dc_tax_percentage: "0",
+        pc_tax_percentage: "0",
         description: `MT-01 sandbox relay — ${order.scenarioId}`,
-        enable_delivery: isDelivery ? "0" : "1",
+        // Riders are always third-party, so this is "0" for every order type,
+        // matching orderPush.ts. The previous version inverted it and told the
+        // POS to self-deliver non-delivery orders.
+        enable_delivery: "0",
         callback_url: callbackUrl,
         ...(order.tableNumber ? { table_no: order.tableNumber } : {}),
         // legacy flat customer keys
@@ -428,12 +514,22 @@ export function formatPetpoojaV21Payload(
         customer_address: isDelivery ? "Sandbox Test Address, Ahmedabad" : "",
       },
       OrderItem: orderItems,
-      Tax: taxLines.map(({ id, title, type, price, tax }) => ({ id, title, type, price, tax })),
-      Discount: { id: "", title: "", type: "F", price: money(discount) },
+      // The official Tax[] shape is id / title / type / price / tax /
+      // restaurant_liable_amt. The previous destructure dropped
+      // `restaurant_liable_amt`, so the POS was told the restaurant owed no GST
+      // on any line while the item lines claimed otherwise.
+      Tax: taxLines,
+      // The contract carries discounts as `discount_type` + `discount_total`
+      // scalars on Order (spec §8) and defines no `Discount` object. A stray
+      // object carrying a `price` sits in the same namespace as Tax and can be
+      // read as a charge, so it is not emitted.
       // legacy flat collections the POS parser may still read
       tax_details: taxLines.map((t) => ({
         tax_name: t.title,
-        tax_percent: Number(String(t.price).replace("%", "")) / 2,
+        // `t.price` is already a percentage ("2.5%"). The previous version
+        // divided it by two, so the legacy contract advertised 1.25% CGST
+        // against a 2.5% tax row.
+        tax_percent: Number(String(t.price).replace("%", "")),
         tax_amount: Number(t.tax),
       })),
       order_items: orderItems,
@@ -571,8 +667,23 @@ export async function runPetpoojaTestScenario(
     !!petpoojaConfig.accessToken;
 
   if (!relayEligible) {
-    // Mock/emulator path only. Live relays must never land here: a caller that
-    // supplied a branch mapping and credentials gets a real relay or an error.
+    // Mock/emulator path only. `clientOrderID` is synthesised here and exists
+    // nowhere on the POS, so returning it from a live process would report a
+    // fulfilled scenario that Petpooja never accepted. Only mock mode may do
+    // that; anything else fails loudly and names what is missing.
+    if (!config.mock.petpoojaPos) {
+      const missing = [
+        !params.branchId && "branchId (the outlet's menu sharing code)",
+        !petpoojaConfig.appKey && "PETPOOJA_APP_KEY",
+        !petpoojaConfig.appSecret && "PETPOOJA_APP_SECRET",
+        !petpoojaConfig.accessToken && "PETPOOJA_ACCESS_TOKEN",
+      ].filter(Boolean) as string[];
+      const err: any = new Error(
+        `Petpooja test runner cannot relay scenario "${order.scenarioId}" — refusing to report a fabricated order id. Missing: ${missing.join(", ")}`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
     return {
       success: true,
       scenarioId: params.scenarioId,
