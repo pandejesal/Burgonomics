@@ -213,6 +213,83 @@ describe("Petpooja POS Bridge Service", () => {
       expect(payload2.orderinfo.Order.order_type).toBe("D");
       expect(payload2.orderinfo.Order.payment_type).toBe("ONLINE");
     });
+
+    it("resolves the POS item id and price from the CartLine shape the app actually writes", () => {
+      // Regression: the `orders` document stores CartLine objects, which carry
+      // `productId` / `unitPrice` / `veg` / `meta` — none of the names the relay
+      // used to read. Every line therefore shipped `id: undefined` at price 0.
+      const order = {
+        id: "ord_2001",
+        orderNumber: "BUR-2001",
+        fulfillmentType: "DELIVERY",
+        paymentMethod: "COD",
+        customerName: "Cartline Case",
+        customerPhone: "9825100001",
+        items: [
+          {
+            lineId: "l1",
+            productId: "prod_branch_surat_01_30791",
+            unitPrice: 350,
+            quantity: 2,
+            veg: false,
+            name: "Tandoori Dahi Kebab",
+          },
+          {
+            lineId: "l2",
+            productId: "prod_branch_surat_01_30787",
+            unitPrice: 220,
+            quantity: 1,
+            veg: true,
+            name: "French Fries",
+            // The cart's documented escape hatch for POS ids.
+            meta: { petpoojaItemId: "30799" },
+          },
+        ],
+        pricing: { subtotal: 920, gst: 46, grandTotal: 966 },
+      };
+
+      const payload = formatPetpoojaOrderPayload(
+        order,
+        null,
+        "TEST_RES_ID",
+        "branch_surat_01"
+      );
+      const lines = payload.orderinfo.OrderItem as Array<Record<string, unknown>>;
+
+      // `prod_<branchId>_<itemid>` is stripped by exact prefix.
+      expect(lines[0].id).toBe("30791");
+      expect(lines[0].item_id).toBe("30791");
+      // `meta.petpoojaItemId` outranks the doc-id fallback.
+      expect(lines[1].id).toBe("30799");
+      // Prices come from `unitPrice`, not the absent `price`/`basePrice`.
+      expect(lines[0].price).toBe("350.00");
+      expect(lines[1].price).toBe("220.00");
+      // `veg` is honoured; reading only `isVeg` reported every line as veg.
+      expect(lines[0].item_attribute).toBe("2");
+      expect(lines[1].item_attribute).toBe("1");
+      // The tax split is a share of the order's embedded GST, per line.
+      expect(Number(lines[0].item_tax[0].amount) + Number(lines[0].item_tax[1].amount)).toBeCloseTo(
+        (46 * 700) / 920 / 1,
+        2
+      );
+    });
+
+    it("leaves the item id empty rather than inventing one when nothing resolves", () => {
+      const payload = formatPetpoojaOrderPayload(
+        {
+          id: "ord_2002",
+          fulfillmentType: "TAKEAWAY",
+          paymentMethod: "COD",
+          items: [{ lineId: "l1", productId: "prod_other_branch_9", unitPrice: 100, quantity: 1 }],
+          pricing: { grandTotal: 100 },
+        },
+        null,
+        "TEST_RES_ID",
+        "branch_surat_01"
+      );
+      // Wrong-branch prefix must NOT be stripped into a bogus id.
+      expect((payload.orderinfo.OrderItem as any)[0].id).toBe("");
+    });
   });
 
   describe("normalizePetpoojaStatus", () => {

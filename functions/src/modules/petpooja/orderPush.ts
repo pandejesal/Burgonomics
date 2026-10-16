@@ -102,7 +102,48 @@ export function petpoojaClock(now: Date = new Date()) {
   return { preorderDate: date, preorderTime: time, createdOn: `${date} ${time}` };
 }
 
-export function formatPetpoojaOrderPayload(order: any, branch: any, resId: string) {
+/**
+ * Petpooja item id for an order line.
+ *
+ * The `orders` document stores the app's `CartLine` shape — `productId`,
+ * `unitPrice`, `veg`, and an optional `meta` bag — none of which is a field name
+ * this relay used to read (`petpoojaItemId` / `itemId` / `id`). Every line
+ * therefore went out with no id at all and the POS had nothing to match.
+ *
+ * Accepts, in order of authority:
+ *   1. an explicit POS id on the line (`petpoojaItemId`)
+ *   2. the cart's `meta` bag (`meta.petpoojaItemId`)
+ *   3. a legacy `itemId` / `id`
+ *   4. the menu doc id the sync writes, `prod_<branchId>_<petpoojaItemId>`,
+ *      stripped by exact prefix — never parsed loosely.
+ * Returns "" when nothing resolves, so the gap stays visible.
+ */
+function linePetpoojaItemId(item: any, firestoreBranchId?: string): string {
+  const meta = item?.meta || {};
+  for (const candidate of [item?.petpoojaItemId, meta.petpoojaItemId, item?.itemId, item?.id]) {
+    if (candidate !== undefined && candidate !== null && String(candidate).trim() !== "") {
+      return String(candidate);
+    }
+  }
+  const productId = item?.productId;
+  if (firestoreBranchId && typeof productId === "string") {
+    const prefix = `prod_${firestoreBranchId}_`;
+    if (productId.startsWith(prefix)) return productId.slice(prefix.length);
+  }
+  return "";
+}
+
+/** Unit price of a line: the app writes `unitPrice`; legacy shapes write price/basePrice. */
+function lineUnitPrice(item: any): number {
+  return Number(item?.basePrice ?? item?.price ?? item?.unitPrice ?? 0) || 0;
+}
+
+export function formatPetpoojaOrderPayload(
+  order: any,
+  branch: any,
+  resId: string,
+  firestoreBranchId?: string
+) {
   const fulfillment = (order.fulfillmentType || order.orderType || "DELIVERY").toUpperCase();
   // Official V2.1.0 order_type is a letter code: H (home delivery),
   // P (parcel/takeaway), D (dine-in). The numeric 1/2/3 form the old code sent
@@ -123,22 +164,22 @@ export function formatPetpoojaOrderPayload(order: any, branch: any, resId: strin
   const preItems = order.items || [];
   const preGst = (order.pricing || {}).gst || order.taxAmount || order.tax || 0;
   const preItemTotal = preItems.reduce(
-    (sum: number, it: any) =>
-      sum + (it.basePrice || it.price || 0) * (it.quantity || 1),
+    (sum: number, it: any) => sum + lineUnitPrice(it) * (it.quantity || 1),
     0
   );
   const branchTaxes = outletTaxes(branch);
   const branchTaxPct = branchTaxes.reduce((sum, t) => sum + t.rate, 0);
 
   const orderItems = (order.items || []).map((item: any) => {
-    const unit = item.basePrice || item.price || 0;
+    const unit = lineUnitPrice(item);
     const qty = item.quantity || 1;
     const addons = (item.modifiers || item.selectedAddons || []).map((mod: any) => ({
       // official AddonItem names: id / name / group_name / price
       id: mod.id || mod.optionId || "addon",
       name: mod.name,
       group_name: mod.groupName || "Addons",
-      price: money(mod.price || 0),
+      // CartModifier carries `priceDelta`; `price` is the legacy spelling.
+      price: money(mod.price ?? mod.priceDelta ?? 0),
       // legacy spelling the POS parser may still read
       addon_id: mod.id || mod.optionId || "addon",
       addon_name: mod.name,
@@ -147,16 +188,19 @@ export function formatPetpoojaOrderPayload(order: any, branch: any, resId: strin
 
     return {
       // ---- official V2.1.0 OrderItem names ----
-      id: item.petpoojaItemId || item.itemId || item.id,
+      id: linePetpoojaItemId(item, firestoreBranchId),
       name: item.name,
       price: money(unit),
       final_price: money(lineTotal),
       quantity: String(qty),
       gst_liability: "restaurant",
-      // The outlet's catalog declares `tax_inclusive: false` on its items and
-      // our totals add GST on top, so the payload must say the same. `true` let
-      // the POS back the tax out of the price a second time.
-      tax_inclusive: false,
+      // Our own order prices are GST-INCLUSIVE: `CartTotals.subtotal` documents
+      // the 5% GST as already inside the line price, and `pricing.gst`/`taxes`
+      // is that embedded portion, not an addition. So the payload must declare
+      // `true` — the POS then treats `tax`/`tax_total` as the tax contained in
+      // the total we sent. (The sandbox runner is the opposite: it computes GST
+      // on top of its item prices, so it declares `false`.)
+      tax_inclusive: true,
       // Petpooja expects the line's own tax. It was omitted entirely, so every
       // line reached the POS untaxed even though the order carried a tax total.
       tax_percentage: String(branchTaxPct),
@@ -181,14 +225,16 @@ export function formatPetpoojaOrderPayload(order: any, branch: any, resId: strin
       // because the multi-contract relay exists precisely to satisfy
       // whichever contract the target implements.
       addon_items: addons,
-      item_id: item.petpoojaItemId || item.itemId || item.id,
+      item_id: linePetpoojaItemId(item, firestoreBranchId),
       item_name: item.name,
       addons: addons.map((a: { id: string; name: string; price: string }) => ({
         addon_id: a.id,
         addon_name: a.name,
         price: a.price,
       })),
-      item_attribute: item.isVeg !== false ? "1" : "2",
+      // `CartLine` names the flag `veg`; `isVeg` is the legacy spelling. Reading
+      // only `isVeg` meant every line was reported as veg.
+      item_attribute: (item.isVeg ?? item.veg) !== false ? "1" : "2",
     };
   });
 
@@ -474,7 +520,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       throw err;
     }
 
-    const payload = formatPetpoojaOrderPayload(order, branchData, resId);
+    const payload = formatPetpoojaOrderPayload(order, branchData, resId, branchId);
 
     // Debug visibility: missing contact or zero totals push a broken KOT that
     // looks successful. Flag loudly instead of masking with fallbacks.
