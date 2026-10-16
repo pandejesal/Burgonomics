@@ -195,17 +195,21 @@ authenticated successfully — no auth rejection at any point).
    `https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order`.
 2. **Every** flat variant is rejected by the live API, including a body
    containing *every* field the PDF marks required (matrix in
-   `scripts/petpooja-flat-matrix.mjs`). The only accepted shape is a lower-case
-   `orderinfo` object wrapping Customer / Order / OrderItem / Tax / Discount.
-   **The PDF does not match the deployed API version.**
-3. The accepted shape returns a canned success with `restID` /
+   `scripts/petpooja-flat-matrix.mjs`). A lower-case `orderinfo` object is
+   required. **The PDF does not match the deployed API version.**
+3. ~~The accepted shape returns a canned success with `restID` /
    `clientOrderID` / `orderID` **always empty** — regardless of where the
-   mapping code is placed (top level, inside `orderinfo`, or inside `OrderInfo`).
+   mapping code is placed.~~ **WITHDRAWN — see §15.1.** The bodies tested in this
+   round put the members *directly* under `orderinfo` and **omitted the required
+   inner `OrderInfo` level and the `details` wrappers**. The endpoint therefore
+   had no `OrderInfo` to read, which is why nothing was echoed. With the
+   documented envelope it echoes the real `restID` and `clientOrderID`.
 4. The sandbox dashboard's API Documentation tab links to that same Apiary page,
    exposes no API route, and its **Order List stays empty** after every
    successful relay.
-5. Conclusion: relays are accepted by Petpooja's **dev environment**, not the
-   assigned sandbox. The sandbox `save_order` endpoint was never published.
+5. ~~Conclusion: relays are accepted by Petpooja's **dev environment**, not the
+   assigned sandbox. The sandbox `save_order` endpoint was never published.~~
+   **WITHDRAWN — see §15.3.** The endpoint does parse the documented envelope.
 
 **Blocker to raise with Petpooja** — the sandbox endpoint URL (and confirmation
 that the issued `app_key` is bound to the mapping code `31z58ciw0h`) before the
@@ -265,11 +269,16 @@ unknown `restID` `THIS_RES_ID_DOES_NOT_EXIST_999`, item id `999999999` that
 exists nowhere, quantity `999`, total `999999.00`. It too returned
 **HTTP 200 `success:"1"`**.
 
-> An endpoint that accepts a non-existent restaurant and a non-existent item, and
-> never echoes back the unique `clientOrderID` it was sent, is not validating and
-> not persisting anything. A fully correct payload — the best this integration
-> can construct — behaves identically to garbage. Item-id mismatch (§13.2) is
-> therefore **not** the cause of the empty order ids.
+> An endpoint that accepts a non-existent restaurant and a non-existent item is
+> not validating identifiers.
+>
+> **Correction (2026-10-16).** The second half of this claim — that it "never
+> echoes back the unique `clientOrderID` it was sent" — did not survive checking.
+> It was an artefact of the malformed envelope (§15.1): with the documented
+> `orderinfo.OrderInfo.*.details` body the endpoint **does** echo our real
+> `clientOrderID` and `restID`. Read §13.1 as "it does not validate
+> identifiers", not "it does not read the body" — §15.2 shows it reads the body
+> clearly enough to return our values.
 
 Evidence: `scripts/petpooja-endpoint-stub-evidence.json` and
 `scripts/petpooja-corrected-payload-evidence.json`.
@@ -403,4 +412,98 @@ id `prod_<branchId>_<itemid>` stripped by exact prefix — never parsed loosely,
 never invented. Prices now read `unitPrice`, the veg flag now reads `veg`, and
 addon prices read `priceDelta`. The mapper in `menuService.ts` is still worth
 fixing so the id is carried in the model rather than recovered from a doc id.
+
+---
+
+## 15. Our envelope was wrong — the missing `orderinfo.OrderInfo` level (2026-10-16)
+
+§12–§13 concluded that the sandbox `save_order` endpoint "does not validate or
+persist", "never echoes what it was sent" and "was never published". That
+conclusion was drawn from a body that was itself malformed, so it proved far
+less than it claimed. **The fault was ours**, and the question "is the fault on
+our side?" was the right one to ask.
+
+### 15.1 The defect
+
+Every relay we had ever sent put the members **directly** under `orderinfo`:
+
+```json
+{ "app_key": "…", "app_secret": "…", "access_token": "…",
+  "orderinfo": { "Customer": {…}, "Order": {…}, "OrderItem": [ … ] } }
+```
+
+The published Orders API puts them under a **required inner `OrderInfo`** level
+and wraps every member in a **`details`** object — with `OrderItem` / `Tax` /
+`Discount` holding a `details` *array*:
+
+```
+orderinfo.OrderInfo.{Restaurant,Customer,Order,OrderItem,Tax,Discount}
+  Restaurant / Customer / Order : { details: { … } }
+  OrderItem / Tax / Discount    : { details: [ … ] }
+```
+
+Sources: the api-evangelist OpenAPI (`petpooja-orders-api-openapi.yml`, component
+`OrderInfo`) and that spec's Postman collection body, matching the vendor Apiary
+summary "an orderinfo object (restaurant, customer, order, order items, taxes,
+discounts)". The vendor PDF instead describes a flat body with no `orderinfo` at
+all — the PDF is stale, but the nested contract is what the deployed API parses.
+
+The endpoint's validator only checks that `orderinfo` **is present**, so our body
+passed it; the parser then found no `OrderInfo` to read and answered
+`success:"1"` with empty ids because it had parsed nothing — not because it is a
+stub.
+
+### 15.2 The proof
+
+Varying **only** the envelope — same credentials, same real outlet ids
+(`scripts/petpooja-spec-shape-probe.mjs`, evidence
+`scripts/petpooja-spec-shape-evidence.json`):
+
+| Envelope | Response |
+|---|---|
+| ours: `orderinfo.{Customer,Order,OrderItem,Tax}` | `{"success":"1",…,"restID":"","clientOrderID":"","orderID":""}` |
+| documented: `orderinfo.OrderInfo.*.details` | `{"success":"1",…,"restID":"31z58ciw0h","clientOrderID":"<our order ref>","orderID":""}` |
+
+Both hosts (`47pfzh5sf2…` and `qle1yy2ydc…`) behave identically. How the three
+collection members are wrapped makes no difference to the echo —
+`scripts/petpooja-orderinfo-matrix.mjs` tries bare arrays (the OpenAPI typing)
+and `details`-wrapped arrays (the Postman body) and both echo identically.
+
+The endpoint therefore reads our body: it returns our restaurant mapping code and
+our order reference, which it never did before. `restID` and `clientOrderID` are
+no longer empty. Through the real runner, all five scenarios now echo
+`restID:"31z58ciw0h"` and their own `clientOrderID`.
+
+### 15.3 What is still not happening, and why it is not the payload
+
+1. **`orderID` is still empty.** Petpooja assigns the POS order number when an
+   order is registered; this endpoint returns none.
+2. **It does not validate `restID`.** `scripts/petpooja-restid-validation-probe.mjs`
+   sends the real code, the numeric `5439`, and `THIS_RES_ID_DOES_NOT_EXIST_999`
+   — all three come back echoed verbatim
+   (`scripts/petpooja-restid-validation-evidence.json`). Whatever the echo proves
+   about parsing, it is not a restaurant lookup.
+3. **`update_store_status` is not routed.** `POST /V1/update_store_status` on the
+   menu host returns `HTTP 403 {"message":"Missing Authentication Token"}` — the
+   API-Gateway response for a route that does not exist — so the store cannot be
+   opened through the API (`scripts/petpooja-store-open-probe.mjs`).
+4. **No callback has ever arrived.** `pos_webhook_audits` is empty. Note that our
+   inbound route fails closed: `/petpooja/webhook` requires a credential header
+   matching `PETPOOJA_APP_KEY` (`core/middleware.ts:259`), so a vendor callback
+   carrying no such header would 401. That cannot be tested until a callback is
+   ever sent.
+
+So the remaining blocker is no longer our payload. Points 1–3 are properties of
+the endpoint as deployed, and point 4 is untestable until it sends anything.
+
+### 15.4 Fix
+
+`orderinfo.OrderInfo.*.details` is now what both builders emit
+(`orderPush.ts`, `testRunner.ts`); `AddonItem` is carried as `AddonItem.details`;
+and the previous flat/nested spellings are kept as harmless aliases because
+unknown keys are ignored. Regression guard: the `formatPetpoojaOrderPayload` test
+asserts every member is reachable at `orderinfo.OrderInfo.<Member>.details`.
+Commit `d87a579`.
+
+Gates: build clean; `482 passed / 2 skipped / 0 failed`.
 
