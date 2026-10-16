@@ -312,3 +312,64 @@ Because §13.1 proves every ack is empty, two fabrication paths were removed:
    **no** `dev_error_snapshots` row was ever written for a Petpooja failure
    while the endpoint still answered 200 — the ops trail silently did not exist.
    Undefined keys are now omitted.
+
+---
+
+## 14. Codebase audit findings (2026-10-16)
+
+Four read-only sweeps of the whole repo (payload builder, identifier wiring,
+both client apps + website, inbound webhooks/routes/auth) found the defects
+below. They were found **because** §13.1 was drawn from a payload that was
+itself wrong, which is what prompted the question "is the fault on our side?".
+It partly was. All items in §14.1–14.3 are fixed and deployed in `3cf834d` /
+`756b950`; §14.4 is open.
+
+### 14.1 Payload defects (fixed)
+
+Everything in §13.1–13.2 plus: the production builder (`orderPush.ts`) omitted
+per-line `item_tax` / `tax_percentage` / `item_discount` entirely and sent the
+tax ids `"cgst"` / `"sgst"`, which name no tax row; both builders dropped
+`restaurant_liable_amt` from `Tax[]`; `tax_details` halved the tax percentage
+twice (advertising 1.25% against a 2.5% row); `created_on` and the `preorder_*`
+fields were written in the runtime's local zone (UTC) rather than IST;
+`dc_tax_percentage` / `pc_tax_percentage` claimed `"5"` where production sent
+`"0"`; `enable_delivery` was inverted; a `Discount` object was emitted although
+the contract defines only `discount_type` + `discount_total`; and
+`tax_inclusive` claimed `true` while the outlet's items say `false` and the
+totals add GST on top.
+
+### 14.2 Fabricated identifiers (fixed)
+
+Both the 5-scenario runner and the production relay derived item ids from the
+**integration guide's illustrative examples** (`101`, `201`, `301`, `302`)
+instead of the outlet's catalog. The partner app additionally wrote fabricated
+`PP-BRG-*` item ids that the server reads *first*, ahead of the real field. Item
+ids now come from the outlet's own menu push.
+
+### 14.3 Untruthful success paths (fixed)
+
+`/petpooja/testRunner` handed back a synthetic `pp_test_*` id whenever the relay
+was not eligible, including in a live process with credentials present and only
+`branchId` missing — reporting a fulfilled scenario that never reached the POS.
+It now throws and names what is missing; only mock mode may synthesise an id.
+
+### 14.4 Open — identifier resolution drift
+
+`references/petpooja_pos.md` P3 and `references/known_issues.md` R13 both state
+that the authoritative restaurant identifier is the **nested**
+`branches/{branchId}.petpooja.restId`. The code does not read that location.
+Every server path reads the **flat** `petpoojaStoreId`:
+
+- `orderPush.ts:463`, `menuSyncWebhook.ts:52,60,65`, `item86ingSync.ts:127,135,253`
+
+and `firestore.rules` gates the nested `petpooja.restId` to brand owners. So an
+operator following the runbook writes one location while the relay reads another.
+Compounding this, no real outlet has ever been linked: all 25 branch docs hold
+seeded placeholders (`petpoojaStoreId = str_001…str_016`,
+`petpoojaRestId = rest_<slug>`), neither of which is a real Petpooja id.
+
+This is deliberately fail-closed (the code refuses to fall back to the branch
+doc id or invent one), so it was left as-is rather than re-plumbed blind — there
+is no linked outlet to validate a resolution-order change against. Resolve the
+doc/code disagreement before linking the first real outlet.
+
