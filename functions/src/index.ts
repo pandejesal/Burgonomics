@@ -574,7 +574,13 @@ app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
 app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
   const p = req.body || {};
   try {
-    await handlePetpoojaWebhook(p);
+    // `petpoojaAuthenticated` is false only when the middleware admitted the call
+    // by callback SHAPE (the vendor sends no credential header). The handler uses
+    // it to keep sync state — the POS id and "synced" — out of reach of an
+    // unauthenticated caller.
+    await handlePetpoojaWebhook(p, {
+      authenticated: (req as any).petpoojaAuthenticated !== false,
+    });
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/webhook",
       outcome: "ok",

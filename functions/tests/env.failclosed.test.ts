@@ -232,6 +232,7 @@ describe("fail-closed boot on empty env", () => {
     const nCb = vi.fn();
     verifyPetpoojaAuth(
       {
+        path: "/petpooja/webhook",
         headers: {},
         body: { restID: "31z58ciw0h", orderID: "PP-1", status: "Accept" },
       } as any,
@@ -245,12 +246,28 @@ describe("fail-closed boot on empty env", () => {
     const rSs: any = { status: vi.fn(() => ({ json: vi.fn() })) };
     const nSs = vi.fn();
     verifyPetpoojaAuth(
-      { headers: {}, body: { restID: "31z58ciw0h", status: "1" } } as any,
+      { path: "/petpooja/webhook", headers: {}, body: { restID: "31z58ciw0h", status: "1" } } as any,
       rSs,
       nSs
     );
     expect(nSs).toHaveBeenCalledTimes(1);
     expect(rSs.status).not.toHaveBeenCalled();
+
+    // The allowance is SCOPED to the order route: the sibling routes share this
+    // middleware and do NOT implement the handler-side integrity checks, so the
+    // same shape must still 401 there (otherwise an uncredentialed caller could
+    // 86 menu items or trigger catalog-pull fan-out).
+    for (const path of ["/petpooja/stockWebhook", "/petpooja/menu-sync"]) {
+      const r: any = { status: vi.fn(() => ({ json: vi.fn() })) };
+      const n = vi.fn();
+      verifyPetpoojaAuth(
+        { path, headers: {}, body: { restID: "31z58ciw0h", status: "1" } } as any,
+        r,
+        n
+      );
+      expect(r.status).toHaveBeenCalledWith(401);
+      expect(n).not.toHaveBeenCalled();
+    }
 
     // The allowance is a narrow shape test: everything else keeps the 401.
     for (const body of [
@@ -259,10 +276,13 @@ describe("fail-closed boot on empty env", () => {
       { restID: "31z58ciw0h" },
       { app_key: "test_pp_app_key" },
       { restID: "31z58ciw0h", status: "" },
+      // `order_status` is NOT one of the accepted status keys — it must agree
+      // with isStoreStatusPayload downstream, or the handler would 500 on it.
+      { restID: "31z58ciw0h", order_status: "Accept" },
     ]) {
       const r: any = { status: vi.fn(() => ({ json: vi.fn() })) };
       const n = vi.fn();
-      verifyPetpoojaAuth({ headers: {}, body } as any, r, n);
+      verifyPetpoojaAuth({ path: "/petpooja/webhook", headers: {}, body } as any, r, n);
       expect(r.status).toHaveBeenCalledWith(401);
       expect(n).not.toHaveBeenCalled();
     }

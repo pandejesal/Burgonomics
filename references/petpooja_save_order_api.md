@@ -591,3 +591,43 @@ Tests added: four in `petpooja.webhook-terminal.test.ts`, one in
 
 Gates: build clean; `487 passed / 2 skipped / 0 failed`.
 
+### 16.6 Review hardening (same day, after an adversarial self-review)
+
+The first cut of 16.4 relaxed `verifyPetpoojaAuth`, which is **shared** by
+`/petpooja/webhook`, `/petpooja/stockWebhook` and `/petpooja/menu-sync`. Two of
+those handlers never implemented the integrity checks the change promised, so
+that cut would have handed an uncredentialed caller the ability to 86 arbitrary
+menu items at any linked outlet and to trigger catalog-pull fan-out — worse than
+the problem it fixed. What changed:
+
+- **The shape allowance is scoped to `/petpooja/webhook` only.** Every other
+  route keeps the fail-closed 401 (asserted by test).
+- **Shape-admitted calls are marked untrusted** (`req.petpoojaAuthenticated` is
+  set false; credential and HMAC paths set it true) and the handler receives it.
+  An untrusted call may still apply a bounded status change, but it cannot write
+  `petpoojaOrderId` / `petpoojaStatus:"synced"` — the retry worker and the
+  outbound dedupe both key off those, so a forged value would silently drop a
+  genuinely un-pushed order from the retry queue. What such a call claims is
+  recorded under `petpoojaCallbackOrderId` for visibility only.
+- **Untrusted calls are outlet-scoped.** They must carry a `restID` that resolves
+  to a linked branch and must target an order belonging to that branch. The
+  POS-id lookup now fails closed when the branch cannot be resolved (a bare
+  `orderID` no longer reaches an arbitrary outlet), and the doc-id path is scoped
+  the same way.
+- **Promotion requires an accepting status.** A `Reject` no longer turns an order
+  `synced` with no signal that the KOT was refused.
+- **The two status-key predicates agree.** The middleware no longer accepts
+  `order_status`, which `isStoreStatusPayload` never recognised; a body that
+  passed the gate could otherwise reach the handler and answer HTTP 500.
+
+Residual risk, recorded rather than silently fixed: the parking writes for an
+unresolvable `restID` (`petpooja_store_status_events/*`,
+`unmatched_petpooja_orders/*`) are unauthenticated and rate-limit-exempt, so an
+internet caller can create documents without bound (cost/quota, not data
+integrity). Closing it means either bounding the writes to linked outlets — which
+reverses a prior deliberate decision to record unlinked pings so the real status
+encoding could be learned — or adding a limiter/TTL to those two collections.
+That is a product call, so it is left to the owner.
+
+Gates: build clean; `491 passed / 2 skipped / 0 failed`.
+

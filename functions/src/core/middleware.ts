@@ -270,7 +270,11 @@ export async function requireAppCheck(
 function looksLikePetpoojaStatusCallback(body: any): boolean {
   if (!body || typeof body !== "object" || Array.isArray(body)) return false;
   const restId = body.rest_id ?? body.restId ?? body.restID ?? body.restaurantid;
-  const status = body.status ?? body.order_status ?? body.store_status ?? body.storeStatus;
+  // Status keys are kept identical to isStoreStatusPayload (item86ingSync) so
+  // the two predicates cannot disagree: a body that passes this gate must also
+  // be recognisable downstream, or it would reach the handler and 500 — which
+  // Petpooja reads as a broken webhook and retries or disables.
+  const status = body.status ?? body.store_status ?? body.storeStatus;
   return Boolean(restId) && status !== undefined && status !== null && status !== "";
 }
 
@@ -294,6 +298,7 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     const rawBody =
       typeof raw === "string" ? raw : raw ? Buffer.from(raw).toString("utf8") : "";
     if (rawBody && verifyPetpoojaSignature(rawBody, String(signatureHeader))) {
+      (req as any).petpoojaAuthenticated = true;
       next();
       return;
     }
@@ -313,11 +318,27 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     // Postman example sends only Content-Type). Accept them by SHAPE so a real
     // status update — the only carrier of a POS-assigned order id — is not
     // thrown away at this gate; the handler then enforces integrity (restID must
-    // resolve to a linked branch, and an order event to a tracked order).
-    // Anything else without a credential keeps the fail-closed 401.
-    if (looksLikePetpoojaStatusCallback(req.body)) {
+    // resolve to a linked branch, and an order event to a tracked order in that
+    // branch).
+    //
+    // SCOPED TO THE ORDER ROUTE, deliberately: this middleware is shared with
+    // /petpooja/stockWebhook and /petpooja/menu-sync, and those handlers do NOT
+    // implement those integrity checks. An unscoped allowance would have let an
+    // uncredentialed caller 86 arbitrary menu items at any linked outlet and
+    // trigger unbounded catalog-pull fan-out — both worse than the problem this
+    // fixes. Everything without a credential on any other route keeps the
+    // fail-closed 401.
+    const routePath = String(req.path || req.originalUrl || "").split("?")[0];
+    if (
+      routePath.endsWith("/petpooja/webhook") &&
+      looksLikePetpoojaStatusCallback(req.body)
+    ) {
+      // Marked untrusted: the handler must not let an unauthenticated request
+      // write sync state (the POS id / "synced") that the retry worker and the
+      // push dedupe key off.
+      (req as any).petpoojaAuthenticated = false;
       console.warn(
-        "[Petpooja Auth] accepted an unauthenticated status callback by shape (vendor sends no credential header) — handler integrity checks apply"
+        "[Petpooja Auth] accepted an unauthenticated status callback by shape on /petpooja/webhook (vendor sends no credential header) — treated as untrusted; handler integrity checks apply"
       );
       next();
       return;
@@ -332,6 +353,7 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     : tokenHeader.trim();
 
   if (token && timingSafeEqual(token, inboundSecret)) {
+    (req as any).petpoojaAuthenticated = true;
     next();
     return;
   }

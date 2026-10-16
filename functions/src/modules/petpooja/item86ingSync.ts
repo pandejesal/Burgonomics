@@ -297,17 +297,23 @@ async function resolveOrderByPosOrderId(posOrderId: string, branchId: string | n
     const snap = await col.where("petpoojaOrderId", "==", posOrderId).limit(5).get();
     const docs = snap.docs || [];
     if (!docs.length) return null;
-    if (branchId) {
-      const match = docs.find((d: any) => ((d.data() || {}) as any).branchId === branchId);
-      if (!match) {
-        console.warn(
-          `[Petpooja Webhook] POS id ${posOrderId} matched only orders outside branch ${branchId} — refused`
-        );
-        return null;
-      }
-      return match;
+    // Fail CLOSED when the branch cannot be resolved: a bare `orderID` with no
+    // usable `restID` must not be able to reach an arbitrary outlet's order.
+    // Genuine callbacks always carry restID — the middleware gate requires it.
+    if (!branchId) {
+      console.warn(
+        `[Petpooja Webhook] POS id ${posOrderId} refused: restID unresolved, cannot scope to an outlet`
+      );
+      return null;
     }
-    return docs[0];
+    const match = docs.find((d: any) => ((d.data() || {}) as any).branchId === branchId);
+    if (!match) {
+      console.warn(
+        `[Petpooja Webhook] POS id ${posOrderId} matched only orders outside branch ${branchId} — refused`
+      );
+      return null;
+    }
+    return match;
   } catch (err) {
     console.warn(
       `[Petpooja Webhook] POS-id lookup failed for ${posOrderId}:`,
@@ -317,7 +323,22 @@ async function resolveOrderByPosOrderId(posOrderId: string, branchId: string | n
   }
 }
 
-export async function handlePetpoojaWebhook(payload: any): Promise<void> {
+export interface PetpoojaWebhookAuth {
+  /**
+   * False when `verifyPetpoojaAuth` admitted the call by callback SHAPE rather
+   * than by credential. An untrusted call may still apply a bounded status
+   * change, but must not write sync state (the POS id / "synced") that the retry
+   * worker and the outbound dedupe key off — a forged one would silently drop a
+   * genuinely un-pushed order from the retry queue.
+   */
+  authenticated?: boolean;
+}
+
+export async function handlePetpoojaWebhook(
+  payload: any,
+  auth: PetpoojaWebhookAuth = {}
+): Promise<void> {
+  const untrusted = auth.authenticated === false;
   // Our own order reference: the Firestore doc id we send as Order.orderID.
   let orderId = payload.order_id || payload.clientOrderID || payload.client_order_id;
   // The POS-assigned id the documented order-status callback carries. Read in
@@ -434,6 +455,45 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
     orderDoc.id || orderDoc.ref?.id || String(orderId ?? posOrderId);
   orderId = resolvedOrderId;
 
+  // An unauthenticated caller (a callback admitted by SHAPE) must not steer
+  // another outlet's order. The POS-id path already scopes by branch; this
+  // covers the doc-id path, where the caller supplied our internal order id
+  // directly: require a restID that resolves to a linked branch AND an order
+  // that belongs to it.
+  if (untrusted) {
+    const claimedBranch = restIdRaw ? await resolveBranchIdForRestId(restIdRaw) : null;
+    const orderBranch = String(((orderDoc.data() || {}) as Record<string, any>).branchId ?? "");
+    if (!claimedBranch || !orderBranch || orderBranch !== claimedBranch) {
+      console.warn(
+        `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} refused: restID ${restIdRaw || "absent"} resolves to ${
+          claimedBranch || "UNLINKED"
+        }, order belongs to ${orderBranch || "none"}`
+      );
+      try {
+        await db
+          .collection("unmatched_petpooja_orders")
+          .doc(`upo_${resolvedOrderId}`)
+          .set(
+            {
+              orderId: resolvedOrderId,
+              posOrderId: posOrderId || null,
+              rawStatus: payload.status || payload.order_status || null,
+              restId: restIdRaw || null,
+              status: "needs_review",
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+      } catch (err) {
+        console.warn(
+          `[Petpooja Webhook] Failed to park refused untrusted order ${resolvedOrderId}:`,
+          (err as any)?.message || err
+        );
+      }
+      return;
+    }
+  }
+
   const rawStatus = payload.status || payload.order_status;
   const canonicalStatus = normalizePetpoojaStatus(rawStatus);
   const orderData = (orderDoc.data() || {}) as Record<string, any>;
@@ -502,10 +562,26 @@ export async function handlePetpoojaWebhook(payload: any): Promise<void> {
   // echoed an empty one, so record what we learn here and promote the order out
   // of `pending_retry` — otherwise the retry worker would keep re-pushing an
   // order the POS has demonstrably already accepted.
-  if (posOrderId && orderData.petpoojaOrderId !== posOrderId) {
+  //
+  // Gated on a CREDENTIALED callback and on an accepting status:
+  // - untrusted (shape-admitted) callers must not write `petpoojaOrderId` /
+  //   `synced`, because the retry worker and the outbound dedupe both key off
+  //   those — a forged value would silently drop a genuinely un-pushed order
+  //   from the retry queue. What they claim is recorded under a separate field.
+  // - a `Reject`/unknown status must not be promoted to a plain `synced` state
+  //   with no signal that the KOT was refused.
+  if (
+    !untrusted &&
+    posOrderId &&
+    orderData.petpoojaOrderId !== posOrderId &&
+    canonicalStatus !== "cancelled" &&
+    canonicalStatus !== "unknown"
+  ) {
     updateData.petpoojaOrderId = posOrderId;
     updateData.petpoojaStatus = "synced";
     updateData.petpoojaSyncStatus = "synced";
+  } else if (untrusted && posOrderId && orderData.petpoojaOrderId !== posOrderId) {
+    updateData.petpoojaCallbackOrderId = posOrderId;
   }
   if (eventId) {
     // Replay marker rides on the order doc so a redelivery of the SAME event

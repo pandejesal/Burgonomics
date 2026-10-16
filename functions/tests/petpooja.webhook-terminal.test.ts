@@ -352,4 +352,80 @@ describe("handlePetpoojaWebhook — POS-assigned order id (documented callback s
       status: "needs_review",
     });
   });
+
+  // ---- Untrusted (shape-admitted, no credential) callers ----
+  // The middleware admits the vendor's credential-less callback by shape. These
+  // bound what such a call may do.
+
+  it("refuses an untrusted bare POS id — no restID means no outlet scoping", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_bare"] = {
+      id: "ord_bare",
+      branchId: "branch_t1",
+      petpoojaOrderId: "PP-9004",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({ orderID: "PP-9004", status: "Accept" }, { authenticated: false });
+    // The order must be untouched, and the claim parked instead.
+    expect(savedDocs["orders/ord_bare"].petpoojaKitchenStatus).toBeUndefined();
+    expect(savedDocs["unmatched_petpooja_orders/upo_PP-9004"]).toBeDefined();
+  });
+
+  it("does not let an untrusted callback write the POS id or suppress retries", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_untrusted"] = {
+      id: "ord_untrusted",
+      branchId: "branch_t1",
+      petpoojaStatus: "pending_retry",
+      petpoojaSyncStatus: "pending_retry",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook(
+      { order_id: "ord_untrusted", restID: "31z58ciw0h", orderID: "PP-9005", status: "Accept" },
+      { authenticated: false }
+    );
+    const doc = savedDocs["orders/ord_untrusted"];
+    // A bounded status change is still applied...
+    expect(doc.status).toMatchObject({ code: "CONFIRMED" });
+    // ...but sync state is off limits: the retry worker and the outbound dedupe
+    // both key off these, so a forged value would drop a real order from retry.
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.petpoojaStatus).toBe("pending_retry");
+    expect(doc.petpoojaSyncStatus).toBe("pending_retry");
+    // What the caller claimed is recorded separately, for visibility only.
+    expect(doc.petpoojaCallbackOrderId).toBe("PP-9005");
+  });
+
+  it("refuses an untrusted callback whose restID is not the order's branch", async () => {
+    savedDocs["branches/branch_t2"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_z"] = {
+      id: "ord_z",
+      branchId: "branch_t1",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook(
+      { order_id: "ord_z", restID: "31z58ciw0h", status: "Cancel" },
+      { authenticated: false }
+    );
+    expect(savedDocs["orders/ord_z"].status).toMatchObject({ code: "PENDING" });
+    expect(savedDocs["orders/ord_z"].petpoojaKitchenStatus).toBeUndefined();
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_z"]).toBeDefined();
+  });
+
+  it("does not promote a Reject to a synced state even when credentialed", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_reject"] = {
+      id: "ord_reject",
+      branchId: "branch_t1",
+      petpoojaStatus: "pending_retry",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook(
+      { order_id: "ord_reject", restID: "31z58ciw0h", orderID: "PP-9007", status: "Reject" }
+    );
+    const doc = savedDocs["orders/ord_reject"];
+    // The POS refused the KOT: no id, no "synced".
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.petpoojaStatus).toBe("pending_retry");
+  });
 });
