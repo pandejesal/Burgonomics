@@ -335,16 +335,25 @@ fields were written in the runtime's local zone (UTC) rather than IST;
 `dc_tax_percentage` / `pc_tax_percentage` claimed `"5"` where production sent
 `"0"`; `enable_delivery` was inverted; a `Discount` object was emitted although
 the contract defines only `discount_type` + `discount_total`; and
-`tax_inclusive` claimed `true` while the outlet's items say `false` and the
-totals add GST on top.
+`tax_inclusive` was declared inconsistently with the prices each builder actually
+sends. The sandbox runner computes GST *on top of* its item prices, so it
+declares `false`; the production relay sends the app's GST-inclusive
+`CartTotals.subtotal`, so it declares `true` (`6ef7807`).
 
 ### 14.2 Fabricated identifiers (fixed)
 
 Both the 5-scenario runner and the production relay derived item ids from the
 **integration guide's illustrative examples** (`101`, `201`, `301`, `302`)
-instead of the outlet's catalog. The partner app additionally wrote fabricated
-`PP-BRG-*` item ids that the server reads *first*, ahead of the real field. Item
-ids now come from the outlet's own menu push.
+instead of the outlet's catalog. Item ids now come from the outlet's own menu
+push.
+
+One related claim was checked and **not reproduced**: the partner app does not
+write fabricated `PP-*` ids into `products`. Those strings exist only in
+DEV-gated demo data (`useMenu.ts:26`, `ALLOW_SEED_CATALOG = import.meta.env.DEV`,
+and the mock branch of `petpoojaSync.ts`, which writes `menu/`, not `products`),
+and `useBranchMenu.ts:273` explicitly refuses to stamp a synthetic
+`petpoojaItemId` on combos. Partner-side `products` writes touch stock fields
+only (`useBranchMenu.ts:85`, `:219`).
 
 ### 14.3 Untruthful success paths (fixed)
 
