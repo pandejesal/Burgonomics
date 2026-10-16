@@ -373,3 +373,25 @@ doc id or invent one), so it was left as-is rather than re-plumbed blind — the
 is no linked outlet to validate a resolution-order change against. Resolve the
 doc/code disagreement before linking the first real outlet.
 
+### 14.5 Order-line field mismatch (fixed)
+
+`orders.items` is written as the app's `CartLine[]` (`ordersService.ts:391`,
+`OrderRepository.ts:178`). A `CartLine` carries `productId`, `unitPrice`, `veg`
+and an optional `meta` bag — but the relay read `petpoojaItemId` / `itemId` /
+`id`, `basePrice` / `price`, and `isVeg`. None of those exists on a CartLine, so
+every production KOT went out with no item id at all (`undefined` is dropped by
+`JSON.stringify`), price `0.00` on every line, `item_attribute:"1"` (veg) on
+non-veg items too, and addon price `0.00` (`CartModifier` uses `priceDelta`).
+
+The client's `mapProductDoc` (`menuService.ts:122`) is the deeper version of the
+same problem: the menu sync writes `petpoojaItemId` onto each `products` doc
+(`menuSyncWebhook.ts:204`) but the mapper drops it, so the id never survives into
+the app's `Product` model, let alone the cart or the order.
+
+Server side is fixed (`6ef7807`): `linePetpoojaItemId()` accepts an explicit
+`petpoojaItemId`, `meta.petpoojaItemId`, a legacy `itemId`/`id`, then the menu doc
+id `prod_<branchId>_<itemid>` stripped by exact prefix — never parsed loosely, and
+never invented. Prices now read `unitPrice`, the veg flag now reads `veg`, and
+addon prices read `priceDelta`. The mapper in `menuService.ts` is still worth
+fixing so the id is carried in the model rather than recovered from a doc id.
+
