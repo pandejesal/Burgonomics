@@ -78,18 +78,26 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // "unable to fetch Object from s3 bucket" whenever the outlet's menu file
     // has not been provisioned yet.
     //
-    // A FAILED push arrives in this same shape ({"success":"0","items":[]}), so
-    // `Array.isArray(items)` alone is not enough to accept one — a failed push
-    // then synced zero items and wrote a green COMPLETED row plus
-    // petpoojaItemCount: 0. handlePetpoojaMenuWebhook classifies the push body
-    // (throwIfVendorRefusal) BEFORE it can reach this branch, so a push the
-    // vendor REPORTED as failed never lands here.
+    // A FAILED push arrives in this same shape ({"success":"0","items":[...]}),
+    // so `Array.isArray(items)` alone is not enough to accept one — a failed
+    // push then synced its items and wrote a green COMPLETED row plus a branch
+    // stamp. This branch classifies ITS OWN input (throwIfVendorRefusal), rather
+    // than leaning on the caller: syncPetpoojaMenu is exported and takes
+    // `incomingMenu` as a parameter, so any other caller could otherwise hand it
+    // a body the vendor reported as failed and have it ingested.
     //
-    // That is not a provenance guarantee, and must not be described as one:
-    // classification needs a POSITIVE signal, so a body that omits `success`
-    // (rule 4) is still accepted here — its unexplained `message`, if any, is
-    // recorded in the sync log's `error` field instead (undocumentedVendorMessage),
-    // not silently reported as clean. See menuApiFailureReason.
+    // The `Array.isArray(items)` precondition just above is why that single check
+    // is the COMPLETE guard for the shapes that can reach here: a non-object or
+    // empty-object body (the "malformed" kind) has no `.items` array and is
+    // refused by the precondition itself, so only the vendor kind needs an
+    // explicit check.
+    //
+    // That acceptance is still not a provenance guarantee: classification needs a
+    // POSITIVE signal, so a body that omits `success` (rule 4) is accepted here —
+    // its unexplained `message`, if any, is recorded in the sync log's `error`
+    // field instead (undocumentedVendorMessage), not silently reported as clean.
+    // See menuApiFailureReason.
+    throwIfVendorRefusal(incomingMenu, restId);
     menuData = incomingMenu;
   } else if (config.mock.petpoojaPos) {
     menuData = {
@@ -206,11 +214,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
 
   // Every path that reaches here hands us a plain object: the live branch
   // refuses a non-object body via throwIfUnusableMenuBody (inside its snapshot
-  // try), the push branch is classified by its caller
-  // handlePetpoojaMenuWebhook — currently the ONLY caller that passes
-  // `incomingMenu`, so the classification is not enforced at this boundary
-  // itself — and the canned mock body is a literal. So this read can no longer
-  // throw an unclassified TypeError for a null/array response.
+  // try), the push branch classifies its own input via throwIfVendorRefusal and
+  // its `Array.isArray(items)` precondition refuses the malformed shapes, and the
+  // canned mock body is a literal. So this read can no longer throw an
+  // unclassified TypeError for a null/array response.
   const items = (menuData.items || []) as PetpoojaMenuItem[];
   const categories = menuData.categories || [];
 
@@ -578,7 +585,16 @@ function isFalsySuccessFlag(success: any): boolean {
  * A vendor-side lookup refusal (e.g. the outlet's menu file is not provisioned
  * yet) is transient: 400 would tell Petpooja "your request was malformed — do
  * not retry". Answer 503 so it retries. Genuine caller errors (missing rest_id)
- * and malformed bodies keep their 400.
+ * keep their 400.
+ *
+ * A MALFORMED body — one that parses but is unusable ({}, null, [], a scalar) —
+ * also stays 400, and that is DELIBERATE, not an oversight. It is a protocol
+ * fault, not a transient outage, so its severity stays high (see the live
+ * fetch's captureErrorSnapshot). The /petpooja/menu-sync route is
+ * operator-triggered from Petpooja's own dashboard, so there is no automatic
+ * retry for the status code to steer, and 400 reads as "this is broken" from
+ * either direction. Only an EXPLICIT vendor refusal (a present-and-falsy
+ * `success`/`status`) is marked retryable with 503.
  */
 export function menuSyncFailureStatus(err: any): number {
   return err?.vendorRefusal === true ? 503 : 400;

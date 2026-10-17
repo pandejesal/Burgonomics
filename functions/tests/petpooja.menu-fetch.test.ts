@@ -334,6 +334,23 @@ describe("Petpooja menu PUSH webhook — a push the vendor already reported as f
     expect(savedDocs["branches/branch_pp_refused"].lastPetpoojaSync).toBeUndefined();
     expect(savedDocs["branches/branch_pp_refused"].petpoojaItemCount).toBeUndefined();
   });
+
+  it("REFUSES a vendor-failed body handed STRAIGHT to the exported syncPetpoojaMenu, writing nothing", async () => {
+    // The webhook classifies a push before it calls syncPetpoojaMenu, but
+    // syncPetpoojaMenu is EXPORTED and takes `incomingMenu` as a parameter, so
+    // that guarantee cannot rest on the single caller: any other caller could
+    // hand it a body the vendor reported as failed. {"success":"0","items":[…]}
+    // passes the branch's own `Array.isArray(items)` precondition, so pre-fix
+    // this synced the item and wrote a green COMPLETED row plus a branch stamp.
+    await expect(
+      syncPetpoojaMenu("demo", undefined, { success: "0", items: [{ itemid: "x" }] })
+    ).rejects.toThrow(/refused the catalog lookup for outlet 31z58ciw0h/);
+
+    expect(productRows()).toEqual([]);
+    expect(syncLogRows()).toEqual([]);
+    expect(savedDocs["branches/demo"].lastPetpoojaSync).toBeUndefined();
+    expect(savedDocs["branches/demo"].petpoojaItemCount).toBeUndefined();
+  });
 });
 
 describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDING 1)", () => {
@@ -467,7 +484,13 @@ describe("menuSyncFailureStatus — the /petpooja/menu-sync 503-vs-400 mapping",
     ).toBe(400);
   });
 
-  it("answers 400 for a malformed-body error (the FINDING 3 split)", () => {
+  it("answers 400, not 503, for a body that PARSES but is unusable — deliberate", () => {
+    // DELIBERATE (pinned, so it is not quietly reverted): a malformed body is a
+    // protocol fault, not a transient vendor outage — severity stays high and the
+    // status stays 400. The /petpooja/menu-sync route is operator-triggered from
+    // Petpooja's own dashboard, so there is no automatic retry for the status code
+    // to steer, and 400 reads as "this is broken" from either direction. Only an
+    // EXPLICIT vendor refusal (a falsy success/status) is marked retryable 503.
     const err: any = new Error("Petpooja Menu API answered for outlet x with no menu object: response was an empty object");
     err.malformedMenuBody = true;
     expect(menuSyncFailureStatus(err)).toBe(400);
