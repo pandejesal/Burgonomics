@@ -99,6 +99,21 @@ Delivery menu for the store is empty.
    restID to both records: `stores/{storeId}.petpoojaRestId` and
    `branches/{branchId}.petpoojaStoreId`.
 2. Set Firestore `stores/{storeId}.partnerBranchId = "{branchId}"`.
+
+> **Do NOT "clean up" old `rest_*` / `str_*` values without reading this.**
+> `stores/{id}.petpoojaRestId` looks like a placeholder when it holds
+> `rest_<slug>`, but it is the **join key the Delivery menu resolves on**:
+> `burgonomics-foundation-core` `menuService.resolveRestId` reads it, falls back
+> to the store id only when it is EMPTY, then queries
+> `products.where("restId", "==", …)` — and the seeded products carry the
+> matching value. Blanking it falls back to the store id, matches nothing, and
+> **empties that store's menu in the customer app**. Test every store's menu
+> before and after such a change.
+> `branches/{id}.petpoojaStoreId` is the opposite case: it IS safe to null when
+> unlinked, because it is what the menu-sync scheduler and the KOT relay use as
+> the outlet restID — a placeholder there makes us call Petpooja with an outlet
+> code that maps to nothing (silent `created: 0` sync logs every run) instead of
+> failing closed. See `references/petpooja_save_order_api.md` §16.9.
 3. Add the same pair to Partner `utils/storeBranchRegistry.ts` with
    `verified: true` (covers historical orders lacking `branchId`).
 4. Run Partner menu sync for the branch (or wait for the hourly scheduler).
