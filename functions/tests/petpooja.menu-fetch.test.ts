@@ -92,6 +92,11 @@ import {
 // test would boot the whole app. (The barrel is owned by another change.)
 import { menuSyncFailureStatus } from "../src/modules/petpooja/menuSyncWebhook";
 import { config } from "../src/config/env";
+// Sanitized vendor-truth fixture derived from a real captured Push Menu body
+// (see the file's own header-less shape: no operator/personal fields, no
+// restaurants[].details beyond a placeholder sharing code). Loaded through the
+// real JSON module so the test reads exactly the bytes committed on disk.
+import petpoojaMenuPushSample from "./fixtures/petpooja-menupush-sample.json";
 
 const DEMO_REST_ID = "31z58ciw0h";
 
@@ -566,6 +571,111 @@ describe("Petpooja PUSH — the vendor's OWN field spellings (category join, des
       "https://cdn.example.com/items/img.png"
     );
     expect(savedDocs["products/prod_demo_noimg"].imageUrl).toBeNull();
+  });
+
+  it("(e) resolves a DUPLICATE categoryid to the FIRST entry's name (first-wins)", async () => {
+    // The top-level catalog is a join keyed by `categoryid`. When a payload
+    // repeats an id, the mapper used to `map.set(...)` unconditionally, so the
+    // LAST duplicate overwrote every earlier name. The first catalogued name is
+    // the one that must survive.
+    await handlePetpoojaMenuWebhook({
+      success: "1",
+      rest_id: "demo",
+      categories: [
+        { categoryid: "90750", categoryname: "Burgers" },
+        { categoryid: "90750", categoryname: "Burgers (later duplicate)" },
+      ],
+      items: [
+        {
+          itemid: "dupid",
+          itemname: "Duplicate Category Item",
+          item_categoryid: "90750",
+          price: "5",
+          in_stock: "2",
+        },
+      ],
+    });
+
+    const doc = savedDocs["products/prod_demo_dupid"];
+    expect(doc.categoryId).toBe("90750");
+    expect(doc.categoryName).toBe("Burgers"); // FIRST entry, not the duplicate
+  });
+
+  it("(f) normalises a NUMERIC item_categoryid to a string on the document", async () => {
+    // The vendor sends the id as a string today. If a number ever appears it
+    // must not be written into the doc as a number — String(...) wraps the whole
+    // resolution, and the catalog lookup normalises the same way so the join
+    // still resolves.
+    await handlePetpoojaMenuWebhook({
+      success: "1",
+      rest_id: "demo",
+      categories: [{ categoryid: "90750", categoryname: "Burgers" }],
+      items: [
+        {
+          itemid: "numcat",
+          itemname: "Numeric Category Item",
+          item_categoryid: 90750, // a NUMBER, not the string "90750"
+          price: "5",
+          in_stock: "2",
+        },
+      ],
+    });
+
+    const doc = savedDocs["products/prod_demo_numcat"];
+    expect(typeof doc.categoryId).toBe("string");
+    expect(doc.categoryId).toBe("90750");
+    expect(doc.categoryName).toBe("Burgers"); // the catalog join still resolves
+  });
+});
+
+describe("Petpooja menu PUSH — the sanitized vendor-truth fixture", () => {
+  // The alias work only matters if it runs against the REAL push shape. This
+  // fixture is derived from a captured 166-item Push Menu body with every
+  // operator/personal field dropped: no `restaurants[0].details` (it carries the
+  // owner id, contact number, city and sharing code), no phone/email/address,
+  // and only the placeholder sharing code. What is kept is the vendor's OWN key
+  // shapes — `item_categoryid` on the item joined to `categories[].categoryid`,
+  // `itemdescription`, `item_image_url` — so the mapping is asserted against
+  // vendor truth rather than against a hand-shaped test body.
+  let prevMock: boolean;
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    prevMock = config.mock.petpoojaPos;
+    // Mock mode resolves the push's branch from the sharing code in the fixture.
+    config.mock.petpoojaPos = true;
+  });
+
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+  });
+
+  it("maps categoryId/categoryName/description from the vendor's own keys, and null image", async () => {
+    const res = await handlePetpoojaMenuWebhook(petpoojaMenuPushSample);
+
+    expect(res).toEqual({ success: true, itemCount: 2 });
+
+    const doc = savedDocs["products/prod_SANITIZED_30674"];
+    // categoryId comes from the item's `item_categoryid`...
+    expect(doc.categoryId).toBe("90746");
+    expect(typeof doc.categoryId).toBe("string");
+    // ...and categoryName is the top-level catalog join on that id.
+    expect(doc.categoryName).toBe("Veg Tandoori Starters");
+    // description comes from `itemdescription` (non-empty on this real item).
+    expect(doc.description).toBe(
+      "[Veg preparation] Paneer cubes marinated with pickling spices, yoghurt, and herbs, grilled till lightly charred, delivering tangy flavours with a smoky finish, served hot with onion salad and mint dip."
+    );
+    // The real `item_image_url` is the empty string, so imageUrl is null.
+    expect(doc.imageUrl).toBeNull();
+
+    // The second item joins to the other catalog entry.
+    const doc2 = savedDocs["products/prod_SANITIZED_30661"];
+    expect(doc2.categoryId).toBe("90745");
+    expect(doc2.categoryName).toBe("Meal For 1");
+    expect(doc2.description).toBe(
+      "Shahi Paneer [300ml] With Boondi Raita [175ml] & Choice Of Breads"
+    );
+    expect(doc2.imageUrl).toBeNull();
   });
 });
 

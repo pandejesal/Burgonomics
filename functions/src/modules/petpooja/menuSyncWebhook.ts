@@ -18,8 +18,9 @@ export interface PetpoojaMenuItem {
   itemcategoryid: string;
   // The real push keys the item's category as `item_categoryid` and joins it to
   // the top-level `categories[].categoryid` for the NAME; `itemcategoryid` is
-  // the legacy spelling that was all the mapper read.
-  item_categoryid?: string;
+  // the legacy spelling that was all the mapper read. The vendor sends a string
+  // today, but a number is tolerated and normalised with `String(...)` on write.
+  item_categoryid?: string | number;
   in_stock: string | number | boolean;
   item_attributeid?: string; // 1 = Veg, 2 = NonVeg, 3 = Egg
   itemimageurl?: string;
@@ -41,6 +42,9 @@ export interface PetpoojaMenuItem {
  * carry entries that are not objects or miss either key. A malformed catalog
  * degrades to the item's own legacy `itemcategoryname` (then "Other") — it must
  * never throw, and it must never turn an id the payload DID carry into "Other".
+ *
+ * A repeated `categoryid` is FIRST-wins: the first catalogued name for an id is
+ * the one that survives, and later duplicates are ignored (see below).
  */
 function buildCategoryNameMap(categories: any): Map<string, string> {
   const names = new Map<string, string>();
@@ -53,7 +57,13 @@ function buildCategoryNameMap(categories: any): Map<string, string> {
     // An entry with no usable name cannot name anything — skip it so the item
     // falls through to the legacy name rather than to an empty string.
     if (typeof name !== "string" || name.trim() === "") continue;
-    names.set(String(id), name);
+    // FIRST-wins, NOT last-wins: the map is a join against the vendor's own
+    // catalog, so the first name catalogued for an id is the one that survives.
+    // A payload that repeats a `categoryid` previously let the LAST duplicate
+    // overwrite the earlier entries; the earliest entry now wins and later
+    // duplicates are ignored. The check is `!names.has(...)` (not `set` alone)
+    // so the choice is explicit rather than an overwrite side effect.
+    if (!names.has(String(id))) names.set(String(id), name);
   }
   return names;
 }
@@ -319,10 +329,17 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // `item_categoryid` / `itemdescription` / `item_image_url`; the mapper used
     // to read only `itemcategoryid` / `item_description` and so wrote every one
     // of the 166 captured docs as "uncategorized" / "Other" / "".
-    const categoryId = item.item_categoryid || item.itemcategoryid || "uncategorized";
+    // `String(...)` wraps the WHOLE resolution so a numeric `item_categoryid`
+    // (the vendor sends strings today, but a number would otherwise be written
+    // into the doc as a number) can never land on the document as a number. A
+    // string input is unchanged ("90750" stays "90750") and the "uncategorized"
+    // fallback stays.
+    const categoryId = String(item.item_categoryid || item.itemcategoryid || "uncategorized");
     // The NAME lives only in the top-level catalog, keyed by the id above. If
     // the id is absent from that map, fall back to the item's legacy name, then
     // "Other" — an id the catalog DID carry always resolves to its real name.
+    // The lookup normalises with the same String(...) so it stays consistent
+    // with the (now always string) id above.
     const categoryName =
       categoryNames.get(String(categoryId)) || item.itemcategoryname || "Other";
 

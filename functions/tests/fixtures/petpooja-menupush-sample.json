@@ -1,0 +1,62 @@
+{
+  "success": "1",
+  "message": "Menu items are successfully listed.",
+  "restaurants": [
+    {
+      "restaurantid": "0",
+      "details": {
+        "menusharingcode": "SANITIZED"
+      }
+    }
+  ],
+  "categories": [
+    {
+      "categoryid": "90746",
+      "categoryname": "Veg Tandoori Starters"
+    },
+    {
+      "categoryid": "90745",
+      "categoryname": "Meal For 1"
+    }
+  ],
+  "items": [
+    {
+      "itemid": "30674",
+      "itemname": "Paneer Achari Tikka [8 Pieces]",
+      "item_categoryid": "90746",
+      "itemdescription": "[Veg preparation] Paneer cubes marinated with pickling spices, yoghurt, and herbs, grilled till lightly charred, delivering tangy flavours with a smoky finish, served hot with onion salad and mint dip.",
+      "item_image_url": "",
+      "in_stock": "2",
+      "item_attributeid": "1",
+      "price": "310.00",
+      "active": "1",
+      "itemallowvariation": "0",
+      "item_tax": "3928,3929",
+      "tax_inclusive": false,
+      "gst_type": "services",
+      "is_combo": "0",
+      "item_ordertype": "1,2,3",
+      "addon": [],
+      "variation": []
+    },
+    {
+      "itemid": "30661",
+      "itemname": "Shahi Paneer + Boondi Raita + Choice Of Breads [1 Piece]",
+      "item_categoryid": "90745",
+      "itemdescription": "Shahi Paneer [300ml] With Boondi Raita [175ml] & Choice Of Breads",
+      "item_image_url": "",
+      "in_stock": "2",
+      "item_attributeid": "1",
+      "price": "229.00",
+      "active": "1",
+      "itemallowvariation": "0",
+      "item_tax": "3928,3929",
+      "tax_inclusive": false,
+      "gst_type": "services",
+      "is_combo": "0",
+      "item_ordertype": "1,2,3",
+      "addon": [],
+      "variation": []
+    }
+  ]
+}
