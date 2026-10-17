@@ -1,0 +1,371 @@
+{
+  "capturedAt": "2026-10-17T09:55:07.491Z",
+  "project": "burgonomics-7faa8",
+  "why": "Pre-change snapshot before nulling placeholder Petpooja identifiers and binding the DEMO outlet (5439 / 31z58ciw0h). Restore with firestore PATCH of the listed docs.",
+  "placeholderPattern": "/^(str_\\d+|rest_.*)$/",
+  "branches": [
+    {
+      "id": "amar-jawan-circle",
+      "name": "Amar Jawan Circle",
+      "active": true,
+      "petpoojaStoreId": "str_006",
+      "petpoojaRestId": "rest_nikol",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "cbd-mall",
+      "name": "CBD Mall",
+      "active": false,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_cbd-mall",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "containers-park",
+      "name": "Container's Park",
+      "active": true,
+      "petpoojaStoreId": "str_011",
+      "petpoojaRestId": "rest_containers_park",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "food-valley",
+      "name": "Food Valley",
+      "active": true,
+      "petpoojaStoreId": "str_014",
+      "petpoojaRestId": "rest_food_valley",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "ganesh-glory",
+      "name": "Ganesh Glory",
+      "active": true,
+      "petpoojaStoreId": "str_005",
+      "petpoojaRestId": "rest_gota",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "ghodasar",
+      "name": "Ghodasar",
+      "active": true,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_ghodasar",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "gor-dhod-road",
+      "name": "Gor Dhod Road",
+      "active": false,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_gor-dhod-road",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "hl-road",
+      "name": "HL Road",
+      "active": true,
+      "petpoojaStoreId": "str_001",
+      "petpoojaRestId": "rest_navrangpura",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "karnavati-university",
+      "name": "Karnavati University",
+      "active": true,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_karnavati-university",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "mansi-circle",
+      "name": "Mansi Circle",
+      "active": true,
+      "petpoojaStoreId": "str_003",
+      "petpoojaRestId": "rest_mansi_circle",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "motera",
+      "name": "Motera",
+      "active": true,
+      "petpoojaStoreId": "str_007",
+      "petpoojaRestId": "rest_motera",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "narayanpura",
+      "name": "Narayanpura",
+      "active": true,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_narayanpura",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "nehru-nagar",
+      "name": "Nehru Nagar",
+      "active": true,
+      "petpoojaStoreId": "str_002",
+      "petpoojaRestId": "rest_nehrunagar",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "new-ranip",
+      "name": "New Ranip",
+      "active": false,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_new-ranip",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "nizampura",
+      "name": "Nizampura",
+      "active": true,
+      "petpoojaStoreId": "str_009",
+      "petpoojaRestId": "rest_nizampura",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "pal-road",
+      "name": "Pal Road",
+      "active": true,
+      "petpoojaStoreId": "str_012",
+      "petpoojaRestId": "rest_pal_road",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "patan",
+      "name": "Patan",
+      "active": false,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_patan",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "pune",
+      "name": "Pune",
+      "active": false,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_pune",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "sabri-food-court",
+      "name": "Sabri Food Court",
+      "active": true,
+      "petpoojaStoreId": "str_016",
+      "petpoojaRestId": "rest_ayodhya",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "science-city",
+      "name": "Science City",
+      "active": true,
+      "petpoojaStoreId": "str_004",
+      "petpoojaRestId": "rest_science_city",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "sobo",
+      "name": "SOBO",
+      "active": true,
+      "petpoojaStoreId": "str_008",
+      "petpoojaRestId": "rest_sobo",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "urban-chowk",
+      "name": "Urban Chowk",
+      "active": true,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_urban-chowk",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "vallabh-vidhyanagar",
+      "name": "Vallabh Vidhyanagar",
+      "active": false,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_vallabh-vidhyanagar",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "vr-mall",
+      "name": "VR Mall",
+      "active": true,
+      "petpoojaStoreId": null,
+      "petpoojaRestId": "rest_vr-mall",
+      "petpoojaStoreIdIsPlaceholder": false,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "westbank",
+      "name": "WestBank",
+      "active": true,
+      "petpoojaStoreId": "str_013",
+      "petpoojaRestId": "rest_raiya_road",
+      "petpoojaStoreIdIsPlaceholder": true,
+      "petpoojaRestIdIsPlaceholder": true
+    }
+  ],
+  "stores": [
+    {
+      "id": "str_001",
+      "name": "Burgonomics Navrangpura",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_navrangpura",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_002",
+      "name": "Burgonomics Nehrunagar",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_nehrunagar",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_003",
+      "name": "Burgonomics Mansi Circle",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_mansi_circle",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_004",
+      "name": "Burgonomics Science City",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_science_city",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_005",
+      "name": "Burgonomics Gota",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_gota",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_006",
+      "name": "Burgonomics Nikol",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_nikol",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_007",
+      "name": "Burgonomics Motera",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_motera",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_008",
+      "name": "Burgonomics SOBO",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_sobo",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_009",
+      "name": "Burgonomics Nizampura",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_nizampura",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_010",
+      "name": "Burgonomics Akshar Chowk",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_akshar_chowk",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_011",
+      "name": "Burgonomics Containers Park",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_containers_park",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_012",
+      "name": "Burgonomics Pal Road",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_pal_road",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_013",
+      "name": "Burgonomics Raiya Road",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_raiya_road",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_014",
+      "name": "Burgonomics Food Valley",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_food_valley",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_015",
+      "name": "Burgonomics Kota",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_kota",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    },
+    {
+      "id": "str_016",
+      "name": "Burgonomics Ayodhya",
+      "status": "OPEN",
+      "petpoojaRestId": "rest_ayodhya",
+      "partnerBranchId": null,
+      "petpoojaRestIdIsPlaceholder": true
+    }
+  ],
+  "summary": {
+    "branches": 25,
+    "branchesWithPlaceholderStoreId": 14,
+    "branchesWithPlaceholderRestId": 25,
+    "stores": 16,
+    "storesWithPlaceholderRestId": 16,
+    "storesWithPartnerBranchId": 0
+  }
+}

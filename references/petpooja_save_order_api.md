@@ -736,5 +736,57 @@ pairs each evidence row with its Order List row. No order-listing route exists o
 either host (§16.2), so the dashboard Order List is the only fulfilment oracle and
 the pairing is manual, by `clientOrderID` + total.
 
-Gates: build clean; `494 passed / 2 skipped / 0 failed`.
+### 16.9 DEMO outlet linked; placeholder Petpooja identifiers cleared (2026-10-17)
+
+The demo outlet is now bound, so the menu push resolves and the relay can be
+exercised end to end. Writes went through Firestore REST (service-account auth),
+dry-run first. Pre-change snapshot:
+`scripts/petpooja-placeholder-backup-2026-10-17.json`; what was written:
+`scripts/petpooja-demo-linkage-applied.json`.
+
+- **`branches/demo`** — `petpoojaStoreId: "31z58ciw0h"` (the outlet's real menu
+  sharing code, restaurant 5439), `petpoojaRestId` mirrored, `active: true`,
+  Ahmedabad coordinates, `isDemoOutlet: true`.
+- **`stores/demo`** — `petpoojaRestId: "31z58ciw0h"`, `partnerBranchId: "demo"`,
+  plus `hours`, `supports.{delivery,takeaway,dineIn} === true`, `pricing` and
+  finite lat/lng. Each of those is required for `mapStoreDoc` to render the store
+  rather than drop it.
+- **`storeBranchRegistry.ts`** — the registry's first (and only) `verified: true`
+  link, `demo → demo`. Every other outlet stays unmapped.
+- **14 branches** — `petpoojaStoreId: "str_001"…"str_016"` → `null`.
+
+**What was deliberately NOT cleared, and why the cleanup plan was wrong about
+it.** `stores/*.petpoojaRestId` (`rest_<slug>` on all 16) *looks* like the same
+class of placeholder but is load-bearing:
+`burgonomics-foundation-core/src/features/menu/services/menuService.ts` resolves
+a store's product scope from it (`resolveRestId`, falling back to the store id
+only when empty) and then queries `products.where("restId", "==", …)`. The seeded
+products carry the matching value (`hl-road | rest_navrangpura`, 56 docs each).
+Nulling it would have fallen back to `str_001` and **emptied all 16 delivery
+menus** — a self-inflicted outage dressed up as cleanup. `branches/*.petpoojaRestId`
+(`rest_<slug>` on all 25) is genuinely read by nothing — grepped across
+`functions/`, `burgonomics-partner/` and `burgonomics-foundation-core/` — so it is
+left alone rather than churned.
+
+**Effect of the cleanup.** The menu scheduler fans out one Petpooja call per
+`active` branch, using `petpoojaStoreId` as the restID. Previously 14 of those
+used `str_001`-style values that map to no outlet (silent `created: 0` rows) and
+11 threw for a missing binding. Now every unlinked branch fails closed with the
+exact reason, and exactly one call — the demo outlet — can succeed.
+
+**Expected next behaviour, read off the code path rather than hoped for:**
+
+- A Petpooja **menu push** for 5439 now resolves to `demo` and ingests the
+  catalogue straight from the push payload (`incomingMenu.items`), which the code
+  deliberately does *not* re-fetch — re-fetching hits the Menu API's S3 lookup,
+  the source of "unable to fetch Object from s3 bucket".
+- The **scheduled** sync (no push payload) will still hit that S3 lookup for the
+  demo outlet until Petpooja provisions the outlet's menu file. Vendor-side state,
+  not a defect here.
+- **KOT pushes** can now satisfy `order.branchId = "demo"` →
+  `branches/demo.petpoojaStoreId`, so a real order can be relayed and the inbound
+  callback path (§16.8) exercised.
+
+Gates: functions build clean, `494 passed / 2 skipped / 0 failed`; partner
+`tsc --noEmit` clean and `vite build` clean.
 
