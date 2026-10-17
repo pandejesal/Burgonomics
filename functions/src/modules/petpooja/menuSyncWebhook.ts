@@ -77,6 +77,13 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // Re-fetching would hit the Menu API's S3 lookup, which fails with
     // "unable to fetch Object from s3 bucket" whenever the outlet's menu file
     // has not been provisioned yet.
+    //
+    // A FAILED push arrives in this same shape ({"success":"0","items":[]}), so
+    // `Array.isArray(items)` alone is not enough to accept one — a failed push
+    // then synced zero items and wrote a green COMPLETED row plus
+    // petpoojaItemCount: 0. handlePetpoojaMenuWebhook classifies the push body
+    // (throwIfVendorRefusal) BEFORE it can reach this branch, so this branch only
+    // ever ingests a catalog whose own body vouched for it.
     menuData = incomingMenu;
   } else if (config.mock.petpoojaPos) {
     menuData = {
@@ -157,20 +164,28 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
         throw new Error(`Petpooja Menu API responded with HTTP ${response.status}`);
       }
 
-      menuData = await response.json();
+      const parsed: any = await response.json();
 
       // A 200 whose body reports the vendor's OWN failure is still a failure.
       // See menuApiFailureReason: unchecked, a failed lookup synced zero items
       // and then logged COMPLETED/error:null — an outage that looked healthy.
-      // Throwing here routes it through the captureErrorSnapshot below.
-      const refusal = menuApiFailureReason(menuData, restId);
-      if (refusal) {
-        throw new Error(refusal);
-      }
+      // This call is also the shape guard: rules 1-2 refuse a null / array /
+      // empty-object body BEFORE anything reads `.items`, which used to throw an
+      // unclassified TypeError outside any named failure. Both failures happen
+      // inside this try, so they route through the captureErrorSnapshot below.
+      throwIfVendorRefusal(parsed, restId);
+      menuData = parsed;
     } catch (err: any) {
       await captureErrorSnapshot({
         source: "petpooja",
-        severity: "high",
+        // The vendor's own refusal (e.g. an outlet whose menu file is not
+        // provisioned yet) is expected and usually self-healing. The menu
+        // scheduler ticks HOURLY, so a 'high' severity paged on-call every hour
+        // for one un-provisioned outlet. Genuinely unexpected failures (network
+        // error, timeout, non-2xx HTTP, unparseable JSON) stay 'high'. The
+        // marker property, not the message text, is what distinguishes them —
+        // message string-matching would break on any vendor copy change.
+        severity: err?.vendorRefusal === true ? "medium" : "high",
         message: `Failed to fetch Petpooja menu for branch ${branchId}: ${err.message}`,
         errorStack: err.stack,
         branchId,
@@ -179,6 +194,11 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     }
   }
 
+  // Every path that reaches here hands us a plain object: the live branch
+  // refuses a non-object body via menuApiFailureReason (inside its snapshot
+  // try), the push branch is classified by handlePetpoojaMenuWebhook, and the
+  // canned mock body is a literal. So this read can no longer throw an
+  // unclassified TypeError for a null/array response.
   const items = (menuData.items || []) as PetpoojaMenuItem[];
   const categories = menuData.categories || [];
 
@@ -369,9 +389,12 @@ export function extractMenuRestId(payload: any): string | null {
     if (code) return String(code);
   }
   // Last resort: the numeric Petpooja restaurant id (e.g. "5439"). It is a
-  // weaker join key than the sharing code but still better than dropping the
-  // push — resolveBranchIdForRestId matches on petpoojaStoreId, and ops links
-  // outlets with the sharing code, so this only fires once linked.
+  // weaker join key than the sharing code — and as wired it CANNOT resolve to a
+  // branch: resolveBranchIdForRestId (item86ingSync.ts) matches
+  // where("petpoojaStoreId", "==", restId) EXACTLY, and ops links outlets with
+  // the alphanumeric sharing code (e.g. "31z58ciw0h"), so a numeric
+  // restaurantid never matches. Kept (rather than dropped) so the caller can log
+  // the unlinked outlet loudly and stage it, instead of the push vanishing.
   for (const r of restaurants) {
     if (r?.restaurantid) return String(r.restaurantid);
   }
@@ -395,29 +418,81 @@ export function extractMenuRestId(payload: any): string | null {
  * tombstone pass is separately guarded by `items.length > 0`, so this case never
  * retired anything. The harm is purely that a failure was reported as a success.
  *
- * Deliberately conservative: only an explicitly falsy `success`, or a prose
- * response carrying no `items` array at all, counts as a failure. A genuinely
- * empty catalog (`{"success":"1","items":[]}`) still syncs.
+ * A failure must carry a POSITIVE signal — it is never inferred from the ABSENCE
+ * of a key. (An earlier revision also refused any body with no `success` key, no
+ * top-level `items` array, and a non-empty `message`; that discarded legitimate
+ * success bodies — an outage of our own making.) The rules:
+ *   1. not a plain object (null / undefined / array / scalar) -> failure
+ *      ("response was not a menu object")
+ *   2. a plain object with ZERO own keys                      -> failure
+ *      ("response was an empty object")
+ *   3. `success` present and FALSY (false, 0, "", or a string that trims and
+ *      lowercases to "0" / "false")                           -> failure
+ *   4. otherwise                                              -> null (accept)
+ * Every captured vendor body (the push success body, the S3 failure body,
+ * save_order, update_order_status) carries a `success` key, so success-based
+ * detection covers every observed shape.
  */
 export function menuApiFailureReason(menuData: any, restId: string): string | null {
-  const body = menuData || {};
-  const success = body.success;
+  // Rule 1: only a plain object can be a menu body. A null / array / scalar
+  // body previously reached `menuData.items` and threw an unclassified
+  // TypeError instead of a named failure.
+  if (menuData === null || menuData === undefined || typeof menuData !== "object" || Array.isArray(menuData)) {
+    return `Petpooja Menu API answered for outlet ${restId} with no menu object: response was not a menu object`;
+  }
+  const body = menuData as Record<string, any>;
 
-  const explicitlyRefused =
-    success === false || success === 0 || String(success) === "0";
-  const proseWithoutCatalog =
-    success === undefined &&
-    !Array.isArray(body.items) &&
-    typeof body.message === "string" &&
-    body.message.length > 0;
+  // Rule 2: an object with no own keys carries neither a signal nor a catalog.
+  if (Object.keys(body).length === 0) {
+    return `Petpooja Menu API answered for outlet ${restId} with no menu object: response was an empty object`;
+  }
 
-  if (!explicitlyRefused && !proseWithoutCatalog) return null;
+  // Rule 3: an explicitly falsy `success` is the vendor reporting its OWN
+  // failure. An absent key, or any truthy value (true, 1, "1", "true"), is NOT
+  // a failure — see rule 4.
+  if (Object.prototype.hasOwnProperty.call(body, "success") && isFalsySuccessFlag(body.success)) {
+    const vendor =
+      typeof body.message === "string" && body.message.length > 0
+        ? body.message
+        : `success=${JSON.stringify(body.success)}`;
+    return `Petpooja Menu API refused the catalog lookup for outlet ${restId}: ${vendor}`;
+  }
 
-  const vendor =
-    typeof body.message === "string" && body.message.length > 0
-      ? body.message
-      : `success=${JSON.stringify(success)}`;
-  return `Petpooja Menu API refused the catalog lookup for outlet ${restId}: ${vendor}`;
+  // Rule 4: accept — including a genuinely empty catalog ({"success":"1",
+  // "items":[]}) and a body that simply omits `success`.
+  return null;
+}
+
+/**
+ * Falsy `success` flag: false, numeric 0, "", or a string that trims and
+ * lowercases to "0" / "false". Anything else (absent, null, 1, "1", "true",
+ * arbitrary non-empty string) is NOT a failure signal.
+ */
+function isFalsySuccessFlag(success: any): boolean {
+  if (success === false || success === 0 || success === "") return true;
+  if (typeof success === "string") {
+    const normalized = success.trim().toLowerCase();
+    return normalized === "0" || normalized === "false";
+  }
+  return false;
+}
+
+/**
+ * Throws a vendor-refusal-MARKED error when a menu body reports the vendor's
+ * own failure; returns void otherwise.
+ *
+ * The marker property (`vendorRefusal`) — not the message text — is what the
+ * live fetch's captureErrorSnapshot (down to `medium` so an hourly scheduler
+ * does not page on-call) and the `/petpooja/menu-sync` route (503, "retry",
+ * rather than 400, "your request was malformed") branch on. Message
+ * string-matching would break on any vendor copy change.
+ */
+function throwIfVendorRefusal(menuData: any, restId: string): void {
+  const refusal = menuApiFailureReason(menuData, restId);
+  if (!refusal) return;
+  const err = new Error(refusal) as Error & { vendorRefusal: true };
+  err.vendorRefusal = true;
+  throw err;
 }
 
 /**
@@ -429,6 +504,17 @@ export async function handlePetpoojaMenuWebhook(payload: any): Promise<{
 }> {
   const p = payload || {};
   const restId = extractMenuRestId(p);
+
+  // A menu PUSH carries the vendor's OWN success flag, and a FAILED push arrives
+  // in the SAME shape as a good one — {"success":"0","items":[]}. Accepting on
+  // `Array.isArray(incomingMenu.items)` alone therefore reported
+  // {"success":true,"itemCount":0} for a push the vendor had already told us
+  // failed, and wrote a green COMPLETED / created:0 row plus
+  // petpoojaItemCount: 0. Classify BEFORE the rest_id requirement, so a failed
+  // push is named as a vendor refusal (and answered 503, "retry") rather than as
+  // a malformed request.
+  throwIfVendorRefusal(p, restId || "(unidentified outlet)");
+
   if (!restId) {
     throw new Error("Missing rest_id in Petpooja menu webhook payload");
   }

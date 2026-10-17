@@ -583,7 +583,13 @@ app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
       restId: extractMenuRestId(p),
       detail: err?.message,
     });
-    res.status(400).json({ error: err.message || "Menu webhook failed" });
+    // A vendor-side lookup refusal (e.g. the outlet's menu file is not
+    // provisioned yet) is transient: 400 would tell Petpooja "your request was
+    // malformed — do not retry". Answer 503 so it retries. Genuine caller errors
+    // (missing rest_id, malformed body) keep their 400. The marker property is
+    // set by throwIfVendorRefusal in the menu-sync module.
+    const status = err?.vendorRefusal === true ? 503 : 400;
+    res.status(status).json({ error: err.message || "Menu webhook failed" });
   }
 });
 
