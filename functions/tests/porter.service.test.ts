@@ -108,6 +108,7 @@ import {
   normalizePorterEvent,
   bookPorterRider,
   rebookPorterRider,
+  resolveDropAddress,
   resolvePickupContactPhone,
   cancelPorterBooking,
   handlePorterWebhook,
@@ -546,6 +547,40 @@ describe("Porter Logistics Service", () => {
       expect(resolvePickupContactPhone(undefined)).toBeUndefined();
       // The old live payload ended this chain in a hardcoded stranger's number.
       expect(resolvePickupContactPhone({})).not.toBe("+919876543210");
+    });
+
+    it("never invents a locality for the delivery address (finding 6 class, drop side)", () => {
+      // A real order carries the required OrderAddressSnapshot locality fields.
+      expect(
+        resolveDropAddress({
+          house: "102",
+          full: "102, Shivalik Highstreet, Vastrapur",
+          city: "Surat",
+          state: "Gujarat",
+          pincode: "395007",
+        })
+      ).toEqual({
+        house: "102",
+        street: "102, Shivalik Highstreet, Vastrapur",
+        city: "Surat",
+        state: "Gujarat",
+        pincode: "395007",
+      });
+
+      // Absent locality stays EMPTY: the old payload labelled a drop pin in any
+      // city as "Ahmedabad"/"Gujarat"/"380015" and shipped the wrong locality to
+      // the provider. The real lat/lng pin still carries the position.
+      const bare = resolveDropAddress({ full: "Some street" });
+      expect(bare.street).toBe("Some street");
+      expect(bare.house).toBe("");
+      expect(bare.city).toBe("");
+      expect(bare.state).toBe("");
+      expect(bare.pincode).toBe("");
+
+      // The "Customer Delivery Address" placeholder is gone too.
+      expect(resolveDropAddress(undefined).street).toBe("");
+      expect(Object.values(resolveDropAddress(undefined))).not.toContain("Ahmedabad");
+      expect(Object.values(resolveDropAddress(undefined))).not.toContain("380015");
     });
 
     it("rebook is refused when the order is not rebookable", async () => {

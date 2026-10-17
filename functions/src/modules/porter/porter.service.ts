@@ -229,6 +229,32 @@ export function resolvePickupContactPhone(
   return o.store?.phone || o.branchPhone || undefined;
 }
 
+/**
+ * The delivery address shipped in the Porter payload, taken from the order's real
+ * address snapshot only. `OrderAddressSnapshot.city/state/pincode` are REQUIRED
+ * client fields, so a real order always carries them — the old inline defaults
+ * (Ahmedabad / Gujarat / 380015) invented a locality, so a drop pin in another
+ * city was labelled Ahmedabad on a live booking (audit 2026-10-17, finding 6
+ * class, drop side). An absent field stays empty; the real lat/lng pin still
+ * carries the position.
+ */
+export function resolveDropAddress(drop: Record<string, any> | undefined): {
+  house: string;
+  street: string;
+  city: string;
+  state: string;
+  pincode: string;
+} {
+  const d = drop || {};
+  return {
+    house: d.house || d.flat || d.line1 || "",
+    street: d.street || d.full || d.line2 || d.landmark || "",
+    city: d.city || "",
+    state: d.state || "",
+    pincode: d.pincode || "",
+  };
+}
+
 function storedDispatchSummary(d: any): any {
   return {
     porterOrderId: d.porterOrderId,
@@ -418,6 +444,7 @@ export async function bookPorterRider(
         "Branch phone number is missing — add it to the branch profile, then retry dispatch."
       );
     }
+    const dropAddress = resolveDropAddress(drop);
     try {
       const payload = {
         request_id: `REQ-${orderId}`,
@@ -445,16 +472,11 @@ export async function bookPorterRider(
         },
         drop_details: {
           address: {
-            apartment_address: drop?.house || drop?.flat || drop?.line1 || "",
-            street_address1:
-              drop?.street ||
-              drop?.full ||
-              drop?.line2 ||
-              drop?.landmark ||
-              "Customer Delivery Address",
-            city: drop?.city || "Ahmedabad",
-            state: drop?.state || "Gujarat",
-            pincode: drop?.pincode || "380015",
+            apartment_address: dropAddress.house,
+            street_address1: dropAddress.street,
+            city: dropAddress.city,
+            state: dropAddress.state,
+            pincode: dropAddress.pincode,
             country: "India",
             lat: dropLat,
             lng: dropLng,
