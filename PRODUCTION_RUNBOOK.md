@@ -30,6 +30,18 @@ to `firebase.json`, add a row to this table.
 > `firebase functions:config` is dead on this runtime and unbound Secret Manager
 > secrets are unread — keys set through either mechanism NEVER reach the code and
 > production silently runs in mock mode. Copy `functions/.env.example` → `functions/.env`.
+>
+> **Deploying from a checkout that lacks `functions/.env` reproduces this
+> silently.** `.env` is gitignored, so a fresh clone, a CI runner or a
+> `git worktree` has NO env file: the deploy packages 0 variables and the
+> functions either fall back to mock mode or — per `assertProductionKeys` —
+> refuse to boot. If you deploy from anywhere other than this working tree,
+> copy `functions/.env` across FIRST and prove it landed; `firebase deploy`
+> prints `Loaded environment variables from functions\.env` when it did.
+> Second trap, same class: the CLI's source-analysis step must load the whole
+> bundle within 10 s. A cold cache (fresh worktree, first run) takes ~30 s and
+> fails with "User code failed to load. Cannot determine backend specification.
+> Timeout after 10000" — warm the cache and re-run before suspecting the code.
 
 | Variable | From | Format | Used by |
 |---|---|---|---|

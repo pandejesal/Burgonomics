@@ -790,3 +790,31 @@ exact reason, and exactly one call — the demo outlet — can succeed.
 Gates: functions build clean, `494 passed / 2 skipped / 0 failed`; partner
 `tsc --noEmit` clean and `vite build` clean.
 
+**Deployed 2026-10-17.** `api`, `hourlyPetpoojaMenuSync` and `retryPetpoojaOrders`
+were updated to the committed HEAD build — the three functions the Petpooja fixes
+reach (`api` carries the routes; the other two are the schedulers). The payment
+webhook is a route *inside* `api`, so this shipped all committed route code, but
+NOT the two uncommitted `functions/src/modules/payments/*` files another session
+holds in flight. That separation was achieved by building and deploying from a
+clean `git worktree` at HEAD, then proven by hash: the worktree's
+`payments/webhookHandler.ts` equalled HEAD-in-git (`41A3371…`) and differed from
+the dirty working-tree copy (`2C1475F…`).
+
+Two traps the deploy exposed, both now written up in Runbook §2a:
+
+- the worktree had **no `functions/.env`** (gitignored, so absent from any
+  checkout). Deploying as-is would have shipped zero environment variables, and
+  `assertProductionKeys` refuses to boot in production on mock keys — an outage,
+  not a degrade. The file was copied across first and confirmed byte-identical
+  by SHA256, and the deploy logged `Loaded environment variables from
+  functions\.env`.
+- the first attempt failed on the CLI's 10 s source-analysis timeout. Cold cache:
+  the bundle took 29 s to load, then 2.6 s once warm. The code was fine.
+
+Deploy verification here is **by provenance, not by behaviour**: clean tree →
+`tsc` → bundles grepped for `petpoojaAcceptedNoId` and the outlet-naming reason →
+`Successful update operation` for all three from the deploy API. No behavioural
+fingerprint is available to an unauthenticated caller, because every route that
+would prove it is auth-gated (`/petpooja/menu-sync`, `/petpooja/pushOrder`), and
+the vendor credential was not used to forge one. The first real proof is an order.
+
