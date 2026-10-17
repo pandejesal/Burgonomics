@@ -87,6 +87,10 @@ import {
   handlePetpoojaMenuWebhook,
   menuApiFailureReason,
 } from "../src/modules/petpooja";
+// Imported directly rather than through the petpooja barrel: this helper backs
+// the /petpooja/menu-sync 503-vs-400 mapping, and importing src/index.ts in a
+// test would boot the whole app. (The barrel is owned by another change.)
+import { menuSyncFailureStatus } from "../src/modules/petpooja/menuSyncWebhook";
 import { config } from "../src/config/env";
 
 const DEMO_REST_ID = "31z58ciw0h";
@@ -121,6 +125,8 @@ const REAL_PUSH_BODY = {
 
 const syncLogRows = () =>
   Object.keys(savedDocs).filter((k) => k.startsWith("petpooja_sync_logs/"));
+
+const productRows = () => Object.keys(savedDocs).filter((k) => k.startsWith("products/"));
 
 const snapshotRows = () =>
   Object.keys(savedDocs).filter((k) => k.startsWith("dev_error_snapshots/"));
@@ -223,6 +229,61 @@ describe("Petpooja Menu API — a 200 that reports the vendor's own failure", ()
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] });
     await expect(syncPetpoojaMenu("demo")).rejects.toThrow(/response was not a menu object/);
   });
+
+  it("classifies a MALFORMED body as unexpected, not as a vendor refusal", async () => {
+    // FINDING 3: `{}` / null / [] used to take the same `vendorRefusal` marker as
+    // a falsy `success`, so the route answered 503 ("retry") where it had always
+    // answered 400. The marker must now say malformed and the severity must stay
+    // high (a broken body is not a transient vendor outage).
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    const caught = await syncPetpoojaMenu("demo").catch((e) => e);
+
+    expect(caught.vendorRefusal).toBeUndefined();
+    expect(caught.malformedMenuBody).toBe(true);
+    expect(caught.message).toContain("response was an empty object");
+    expect(menuSyncFailureStatus(caught)).toBe(400);
+
+    const rows = snapshotRows();
+    expect(rows.length).toBe(1);
+    expect(savedDocs[rows[0]].severity).toBe("high");
+  });
+
+  it("FLAGS a prose-only failure body in the log's error field instead of reporting a clean sync", async () => {
+    // FINDING 4c: {"message":"unable to fetch Object from s3 bucket"} carries no
+    // `success` key at all, so it is accepted (refusing it risks discarding a
+    // legitimate body that nests its catalogue under `restaurants`) — but it must
+    // not be written as COMPLETED / error: null, which hides the vendor failure.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ message: "unable to fetch Object from s3 bucket" }),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(syncPetpoojaMenu("demo")).resolves.toBeDefined();
+
+    const rows = syncLogRows();
+    expect(rows.length).toBe(1);
+    expect(savedDocs[rows[0]].error).toBe("unable to fetch Object from s3 bucket");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("still records error: null for a genuinely empty catalogue", async () => {
+    // The other half of FINDING 4c: {"success":"1","items":[]} is an honest empty
+    // menu, so the `error` field must stay null.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: "1", items: [], categories: [] }),
+    });
+
+    await syncPetpoojaMenu("demo");
+
+    const rows = syncLogRows();
+    expect(rows.length).toBe(1);
+    expect(savedDocs[rows[0]].error).toBeNull();
+  });
 });
 
 describe("Petpooja menu PUSH webhook — a push the vendor already reported as failed", () => {
@@ -275,6 +336,42 @@ describe("Petpooja menu PUSH webhook — a push the vendor already reported as f
   });
 });
 
+describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDING 1)", () => {
+  let prevMock: boolean;
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    prevMock = config.mock.petpoojaPos;
+    config.mock.petpoojaPos = false; // the real push path, not the mock short-circuit
+    savedDocs["branches/demo"] = { petpoojaStoreId: DEMO_REST_ID };
+  });
+
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+  });
+
+  it("accepts the real push body end to end and takes the 'no linked branch' skip", async () => {
+    // The classifier does NOT refuse a body whose own success flag is truthy —
+    // this is the acceptance path AROUND the new refusal, composed end to end.
+    expect(menuApiFailureReason(REAL_PUSH_BODY, DEMO_REST_ID)).toBeNull();
+
+    // In live mode the handler resolves the outlet through
+    // resolveBranchIdForRestId, which runs an INDEXED query
+    // (branches.where("petpoojaStoreId", "==", restId)); this test's Firestore
+    // double exposes no `.where`, so the resolver returns null (item86ingSync.ts)
+    // and the handler takes the section 16.7 "no linked branch" skip. Calling it
+    // would have thrown had the classifier refused the body.
+    const res = await handlePetpoojaMenuWebhook(REAL_PUSH_BODY);
+
+    expect(res).toEqual({ success: false, itemCount: 0 });
+    // A skipped push writes nothing at all: no products, no green sync-log row,
+    // no branch stamp.
+    expect(productRows()).toEqual([]);
+    expect(syncLogRows()).toEqual([]);
+    expect(savedDocs["branches/demo"].lastPetpoojaSync).toBeUndefined();
+  });
+});
+
 describe("menuApiFailureReason — the decision itself", () => {
   it("requires a POSITIVE failure signal: an explicit falsy success", () => {
     expect(
@@ -313,5 +410,66 @@ describe("menuApiFailureReason — the decision itself", () => {
     expect(menuApiFailureReason({ success: "1", items: [{ itemid: "1" }] }, "x")).toBeNull();
     expect(menuApiFailureReason({ items: [{ itemid: "1" }] }, "x")).toBeNull();
     expect(menuApiFailureReason(REAL_PUSH_BODY, "x")).toBeNull();
+  });
+
+  it("treats a JSON null / undefined success as a falsy failure signal (FINDING 4a)", () => {
+    // The doc comment calls rule 3 "FALSY", but the narrow string/number set
+    // omitted JSON `null` — so {"success":null} synced as a clean success.
+    expect(menuApiFailureReason({ success: null }, "x")).toContain("refused");
+    // A JS-object caller (not JSON) can produce `undefined`; the same rule must
+    // cover it because the key is PRESENT.
+    expect(menuApiFailureReason({ success: undefined }, "x")).toContain("refused");
+  });
+
+  it("treats a falsy `status` as a failure, but only when `success` is absent (FINDING 4b)", () => {
+    // This module's own canned body and the repo's probe scripts use
+    // status:"success" as the success key, so `status` is a real alternate
+    // signal. A falsy status ("0") previously synced green.
+    expect(menuApiFailureReason({ status: "0" }, "x")).toContain("refused");
+    expect(menuApiFailureReason({ status: 0 }, "x")).toContain("refused");
+    // `success` always wins when both keys are present: a truthy success makes a
+    // falsy status irrelevant...
+    expect(menuApiFailureReason({ success: "1", status: "0" }, "x")).toBeNull();
+    // ...and a NON-falsy status never makes anything a failure on its own.
+    expect(menuApiFailureReason({ status: 200 }, "x")).toBeNull();
+    expect(menuApiFailureReason({ status: "success" }, "x")).toBeNull();
+  });
+
+  it("refuses an explicit vendor failure even when it ships a catalogue (FINDING 5, deliberate)", () => {
+    // {"success":"0","items":[{...}]} discards a real catalogue. That is a
+    // DELIBERATE choice: an explicit vendor failure is never acted on. Pinned so
+    // the refusal is not quietly relaxed later.
+    expect(menuApiFailureReason({ success: "0", items: [{ itemid: "1" }] }, "x")).toContain("refused");
+  });
+
+  it("accepts unknown success-flag string variants — the normalisation is narrow (FINDING 6)", () => {
+    // Deliberately narrow: only "", "0" and "false" (after trim/lowercase) are
+    // falsy. An unrecognised string is NOT treated as a failure. Pinned so the
+    // acceptance is deliberate rather than accidental.
+    expect(menuApiFailureReason({ success: "00" }, "x")).toBeNull();
+    expect(menuApiFailureReason({ success: "no" }, "x")).toBeNull();
+    expect(menuApiFailureReason({ success: "error" }, "x")).toBeNull();
+  });
+});
+
+describe("menuSyncFailureStatus — the /petpooja/menu-sync 503-vs-400 mapping", () => {
+  // The route maps through this pure helper (src/index.ts) instead of inlining
+  // `err?.vendorRefusal === true ? 503 : 400`, so the decision is testable
+  // without a supertest stack or booting the app. The marker property, never the
+  // message text, decides it.
+  it("answers 503 for a marked vendor refusal", () => {
+    expect(menuSyncFailureStatus({ vendorRefusal: true })).toBe(503);
+  });
+
+  it("answers 400 for a plain caller error such as a missing rest_id", () => {
+    expect(
+      menuSyncFailureStatus(new Error("Missing rest_id in Petpooja menu webhook payload"))
+    ).toBe(400);
+  });
+
+  it("answers 400 for a malformed-body error (the FINDING 3 split)", () => {
+    const err: any = new Error("Petpooja Menu API answered for outlet x with no menu object: response was an empty object");
+    err.malformedMenuBody = true;
+    expect(menuSyncFailureStatus(err)).toBe(400);
   });
 });

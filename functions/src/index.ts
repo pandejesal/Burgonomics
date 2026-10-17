@@ -41,6 +41,9 @@ import {
   pushItemStockToPetpooja,
   runPetpoojaTestScenario,
 } from "./modules/petpooja";
+// Direct module import (not via the barrel): the /petpooja/menu-sync route's
+// 503-vs-400 mapping is a pure helper kept testable without booting this app.
+import { menuSyncFailureStatus } from "./modules/petpooja/menuSyncWebhook";
 import { auditPetpoojaWebhook } from "./modules/petpooja/webhookAudit";
 import {
   syncAllBranchesPetpoojaMenu,
@@ -586,10 +589,10 @@ app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
     // A vendor-side lookup refusal (e.g. the outlet's menu file is not
     // provisioned yet) is transient: 400 would tell Petpooja "your request was
     // malformed — do not retry". Answer 503 so it retries. Genuine caller errors
-    // (missing rest_id, malformed body) keep their 400. The marker property is
-    // set by throwIfVendorRefusal in the menu-sync module.
-    const status = err?.vendorRefusal === true ? 503 : 400;
-    res.status(status).json({ error: err.message || "Menu webhook failed" });
+    // (missing rest_id) and malformed bodies keep their 400. The mapping lives in
+    // menuSyncFailureStatus (menu-sync module) so it can be unit-tested without
+    // booting the app; the marker property, never the message text, decides it.
+    res.status(menuSyncFailureStatus(err)).json({ error: err.message || "Menu webhook failed" });
   }
 });
 

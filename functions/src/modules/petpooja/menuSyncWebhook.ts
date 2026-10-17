@@ -82,8 +82,14 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // `Array.isArray(items)` alone is not enough to accept one — a failed push
     // then synced zero items and wrote a green COMPLETED row plus
     // petpoojaItemCount: 0. handlePetpoojaMenuWebhook classifies the push body
-    // (throwIfVendorRefusal) BEFORE it can reach this branch, so this branch only
-    // ever ingests a catalog whose own body vouched for it.
+    // (throwIfVendorRefusal) BEFORE it can reach this branch, so a push the
+    // vendor REPORTED as failed never lands here.
+    //
+    // That is not a provenance guarantee, and must not be described as one:
+    // classification needs a POSITIVE signal, so a body that omits `success`
+    // (rule 4) is still accepted here — its unexplained `message`, if any, is
+    // recorded in the sync log's `error` field instead (undocumentedVendorMessage),
+    // not silently reported as clean. See menuApiFailureReason.
     menuData = incomingMenu;
   } else if (config.mock.petpoojaPos) {
     menuData = {
@@ -167,13 +173,16 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       const parsed: any = await response.json();
 
       // A 200 whose body reports the vendor's OWN failure is still a failure.
-      // See menuApiFailureReason: unchecked, a failed lookup synced zero items
-      // and then logged COMPLETED/error:null — an outage that looked healthy.
+      // See menuApiFailureReason/classifyMenuBody: unchecked, a failed lookup
+      // synced zero items and then logged COMPLETED/error:null — an outage that
+      // looked healthy.
       // This call is also the shape guard: rules 1-2 refuse a null / array /
       // empty-object body BEFORE anything reads `.items`, which used to throw an
-      // unclassified TypeError outside any named failure. Both failures happen
-      // inside this try, so they route through the captureErrorSnapshot below.
-      throwIfVendorRefusal(parsed, restId);
+      // unclassified TypeError outside any named failure. A malformed body is
+      // marked `malformedMenuBody` (severity stays high); a vendor refusal is
+      // marked `vendorRefusal` (severity medium). Both happen inside this try, so
+      // they route through the captureErrorSnapshot below.
+      throwIfUnusableMenuBody(parsed, restId);
       menuData = parsed;
     } catch (err: any) {
       await captureErrorSnapshot({
@@ -182,9 +191,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
         // provisioned yet) is expected and usually self-healing. The menu
         // scheduler ticks HOURLY, so a 'high' severity paged on-call every hour
         // for one un-provisioned outlet. Genuinely unexpected failures (network
-        // error, timeout, non-2xx HTTP, unparseable JSON) stay 'high'. The
-        // marker property, not the message text, is what distinguishes them —
-        // message string-matching would break on any vendor copy change.
+        // error, timeout, non-2xx HTTP, unparseable JSON, a malformed body)
+        // stay 'high'. The marker property, not the message text, is what
+        // distinguishes them — message string-matching would break on any vendor
+        // copy change.
         severity: err?.vendorRefusal === true ? "medium" : "high",
         message: `Failed to fetch Petpooja menu for branch ${branchId}: ${err.message}`,
         errorStack: err.stack,
@@ -195,10 +205,12 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   }
 
   // Every path that reaches here hands us a plain object: the live branch
-  // refuses a non-object body via menuApiFailureReason (inside its snapshot
-  // try), the push branch is classified by handlePetpoojaMenuWebhook, and the
-  // canned mock body is a literal. So this read can no longer throw an
-  // unclassified TypeError for a null/array response.
+  // refuses a non-object body via throwIfUnusableMenuBody (inside its snapshot
+  // try), the push branch is classified by its caller
+  // handlePetpoojaMenuWebhook — currently the ONLY caller that passes
+  // `incomingMenu`, so the classification is not enforced at this boundary
+  // itself — and the canned mock body is a literal. So this read can no longer
+  // throw an unclassified TypeError for a null/array response.
   const items = (menuData.items || []) as PetpoojaMenuItem[];
   const categories = menuData.categories || [];
 
@@ -329,6 +341,19 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
 
   // Server-side sync audit trail (clients cannot write here by rules).
   // doc().set (not .add) for wider datastore-shim compatibility.
+  //
+  // FINDING 4c: an accepted body that carries a prose `message` and NO truthy
+  // `success` is a vendor failure in a shape we have not captured — it must not
+  // be recorded as a clean `error: null`. Refusing it outright was rejected: an
+  // undocumented SUCCESS body nesting its catalogue under `restaurants` would
+  // then be discarded (a self-inflicted outage). It stays ingesting, and the
+  // vendor's own words land in the existing `error` field instead.
+  const unexplainedVendorMessage = undocumentedVendorMessage(menuData);
+  if (unexplainedVendorMessage) {
+    console.warn(
+      `[Petpooja Menu Sync] outlet ${restId} (branch ${branchId}) returned a catalogue body with no success flag but the message: ${unexplainedVendorMessage}`
+    );
+  }
   try {
     await db.collection("petpooja_sync_logs").doc().set({
       storeId: branchId,
@@ -344,7 +369,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       updated: 0,
       deleted: 0,
       conflicts: 0,
-      error: null,
+      error: unexplainedVendorMessage,
       simulated: config.mock.petpoojaPos,
       source: "menuSyncWebhook",
     });
@@ -402,8 +427,111 @@ export function extractMenuRestId(payload: any): string | null {
 }
 
 /**
+ * Why a Menu API body cannot be used for a sync — and which KIND of failure it
+ * is. The kind matters: the two are not interchangeable downstream.
+ *
+ *   - "vendor"    the vendor itself reporting its own failure (a falsy
+ *                 `success` / `status`). Expected and usually self-healing, so
+ *                 it is recorded at severity `medium` and the webhook route
+ *                 answers 503 ("retry").
+ *   - "malformed" the body is not a menu object at all (not a plain object, or
+ *                 a plain object with zero own keys). Genuinely unexpected — a
+ *                 bug or a broken caller — so severity stays `high` and the
+ *                 route answers 400 ("your request was malformed").
+ *
+ * Classifying these together as one "refusal" was a real bug: a push body of
+ * `{}` / `null` / `[]` answered 503 ("retry") where it had always answered 400.
+ */
+interface MenuBodyClassification {
+  kind: "vendor" | "malformed";
+  /**
+   * Human-readable detail WITHOUT the "for outlet X" prefix, which the callers
+   * below add because it differs per kind.
+   */
+  reason: string;
+}
+
+/**
+ * Classifies a Menu API body that cannot be used, else null (accept).
+ *
+ * A failure must carry a POSITIVE signal — it is never inferred from the ABSENCE
+ * of a key. (An earlier revision also refused any body with no `success` key, no
+ * top-level `items` array, and a non-empty `message`; that discarded legitimate
+ * success bodies — an outage of our own making. A shape like that is now merely
+ * FLAGGED in the sync log, see undocumentedVendorMessage.) The rules:
+ *   1. not a plain object (null / undefined / array / scalar)
+ *                                                       -> malformed
+ *      ("response was not a menu object")
+ *   2. a plain object with ZERO own keys                -> malformed
+ *      ("response was an empty object")
+ *   3. `success` PRESENT and FALSY (false, 0, null,
+ *      undefined, "", or a string that trims and
+ *      lowercases to "0" / "false")                     -> vendor
+ *   3b. `success` ABSENT and `status` present and falsy -> vendor
+ *      (the module's own canned body and the repo's
+ *      probe scripts use `status:"success"` as the
+ *      success key, so `status` is a real alternate
+ *      signal; `success` always wins when both exist)
+ *   4. otherwise                                        -> null (accept)
+ * Every captured vendor failure body (the S3 failure body, save_order,
+ * update_order_status) carries `success:"0"`, so success-based detection covers
+ * every observed failure shape.
+ */
+function classifyMenuBody(menuData: any): MenuBodyClassification | null {
+  // Rule 1: only a plain object can be a menu body. A null / array / scalar
+  // body previously reached `menuData.items` and threw an unclassified
+  // TypeError instead of a named failure.
+  if (menuData === null || menuData === undefined || typeof menuData !== "object" || Array.isArray(menuData)) {
+    return { kind: "malformed", reason: "response was not a menu object" };
+  }
+  const body = menuData as Record<string, any>;
+
+  // Rule 2: an object with no own keys carries neither a signal nor a catalog.
+  if (Object.keys(body).length === 0) {
+    return { kind: "malformed", reason: "response was an empty object" };
+  }
+
+  // Rule 3: an explicitly falsy `success` is the vendor reporting its OWN
+  // failure. An absent key, or any truthy value (true, 1, "1", "true"), is NOT
+  // a failure — see rule 4.
+  const hasSuccess = Object.prototype.hasOwnProperty.call(body, "success");
+  if (hasSuccess && isFalsySuccessFlag(body.success)) {
+    return { kind: "vendor", reason: bodyMessage(body) || `success=${JSON.stringify(body.success)}` };
+  }
+
+  // Rule 3b: `status` is an alternate success signal in this integration, so a
+  // falsy `status` (and only when `success` is absent — success always wins) is
+  // the same failure. A non-falsy `status` (200, "success") never makes a body a
+  // failure.
+  if (!hasSuccess && Object.prototype.hasOwnProperty.call(body, "status") && isFalsySuccessFlag(body.status)) {
+    return { kind: "vendor", reason: bodyMessage(body) || `status=${JSON.stringify(body.status)}` };
+  }
+
+  // Rule 4: accept — including a genuinely empty catalog ({"success":"1",
+  // "items":[]}) and a body that simply omits `success`. Deliberate: an
+  // explicit failure that nevertheless carries a catalogue
+  // ({"success":"0","items":[...]}) is refused by rule 3 BEFORE it reaches here
+  // — an explicit vendor failure is never acted on, even when it ships items.
+  return null;
+}
+
+/** Non-empty `message` string from a body, else null (never inferred). */
+function bodyMessage(body: Record<string, any>): string | null {
+  return typeof body.message === "string" && body.message.length > 0 ? body.message : null;
+}
+
+/** Renders a classification as the operator-facing error message. */
+function menuBodyFailureMessage(classification: MenuBodyClassification, restId: string): string {
+  const prefix =
+    classification.kind === "vendor"
+      ? `Petpooja Menu API refused the catalog lookup for outlet ${restId}`
+      : `Petpooja Menu API answered for outlet ${restId} with no menu object`;
+  return `${prefix}: ${classification.reason}`;
+}
+
+/**
  * Returns a human-readable reason when a Menu API response body reports the
- * VENDOR'S OWN failure, else null.
+ * VENDOR'S OWN failure or is malformed, else null.
  *
  * The Menu API reports failures with HTTP 200 — e.g.
  * `{"success":"0","message":"unable to fetch Object from s3 bucket"}`. Because
@@ -418,58 +546,25 @@ export function extractMenuRestId(payload: any): string | null {
  * tombstone pass is separately guarded by `items.length > 0`, so this case never
  * retired anything. The harm is purely that a failure was reported as a success.
  *
- * A failure must carry a POSITIVE signal — it is never inferred from the ABSENCE
- * of a key. (An earlier revision also refused any body with no `success` key, no
- * top-level `items` array, and a non-empty `message`; that discarded legitimate
- * success bodies — an outage of our own making.) The rules:
- *   1. not a plain object (null / undefined / array / scalar) -> failure
- *      ("response was not a menu object")
- *   2. a plain object with ZERO own keys                      -> failure
- *      ("response was an empty object")
- *   3. `success` present and FALSY (false, 0, "", or a string that trims and
- *      lowercases to "0" / "false")                           -> failure
- *   4. otherwise                                              -> null (accept)
- * Every captured vendor body (the push success body, the S3 failure body,
- * save_order, update_order_status) carries a `success` key, so success-based
- * detection covers every observed shape.
+ * Delegates to classifyMenuBody, which draws the vendor/malformed split; this
+ * wrapper keeps its original name and signature for existing callers.
  */
 export function menuApiFailureReason(menuData: any, restId: string): string | null {
-  // Rule 1: only a plain object can be a menu body. A null / array / scalar
-  // body previously reached `menuData.items` and threw an unclassified
-  // TypeError instead of a named failure.
-  if (menuData === null || menuData === undefined || typeof menuData !== "object" || Array.isArray(menuData)) {
-    return `Petpooja Menu API answered for outlet ${restId} with no menu object: response was not a menu object`;
-  }
-  const body = menuData as Record<string, any>;
-
-  // Rule 2: an object with no own keys carries neither a signal nor a catalog.
-  if (Object.keys(body).length === 0) {
-    return `Petpooja Menu API answered for outlet ${restId} with no menu object: response was an empty object`;
-  }
-
-  // Rule 3: an explicitly falsy `success` is the vendor reporting its OWN
-  // failure. An absent key, or any truthy value (true, 1, "1", "true"), is NOT
-  // a failure — see rule 4.
-  if (Object.prototype.hasOwnProperty.call(body, "success") && isFalsySuccessFlag(body.success)) {
-    const vendor =
-      typeof body.message === "string" && body.message.length > 0
-        ? body.message
-        : `success=${JSON.stringify(body.success)}`;
-    return `Petpooja Menu API refused the catalog lookup for outlet ${restId}: ${vendor}`;
-  }
-
-  // Rule 4: accept — including a genuinely empty catalog ({"success":"1",
-  // "items":[]}) and a body that simply omits `success`.
-  return null;
+  const classification = classifyMenuBody(menuData);
+  return classification ? menuBodyFailureMessage(classification, restId) : null;
 }
 
 /**
- * Falsy `success` flag: false, numeric 0, "", or a string that trims and
- * lowercases to "0" / "false". Anything else (absent, null, 1, "1", "true",
- * arbitrary non-empty string) is NOT a failure signal.
+ * Falsy `success` flag: false, numeric 0, `null`, `undefined` (a JS-object
+ * caller can produce it), "", or a string that trims and lowercases to "0" /
+ * "false". Anything else (1, "1", "true", or an arbitrary non-empty string such
+ * as "00" / "no" / "error") is NOT a failure signal — the normalisation is
+ * deliberately narrow. An ABSENT key is not evaluated here at all.
  */
 function isFalsySuccessFlag(success: any): boolean {
-  if (success === false || success === 0 || success === "") return true;
+  if (success === false || success === 0 || success === "" || success === null || success === undefined) {
+    return true;
+  }
   if (typeof success === "string") {
     const normalized = success.trim().toLowerCase();
     return normalized === "0" || normalized === "false";
@@ -478,21 +573,77 @@ function isFalsySuccessFlag(success: any): boolean {
 }
 
 /**
+ * HTTP status for a failed `/petpooja/menu-sync` call.
+ *
+ * A vendor-side lookup refusal (e.g. the outlet's menu file is not provisioned
+ * yet) is transient: 400 would tell Petpooja "your request was malformed — do
+ * not retry". Answer 503 so it retries. Genuine caller errors (missing rest_id)
+ * and malformed bodies keep their 400.
+ */
+export function menuSyncFailureStatus(err: any): number {
+  return err?.vendorRefusal === true ? 503 : 400;
+}
+
+/** Throws a marked error for a classified failure. Never message-matched. */
+function throwMarkedMenuBodyFailure(classification: MenuBodyClassification, restId: string): never {
+  const err = new Error(menuBodyFailureMessage(classification, restId)) as Error & {
+    vendorRefusal?: true;
+    malformedMenuBody?: true;
+  };
+  if (classification.kind === "vendor") err.vendorRefusal = true;
+  else err.malformedMenuBody = true;
+  throw err;
+}
+
+/**
  * Throws a vendor-refusal-MARKED error when a menu body reports the vendor's
- * own failure; returns void otherwise.
+ * own failure; returns void otherwise. A MALFORMED body is deliberately NOT
+ * thrown here — this call runs before the `rest_id` requirement, and a body
+ * that is not a usable object cannot carry a `rest_id` anyway, so it falls
+ * through to the existing "Missing rest_id" 400.
  *
  * The marker property (`vendorRefusal`) — not the message text — is what the
  * live fetch's captureErrorSnapshot (down to `medium` so an hourly scheduler
- * does not page on-call) and the `/petpooja/menu-sync` route (503, "retry",
- * rather than 400, "your request was malformed") branch on. Message
- * string-matching would break on any vendor copy change.
+ * does not page on-call) and the `/petpooja/menu-sync` route (503, "retry")
+ * branch on. Message string-matching would break on any vendor copy change.
  */
 function throwIfVendorRefusal(menuData: any, restId: string): void {
-  const refusal = menuApiFailureReason(menuData, restId);
-  if (!refusal) return;
-  const err = new Error(refusal) as Error & { vendorRefusal: true };
-  err.vendorRefusal = true;
-  throw err;
+  const classification = classifyMenuBody(menuData);
+  if (classification?.kind === "vendor") throwMarkedMenuBodyFailure(classification, restId);
+}
+
+/**
+ * Throws a marked error when a body is unusable for ANY reason — vendor refusal
+ * or malformed. Used where the body must be a usable catalogue (the live fetch),
+ * so that a null / array / empty-object body becomes a NAMED failure (severity
+ * `high`) instead of an unclassified TypeError outside any named failure.
+ */
+function throwIfUnusableMenuBody(menuData: any, restId: string): void {
+  const classification = classifyMenuBody(menuData);
+  if (classification) throwMarkedMenuBodyFailure(classification, restId);
+}
+
+/**
+ * A non-empty `message` from a body that carries NO truthy `success` — i.e. a
+ * vendor failure in a shape we have not captured, such as
+ * `{"message":"unable to fetch Object from s3 bucket"}`.
+ *
+ * FINDING 4c: refusing this shape outright (as an earlier revision did) risks a
+ * self-inflicted outage on an undocumented SUCCESS body that nests its catalogue
+ * under `restaurants`. So the body is still ingested, but it must not read as a
+ * clean success: the sync-log row's `error` field carries this message instead
+ * of null. A genuinely empty catalogue ({"success":"1","items":[]}) keeps
+ * `error: null`.
+ */
+function undocumentedVendorMessage(menuData: any): string | null {
+  if (!menuData || typeof menuData !== "object" || Array.isArray(menuData)) return null;
+  const body = menuData as Record<string, any>;
+  // A truthy `success` — or the truthy `status` alternate this module's canned
+  // body and the repo's probe scripts use (see classifyMenuBody rule 3b) —
+  // vouches for the catalogue. Honouring ONLY `success` here would flag a body
+  // the classifier had just accepted, recording a false `error` on a clean sync.
+  if (body.success || body.status) return null;
+  return bodyMessage(body);
 }
 
 /**
@@ -513,6 +664,11 @@ export async function handlePetpoojaMenuWebhook(payload: any): Promise<{
   // petpoojaItemCount: 0. Classify BEFORE the rest_id requirement, so a failed
   // push is named as a vendor refusal (and answered 503, "retry") rather than as
   // a malformed request.
+  //
+  // Only the VENDOR kind is thrown here; a malformed body ({}, null, [], a
+  // scalar) deliberately falls through to the rest_id check below, so it keeps
+  // its historic 400 ("Missing rest_id") instead of being answered 503 for a
+  // body that carries no rest_id and never could.
   throwIfVendorRefusal(p, restId || "(unidentified outlet)");
 
   if (!restId) {
