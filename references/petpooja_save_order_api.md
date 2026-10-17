@@ -876,3 +876,190 @@ write **none**, because its lookup now throws. A `petpooja_sync_logs` row for
 `demo` at 11:30Z therefore means the deploy did not take effect, and a row with
 `created > 0` means Petpooja provisioned the outlet's menu in the meantime.
 
+---
+
+## 17. The captured Push Menu payload: what the vendor actually sends (2026-10-17)
+
+§12–§16 worked the **order** side of the integration; §16.10 closed the
+failure-reads-as-success class on the scheduled menu path. This section is the
+first ground truth for the **ingest** side: a real Push Menu capture, what the
+mapper did with it, and what the capture cannot settle. Where the payload does
+not answer a question, it is marked open rather than inferred.
+
+### 17.1 The capture
+
+Captured 2026-10-17 for outlet **5439** (`menusharingcode` `31z58ciw0h`). Our
+route's reply:
+
+```json
+{"success":true,"itemCount":166,"http_code":200,"error":""}
+```
+
+166 items, **32 keys per item**. Top-level keys: `success`, `message`,
+`restaurants`, `ordertypes`, `group_categories`, `categories`, `parentcategories`,
+`items`, `variations`, `addongroups`, `attributes`, `taxes`, `tables`, `discounts`,
+`serverdatetime`, `db_version`, `application_version`, `http_code`, `error`.
+
+The outlet key is **nested**: `restaurants[0].details.menusharingcode`. That is
+exactly the shape `extractMenuRestId` reads first (`menuSyncWebhook.ts:531`),
+falling back to `restaurants[0].menusharingcode` only if `details` carries
+nothing — the order §16.7's audit-row fix and §16.10's fixture both depend on
+(see also §17.11).
+
+### 17.2 The item field spellings — the mismatch that shipped "uncategorized"
+
+The payload sends `item_categoryid`, `itemdescription` and `item_image_url`. The
+mapper read `itemcategoryid`, `item_description`, and `itemimageurl` /
+`image_url` / `image`.
+
+Production outcome of that mismatch: all 166 product docs were written
+`categoryId "uncategorized"`, `categoryName "Other"`, `description ""`,
+`imageUrl null` — while the payload carried **166 real category ids, 21 real
+category names and 110 real descriptions**.
+
+Fixed in `1627204`: the mapper reads **vendor-first**, with every legacy spelling
+retained as a fallback (`menuSyncWebhook.ts:337,350,355`) — the same
+alias-tolerance `orderPush.ts` uses on the order side. Follow-up `9407006` made
+the categoryid→categoryname join first-wins and `String()`-normalised.
+
+### 17.3 The category name join
+
+The NAME exists only in the top-level `categories[]` array (`categoryid` +
+`categoryname`, 21 entries); items carry only the id. The join
+`item.item_categoryid -> categories[].categoryid -> categoryname` resolves
+**166/166 with zero misses**. `group_categories` and `parentcategories` are empty
+in this payload, so neither plays any part in name resolution.
+
+### 17.4 `item_image_url` is empty on every item — a vendor data gap
+
+`item_image_url` is the **empty string** on all 166 items, and no image URL
+exists anywhere in the payload. So `imageUrl: null` is a **vendor data gap, not
+a mapper defect** — it was previously suspected to be our bug; it is not ours to
+fix and nothing in the mapper can recover it.
+
+### 17.5 `item_attributeid` — the veg flag is decoded by the payload itself
+
+`item_attributeid` is `"1"` x129 (veg) and `"2"` x37 (non-veg). The payload's own
+`attributes[]` array decodes `1 = veg`, `2 = non-veg` (the mapper's type comment
+also allows `3 = Egg`). The mapper's `=== "1"` test is correct as it stands.
+
+### 17.6 `in_stock` — THE OPEN QUESTION
+
+All 166 items carry the string `"2"`, and that is the **only** value present.
+The mapper accepts only `1` / `"1"` / `true` (`menuSyncWebhook.ts:308`), so all
+166 products were written `inStock: false` and the whole storefront rendered
+**Sold Out**.
+
+> **The meaning of `"2"` is UNRESOLVED. It is not guessed at here.** The evidence
+> boundary: an independent read of the vendor's published API documentation found
+> that the documented Push Menu item schema **does not document `in_stock` at
+> all**, and that the stock signal it *does* document is a different one — a
+> **boolean `inStock`** that Petpooja sends **to the integrator's endpoint** when
+> an item is toggled, carrying `type`, `itemID`, `restID`. There is no
+> documentation of the push field's encoding.
+
+The instrument that will settle it from data rather than a hunch: `317b6ea` adds
+an additive `inStockValues` census to the `petpooja_sync_logs` row
+(`menuSyncWebhook.ts:495`) plus a console warning when an entire catalogue comes
+out not-in-stock (`:387`). The next real push answers it.
+
+### 17.7 `price` — 81 zero-priced items, and the definitions are absent
+
+166/166 items carry a non-empty `price` string. **81 of them are `"0"`**, and
+those 81 are **exactly** the items flagged `itemallowvariation: "1"` — a perfect
+1:1 partition.
+
+The variation **definitions** are absent: per-item `variation` is `[]` on all
+166, and the top-level `variations` array is empty. So those prices are **missing
+from the payload entirely**, not relocated onto a variation. A corrected mapper
+still cannot price those 81 SKUs, and `Number(item.price) || 0` renders an
+unknowable price as an **orderable zero**.
+
+> **OPEN DECISION (repo owner) + ASK (to Petpooja):** how should a
+> variation-flagged SKU with `price:"0"` and no variation definition be priced —
+> and did Petpooja intend to send the variation definitions in this push?
+
+### 17.8 Fields the mapper reads nowhere (latent, no impact today)
+
+All single-valued in this capture, so none changes behaviour now — recorded so a
+later change does not rediscover them:
+
+| Field | Value in the capture | Note |
+|---|---|---|
+| `active` | `"1"` x166 | never read by this path |
+| `is_combo` | `"0"` x166 | the tombstone pass protects a field this path never writes |
+| `item_ordertype` | `"1,2,3"` x166 | `ordertypes[]` names Delivery / Pick Up / Dine In |
+
+**Tax does not reach the product document.** `item_tax` is `"3928,3929"`,
+resolving through `taxes[]` to CGST 2.5% + SGST 2.5%, with `tax_inclusive:
+false`, `gst_type: "services"`, and `ignore_taxes` / `ignore_discounts` `"0"`.
+None of that is written onto the product doc, so **every stored price is ex-GST
+with no tax metadata**. Open decision.
+
+### 17.9 A dead end: the legacy `petpooja_products` collection
+
+Recorded so nobody re-walks it. The 63 documents in the legacy
+`petpooja_products` collection are **seeded fixtures**, not payload-derived data,
+and carry **no information about the vendor's `in_stock` encoding**.
+
+Their only writer was `burgonomics-foundation-core/scripts/seed.ts`, whose import
+(`petpoojaSampleData.ts`) was **deleted 2026-10-11**, so the write path is dead;
+`firestore.rules` denies client writes and no live function writes the
+collection. Every doc is a literal boolean `true` with **no `in_stock` field at
+all**, the ids are `prd_*` slugs matching the seed array **63/63**, and they
+overlap the real payload's numeric ids (**30651–30791**) **zero** times.
+
+### 17.10 The classification contract after `b26d5e3` / `9c20c12`
+
+The menu-ingest boundary separates two failure kinds:
+
+- **Vendor refusal** — a *present-and-falsy* `success`, or `status` when
+  `success` is absent. Marked as a refusal, **not message-matched**; severity
+  **medium**.
+- **Malformed body** — not a plain object, or an empty object. Severity
+  **high**.
+
+The route answers **503 only for a vendor refusal** and **400 otherwise**. That
+400 is a **DELIBERATE decision**, not an oversight: the route is
+operator-triggered, so there is no automatic retry for the status code to steer.
+The push branch **guards its own input at the boundary** (`throwIfVendorRefusal`,
+`menuSyncWebhook.ts:148`) rather than trusting its caller.
+
+### 17.11 New vendor-truth test fixture
+
+`functions/tests/fixtures/petpooja-menupush-sample.json` — a sanitized **two-item**
+fixture derived from the real captured push, so the alias work runs against
+vendor truth. No PII: `restaurants[].details` carries only a sharing-code
+placeholder.
+
+The real nesting `restaurants[0].details.menusharingcode` is **preserved
+deliberately**, because `extractMenuRestId` reads `details` first and only falls
+back to `restaurants[0].menusharingcode` (§17.1). A fixture that flattened it
+would stop exercising that resolution order.
+
+### 17.12 Deploy coupling, and the read-only proof nothing shipped
+
+`firebase deploy --only functions:api` ships the **WHOLE functions bundle**, so a
+Petpooja deploy also ships whatever else is committed — including other lanes'
+dispatch work. This is the constraint §16.9's clean-worktree deploy was built
+around.
+
+As of these commits **none of `b26d5e3` / `1627204` / `317b6ea` / `9407006` is
+deployed.** Read-only evidence:
+
+- the newest `petpooja_sync_logs` row is still **2026-10-17T11:02:53Z**, with no
+  tick rows after it — consistent with the refusal fix already deployed (§16.10)
+  throwing for every branch instead of writing a fake `COMPLETED` / `created: 0`;
+- no row carries `inStockValues`, which only `317b6ea` would write.
+
+### 17.13 The re-sync requirement
+
+The 166 demo product docs **still hold the mis-mapped values** until the
+catalogue is re-synced — the fixes change the mapper, not the documents already
+written.
+
+The hourly pull refuses on the vendor's S3 lookup (§16.10), so it cannot rewrite
+them. A **fresh Push Menu from Petpooja's dashboard** is what rewrites them — and
+that same re-push, after turning **one item off in the POS**, is what settles
+`in_stock` from the new census (§17.6).
+
