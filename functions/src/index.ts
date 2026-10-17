@@ -34,6 +34,7 @@ import { resolveDiscrepancy } from "./modules/payments/discrepancies";
 import {
   syncPetpoojaMenu,
   handlePetpoojaMenuWebhook,
+  extractMenuRestId,
   handlePetpoojaStockWebhook,
   handlePetpoojaWebhook,
   pushOrderToPetpooja,
@@ -550,21 +551,36 @@ app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
   const p = req.body || {};
   try {
     const result = await handlePetpoojaMenuWebhook(p);
+    // A menu PUSH nests the outlet code in `restaurants[0].details.menusharingcode`,
+    // NOT in a top-level rest_id — so auditing only the top-level keys recorded
+    // `restId: null` for every refused push and hid WHICH outlet failed (observed
+    // live: a dashboard "Burgonomics API Menu" error whose audit row named no
+    // outlet). Resolve it the same way the handler does.
+    const restId = extractMenuRestId(p);
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/menu-sync",
       outcome: "ok",
-      restId: p.rest_id ?? p.res_id ?? p.restID ?? p.restId ?? null,
+      restId,
       itemCount: result.itemCount,
       detail: result.success ? undefined : "outlet not linked — catalog pull skipped",
     });
     // success:false (unlinked outlet) is still a 200 — the payload was valid,
-    // there is nothing for Petpooja to retry; the skip was logged loudly.
-    res.status(200).json(result);
+    // there is nothing for Petpooja to retry; the skip was logged loudly. The
+    // reason is included so the dashboard/bus shows WHY it was refused instead
+    // of a bare failure.
+    res.status(200).json(
+      result.success
+        ? result
+        : {
+            ...result,
+            reason: `outlet ${restId || "(unidentified)"} is not linked — no branch carries it as petpoojaStoreId (Runbook §5)`,
+          }
+    );
   } catch (err: any) {
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/menu-sync",
       outcome: "error",
-      restId: p.rest_id ?? p.res_id ?? p.restID ?? p.restId ?? null,
+      restId: extractMenuRestId(p),
       detail: err?.message,
     });
     res.status(400).json({ error: err.message || "Menu webhook failed" });

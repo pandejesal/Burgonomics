@@ -321,17 +321,23 @@ async function main() {
       }
       row.response = parsed ?? text;
 
-      const ok =
-        (parsed &&
-          (parsed.success === "1" ||
-            parsed.success === 1 ||
-            parsed.success === true ||
-            parsed.status === "success")) ||
-        false;
+      const posAccepted =
+        !!parsed &&
+        (parsed.success === "1" ||
+          parsed.success === 1 ||
+          parsed.success === true ||
+          parsed.status === "success");
       const liveId =
         parsed && (parsed.petpooja_order_id || parsed.order_id || parsed.orderID || parsed.orderId);
-      row.ok = ok && typeof liveId === "string" && liveId.length > 0;
-      row.petpoojaOrderId = row.ok ? liveId : null;
+      // FULFILMENT is the POS accepting the order — NOT the response carrying an
+      // id. Petpooja answers success:"1" with an empty `orderID` while still
+      // registering the order (proven 2026-10-17: Petpooja's Order List for
+      // 5439 lists every relayed order with our clientOrderIDs and totals).
+      // Treating "no id in the body" as NOT FULFILLED was our false negative.
+      row.posAccepted = posAccepted;
+      row.petpoojaOrderId = posAccepted && typeof liveId === "string" && liveId.length > 0 ? liveId : null;
+      row.petpoojaOrderIdReturned = !!row.petpoojaOrderId;
+      row.ok = posAccepted;
       if (!row.ok) failures += 1;
 
       console.log(
@@ -340,7 +346,13 @@ async function main() {
           `  total   : ${payload.orderinfo?.Order?.total}  tax_total: ${payload.orderinfo?.Order?.tax_total}\n` +
           `  HTTP    : ${res.status}\n` +
           `  body    : ${typeof row.response === "string" ? row.response : JSON.stringify(row.response)}\n` +
-          `  verdict : ${row.ok ? `FULFILLED (petpooja order id ${row.petpoojaOrderId})` : "NOT FULFILLED"}\n`
+          `  verdict : ${
+            !row.ok
+              ? "NOT FULFILLED (POS rejected)"
+              : row.petpoojaOrderIdReturned
+                ? `FULFILLED (petpooja order id ${row.petpoojaOrderId})`
+                : "FULFILLED (POS accepted; response carried no order id — confirm on the outlet's Order List)"
+          }\n`
       );
     } catch (err) {
       failures += 1;
@@ -358,7 +370,17 @@ async function main() {
     dryRun: DRY_RUN,
     scenarios: results.map(({ response, ...rest }) => rest),
     verdict: DRY_RUN ? "DRY_RUN" : failures === 0 ? "PASS" : "FAIL",
-    fulfilledIds: results.filter((r) => r.ok).map((r) => ({ scenarioId: r.scenarioId, orderID: r.orderID, petpoojaOrderId: r.petpoojaOrderId })),
+    // Fulfilment = POS accepted. `petpoojaOrderId` is null whenever Petpooja
+    // omitted the id from a response — the order is still registered.
+    fulfilledIds: results
+      .filter((r) => r.ok)
+      .map((r) => ({
+        scenarioId: r.scenarioId,
+        clientOrderID: r.orderID,
+        petpoojaOrderId: r.petpoojaOrderId,
+        petpoojaOrderIdReturned: r.petpoojaOrderIdReturned,
+      })),
+    acceptedWithoutId: results.filter((r) => r.ok && !r.petpoojaOrderIdReturned).length,
   };
   fs.writeFileSync(EVIDENCE_PATH, JSON.stringify(evidence, null, 2));
 

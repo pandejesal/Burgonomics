@@ -259,6 +259,12 @@ both the item lines and `tax_details`, `order_type:"H"`, tax computed from the
 outlet's own 2.5% + 2.5% rows, and no `Discount` object. Result:
 **HTTP 200, `success:"1"`, `orderID:""`** — still no order id.
 
+> **Correction (2026-10-17, see §16.8).** This section treated an empty
+> `orderID` as evidence the relay had not landed. It has not: Petpooja's own
+> Order List for outlet 5439 shows the orders these probes placed, plus the five
+> deliverable scenarios. An empty `orderID` is the normal shape of a successful
+> save and says nothing about fulfilment — only the dashboard Order List does.
+
 The same probe re-tests the flat contract with those real ids: still
 `{"success":"0","message":"Invalid order relay payload "}`. So the flat body is
 rejected on **shape**, not because of bad ids, while the envelope is accepted
@@ -308,13 +314,19 @@ code defect here.
 Because §13.1 proves every ack is empty, two fabrication paths were removed:
 
 1. `orderPush.ts` — a `success:"1"` response with **no** order id used to be
-   treated as a win: it invented `pp_<epoch>` and stamped `kotPrinted:true`,
-   telling the kitchen a KOT had printed that Petpooja never registered. The
+   treated as a win: it invented `pp_<epoch>` and stamped `kotPrinted:true`. The
    fabricated id was then truthy, so the idempotency guard skipped every later
-   retry and the order became unrecoverable. Now an empty id parks the order
-   `pending_retry` and stores the raw POS body in `lastPetpoojaError`. The
-   response's real `orderID` spelling is also read now — the old code only
-   looked for snake_case, so a genuine id would have been discarded.
+   retry and the order became unrecoverable. The response's real `orderID`
+   spelling is also read now — the old code only looked for snake_case, so a
+   genuine id would have been discarded.
+
+   **Superseded 2026-10-17 — see §16.8.** This entry said the fabricated stamp
+   told the kitchen a KOT had printed "that Petpooja never registered", and the
+   replacement behaviour was to park the order `pending_retry` with the raw body
+   in `lastPetpoojaError`. The parking half was itself wrong: Petpooja **did**
+   register those orders, so parking re-POSTed each one on every retry. The
+   relay now records an id-less ack as accepted (`petpoojaAcceptedNoId`), keeps
+   the raw body, never invents an id, and does not retry.
 2. `core/errors.ts` — four optional refs and `context` were written as explicit
    `undefined`, which Firestore rejects (`Cannot use "undefined" as a Firestore
    value`). The throw was swallowed by `captureErrorSnapshot`'s own catch, so
@@ -371,7 +383,7 @@ was not eligible, including in a live process with credentials present and only
 `branchId` missing — reporting a fulfilled scenario that never reached the POS.
 It now throws and names what is missing; only mock mode may synthesise an id.
 
-### 14.4 Open — identifier resolution drift
+### 14.4 Identifier resolution drift (RESOLVED 2026-10-17 — the code is right)
 
 `references/petpooja_pos.md` P3 and `references/known_issues.md` R13 both state
 that the authoritative restaurant identifier is the **nested**
@@ -380,16 +392,23 @@ Every server path reads the **flat** `petpoojaStoreId`:
 
 - `orderPush.ts:463`, `menuSyncWebhook.ts:52,60,65`, `item86ingSync.ts:127,135,253`
 
-and `firestore.rules` gates the nested `petpooja.restId` to brand owners. So an
-operator following the runbook writes one location while the relay reads another.
-Compounding this, no real outlet has ever been linked: all 25 branch docs hold
-seeded placeholders (`petpoojaStoreId = str_001…str_016`,
-`petpoojaRestId = rest_<slug>`), neither of which is a real Petpooja id.
+This was recorded as an open drift on the assumption that the runbook matched the
+nested form. It does not — the current operator-facing documents both say FLAT:
 
-This is deliberately fail-closed (the code refuses to fall back to the branch
-doc id or invent one), so it was left as-is rather than re-plumbed blind — there
-is no linked outlet to validate a resolution-order change against. Resolve the
-doc/code disagreement before linking the first real outlet.
+- `PRODUCTION_RUNBOOK.md:100` — "write that SAME restID to both records:
+  `stores/{storeId}.petpoojaRestId` **and** `branches/{branchId}.petpoojaStoreId`".
+- `STORE_SUBMISSION_GUIDE.md:253` — "Real branch→restID mapping = Firestore
+  `branches/{id}.petpoojaStoreId` (fail-closed 503 if unset)".
+
+So the flat read is correct and `petpooja_pos.md` P3/P4 and `known_issues.md` R13
+describe an older nested design that was never implemented. Those two references
+are stale; an operator who followed them would write a field nothing reads and the
+integration would fail closed with no obvious cause.
+
+Nothing was re-plumbed. What remains is a **data** step, not code: no branch has
+ever been linked to a real outlet. All 25 branch docs hold seeded placeholders
+(`petpoojaStoreId = str_001…str_016`, `petpoojaRestId = rest_<slug>`), so every
+outlet-bound path fails closed. See §16.7 for the menu-push consequence.
 
 ### 14.5 Order-line field mismatch (fixed)
 
@@ -629,5 +648,93 @@ reverses a prior deliberate decision to record unlinked pings so the real status
 encoding could be learned — or adding a limiter/TTL to those two collections.
 That is a product call, so it is left to the owner.
 
-Gates: build clean; `491 passed / 2 skipped / 0 failed`.
+### 16.7 The "Burgonomics API Menu" push error is ours: the outlet was never linked
+
+Petpooja's dashboard reported, for a menu push:
+
+```
+Request -  {"success":"1","message":"Menu items are successfully listed.", ...the full catalogue...}
+Response - {"success":false,"itemCount":0,"http_code":200,"error":""}
+```
+
+`http_code` and `error` are NOT ours — `/petpooja/menu-sync` answers
+`{success, itemCount}` only. Petpooja wrapped OUR 200 body: it lifted
+`success:false` / `itemCount:0` out of it and added the HTTP status and a blank
+error. So the push **reached us and we refused it**.
+
+- `menuSyncWebhook.ts:397-400` returns `{success:false, itemCount:0}` when the
+  outlet code resolves to no branch.
+- Live proof, `pos_webhook_audits`: `/petpooja/menu-sync` rows with
+  `detail: "outlet not linked — catalog pull skipped"`, `itemCount: 0`, at
+  2026-10-14T15:16:35Z (that row carries `restId: "31z58ciw0h"`), 2026-10-15T08:32,
+  09:06 and 11:40, and again 2026-10-17T08:23:28Z.
+- Live proof, `branches`: 25 docs, 14 bound to seeded placeholders
+  (`str_001…str_016`), ZERO carrying `31z58ciw0h` or `5439`.
+
+Petpooja is calling us correctly and we refuse because
+`resolveBranchIdForRestId("31z58ciw0h")` is null. Fixing the reported error is a
+**data** step (bind the outlet — `PRODUCTION_RUNBOOK.md` §5 step 1), not a
+payload change.
+
+Defect fixed in the same pass: the audit row for a refused push recorded
+`restId: null`, because the route read only top-level keys while a push nests the
+code in `restaurants[0].details.menusharingcode`. It now resolves through
+`extractMenuRestId` and the `success:false` reply carries a `reason` naming the
+outlet. Three new tests pin the resolution order (top-level → nested
+`menusharingcode` → `restaurantid` → null).
+
+### 16.8 Fulfilment is proven: the empty `orderID` is not a failure
+
+On 2026-10-17 the operator captured Petpooja's **Order List** for
+`5439 - Burgonomics DEMO [135148] - 31z58ciw0h`. It holds every order this
+integration has placed — 34 records — including all five deliverable scenarios,
+matching our own runner evidence by `clientOrderID` **and** total:
+
+| scenario | clientOrderID (shown as the Order No.) | our total | Order List total | placed | status |
+| --- | --- | --- | --- | --- | --- |
+| Items + Tax | `bgx_items_tax_1792168821493` | 598.50 | 598.5 | 2026-10-16 22:10:28 | Waiting For Acceptance |
+| Addon and Variation + Tax | `bgx_addon_variation_tax_1792168826052` | 312.95 | 312.95 | 22:10:30 | Waiting For Acceptance |
+| Variation + Tax | `bgx_variation_tax_1792168825392` | 283.50 | 283.5 | 22:10:31 | Waiting For Acceptance |
+| Addons + Tax | `bgx_addons_tax_1792168824749` | 419.00 | 419 | 22:10:31 | Waiting For Acceptance |
+| Discount + Tax | `bgx_discount_tax_1792168825788` | 252.00 | 252 | 22:10:31 | Waiting For Acceptance |
+
+Consequences — every one a correction to an earlier claim in this document:
+
+- **The five scenarios are FULFILLED.** `scripts/petpooja-sandbox-evidence.json`
+  scored them `ok:false` and §15 read that as 0/5. That was **our false
+  negative**: the runner required the response to carry an order id. Petpooja
+  registers the order and leaves `orderID` empty.
+- The vendor's Order No. column displays OUR `clientOrderID`. No separate POS id
+  is exposed anywhere the API can reach, so that is the only identifier Petpooja
+  surfaces for these orders.
+- The variants took effect **on the POS**, not only in our builder: the sweep's
+  rows are listed as Home Delivery (Delivery), Home Delivery (Self delivery),
+  Parcel/Pickup, Table/Dine-in, and one Advanced Order — the same knobs §16.3
+  varied.
+- The empty-echo evidence in §12/§13.1 proves the payload was not *parsed*. It
+  never proved that nothing *registered*; those two are different, and only the
+  Order List settles the second.
+
+Fixes forced by this evidence:
+
+1. `orderPush.ts` — an `ok` ack with no id is now recorded as ACCEPTED
+   (`petpoojaAcceptedNoId`, `petpoojaAcceptedNoIdAt`, raw body kept in
+   `petpoojaAcceptedNoIdAck`), status `synced`, and deduped. It previously threw,
+   the catch parked `pending_retry`, and the retry worker re-POSTed an order the
+   POS already held — ringing the kitchen once per attempt. No id is invented.
+2. `payments/webhookHandler.ts` — the duplicate-capture guard treats
+   `petpoojaAcceptedNoId` as "already pushed", exactly like `petpoojaOrderId`.
+3. `petpooja/testRunner.ts` — `ok` now means "POS accepted"; id availability is
+   reported separately (`petpoojaOrderId: string | null`,
+   `petpoojaOrderIdReturned: boolean`). Acceptance without an id no longer throws.
+4. `scripts/petpooja-sandbox-5scenarios.mjs` — the verdict is fulfilment, not id
+   presence; the evidence separates `petpoojaOrderId: null` from rejection and
+   counts `acceptedWithoutId`.
+
+Reconciliation artifact: `scripts/petpooja-sandbox-fulfillment-reconciliation.json`
+pairs each evidence row with its Order List row. No order-listing route exists on
+either host (§16.2), so the dashboard Order List is the only fulfilment oracle and
+the pairing is manual, by `clientOrderID` + total.
+
+Gates: build clean; `494 passed / 2 skipped / 0 failed`.
 

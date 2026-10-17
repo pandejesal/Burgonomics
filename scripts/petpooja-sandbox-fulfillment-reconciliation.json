@@ -1,0 +1,105 @@
+{
+  "generatedAt": "2026-10-17T00:00:00.000Z",
+  "purpose": "Reconciles the five deliverable scenarios against Petpooja's own Order List, because the save_order RESPONSE omits orderID even when the order registers. Establishes the fulfilment verdict independently of our runner.",
+  "outlet": {
+    "restaurantId": "5439",
+    "name": "Burgonomics DEMO [135148]",
+    "restID": "31z58ciw0h"
+  },
+  "method": {
+    "oracle": "Petpooja dashboard -> Order List, filtered to Restaurant name 5439 - Burgonomics DEMO [135148] - 31z58ciw0h",
+    "whyNotApi": "Neither API host exposes an order-listing/fetch route - scripts/petpooja-route-matrix.mjs proved only save_order, update_order_status and mapped_restaurant_menus exist. The dashboard is therefore the only fulfilment oracle.",
+    "pairingKey": "clientOrderID (the value we send as orderinfo.Order.orderID) plus the order total",
+    "orderListOrderNoColumn": "Petpooja displays OUR clientOrderID in its 'Order No.' column; no separate POS-issued id is exposed.",
+    "totalRecordsInOrderList": 34,
+    "orderListCapturedBy": "operator, 2026-10-17",
+    "sourceEvidenceFile": "scripts/petpooja-sandbox-evidence.json",
+    "caveat": "The evidence JSON scores these rows ok:false because its verdict required an orderID in the response body. That verdict has been fixed (scripts/petpooja-sandbox-5scenarios.mjs); the row-level totals and clientOrderIDs it recorded are unchanged and are what is reconciled here."
+  },
+  "scenarios": [
+    {
+      "scenarioId": "items_tax",
+      "title": "Items + Tax",
+      "clientOrderID": "bgx_items_tax_1792168821493",
+      "ourTotal": "598.50",
+      "orderListTotal": "598.5",
+      "orderListPlacedAt": "2026-10-16 22:10:28",
+      "orderListStatus": "Waiting For Acceptance",
+      "orderListOrderType": "Parcel/Pickup",
+      "orderListCustomer": "Petpooja Sandbox Tester",
+      "match": true,
+      "fulfilled": true
+    },
+    {
+      "scenarioId": "addon_variation_tax",
+      "title": "Item with Addon and Variation + Tax",
+      "clientOrderID": "bgx_addon_variation_tax_1792168826052",
+      "ourTotal": "312.95",
+      "orderListTotal": "312.95",
+      "orderListPlacedAt": "2026-10-16 22:10:30",
+      "orderListStatus": "Waiting For Acceptance",
+      "orderListOrderType": "Parcel/Pickup",
+      "orderListCustomer": "Petpooja Sandbox Tester",
+      "match": true,
+      "fulfilled": true
+    },
+    {
+      "scenarioId": "variation_tax",
+      "title": "Item with the Variation + Tax",
+      "clientOrderID": "bgx_variation_tax_1792168825392",
+      "ourTotal": "283.50",
+      "orderListTotal": "283.5",
+      "orderListPlacedAt": "2026-10-16 22:10:31",
+      "orderListStatus": "Waiting For Acceptance",
+      "orderListOrderType": "Parcel/Pickup",
+      "orderListCustomer": "Petpooja Sandbox Tester",
+      "match": true,
+      "fulfilled": true
+    },
+    {
+      "scenarioId": "addons_tax",
+      "title": "Item with the Addons + Tax",
+      "clientOrderID": "bgx_addons_tax_1792168824749",
+      "ourTotal": "419.00",
+      "orderListTotal": "419",
+      "orderListPlacedAt": "2026-10-16 22:10:31",
+      "orderListStatus": "Waiting For Acceptance",
+      "orderListOrderType": "Parcel/Pickup",
+      "orderListCustomer": "Petpooja Sandbox Tester",
+      "match": true,
+      "fulfilled": true
+    },
+    {
+      "scenarioId": "discount_tax",
+      "title": "Item with Discount + Tax",
+      "clientOrderID": "bgx_discount_tax_1792168825788",
+      "ourTotal": "252.00",
+      "orderListTotal": "252",
+      "orderListPlacedAt": "2026-10-16 22:10:31",
+      "orderListStatus": "Waiting For Acceptance",
+      "orderListOrderType": "Parcel/Pickup",
+      "orderListCustomer": "Petpooja Sandbox Tester",
+      "match": true,
+      "fulfilled": true
+    }
+  ],
+  "verdict": {
+    "fulfilled": 5,
+    "required": 5,
+    "result": "PASS — 5/5 FULFILLED, confirmed on Petpooja's Order List, not by the save_order response"
+  },
+  "supportingPointers": [
+    {
+      "claim": "The relay did place the orders despite the empty orderID",
+      "evidence": "All five clientOrderIDs appear in the Order List with exact total matches, 2-5 seconds after the runner finished (evidence file written 2026-10-16 22:10:26)."
+    },
+    {
+      "claim": "The scenario variants reached the POS, not just our payload builder",
+      "evidence": "The same Order List shows probe rows as Home Delivery (Delivery), Home Delivery (Self delivery), Parcel/Pickup, Table/Dine-in and one Advanced Order - the variants scripted in scripts/petpooja-orderid-sweep.mjs."
+    },
+    {
+      "claim": "No order-listing API route exists, so the dashboard is the only oracle",
+      "evidence": "scripts/petpooja-route-matrix.json - only save_order, update_order_status and mapped_restaurant_menus answer on either host; update_order_status is undocumented and every other spelling 403s."
+    }
+  ]
+}

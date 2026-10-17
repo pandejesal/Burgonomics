@@ -87,6 +87,7 @@ import {
   handlePetpoojaStockWebhook,
   pushItemStockToPetpooja,
   handlePetpoojaMenuWebhook,
+  extractMenuRestId,
 } from "../src/modules/petpooja";
 import { config } from "../src/config/env";
 
@@ -364,6 +365,33 @@ describe("Petpooja POS Bridge Service", () => {
       });
       expect(res.success).toBe(true);
       expect(res.itemCount).toBe(4);
+    });
+
+    it("resolves a menu PUSH's outlet code from restaurants[].details.menusharingcode", () => {
+      // The dashboard's "API Menu" push nests the code — reading only a
+      // top-level rest_id made every real push throw "Missing rest_id" and
+      // answer 400, and made the audit row for a refused push name no outlet.
+      expect(
+        extractMenuRestId({
+          restaurants: [{ restaurantid: "5439", details: { menusharingcode: "31z58ciw0h" } }],
+        })
+      ).toBe("31z58ciw0h");
+    });
+
+    it("prefers an explicit top-level rest_id over the nested push code", () => {
+      expect(
+        extractMenuRestId({
+          rest_id: "explicit_code",
+          restaurants: [{ details: { menusharingcode: "31z58ciw0h" } }],
+        })
+      ).toBe("explicit_code");
+    });
+
+    it("falls back to the numeric restaurantid only as a last resort", () => {
+      expect(
+        extractMenuRestId({ restaurants: [{ restaurantid: "5439", details: {} }] })
+      ).toBe("5439");
+      expect(extractMenuRestId({ restaurants: [{ details: {} }] })).toBeNull();
     });
   });
 

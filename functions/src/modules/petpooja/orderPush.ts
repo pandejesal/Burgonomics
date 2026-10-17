@@ -263,12 +263,18 @@ export function formatPetpoojaOrderPayload(
   //
   //   orderinfo.OrderInfo.{Restaurant,Customer,Order,OrderItem,Tax,Discount}
   //
-  // BOTH levels are REQUIRED. Without them the endpoint still answers
-  // `success:"1"` but parses nothing: it echoes empty restID/clientOrderID and
-  // registers no order. That behaviour was previously misread as "the sandbox
-  // endpoint is a stub" — it was this envelope. The live probe in §12 of
+  // BOTH levels are REQUIRED for the payload to be PARSED. Without them the
+  // endpoint still answers `success:"1"` but parses nothing: it echoes empty
+  // restID/clientOrderID. That was previously misread as "the sandbox endpoint
+  // is a stub" — it was this envelope. The live probe in §12 of
   // references/petpooja_save_order_api.md shows the difference directly: empty
   // ids without these levels, our real restID/clientOrderID echoed with them.
+  //
+  // Note the LIMIT of that evidence: an empty echo proves the payload was not
+  // parsed, NOT that no order was registered. The endpoint returns an empty
+  // `orderID` even for a fully parsed POST whose order does register (proven
+  // against the outlet's Order List, §16.8), so never treat an empty id as
+  // proof that nothing landed at the POS.
   // ---------------------------------------------------------------------------
   const restaurantDetails = {
     // The authoritative restaurant identifier in this contract. Fail-closed:
@@ -440,14 +446,21 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
   // the belt-and-braces check for a config flipped after boot).
   assertLivePetpoojaContext(`KOT push for order ${orderId}`);
 
-  // Idempotency: petpoojaOrderId is written ONLY on a successful push, so
+  // Idempotency: the relayed marker is written ONLY on a successful push, so
   // its presence IS the already-pushed marker — independent of the status
   // field, which later bookkeeping may have moved off "synced". Replays (a
   // second Razorpay event, a double-tapped KDS button, the retry worker
   // racing a completed push) must never fire a duplicate KOT at the kitchen.
-  if (order.petpoojaOrderId) {
+  //
+  // TWO accepted shapes, because Petpooja does not always return an id:
+  //  - `petpoojaOrderId`  — accepted, POS told us its id.
+  //  - `petpoojaAcceptedNoId` — accepted, POS omitted the id (see the ack
+  //    handling below). The order IS at the POS either way, so both dedupe.
+  if (order.petpoojaOrderId || order.petpoojaAcceptedNoId) {
     console.warn(
-      `[Petpooja KOT Push] Order ${orderId} already pushed (${order.petpoojaOrderId}) — deduped, no duplicate KOT`
+      `[Petpooja KOT Push] Order ${orderId} already pushed (${
+        order.petpoojaOrderId || "accepted, POS returned no id"
+      }) — deduped, no duplicate KOT`
     );
     return true;
   }
@@ -470,8 +483,8 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         const data = (fresh.exists ? fresh.data() : undefined) as any;
         if (!data) return "gone";
         // A racing caller finished the push while we were reading — reuse
-        // its outcome, never POST a second KOT.
-        if (data.petpoojaOrderId) return "dup";
+        // its outcome, never POST a second KOT. Both accepted shapes count.
+        if (data.petpoojaOrderId || data.petpoojaAcceptedNoId) return "dup";
         // Numeric-first lease read (same trap as the scheduler): a
         // serverTimestamp sentinel has no toMillis and would read as 0,
         // causing instant false takeover and a duplicate KOT POST.
@@ -611,15 +624,24 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     const ok =
       result.success === "1" || result.success === 1 || result.success === true || result.status === "success";
 
-    // An ack WITHOUT an order id is NOT a successful relay. Petpooja's live
-    // sandbox answers {"success":"1","message":"Your order is saved.",
-    // "restID":"","clientOrderID":"","orderID":"","code":200} for every
-    // request. Treating that as success fabricated a `pp_<epoch>` id and
-    // stamped kotPrinted:true, so the kitchen believed a KOT had printed that
-    // Petpooja never registered. Worse, the fabricated id is a truthy
-    // `petpoojaOrderId`, so the dedupe at the top of this function skipped
-    // every later retry — the order could never be recovered. Echo only the
-    // POS's own id, under any spelling it uses; never invent one.
+    // An ack WITHOUT an order id is STILL an accepted relay — proven live.
+    // Petpooja's sandbox answers {"success":"1","message":"Your order is
+    // saved.","restID":"31z58ciw0h","clientOrderID":"<our id>","orderID":"",
+    // "code":200} and leaves `orderID` empty, yet the order DOES register:
+    // on 2026-10-17 the customer-visible Order List for 5439 - Burgonomics
+    // DEMO [135148] showed every order this relay pushed — the five
+    // deliverable scenarios (clientOrderIDs and totals matching exactly:
+    // 598.5 / 419 / 283.5 / 252 / 312.95) plus all 34 API-placed records.
+    //
+    // Two earlier shapes for this branch, both wrong, recorded so it is not
+    // re-flipped blind:
+    //  1. Fabricate a `pp_<epoch>` id and stamp kotPrinted. The invented id is
+    //     truthy, so the dedupe above short-circuited every later attempt —
+    //     and it claimed an id the POS never issued.
+    //  2. Throw and let the catch below park pending_retry. The order WAS at
+    //     the POS, so each retry POSTed it again and rang the kitchen twice.
+    // The POS holds the order, so: record acceptance, record that the vendor
+    // omitted the id, dedupe on that acceptance, and never invent an id.
     const petpoojaOrderId =
       result.petpooja_order_id || result.order_id || result.orderID || result.orderId || "";
     if (ok && petpoojaOrderId) {
@@ -639,12 +661,27 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       return true;
     }
     if (ok) {
-      // Park for the retry worker via the catch below rather than lying.
-      throw new Error(
-        `Petpooja acked order ${orderId} (success:"1") but returned no order id — refusing to mark the KOT printed. Raw response: ${JSON.stringify(
-          result
-        ).slice(0, 300)}`
+      await orderDoc.ref.set(
+        {
+          petpoojaAcceptedNoId: true,
+          petpoojaAcceptedNoIdAt: admin.firestore.FieldValue.serverTimestamp(),
+          // Kept verbatim so an operator can see the vendor really did omit
+          // the id rather than trusting our summary of it.
+          petpoojaAcceptedNoIdAck: JSON.stringify(result).slice(0, 500),
+          petpoojaStatus: "synced",
+          petpoojaSyncStatus: "synced",
+          kotPrinted: true,
+          kotPrintedAt: admin.firestore.FieldValue.serverTimestamp(),
+          kotPushedAt: admin.firestore.FieldValue.serverTimestamp(),
+          petpoojaPushClaimedAt: null,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
       );
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} accepted by POS but the response carried no order id — marked synced (accepted-no-id), NOT queued for retry (a retry would duplicate the KOT)`
+      );
+      return true;
     }
     throw new Error(result.message || "Petpooja KOT push rejected by POS server");
   } catch (err: any) {
@@ -665,7 +702,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         const outcome = await (db as any).runTransaction(async (tx: any) => {
           const fresh = await tx.get(orderDoc.ref);
           const data = (fresh.exists ? fresh.data() : undefined) as any;
-          if (data?.petpoojaOrderId) return "won";
+          if (data?.petpoojaOrderId || data?.petpoojaAcceptedNoId) return "won";
           const freshRetry = (Number(data?.petpoojaRetryCount) || 0) + 1;
           retryForSnapshot = freshRetry;
           tx.set(

@@ -44,7 +44,14 @@ export interface PetpoojaTestRunnerParams {
 export interface PetpoojaTestRunnerResult {
   success: true;
   scenarioId: string;
-  petpoojaOrderId: string;
+  /**
+   * The POS-issued order id, or `null` when Petpooja accepted the order but
+   * omitted the id from its response — which is what it normally does. `null`
+   * does NOT mean the relay failed; read `petpoojaOrderIdReturned`.
+   */
+  petpoojaOrderId: string | null;
+  /** Whether the POS response actually carried an order id. */
+  petpoojaOrderIdReturned: boolean;
 }
 
 export interface ScenarioModifier {
@@ -349,6 +356,9 @@ const OUTLET_TAX = {
  *     `OrderInfo` level entirely, so the endpoint answered `success:"1"` while
  *     parsing nothing and echoing empty `restID`/`clientOrderID` — which is what
  *     the earlier, wrong "the endpoint is a stub" reading was based on.
+ *   - The response's `orderID` is EMPTY even for a correctly parsed POST that
+ *     registers fine, so it says nothing about fulfilment. Confirm fulfilment
+ *     on the outlet's dashboard Order List, not in the response body.
  *   - Unknown keys are ignored, so both the published names AND the legacy
  *     spellings are emitted — the POS reads whichever it implements, and
  *     neither spelling can point at a different outlet.
@@ -467,9 +477,13 @@ export function formatPetpoojaV21Payload(
     //
     //   orderinfo.OrderInfo.{Restaurant,Customer,Order,OrderItem,Tax,Discount}
     //
-    // BOTH levels are REQUIRED. Without them the endpoint still answers
-    // `success:"1"` but parses nothing and registers no order. See §12 of
-    // references/petpooja_save_order_api.md.
+    // BOTH levels are REQUIRED to be PARSED. Without them the endpoint still
+    // answers `success:"1"` but parses nothing and echoes empty
+    // restID/clientOrderID. Whether an unparsed POST still registers an order
+    // is UNPROVEN and must not be asserted either way: an empty echo is not
+    // evidence of non-registration, because the endpoint returns an empty
+    // `orderID` even when the order DOES register (see orderPush.ts). See §12
+    // of references/petpooja_save_order_api.md.
     restID: restId,
     res_name: "Burgonomics",
     address: "Burgonomics, Ahmedabad",
@@ -628,6 +642,12 @@ interface RelayOutcome {
  * Returns a discriminated outcome: `ok: false` on ANY rejection so the caller
  * can fail the QA relay loudly instead of minting a `pp_test_*` order id that
  * never existed on the POS side.
+ *
+ * `ok: true` means the POS ACCEPTED the order. It deliberately does NOT mean
+ * the response carried an id: Petpooja answers `success:"1"` with an empty
+ * `orderID` even though the order registers at the outlet (proven against the
+ * live Order List — see orderPush.ts). Callers must read `petpoojaOrderId`
+ * (id present) separately from `ok` (order accepted).
  */
 async function relayScenarioToPetpooja(
   order: PetpoojaTestOrder,
@@ -690,11 +710,10 @@ async function relayScenarioToPetpooja(
       result?.orderID ||
       result?.orderId;
     if (typeof liveId !== "string" || !liveId) {
-      return {
-        ok: false,
-        reason: "POS accepted but returned no order id",
-        detail: result ?? raw,
-      };
+      // Accepted, id not returned. This is the normal Petpooja response, not a
+      // failure — the order is at the outlet (Order List proof) and re-sending
+      // it would duplicate the KOT. Report acceptance and say the id is absent.
+      return { ok: true, detail: result ?? raw };
     }
     return { ok: true, petpoojaOrderId: liveId };
   } catch (err: any) {
@@ -707,11 +726,14 @@ async function relayScenarioToPetpooja(
  *
  * Honesty contract (deliberately NOT "never hard-fails"):
  *  - mock mode ON  → deterministic `pp_test_*` id (unit tests / emulator).
- *  - mock mode OFF + credentials + branch mapping → the relay is LIVE and the
- *    result MUST be a real Petpooja order id. Any POS rejection, transport
- *    failure, or missing order id THROWS with the POS response attached, so a
+ *  - mock mode OFF + credentials + branch mapping → the relay is LIVE. Any POS
+ *    rejection or transport failure THROWS with the POS response attached, so a
  *    QA relay can never report a "fulfilled" scenario that Petpooja never
  *    accepted.
+ *  - Acceptance WITHOUT an id does NOT throw: the order is at the outlet, and
+ *    reporting that as a failure (the old behaviour) was itself dishonest — it
+ *    claimed nothing had synced when the POS had the order. It returns
+ *    `petpoojaOrderId: null` with `petpoojaOrderIdReturned: false`.
  */
 export async function runPetpoojaTestScenario(
   params: PetpoojaTestRunnerParams,
@@ -763,6 +785,7 @@ export async function runPetpoojaTestScenario(
       success: true,
       scenarioId: params.scenarioId,
       petpoojaOrderId: clientOrderID,
+      petpoojaOrderIdReturned: true,
     };
   }
 
@@ -771,7 +794,7 @@ export async function runPetpoojaTestScenario(
     params.branchId as string,
     clientOrderID
   );
-  if (!outcome.ok || !outcome.petpoojaOrderId) {
+  if (!outcome.ok) {
     const err: any = new Error(
       `Petpooja rejected scenario "${order.scenarioId}" (${
         outcome.reason || "unknown"
@@ -785,6 +808,7 @@ export async function runPetpoojaTestScenario(
   return {
     success: true,
     scenarioId: params.scenarioId,
-    petpoojaOrderId: outcome.petpoojaOrderId,
+    petpoojaOrderId: outcome.petpoojaOrderId ?? null,
+    petpoojaOrderIdReturned: !!outcome.petpoojaOrderId,
   };
 }
