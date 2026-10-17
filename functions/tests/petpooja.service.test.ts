@@ -378,6 +378,62 @@ describe("Petpooja POS Bridge Service", () => {
       ).toBe("31z58ciw0h");
     });
 
+    it.each([
+      ["details.menusharingcode", { details: { menusharingcode: "31z58ciw0h" } }],
+      ["details.menu_sharing_code", { details: { menu_sharing_code: "31z58ciw0h" } }],
+      ["details.restID", { details: { restID: "31z58ciw0h" } }],
+      ["flattened menusharingcode without details", { menusharingcode: "31z58ciw0h" }],
+      ["flattened menusharingcode with empty details", { details: {}, menusharingcode: "31z58ciw0h" }],
+    ])("resolves a menu PUSH's outlet code from %s", (_shape, restaurant) => {
+      // Flattened pushes are a fallback, not a reason to require details.
+      expect(extractMenuRestId({ restaurants: [restaurant] })).toBe("31z58ciw0h");
+    });
+
+    it.each([
+      ["details.menusharingcode", {
+        details: { menusharingcode: "primary_code", menu_sharing_code: "underscored_code", restID: "alias_code" },
+        menusharingcode: "flattened_code",
+      }, "primary_code"],
+      ["details.menu_sharing_code", {
+        details: { menu_sharing_code: "underscored_code", restID: "alias_code" },
+        menusharingcode: "flattened_code",
+      }, "underscored_code"],
+      ["details.restID", {
+        details: { restID: "alias_code" },
+        menusharingcode: "flattened_code",
+      }, "alias_code"],
+    ])("prefers %s over the remaining push-code fallbacks", (_shape, restaurant, expected) => {
+      // Conflicting spellings must keep the source's order — not whichever
+      // property a vendor happens to send first.
+      expect(extractMenuRestId({ restaurants: [restaurant] })).toBe(expected);
+    });
+
+    it("prefers an explicit top-level rest_id over all push-code spellings", () => {
+      expect(
+        extractMenuRestId({
+          rest_id: "explicit_code",
+          restaurants: [{
+            details: { menusharingcode: "primary_code", menu_sharing_code: "underscored_code", restID: "alias_code" },
+            menusharingcode: "flattened_code",
+          }],
+        })
+      ).toBe("explicit_code");
+    });
+
+    it.each([
+      ["keeps the first value even when a later entry has a nested code", [
+        { menusharingcode: "first_code" },
+        { details: { menusharingcode: "later_code" } },
+      ]],
+      ["skips an entry without a sharing code", [
+        { restaurantid: "5439", details: {} },
+        { details: { restID: "first_code" } },
+        { details: { menusharingcode: "later_code" } },
+      ]],
+    ])("resolves the first restaurant entry that yields a code: %s", (_case, restaurants) => {
+      expect(extractMenuRestId({ restaurants })).toBe("first_code");
+    });
+
     it("prefers an explicit top-level rest_id over the nested push code", () => {
       expect(
         extractMenuRestId({
