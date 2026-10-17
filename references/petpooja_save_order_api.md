@@ -867,3 +867,12 @@ only the wiring makes the first test resolve with
 is known to bite rather than merely pass. Full gate: build clean, 500 passed /
 2 skipped / 0 failed.
 
+**Deployed 2026-10-17** (`api`, `hourlyPetpoojaMenuSync`, `retryPetpoojaOrders`),
+from a clean worktree at the commit, per §16.9. Because this fix lands on the
+*scheduled* path, the next hourly tick fingerprints the build — the first such
+check available for either deploy: pre-fix the 10:30Z tick wrote one row for
+`demo` (`COMPLETED`, `created: 0`, `error: null`); post-fix that same outlet must
+write **none**, because its lookup now throws. A `petpooja_sync_logs` row for
+`demo` at 11:30Z therefore means the deploy did not take effect, and a row with
+`created > 0` means Petpooja provisioned the outlet's menu in the meantime.
+
