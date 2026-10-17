@@ -780,9 +780,10 @@ exact reason, and exactly one call — the demo outlet — can succeed.
   catalogue straight from the push payload (`incomingMenu.items`), which the code
   deliberately does *not* re-fetch — re-fetching hits the Menu API's S3 lookup,
   the source of "unable to fetch Object from s3 bucket".
-- The **scheduled** sync (no push payload) will still hit that S3 lookup for the
-  demo outlet until Petpooja provisions the outlet's menu file. Vendor-side state,
-  not a defect here.
+- The **scheduled** sync (no push payload) is a different matter — see §16.10.
+  This document predicted it would fail loudly on the Menu API's S3 lookup. The
+  10:30 UTC tick showed it does the opposite: it completes *silently* with zero
+  items and `error: null`.
 - **KOT pushes** can now satisfy `order.branchId = "demo"` →
   `branches/demo.petpoojaStoreId`, so a real order can be relayed and the inbound
   callback path (§16.8) exercised.
@@ -817,4 +818,42 @@ Deploy verification here is **by provenance, not by behaviour**: clean tree →
 fingerprint is available to an unauthenticated caller, because every route that
 would prove it is auth-gated (`/petpooja/menu-sync`, `/petpooja/pushOrder`), and
 the vendor credential was not used to forge one. The first real proof is an order.
+
+### 16.10 A failed Petpooja menu lookup is logged as a *successful* empty sync (2026-10-17)
+
+**Evidence.** The 10:30 UTC hourly tick — the first after the DEMO outlet was
+linked — wrote exactly one `petpooja_sync_logs` row:
+
+```json
+{ "storeId": "demo", "status": "COMPLETED", "version": "live", "scope": "FULL",
+  "error": null, "created": 0, "createdAt": "2026-10-17T10:30:02.335Z" }
+```
+
+Every other branch wrote none (all unlinked → fail closed), so the noise fell from
+14 rows/hour to 1. But that one row is wrong. `demo` is the outlet whose Menu-API
+lookup answers `{"success":"0","message":"unable to fetch Object from s3 bucket"}`
+(§16.7 probe), so a **failed** fetch was recorded as a healthy `COMPLETED` with
+`created: 0` and `error: null`.
+
+**Cause.** `menuSyncWebhook.ts:156-160` throws only on `!response.ok` and then
+does `menuData = await response.json()`. The following lines read
+`menuData.items || []` (`:173`) and `menuData.categories || []` (`:174`) and never
+inspect `success` or `message` — a grep finds no other reader of either. The Menu
+API reports its own failure with HTTP 200 + `success:"0"`, so the failure body
+parses as an empty catalogue.
+
+**Why it matters.** `petpooja_sync_logs` is the operator-facing answer to "did the
+menu sync?". A vendor outage and an outlet that genuinely has no menu produce the
+same green row. This is the same false-success class as the rest of this
+document — the runner's `ok:false` false negative (§16.8), the id-less ack read
+as failure — with the sign flipped: here a failure reads as success. It is also
+why `created: 0` rows were tolerated for so long as "expected, fake rest ids".
+
+**Deliberately not fixed here.** The fix is a body check in the live fetch —
+treat `success` in `{0, "0", false}`, or a `message` accompanying no `items`
+array, as a failed lookup, let the existing `captureErrorSnapshot`
+(`:162-169`) record it and carry the vendor's message, and add a regression test
+for the HTTP-200-with-`success:"0"` shape. It touches the same fetch block as the
+dual-auth-header guess, so it deserves its own deploy rather than being folded
+into the linkage change. Recorded here so it is not lost.
 
