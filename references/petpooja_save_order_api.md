@@ -849,11 +849,21 @@ document — the runner's `ok:false` false negative (§16.8), the id-less ack re
 as failure — with the sign flipped: here a failure reads as success. It is also
 why `created: 0` rows were tolerated for so long as "expected, fake rest ids".
 
-**Deliberately not fixed here.** The fix is a body check in the live fetch —
-treat `success` in `{0, "0", false}`, or a `message` accompanying no `items`
-array, as a failed lookup, let the existing `captureErrorSnapshot`
-(`:162-169`) record it and carry the vendor's message, and add a regression test
-for the HTTP-200-with-`success:"0"` shape. It touches the same fetch block as the
-dual-auth-header guess, so it deserves its own deploy rather than being folded
-into the linkage change. Recorded here so it is not lost.
+**Fixed 2026-10-17.** `menuApiFailureReason` (exported from `menuSyncWebhook.ts`)
+reads the response body, and the live fetch now throws when the body reports a
+failure — so the existing `captureErrorSnapshot` (`:162-169`) records it and
+carries the vendor's own message into the error instead of logging green. It is
+deliberately conservative: only an explicitly falsy `success` (`false`, `0`,
+`"0"`), or prose accompanying no `items` array at all, counts as a failure, so a
+genuinely empty catalog (`{"success":"1","items":[]}`) still syncs.
+
+`functions/tests/petpooja.menu-fetch.test.ts` drives the real live path
+(`mock.petpoojaPos = false`) with the POS HTTP call stubbed, so a dropped wiring
+fails the test even when the helper is correct: the failing-body case rejects with
+no `petpooja_sync_logs` row and no `lastPetpoojaSync` stamp, the empty-catalog
+case still resolves and logs `created: 0`, and a non-200 still rejects. Reverting
+only the wiring makes the first test resolve with
+`{itemCount: 0, categoriesCount: 0}` — the false success reproduced — so the test
+is known to bite rather than merely pass. Full gate: build clean, 500 passed /
+2 skipped / 0 failed.
 

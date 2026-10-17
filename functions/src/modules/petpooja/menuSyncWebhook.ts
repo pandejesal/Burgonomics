@@ -158,6 +158,15 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       }
 
       menuData = await response.json();
+
+      // A 200 whose body reports the vendor's OWN failure is still a failure.
+      // See menuApiFailureReason: unchecked, a failed lookup synced zero items
+      // and then logged COMPLETED/error:null — an outage that looked healthy.
+      // Throwing here routes it through the captureErrorSnapshot below.
+      const refusal = menuApiFailureReason(menuData, restId);
+      if (refusal) {
+        throw new Error(refusal);
+      }
     } catch (err: any) {
       await captureErrorSnapshot({
         source: "petpooja",
@@ -367,6 +376,48 @@ export function extractMenuRestId(payload: any): string | null {
     if (r?.restaurantid) return String(r.restaurantid);
   }
   return null;
+}
+
+/**
+ * Returns a human-readable reason when a Menu API response body reports the
+ * VENDOR'S OWN failure, else null.
+ *
+ * The Menu API reports failures with HTTP 200 — e.g.
+ * `{"success":"0","message":"unable to fetch Object from s3 bucket"}`. Because
+ * the live fetch only checked `response.ok`, that body fell through to
+ * `menuData.items || []`, so a failed lookup synced zero items and then wrote a
+ * `petpooja_sync_logs` row reading `COMPLETED / error: null / created: 0`, and
+ * stamped `lastPetpoojaSync` + `petpoojaItemCount: 0` on the branch. An outlet in
+ * the middle of a vendor outage was therefore indistinguishable from one that
+ * honestly has no menu (observed live 2026-10-17T10:30Z for outlet 31z58ciw0h).
+ *
+ * Scope note, so this is not mistaken for a data-loss guard: the empty-feed
+ * tombstone pass is separately guarded by `items.length > 0`, so this case never
+ * retired anything. The harm is purely that a failure was reported as a success.
+ *
+ * Deliberately conservative: only an explicitly falsy `success`, or a prose
+ * response carrying no `items` array at all, counts as a failure. A genuinely
+ * empty catalog (`{"success":"1","items":[]}`) still syncs.
+ */
+export function menuApiFailureReason(menuData: any, restId: string): string | null {
+  const body = menuData || {};
+  const success = body.success;
+
+  const explicitlyRefused =
+    success === false || success === 0 || String(success) === "0";
+  const proseWithoutCatalog =
+    success === undefined &&
+    !Array.isArray(body.items) &&
+    typeof body.message === "string" &&
+    body.message.length > 0;
+
+  if (!explicitlyRefused && !proseWithoutCatalog) return null;
+
+  const vendor =
+    typeof body.message === "string" && body.message.length > 0
+      ? body.message
+      : `success=${JSON.stringify(success)}`;
+  return `Petpooja Menu API refused the catalog lookup for outlet ${restId}: ${vendor}`;
 }
 
 /**
