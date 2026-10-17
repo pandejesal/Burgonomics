@@ -14,10 +14,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 // HTTP call stubbed, so they fail if the wiring is dropped even when
 // `menuApiFailureReason` itself is still correct.
 //
-// The push tests drive `handlePetpoojaMenuWebhook` with mock.petpoojaPos = true
-// (an inbound push resolves its branch differently from the scheduled pull, and
-// this sandbox has no indexed branch query), which exercises the same ingestion
-// branch a live push takes.
+// Push tests cover both mock ingestion and live indexed outlet resolution,
+// including the live-only ghost-SKU retirement pass.
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
@@ -43,8 +41,40 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
     }),
     commit: vi.fn(async () => {}),
   };
+  const query = (
+    col: string,
+    filters: Array<[string, string, any]> = [],
+    max = Infinity,
+    afterId = ""
+  ): any => ({
+    where: (field: string, op: string, value: any) =>
+      query(col, [...filters, [field, op, value]], max, afterId),
+    orderBy: (field: string) => {
+      if (field !== "__name__") throw new Error(`Unsupported query order: ${field}`);
+      return query(col, filters, max, afterId);
+    },
+    limit: (n: number) => query(col, filters, n, afterId),
+    startAfter: (doc: { id: string }) => query(col, filters, max, doc.id),
+    get: vi.fn(async () => {
+      const docs = Object.keys(savedDocs)
+        .filter((path) => path.startsWith(`${col}/`))
+        .sort()
+        .filter((path) => path.slice(col.length + 1) > afterId)
+        .filter((path) => filters.every(([field, op, value]) => {
+          if (op !== "==") throw new Error(`Unsupported query operator: ${op}`);
+          return savedDocs[path][field] === value;
+        }))
+        .slice(0, max)
+        .map((path) => {
+          const id = path.slice(col.length + 1);
+          return { id, data: () => savedDocs[path], ref: docRef(col, id) };
+        });
+      return { empty: docs.length === 0, docs };
+    }),
+  });
   const mockDb: any = {
     collection: (col: string) => ({
+      ...query(col),
       doc: (id?: string) => docRef(col, id as string),
       add: vi.fn(async (data: any) => {
         savedDocs[`${col}/added_${Object.keys(savedDocs).length}`] = data;
@@ -377,12 +407,8 @@ describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDIN
     // this is the acceptance path AROUND the new refusal, composed end to end.
     expect(menuApiFailureReason(REAL_PUSH_BODY, DEMO_REST_ID)).toBeNull();
 
-    // In live mode the handler resolves the outlet through
-    // resolveBranchIdForRestId, which runs an INDEXED query
-    // (branches.where("petpoojaStoreId", "==", restId)); this test's Firestore
-    // double exposes no `.where`, so the resolver returns null (item86ingSync.ts)
-    // and the handler takes the section 16.7 "no linked branch" skip. Calling it
-    // would have thrown had the classifier refused the body.
+    // A genuinely unlinked outlet still takes the skip with query support.
+    delete savedDocs["branches/demo"];
     const res = await handlePetpoojaMenuWebhook(REAL_PUSH_BODY);
 
     expect(res).toEqual({ success: false, itemCount: 0 });
@@ -390,7 +416,74 @@ describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDIN
     // no branch stamp.
     expect(productRows()).toEqual([]);
     expect(syncLogRows()).toEqual([]);
-    expect(savedDocs["branches/demo"].lastPetpoojaSync).toBeUndefined();
+    expect(savedDocs["branches/demo"]).toBeUndefined();
+  });
+
+  it("resolves a LIVE push by sharing code, ingests under the branch, and retires only absent orderable POS SKUs", async () => {
+    const ghostPath = "products/prod_demo_ghost";
+    savedDocs[ghostPath] = {
+      branchId: "demo", restId: DEMO_REST_ID, petpoojaItemId: "ghost",
+      name: "Removed from POS", inStock: true,
+    };
+    const protectedDocs = {
+      "products/prod_other_ghost": { branchId: "other", petpoojaItemId: "ghost", inStock: true },
+      "products/prod_demo_combo": { branchId: "demo", petpoojaItemId: "combo", isCombo: true, inStock: true },
+      "products/prod_demo_local": { branchId: "demo", inStock: true },
+      "products/prod_demo_already_out": { branchId: "demo", petpoojaItemId: "already_out", inStock: false },
+    };
+    Object.assign(savedDocs, protectedDocs);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      expect(menuApiFailureReason(REAL_PUSH_BODY, DEMO_REST_ID)).toBeNull();
+      const res = await handlePetpoojaMenuWebhook(REAL_PUSH_BODY);
+
+      expect(res).toEqual({ success: true, itemCount: 2 });
+      expect(fetchMock).not.toHaveBeenCalled(); // inbound catalog, not a pull
+      for (const item of REAL_PUSH_BODY.items) {
+        expect(savedDocs[`products/prod_demo_${item.itemid}`]).toMatchObject({
+          branchId: "demo", restId: DEMO_REST_ID, petpoojaItemId: item.itemid,
+          name: item.itemname, inStock: true,
+        });
+        expect(savedDocs[`products/prod_${DEMO_REST_ID}_${item.itemid}`]).toBeUndefined();
+      }
+      expect(savedDocs["branches/demo"].petpoojaItemCount).toBe(2);
+      expect(syncLogRows()).toHaveLength(1);
+      expect(savedDocs[syncLogRows()[0]]).toMatchObject({
+        storeId: "demo", status: "COMPLETED", created: 2, error: null, simulated: false,
+      });
+
+      // Source: "Never DELETE: flip inStock:false + ghostRetired"; preserve data.
+      expect(savedDocs[ghostPath]).toEqual({
+        branchId: "demo", restId: DEMO_REST_ID, petpoojaItemId: "ghost",
+        name: "Removed from POS", inStock: false, ghostRetired: true,
+        ghostRetiredAt: "MOCK_TIMESTAMP", updatedAt: "MOCK_TIMESTAMP",
+      });
+      for (const [path, data] of Object.entries(protectedDocs)) {
+        expect(savedDocs[path]).toEqual(data);
+      }
+      expect(snapshotRows()).toHaveLength(1);
+      expect(savedDocs[snapshotRows()[0]]).toMatchObject({
+        branchId: "demo", severity: "medium",
+        message: expect.stringContaining("retired 1 ghost SKU(s)"),
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not retire existing POS SKUs when a LIVE push carries an empty feed", async () => {
+    const ghost = { branchId: "demo", petpoojaItemId: "ghost", inStock: true };
+    savedDocs["products/prod_demo_ghost"] = ghost;
+
+    await expect(handlePetpoojaMenuWebhook({ ...REAL_PUSH_BODY, items: [] }))
+      .resolves.toEqual({ success: true, itemCount: 0 });
+
+    // Source guard: live mode AND items.length > 0; an empty feed retires nothing.
+    expect(savedDocs["products/prod_demo_ghost"]).toEqual(ghost);
+    expect(snapshotRows()).toEqual([]);
+    expect(syncLogRows()).toHaveLength(1);
+    expect(savedDocs[syncLogRows()[0]]).toMatchObject({ created: 0, simulated: false });
   });
 });
 
