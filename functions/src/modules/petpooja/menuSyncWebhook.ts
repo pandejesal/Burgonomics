@@ -8,16 +8,54 @@ import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
 export interface PetpoojaMenuItem {
   itemid: string;
   itemname: string;
+  // Both spellings are kept: the legacy `item_description` the mapper used to
+  // read, and `itemdescription` — the name the real push actually sends
+  // (non-empty on 110/166 captured items). Same alias-tolerance as orderPush.
   item_description?: string;
+  itemdescription?: string;
   price: string | number;
   itemcategoryname: string;
   itemcategoryid: string;
+  // The real push keys the item's category as `item_categoryid` and joins it to
+  // the top-level `categories[].categoryid` for the NAME; `itemcategoryid` is
+  // the legacy spelling that was all the mapper read.
+  item_categoryid?: string;
   in_stock: string | number | boolean;
   item_attributeid?: string; // 1 = Veg, 2 = NonVeg, 3 = Egg
   itemimageurl?: string;
+  item_image_url?: string;
   image_url?: string;
   image?: string;
   addon_groups?: any[];
+}
+
+/**
+ * Builds `categoryid -> categoryname` from the payload's top-level `categories`
+ * array — the join the push's item-level `item_categoryid` needs to resolve a
+ * human name. The vendor sends the id on the ITEM (`item_categoryid`, e.g.
+ * "90750") and the name only in the top-level catalog
+ * (`categories[].categoryid` / `categories[].categoryname`), so neither side
+ * alone is enough.
+ *
+ * The whole shape is guarded: `categories` may be absent, not an array, or
+ * carry entries that are not objects or miss either key. A malformed catalog
+ * degrades to the item's own legacy `itemcategoryname` (then "Other") — it must
+ * never throw, and it must never turn an id the payload DID carry into "Other".
+ */
+function buildCategoryNameMap(categories: any): Map<string, string> {
+  const names = new Map<string, string>();
+  if (!Array.isArray(categories)) return names;
+  for (const entry of categories) {
+    if (!entry || typeof entry !== "object") continue;
+    const id = entry.categoryid;
+    const name = entry.categoryname;
+    if (id === undefined || id === null || String(id).trim() === "") continue;
+    // An entry with no usable name cannot name anything — skip it so the item
+    // falls through to the legacy name rather than to an empty string.
+    if (typeof name !== "string" || name.trim() === "") continue;
+    names.set(String(id), name);
+  }
+  return names;
 }
 
 /**
@@ -221,6 +259,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   const items = (menuData.items || []) as PetpoojaMenuItem[];
   const categories = menuData.categories || [];
 
+  // Resolve the item -> category NAME join ONCE, before the loop: the real push
+  // carries the id on each item and the name only in the top-level catalog.
+  const categoryNames = buildCategoryNameMap(menuData.categories);
+
   // Firestore batches cap at 500 writes — a >500-SKU catalog in one batch
   // silently drops the tail (H10/M30). Commit in ≤500-item chunks.
   const MENU_SYNC_BATCH_LIMIT = 500;
@@ -247,15 +289,28 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
         ? String(item.item_attributeid).trim() === "1"
         : true;
 
+    // Read the vendor's OWN spellings first, keep the legacy ones as fallback
+    // (alias-tolerant read, matching orderPush.ts). The push sends
+    // `item_categoryid` / `itemdescription` / `item_image_url`; the mapper used
+    // to read only `itemcategoryid` / `item_description` and so wrote every one
+    // of the 166 captured docs as "uncategorized" / "Other" / "".
+    const categoryId = item.item_categoryid || item.itemcategoryid || "uncategorized";
+    // The NAME lives only in the top-level catalog, keyed by the id above. If
+    // the id is absent from that map, fall back to the item's legacy name, then
+    // "Other" — an id the catalog DID carry always resolves to its real name.
+    const categoryName =
+      categoryNames.get(String(categoryId)) || item.itemcategoryname || "Other";
+
     const productPayload = {
       id: productId,
       petpoojaItemId: item.itemid,
       name: item.itemname,
-      description: item.item_description || "",
+      description: item.itemdescription || item.item_description || "",
       price: Number(item.price) || 0,
-      categoryId: item.itemcategoryid || "uncategorized",
-      categoryName: item.itemcategoryname || "Other",
-      imageUrl: item.itemimageurl || item.image_url || item.image || null,
+      categoryId,
+      categoryName,
+      imageUrl:
+        item.itemimageurl || item.item_image_url || item.image_url || item.image || null,
       inStock,
       isVeg,
       branchId,

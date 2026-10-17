@@ -389,6 +389,186 @@ describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDIN
   });
 });
 
+describe("Petpooja PUSH — the vendor's OWN field spellings (category join, description, image)", () => {
+  // Live Firestore showed every doc written from the 166-item captured push as
+  // categoryId "uncategorized" / categoryName "Other" / description "" / imageUrl
+  // null. The push keys the item's category as `item_categoryid` and carries the
+  // NAME only in the top-level `categories` array; the mapper read
+  // `itemcategoryid` / `itemcategoryname` / `item_description`, none of which the
+  // vendor sends. These pin the vendor spellings AND the legacy compatibility.
+  let prevMock: boolean;
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    prevMock = config.mock.petpoojaPos;
+    // Mock mode resolves the push's branch from rest_id (branchId = restId), so
+    // `rest_id: "demo"` yields predictable `prod_demo_<itemid>` doc ids.
+    config.mock.petpoojaPos = true;
+    savedDocs["branches/demo"] = { petpoojaStoreId: DEMO_REST_ID };
+  });
+
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+  });
+
+  it("(a) maps the REAL spellings: item_categoryid -> the joined top-level categoryname, plus itemdescription", async () => {
+    const res = await handlePetpoojaMenuWebhook({
+      success: "1",
+      message: "Menu items are successfully listed.",
+      rest_id: "demo",
+      categories: [
+        { categoryid: "90762", categoryname: "Accompaniments" },
+        { categoryid: "90750", categoryname: "Burgers" },
+      ],
+      items: [
+        {
+          itemid: "17314",
+          itemname: "Classic Veg Burger",
+          itemdescription: "Crispy smashed veg patty with house sauce",
+          item_categoryid: "90750",
+          item_image_url: "", // empty on all 166 today
+          price: "199",
+          in_stock: "2",
+          item_attributeid: "1",
+        },
+      ],
+    });
+
+    expect(res).toEqual({ success: true, itemCount: 1 });
+    const doc = savedDocs["products/prod_demo_17314"];
+    expect(doc.categoryId).toBe("90750");
+    expect(doc.categoryName).toBe("Burgers"); // joined from categories[], NOT "Other"
+    expect(doc.description).toBe("Crispy smashed veg patty with house sauce");
+  });
+
+  it("(b) still maps the LEGACY spellings exactly as before (compatibility half)", async () => {
+    await handlePetpoojaMenuWebhook({
+      success: "1",
+      rest_id: "demo",
+      // No top-level `categories` at all — the legacy path never needed one.
+      items: [
+        {
+          itemid: "pp_b1",
+          itemname: "Classic Smash Cheese Burger",
+          item_description: "Legacy description",
+          itemcategoryname: "Signature Burgers",
+          itemcategoryid: "cat_burgers",
+          price: 199,
+          in_stock: 1,
+          item_attributeid: "1",
+        },
+      ],
+    });
+
+    const doc = savedDocs["products/prod_demo_pp_b1"];
+    expect(doc.categoryId).toBe("cat_burgers");
+    expect(doc.categoryName).toBe("Signature Burgers");
+    expect(doc.description).toBe("Legacy description");
+  });
+
+  it("(c) falls back to Other for an id the catalog does not carry, without throwing", async () => {
+    const res = await handlePetpoojaMenuWebhook({
+      success: "1",
+      rest_id: "demo",
+      categories: [{ categoryid: "90762", categoryname: "Accompaniments" }],
+      items: [
+        {
+          itemid: "orphan",
+          itemname: "Orphan Item",
+          item_categoryid: "99999", // id present on the item, absent from categories
+          price: "10",
+          in_stock: "2",
+        },
+      ],
+    });
+
+    expect(res).toEqual({ success: true, itemCount: 1 });
+    const doc = savedDocs["products/prod_demo_orphan"];
+    expect(doc.categoryId).toBe("99999"); // the id the payload DID carry is kept
+    expect(doc.categoryName).toBe("Other"); // ...and only the name falls back
+  });
+
+  it("(c) survives a missing or non-array `categories`, and unusable entries, without throwing", async () => {
+    // `categories` absent entirely.
+    await expect(
+      handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        items: [{ itemid: "m1", itemname: "M", item_categoryid: "1", price: "5", in_stock: "2" }],
+      })
+    ).resolves.toEqual({ success: true, itemCount: 1 });
+    expect(savedDocs["products/prod_demo_m1"].categoryName).toBe("Other");
+
+    // `categories` present but NOT an array.
+    await expect(
+      handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        categories: "not-an-array",
+        items: [
+          {
+            itemid: "m2",
+            itemname: "M2",
+            item_categoryid: "1",
+            itemcategoryname: "Legacy Name",
+            price: "5",
+            in_stock: "2",
+          },
+        ],
+      })
+    ).resolves.toEqual({ success: true, itemCount: 1 });
+    expect(savedDocs["products/prod_demo_m2"].categoryName).toBe("Legacy Name");
+
+    // Array with junk entries and an entry missing the NAME for the item's id.
+    await expect(
+      handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        categories: [null, "x", { categoryname: "No Id" }, { categoryid: "42" }],
+        items: [
+          {
+            itemid: "m3",
+            itemname: "M3",
+            item_categoryid: "42",
+            itemcategoryname: "Legacy For 42",
+            price: "5",
+            in_stock: "2",
+          },
+        ],
+      })
+    ).resolves.toEqual({ success: true, itemCount: 1 });
+    expect(savedDocs["products/prod_demo_m3"].categoryName).toBe("Legacy For 42");
+  });
+
+  it("(d) picks up item_image_url when it carries a value, and stays null when it is the empty string", async () => {
+    await handlePetpoojaMenuWebhook({
+      success: "1",
+      rest_id: "demo",
+      items: [
+        {
+          itemid: "img",
+          itemname: "Has Image",
+          item_image_url: "https://cdn.example.com/items/img.png",
+          price: "5",
+          in_stock: "2",
+        },
+        {
+          itemid: "noimg",
+          itemname: "Empty Image",
+          item_image_url: "", // the observed value on all 166 today
+          price: "5",
+          in_stock: "2",
+        },
+      ],
+    });
+
+    expect(savedDocs["products/prod_demo_img"].imageUrl).toBe(
+      "https://cdn.example.com/items/img.png"
+    );
+    expect(savedDocs["products/prod_demo_noimg"].imageUrl).toBeNull();
+  });
+});
+
 describe("menuApiFailureReason — the decision itself", () => {
   it("requires a POSITIVE failure signal: an explicit falsy success", () => {
     expect(
