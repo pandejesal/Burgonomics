@@ -290,6 +290,17 @@ async function parkDispatchEvent(
   options: { snapshot?: boolean } = {}
 ): Promise<void> {
   try {
+    // A redelivery of an already-parked event re-parks it — that re-attempt is
+    // the point of finding 3 — but it must NOT re-alert. The operator already
+    // has the row; only a first park raises a snapshot (review finding on
+    // 39efc40: the snapshot ran once per redelivery).
+    const preState = await db
+      .collection("dispatch_webhook_events")
+      .doc(parkId)
+      .get()
+      .catch(() => null);
+    const alreadyParked = preState?.data?.()?.status === "parked";
+
     await db
       .collection("unmatched_dispatch_events")
       .doc(parkId)
@@ -302,7 +313,7 @@ async function parkDispatchEvent(
         },
         { merge: true }
       );
-    if (options.snapshot !== false) {
+    if (options.snapshot !== false && !alreadyParked) {
       await captureErrorSnapshot({
         source: "dispatch",
         severity,
@@ -433,7 +444,10 @@ export async function handleDispatchWebhook(
   // re-attempted on provider redelivery instead of being dropped forever
   // (finding 3). The park reason rides the dedup doc so the retry is auditable;
   // the row in `unmatched_dispatch_events` is keyed by the same deterministic
-  // `parkId`, so a redelivery never appends a second row.
+  // `parkId`, so a redelivery never appends a second row. That idempotency is
+  // exact for BYTE-IDENTICAL redeliveries (the shape providers actually retry) —
+  // `parkId` derives from a hash of the raw body, so a reserialized body (key
+  // order/whitespace) yields a different row (audit finding 15, left open).
   const markParked = async (parkReason: string) => {
     try {
       await db.collection("dispatch_webhook_events").doc(parkId).set(
@@ -695,11 +709,14 @@ export async function handleDispatchWebhook(
   // window — a late RIDER_CANCELLED would otherwise resurrect a DELIVERED order
   // as rider_cancelled + needsRebook and pay for a second rider, and a late
   // courier_assigned/active would resurrect a CANCELLED order as `dispatched`
-  // (finding 10).
-  if (
-    event !== "DELIVERED" &&
-    TERMINAL_DELIVERY_STATUSES.includes(currentOrder.deliveryStatus)
-  ) {
+  // (finding 10). See the exempt case below.
+  // The exempt case is ONLY a DELIVERED re-confirm of an already-delivered
+  // order: a late DELIVERED must not turn a CANCELLED order into a paid delivery
+  // (review finding on 39efc40), and every other event is still ignored.
+  const currentTerminal = TERMINAL_DELIVERY_STATUSES.includes(currentOrder.deliveryStatus);
+  const terminalSelfConfirm =
+    event === "DELIVERED" && currentOrder.deliveryStatus === "delivered";
+  if (currentTerminal && !terminalSelfConfirm) {
     log(`Late ${rawEvent} after terminal delivery status ignored (no rewind)`);
     await markProcessed();
     return;

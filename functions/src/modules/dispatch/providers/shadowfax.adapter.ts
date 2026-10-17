@@ -205,7 +205,7 @@ export const shadowfaxAdapter: ProviderAdapter = {
     // of transmitting a fabricated number. (Shadowfax's required-field set is
     // UNVERIFIED — their doc URL 404s and the Postman collection is auth-gated
     // — so an omitted key would be the honest-but-unconfirmed alternative.)
-    const pickupContactNumber = contactDigits(pickup.phone, ctx.customerPhone);
+    const pickupContactNumber = contactDigits(pickup.phone);
     const dropContactNumber = contactDigits(drop.phone, ctx.customerPhone);
     if (!pickupContactNumber || !dropContactNumber) {
       throw unparseable("shadowfax", "contact phone");

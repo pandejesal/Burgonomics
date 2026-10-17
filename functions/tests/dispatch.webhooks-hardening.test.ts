@@ -280,4 +280,46 @@ describe("dispatch webhook hardening (findings 3, 8, 10, 16)", () => {
     expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(1);
     expect(snapshotSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("ignores a late DELIVERED callback on a cancelled order (no cancelled -> delivered) (review on 39efc40)", async () => {
+    seedOrder("ord_cancel_del", {
+      deliveryStatus: "cancelled",
+      dispatchProvider: "borzo",
+      dispatchOrderId: "BZ-CAN-DEL-1",
+      status: { code: "CANCELLED", label: "Cancelled", kind: "cancelled", terminal: true },
+    });
+    savedDocs["dispatch_order_map/BZ-CAN-DEL-1"] = { orderId: "ord_cancel_del", provider: "borzo" };
+
+    const payload = { event: "DELIVERED", order_id: "BZ-CAN-DEL-1", timestamp: Date.now() };
+    const raw = JSON.stringify(payload);
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    // DELIVERED is exempt from the guard only as a re-confirm of an
+    // ALREADY-delivered order. A cancelled delivery must never become a paid
+    // delivery through a late callback.
+    const doc = docOf("ord_cancel_del");
+    expect(doc.deliveryStatus).toBe("cancelled");
+    expect(doc.dispatchWebhookEvent).toBeUndefined();
+    expect(doc.riderName).toBeUndefined();
+    expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(0);
+  });
+
+  it("does not re-alert on a redelivery of an already-parked event (review on 39efc40)", async () => {
+    seedOrder("ord_realert", { deliveryStatus: "dispatched", dispatchProvider: "borzo" });
+
+    // No map row and no binding hint -> parks as `no_matching_order`.
+    const payload = { event: "DELIVERED", order_id: "BZ-NOALERT-1", timestamp: Date.now() };
+    const raw = JSON.stringify(payload);
+
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+    expect(snapshotSpy).toHaveBeenCalledTimes(1); // a first park is a real alert
+    const parkKeys = keysWithPrefix("unmatched_dispatch_events/");
+    expect(parkKeys).toHaveLength(1);
+
+    // The provider retries the byte-identical body: re-attempted (finding 3) but
+    // the operator is not alerted twice, and the review row stays single.
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+    expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(1);
+  });
 });

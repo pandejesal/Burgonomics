@@ -212,18 +212,21 @@ function definedFields(o: Record<string, any>): Record<string, any> {
 }
 
 /**
- * The phone the courier is given for the pickup, in preference order: the
- * branch's own number as snapshotted onto the order at creation (`store.phone` —
- * a required field of the client's OrderStoreSnapshot), then the legacy
- * `branchPhone` alias, then the customer's number. The live payload used to end
- * this chain in a hardcoded literal, so a courier with a question rang a
- * stranger — never fabricate a contact (audit 2026-10-17, finding 5 class).
+ * The phone the courier is given for the pickup: the branch's own number as
+ * snapshotted onto the order at creation (`store.phone` — a required field of the
+ * client's OrderStoreSnapshot), then the legacy `branchPhone` alias. The live
+ * payload used to end this chain in a hardcoded literal, and then in the
+ * CUSTOMER's number — neither is the branch, so a courier with a question rang a
+ * stranger (audit 2026-10-17 findings 4/5). The customer bridge was removed on
+ * review: a pre-snapshot order that has no branch number now sends no pickup
+ * contact instead of a different person's number, so backfill `store.phone` on
+ * any order created before the snapshot existed.
  */
 export function resolvePickupContactPhone(
   order: Record<string, any> | undefined
 ): string | undefined {
   const o = order || {};
-  return o.store?.phone || o.branchPhone || o.customerPhone || undefined;
+  return o.store?.phone || o.branchPhone || undefined;
 }
 
 function storedDispatchSummary(d: any): any {
@@ -406,6 +409,15 @@ export async function bookPorterRider(
       geoSource: dispatchGeoSource,
     };
   } else {
+    // Fail loudly rather than send a pickup with no contact: a live booking needs
+    // the branch's own number (see resolvePickupContactPhone — the customer
+    // bridge is deliberately gone).
+    const pickupContactPhone = resolvePickupContactPhone(order);
+    if (!pickupContactPhone) {
+      throw new Error(
+        "Branch phone number is missing — add it to the branch profile, then retry dispatch."
+      );
+    }
     try {
       const payload = {
         request_id: `REQ-${orderId}`,
@@ -425,7 +437,7 @@ export async function bookPorterRider(
             lng: pickupLng,
             contact_details: {
               name: order.store?.name || order.branchName || "Burgonomics Branch Staff",
-              phone_number: resolvePickupContactPhone(order),
+              phone_number: pickupContactPhone,
             },
           },
           lat: pickupLat,
@@ -484,7 +496,10 @@ export async function bookPorterRider(
 
       dispatchResult = {
         porterOrderId: data.order_id,
-        riderName: data.driver_details?.name || data.driver?.name || "Porter Driver",
+        // No fabricated identity (same class as the Borzo/Shadowfax placeholders):
+        // an empty name keeps the dispatch `pending` until a real driver callback
+        // or the active-order poll fills it in.
+        riderName: data.driver_details?.name || data.driver?.name || "",
         riderPhone: data.driver_details?.phone || data.driver?.phone || "",
         riderVehicleNumber: data.driver_details?.vehicle_number || data.driver?.vehicle_number || "",
         trackingUrl: data.tracking_url || "",

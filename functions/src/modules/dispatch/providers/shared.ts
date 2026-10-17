@@ -163,9 +163,12 @@ export function pickupContact(order: Record<string, any> | undefined): {
     // The branch's own number. Real orders carry it as `store.phone` — a
     // REQUIRED field of the client's OrderStoreSnapshot, written at order
     // creation (OrderRepository/PaymentRepository). `branchPhone` is a legacy
-    // alias; the customer's number is a last resort for orders that predate the
-    // snapshot (no fabricated literal — audit 2026-10-17 findings 4/5).
-    phone: o.store?.phone || o.branchPhone || o.customerPhone || undefined,
+    // alias. There is deliberately NO fallback to the customer's number: the
+    // courier would be told to ring a different person to find the store
+    // (audit 2026-10-17 findings 4/5, bridge removed on review). A pre-snapshot
+    // order therefore sends no pickup contact — `store.phone` needs backfilling
+    // there — instead of a wrong one.
+    phone: o.store?.phone || o.branchPhone || undefined,
   };
 }
 

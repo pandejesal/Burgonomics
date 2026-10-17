@@ -539,7 +539,9 @@ describe("Porter Logistics Service", () => {
         })
       ).toBe("+91 98250 12345");
       expect(resolvePickupContactPhone({ branchPhone: "+91 90000 00000" })).toBe("+91 90000 00000");
-      expect(resolvePickupContactPhone({ customerPhone: "+91 99999 88888" })).toBe("+91 99999 88888");
+      // The customer bridge was removed on review: a pickup contact must never
+      // resolve to a different person's number.
+      expect(resolvePickupContactPhone({ customerPhone: "+91 99999 88888" })).toBeUndefined();
       expect(resolvePickupContactPhone({})).toBeUndefined();
       expect(resolvePickupContactPhone(undefined)).toBeUndefined();
       // The old live payload ended this chain in a hardcoded stranger's number.

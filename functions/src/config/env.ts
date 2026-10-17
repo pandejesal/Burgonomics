@@ -21,11 +21,13 @@ function explicitMock(flag: string | undefined): boolean {
 }
 
 /**
- * Positive finite milliseconds, else the default. `Number("6s")` is NaN and
- * `setTimeout(fn, NaN)` fires IMMEDIATELY, which would time out every dispatch
- * quote at once (audit finding 13); 0/negative/non-numeric all fall back.
+ * A positive finite number from an env string, else the default. `Number("6s")`
+ * is NaN and `setTimeout(fn, NaN)` fires IMMEDIATELY, which would time out every
+ * dispatch quote at once (audit finding 13); a NaN rupee threshold silently
+ * disables the DR7 fare-confirmation gate (`NaN` comparisons are always false),
+ * so the same guard covers both. 0/negative/non-numeric fall back to the default.
  */
-function positiveMs(raw: string | undefined, fallback: number): number {
+function positiveNumber(raw: string | undefined, fallback: number): number {
   const n = Number(raw ?? "");
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
@@ -98,8 +100,11 @@ export const config = {
     baseUrl: process.env.SHADOWFAX_BASE_URL || "https://api.shadowfax.in",
   },
   dispatch: {
-    quoteTimeoutMs: positiveMs(process.env.DISPATCH_QUOTE_TIMEOUT_MS, 6000),
-    fareConfirmDeltaInr: Number(process.env.DISPATCH_FARE_CONFIRM_DELTA_INR || 20),
+    quoteTimeoutMs: positiveNumber(process.env.DISPATCH_QUOTE_TIMEOUT_MS, 6000),
+    // DR7 fare-confirmation threshold. A non-numeric value used to become NaN,
+    // and every `|delta| > NaN` comparison is false, so a single env typo
+    // silently disabled the confirmation gate (review finding on 39efc40).
+    fareConfirmDeltaInr: positiveNumber(process.env.DISPATCH_FARE_CONFIRM_DELTA_INR, 20),
   },
   alerts: {
     slackWebhookUrl: process.env.SLACK_DEV_WEBHOOK_URL || "",

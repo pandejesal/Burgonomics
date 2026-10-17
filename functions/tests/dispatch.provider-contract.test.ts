@@ -448,8 +448,10 @@ describe("borzo contact phones (findings 4, 5)", () => {
 
   it("fails closed rather than inventing a courier phone number", async () => {
     fetchHandler = () => okJson({ is_successful: true, order: { payment_amount: "60.00" } });
+    // NOTE: the customer's phone IS available here — a pickup contact must still
+    // not fall back to it (the bridge was removed on review). Only a real branch
+    // number will do.
     const ctx = borzoContext({
-      customerPhone: undefined,
       order: { branchName: "Burgonomics CG Road" },
     });
 
@@ -607,6 +609,9 @@ describe("dispatchBook end-to-end: an account failure is never an address verdic
       order: {
         branchName: "Burgonomics CG Road",
         branchCity: "Surat",
+        // Real orders carry the branch phone as `store.phone`; the pickup contact
+        // no longer bridges to the customer's number (review on 39efc40).
+        store: { phone: "+91 98250 12345" },
         deliveryAddress: { full: "Some street", lat: DROP.lat, lng: DROP.lng },
       },
     });
