@@ -322,4 +322,34 @@ describe("dispatch webhook hardening (findings 3, 8, 10, 16)", () => {
     expect(snapshotSpy).toHaveBeenCalledTimes(1);
     expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(1);
   });
+
+  it("dedups a reserialized redelivery of the same event, but not different content (finding 15)", async () => {
+    seedOrder("ord_reser", { deliveryStatus: "dispatched", dispatchProvider: "borzo" });
+
+    // No map row and no binding hint -> parks as `no_matching_order`.
+    const ts = Date.now();
+    const payload = { event: "DELIVERED", order_id: "BZ-RESER-1", timestamp: ts };
+    const rawA = JSON.stringify(payload);
+    // The same event with the same values, reserialized: different key order.
+    const rawB = `{"timestamp":${ts},"order_id":"BZ-RESER-1","event":"DELIVERED"}`;
+    expect(rawB).not.toBe(rawA); // the bytes really do differ
+
+    await handleDispatchWebhook("borzo", rawA, borzoSig(rawA), payload);
+    expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(1);
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+
+    await handleDispatchWebhook("borzo", rawB, borzoSig(rawB), payload);
+    // One canonical dedup id -> one review row and one alert, not a second of each.
+    // (Pre-fix the raw-byte hash made this a brand-new event.)
+    expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(1);
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+
+    // Content that genuinely differs is still a distinct event: canonicalising
+    // must not merge real changes away. `courier` is inert here (it affects
+    // neither the event name nor the provider order id).
+    const payloadC = { ...payload, courier: { name: "Amit", phone: "918880000001" } };
+    const rawC = JSON.stringify(payloadC);
+    await handleDispatchWebhook("borzo", rawC, borzoSig(rawC), payloadC);
+    expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(2);
+  });
 });

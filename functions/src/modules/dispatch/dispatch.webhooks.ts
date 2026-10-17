@@ -198,6 +198,37 @@ function hash12(raw: string): string {
 }
 
 /**
+ * A canonical form of a JSON body: object keys sorted recursively, array order
+ * and every value preserved. Providers re-send the SAME event with different
+ * key order, whitespace or number formatting; hashing the raw bytes made that
+ * look like a brand-new event, so the mirror wrote `riderLocation` twice and
+ * re-sent RIDER_CANCELLED pushes (audit finding 15). Content that actually
+ * differs still hashes differently. Non-JSON bodies keep their raw bytes.
+ *
+ * This is a dedup key only — the HMAC is verified over the raw bytes before we
+ * ever get here, so canonicalisation cannot affect authenticity.
+ */
+function canonicalJson(raw: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  const walk = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (value && typeof value === "object") {
+      const source = value as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(source).sort()) out[key] = walk(source[key]);
+      return out;
+    }
+    return value;
+  };
+  return JSON.stringify(walk(parsed));
+}
+
+/**
  * Real rider GPS extraction — ZERO-FAKE rule. Only rider/driver/courier-
  * prefixed coordinate pairs are accepted, and only when BOTH values coerce to
  * finite in-range numbers. Nothing is interpolated, defaulted, or derived: a
@@ -246,7 +277,10 @@ function eventDocId(
 ): string {
   const safeRef = ref.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "noref";
   const safeEvent = (rawEvent || "unknown").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 32);
-  return `dwe_${provider}_${safeEvent}_${safeRef}_${hash12(rawBody)}`;
+  // Hash the CANONICAL body, not the raw bytes (finding 15): a reserialized
+  // redelivery of the same event must land on the same dedup doc id. Content
+  // that really differs still yields a distinct id.
+  return `dwe_${provider}_${safeEvent}_${safeRef}_${hash12(canonicalJson(rawBody))}`;
 }
 
 function eventTimestampMs(payload: any): number | null {
