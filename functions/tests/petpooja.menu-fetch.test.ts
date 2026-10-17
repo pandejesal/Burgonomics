@@ -569,6 +569,184 @@ describe("Petpooja PUSH — the vendor's OWN field spellings (category join, des
   });
 });
 
+// The 166-item Sold-Out incident: every item carried `"in_stock": "2"`, the
+// whitelist (1 / "1" / true) mapped all of them to `inStock: false`, and the run
+// wrote a green COMPLETED row — a fully dark catalogue looked like a healthy
+// sync. These pin the two additive guards: the RAW in_stock census is recorded
+// on the sync-log row, and an ALL-DARK run warns once. The whitelist itself is
+// NOT changed here — whether "2" means available is still open.
+describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", () => {
+  let prevMock: boolean;
+
+  /** console.warn is spied per-test; never leaked into a sibling assertion. */
+  const spyOnWarn = () => vi.spyOn(console, "warn").mockImplementation(() => {});
+
+  const warnText = (warn: any) => warn.mock.calls.map((c: any[]) => String(c[0])).join("\n");
+
+  const latestSyncLog = () => savedDocs[syncLogRows()[0]];
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    prevMock = config.mock.petpoojaPos;
+    config.mock.petpoojaPos = true; // the push path resolves branchId = rest_id
+    savedDocs["branches/demo"] = { petpoojaStoreId: DEMO_REST_ID };
+  });
+
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+  });
+
+  it("(a) records the raw census AND warns when EVERY item is unrecognised (all dark)", async () => {
+    const warn = spyOnWarn();
+    try {
+      const res = await handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        categories: [{ categoryid: "90750", categoryname: "Burgers" }],
+        items: [
+          { itemid: "17314", itemname: "Classic Veg Burger", item_categoryid: "90750", price: "199", in_stock: "2" },
+          { itemid: "17315", itemname: "Paneer Burger", item_categoryid: "90750", price: "219", in_stock: "2" },
+          { itemid: "17316", itemname: "Peri Peri Fries", item_categoryid: "90750", price: "99", in_stock: "2" },
+        ],
+      });
+
+      expect(res).toEqual({ success: true, itemCount: 3 });
+
+      // 1. The census lands on the sync-log row, additively.
+      expect(syncLogRows().length).toBe(1);
+      expect(latestSyncLog().inStockValues).toEqual({ "2": 3 });
+      // Existing fields keep their meaning.
+      expect(latestSyncLog().status).toBe("COMPLETED");
+      expect(latestSyncLog().error).toBeNull();
+      expect(latestSyncLog().created).toBe(3);
+
+      // 2. The warning names the OUTLET and the raw value with its count.
+      expect(warn).toHaveBeenCalled();
+      const message = warnText(warn);
+      expect(message).toContain(DEMO_REST_ID);
+      expect(message).toContain("ingested 3 items");
+      expect(message).toContain("2 x3");
+      expect(message).toContain("Sold Out");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(b) records the census and stays SILENT for a PARTIALLY dark catalogue (genuine 86-ing)", async () => {
+    const warn = spyOnWarn();
+    try {
+      await handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        items: [
+          { itemid: "in1", itemname: "Available", price: "10", in_stock: 1 },
+          { itemid: "out1", itemname: "86-ed", price: "10", in_stock: "2" },
+          { itemid: "out2", itemname: "Also 86-ed", price: "10", in_stock: "0" },
+        ],
+      });
+
+      expect(latestSyncLog().inStockValues).toEqual({ "1": 1, "2": 1, "0": 1 });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(c) records the census and stays SILENT when every item IS in stock", async () => {
+    const warn = spyOnWarn();
+    try {
+      await handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        items: [
+          { itemid: "s1", itemname: "A", price: "10", in_stock: 1 },
+          { itemid: "s2", itemname: "B", price: "10", in_stock: "1" },
+          { itemid: "s3", itemname: "C", price: "10", in_stock: true },
+        ],
+      });
+
+      // 1 / "1" / true collapse to one bucket (normalised only for grouping).
+      expect(latestSyncLog().inStockValues).toEqual({ "1": 2, "true": 1 });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(d) treats a zero-item sync as NOT all-dark, and survives odd shapes without throwing", async () => {
+    const warn = spyOnWarn();
+    try {
+      // Zero items is an empty feed, not a dark catalogue.
+      const res = await handlePetpoojaMenuWebhook({ success: "1", rest_id: "demo", items: [] });
+      expect(res).toEqual({ success: true, itemCount: 0 });
+      expect(latestSyncLog().inStockValues).toEqual({});
+      expect(warn).not.toHaveBeenCalled();
+
+      // A missing `in_stock`, and a NON-object entry in `items`: neither may
+      // throw, and an all-dark warn must not fire spuriously (one item IS in
+      // stock, so this is partially dark). `doc()`/`.doc()` reuse one key, so
+      // the second row overwrites the first in this double.
+      await handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        items: [
+          { itemid: "noflag", itemname: "No flag", price: "10" },
+          "not-an-object",
+          { itemid: "ok", itemname: "Ok", price: "10", in_stock: 1 },
+        ],
+      });
+      expect(latestSyncLog().inStockValues).toEqual({ "(absent)": 2, "1": 1 });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+// The live fetch path can hand the census an `items`-less body (`menuData.items
+// || []`); the push path can never reach it that way, because a body without an
+// `items` array is routed to the mock/pull branch.
+describe("Petpooja Menu API — a body with NO `items` array (census edge, live path)", () => {
+  let prevMock: boolean;
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    prevMock = config.mock.petpoojaPos;
+    config.mock.petpoojaPos = false; // live path — the Menu API call is stubbed
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    savedDocs["branches/demo"] = { petpoojaStoreId: DEMO_REST_ID };
+  });
+
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+    vi.unstubAllGlobals();
+  });
+
+  it("(d) does not throw and does not warn when the body carries no items array", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      // A truthy success flag with no catalogue at all: accepted, zero items.
+      json: async () => ({ success: "1", message: "Menu items are successfully listed." }),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(syncPetpoojaMenu("demo")).resolves.toEqual({
+        itemCount: 0,
+        categoriesCount: 0,
+      });
+
+      expect(syncLogRows().length).toBe(1);
+      expect(savedDocs[syncLogRows()[0]].inStockValues).toEqual({});
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("menuApiFailureReason — the decision itself", () => {
   it("requires a POSITIVE failure signal: an explicit falsy success", () => {
     expect(

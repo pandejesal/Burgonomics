@@ -276,6 +276,19 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     }
   };
 
+  // OBSERVABILITY ONLY — nothing below influences a single product document.
+  // A real push carried `"in_stock": "2"` on all 166 items; the whitelist maps
+  // that to `inStock: false`, so the whole catalogue rendered Sold Out while the
+  // run still wrote a green COMPLETED sync-log row and stamped the branch — a
+  // 100% dark catalogue was indistinguishable from a healthy sync, and nothing
+  // warned. Two additions, both additive: census the RAW `in_stock` values as
+  // they arrive (recorded on the sync-log row), and warn once when EVERY item
+  // came out not-in-stock. Whether "2" means available or unavailable is
+  // UNRESOLVED — that is exactly why the raw values are counted: the next real
+  // push answers it without a code change.
+  const rawInStockValues: Record<string, number> = {};
+  let inStockTrueCount = 0;
+
   for (const item of items) {
     // Doc id is branch-scoped: the same Petpooja itemid exists in every
     // outlet, and a global prod_{itemid} lets the second synced branch
@@ -283,6 +296,18 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     const productId = `prod_${branchId}_${item.itemid}`;
     const productRef = db.collection("products").doc(productId);
     const inStock = item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
+
+    // Census bucket. Normalised ONLY for grouping (`String(value)`), so "2"
+    // stays "2" and the numeric 1 / "1" / true collapse to one key. An absent or
+    // null flag is its own bucket ("(absent)") rather than being folded into the
+    // string "undefined". Optional chaining keeps a non-object entry (a bare
+    // string / number in `items`) from throwing here — this read must never be
+    // the thing that fails a sync.
+    const rawInStock = (item as any)?.in_stock;
+    const rawInStockKey =
+      rawInStock === undefined || rawInStock === null ? "(absent)" : String(rawInStock);
+    rawInStockValues[rawInStockKey] = (rawInStockValues[rawInStockKey] || 0) + 1;
+    if (inStock) inStockTrueCount++;
 
     const isVeg =
       item.item_attributeid !== undefined && item.item_attributeid !== null
@@ -329,6 +354,22 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   }
 
   await commitChunk();
+
+  // The warning that would have caught the 166-item Sold-Out incident. A warn
+  // only: it never throws, never alerts, and does not change `status`, `error`
+  // or the returned counts. Deliberately narrow — at least ONE item ingested AND
+  // every one of them not in stock. A zero-item sync is an empty feed, not an
+  // all-dark catalogue, so it must stay silent; and a PARTIALLY dark catalogue
+  // is just normal 86-ing, so it must stay silent too (hence `=== 0`, not
+  // "some"). Keeping this to the all-dark case is what makes it low-noise.
+  if (items.length > 0 && inStockTrueCount === 0) {
+    const census = Object.entries(rawInStockValues)
+      .map(([value, count]) => `${value} x${count}`)
+      .join(", ");
+    console.warn(
+      `[Petpooja Menu Sync] menu sync for outlet ${restId} ingested ${items.length} items and NONE are in stock (raw in_stock: ${census}) — the whole catalogue will render as Sold Out; verify the vendor's in_stock encoding`
+    );
+  }
 
   // Loop 6: tombstone pass — SKUs absent from the POS feed otherwise stay
   // live/orderable forever (ghost catalog → kitchen can't fulfill → refunds).
@@ -431,6 +472,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       updated: 0,
       deleted: 0,
       conflicts: 0,
+      // ADDITIVE observability: the RAW `in_stock` values seen this run, grouped
+      // by String(value) — e.g. { "2": 166 }. Record-only; it never influences
+      // the products written, and no existing field is renamed or repurposed.
+      inStockValues: rawInStockValues,
       error: unexplainedVendorMessage,
       simulated: config.mock.petpoojaPos,
       source: "menuSyncWebhook",
