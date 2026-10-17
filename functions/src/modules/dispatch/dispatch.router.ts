@@ -692,7 +692,7 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
     dispatchAttempts: attempts,
     dispatchGeoSource: booked.geoSource || geoSource,
     dispatchSource: booked.source || "api",
-    dispatchedBy: staffName || "Branch Staff",
+    dispatchedBy: staffName || "unattributed",
     dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
     needsRebook: false,
     // A successful book clears the auto-rebook trigger: the order is live
@@ -1103,7 +1103,7 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
       dispatchStatus: "dispatched",
       dispatchClaimedAt: null,
       dispatchSource: "manual_paste",
-      dispatchedBy: staffName || "Branch Staff",
+      dispatchedBy: staffName || "unattributed",
       dispatchedAt: now,
       needsRebook: false,
       // Staff resolved the dispatch by hand — the auto-rebook worker stops.

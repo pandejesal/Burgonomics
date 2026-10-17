@@ -530,7 +530,7 @@ export async function bookPorterRider(
       riderVehicleNumber: dispatchResult.riderVehicleNumber,
       riderTrackingUrl: dispatchResult.trackingUrl,
       dispatchGeoSource,
-      dispatchedBy: staffName || "Branch Staff",
+      dispatchedBy: staffName || "unattributed",
       dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
       // `order.delivery` mirror (customer tracking contract): the customer map
       // reads this path for rider identity + live GPS + tracking link. Real
@@ -1401,7 +1401,7 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
     riderName: riderName.trim(),
     riderPhone: riderPhone.trim(),
     riderVehicleNumber: "Local / In-Store",
-    dispatchedBy: staffName || "Branch Manager",
+    dispatchedBy: staffName || "unattributed",
     dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
     manualDispatchNotes: notes || "Dispatched via Branch POS Terminal fallback",
     // An in-house rider settles any pending auto-rebook: leaving needsRebook

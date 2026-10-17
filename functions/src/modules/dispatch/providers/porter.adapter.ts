@@ -145,7 +145,11 @@ export const porterAdapter: ProviderAdapter = {
       kind: "booked",
       provider: "porter",
       providerOrderId: String(result.porterOrderId),
-      riderName: result.riderName || "Porter Driver",
+      // No fabricated identity: an empty name keeps the router's dispatch
+      // status `pending` (dispatch.router.ts) until a real rider callback or
+      // poll fills it, instead of reporting a made-up "Porter Driver" as
+      // assigned (audit 2026-10-17, D4 class).
+      riderName: result.riderName || "",
       riderPhone: result.riderPhone || "",
       riderVehicleNumber: result.riderVehicleNumber || "",
       trackingUrl: result.trackingUrl || "",

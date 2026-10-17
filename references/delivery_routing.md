@@ -10,7 +10,7 @@
 
 - **DR1 — Cheapest serviceable wins**: routing picks the provider with the **lowest successful quote fare** among providers that pass serviceability. Ties break by fixed priority: `borzo > shadowfax > porter`.
 - **DR2 — Per-provider fail-closed (inherits D1/D2)**: a provider's failed quote is recorded as a **provider-level failure**, never a silent fallback to a static rate card. A provider failure only makes *that provider* unavailable; it does not abort the fan-out. Only when **every** eligible provider fails (or none are eligible) does the quote fail closed: delivery unavailable.
-- **DR3 — Serviceability is per-provider**: `not_serviced` (address outside that provider's coverage / unsupported pin / branch-radius fail) is distinct from `transient_failure` (timeout / 5xx / network). Only `transient_failure` is retryable; `not_serviced` removes the provider from that address permanently for the session.
+- **DR3 — Serviceability is per-provider**: `not_serviced` (address outside that provider's coverage / unsupported pin / branch-radius fail) is distinct from `transient_failure` (timeout / 5xx / network). Only `transient_failure` is retryable. *Deviation recorded 2026-10-17: the per-address `not_serviced` exclusion "for the session" is **not implemented** — `runQuoteFanOut` re-attempts every eligible provider on every quote, so nothing is cached or remembered. Documented intent, owner decision pending (`audit-results/integrations-2026-10-17/audit-dispatch.md` finding 7).*
 - **DR4 — Branch-radius pre-check stays first**: the existing D3 two-stage check (`radius gate → provider-quote gate`) runs once before the fan-out. Radius failure short-circuits: no provider is called, result is `not_serviced`.
 - **DR5 — Parallel fan-out**: all eligible providers are quoted **concurrently** (`Promise.allSettled`, per-provider timeout `DISPATCH_QUOTE_TIMEOUT_MS`, default 6000 ms). The slowest provider never serializes the checkout.
 - **DR6 — Booking failover is bounded**: `book` books the quoted winner; if its booking fails (`transient_failure` **or** a book-time `not_serviced` — the quote expired between quote and book), the router falls through to the **next-cheapest serviceable provider from the same quote**, in order, until one books or the list is exhausted. Never books a provider that had no successful quote in the session. Every failed attempt is recorded in `dispatchAttempts[]`.
@@ -39,7 +39,7 @@ A provider **not keyed** is excluded from the fan-out (not a failure, DR2) — *
 `POST /dispatch/quote` `{ pickupLat, pickupLng, dropLat, dropLng, orderId? }`:
 
 1. **Radius gate (DR4)** — `checkBranchDeliveryServiceability`; fail ⇒ `{ serviceable: false, reason: "not_serviced" }`, no provider calls.
-2. **Eligibility** — providers enabled + keyed (+ mock-flagged ones) minus per-address `not_serviced` cache.
+2. **Eligibility** — providers enabled + keyed (+ mock-flagged ones). *(No per-address `not_serviced` cache exists — see DR3.)*
 3. **Fan-out (DR5)** — parallel quotes with timeout; each result is `{ provider, outcome: "ok" | "not_serviced" | "transient_failure", fareKm?, fare?, quoteId?, expiresAt?, error? }`.
 4. **Winner (DR1)** — min fare among `ok`; ties → priority order.
 5. **Response** — winner flattened at top level for back-compat (`estimatedFare`, `estimatedDistanceKm`, `quoteId`, `vehicleType`, `source`, `expiresAt`, `validForSeconds` = 600) **plus** `winner: provider`, `providers: ProviderQuoteOutcome[]`, `serviceable`, `quotedAt`.
