@@ -1,4 +1,4 @@
-import { config } from "../../../config/env";
+import { assertLiveDispatchContext, config } from "../../../config/env";
 import {
   ProviderDispatchError,
   type DispatchBookContext,
@@ -46,6 +46,7 @@ export const porterAdapter: ProviderAdapter = {
       await import("../../../core/geo");
 
     if (porterApiReady()) {
+      assertLiveDispatchContext("porter quote");
       try {
         const q = await getDeliveryQuote({
           pickupLat: ctx.pickup.lat,
@@ -108,6 +109,7 @@ export const porterAdapter: ProviderAdapter = {
       };
     }
 
+    assertLiveDispatchContext("porter book");
     const { bookPorterRider } = await import("../../porter/porter.service");
     let result: any;
     try {

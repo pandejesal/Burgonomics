@@ -23,11 +23,15 @@ import { dispatchFCM } from "../notifications/fcm.service";
  *      `event`/`order_id` payloads keep working for tests/legacy.
  *   3. Event normalization → canonical lifecycle events; known-but-inert
  *      lifecycle noise (Borzo order `new`/`available`/…) marks processed
- *      silently; unknown parks.
- *   4. Deterministic dedup + freshness gate.
+ *      silently; a documented-but-unmapped return/reattempt status is recorded
+ *      for review WITHOUT an error snapshot; unknown parks.
+ *   4. Deterministic dedup + freshness gate. Only `processed` dedups — a
+ *      PARKED event stays re-attemptable on provider redelivery.
  *   5. Order resolution via dispatch_order_map FIRST, hint only when the
- *      order's own dispatchOrderId confirms it (conflict → park, never guess).
- *   6. Late non-terminal events after `delivered` are ignored (no rewind).
+ *      order's own dispatchOrderId confirms it (conflict AND an unbound order
+ *      → park, never guess).
+ *   6. Late non-terminal events after a terminal delivery status
+ *      (`delivered`/`cancelled` — same set dispatchBook locks) are ignored.
  *   7. Canonical field switch (duplicated from porter — deliberate: do NOT
  *      refactor porter's webhook, its tests must stay green).
  */
@@ -36,6 +40,14 @@ export type DispatchWebhookProvider = "borzo" | "shadowfax";
 
 const DISPATCH_WEBHOOK_FRESHNESS_MS = 15 * 60 * 1000;
 const DISPATCH_WEBHOOK_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * Terminal delivery states — identical to dispatchBook's own locked set
+ * (`dispatch.router.ts:assertDispatchNotLocked`). A late callback must not
+ * rewind EITHER state: a `cancelled` order is as final as a `delivered` one,
+ * otherwise a late `courier_assigned` resurrects it as `dispatched` (finding 10).
+ */
+const TERMINAL_DELIVERY_STATUSES: readonly string[] = ["delivered", "cancelled"];
 
 function webhookSecretFor(provider: DispatchWebhookProvider): string {
   return provider === "borzo" ? config.borzo.webhookSecret : config.shadowfax.webhookSecret;
@@ -150,6 +162,25 @@ export function isIgnoredDispatchEvent(rawEvent: any): boolean {
   return IGNORED_DISPATCH_EVENTS.has(normalizeEventKey(rawEvent));
 }
 
+/**
+ * Documented provider lifecycle statuses we deliberately do NOT map to a
+ * canonical event: a return-to-seller (`return_*`) or a reattempt
+ * (`reattempt_*`) is a normal delivery outcome, not an order-state flip and
+ * NOT an error. They are recorded in `unmatched_dispatch_events` (so they stay
+ * traceable) and parked, but no error snapshot is raised — an operator alert
+ * per returned parcel is review noise, not a defect (finding 16).
+ *
+ * RESIDUAL (owner to decide): staff still get no alert when a parcel comes
+ * back. A return/reattempt is visible only in `unmatched_dispatch_events`
+ * until a purpose-built UI/reporting surface exists.
+ */
+const UNMAPPED_LIFECYCLE_STATUS_PREFIXES: readonly string[] = ["RETURN", "REATTEMPT"];
+
+export function isUnmappedLifecycleStatus(rawEvent: any): boolean {
+  const key = normalizeEventKey(rawEvent);
+  return UNMAPPED_LIFECYCLE_STATUS_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
 export function normalizeDispatchEvent(
   rawEvent: any,
   scope?: "order" | "delivery" | "generic"
@@ -253,7 +284,10 @@ async function parkDispatchEvent(
   parkId: string,
   fields: Record<string, any>,
   snapshotMessage: string,
-  severity: "low" | "medium" | "high"
+  severity: "low" | "medium" | "high",
+  // Unmapped-but-documented lifecycle statuses are traceable without an
+  // operator alert (normal delivery flow, not an error — finding 16).
+  options: { snapshot?: boolean } = {}
 ): Promise<void> {
   try {
     await db
@@ -268,12 +302,14 @@ async function parkDispatchEvent(
         },
         { merge: true }
       );
-    await captureErrorSnapshot({
-      source: "dispatch",
-      severity,
-      message: snapshotMessage,
-      context: { provider },
-    });
+    if (options.snapshot !== false) {
+      await captureErrorSnapshot({
+        source: "dispatch",
+        severity,
+        message: snapshotMessage,
+        context: { provider },
+      });
+    }
   } catch (err: any) {
     console.warn(`[Dispatch Webhook/${provider}] failed to park event:`, err?.message || err);
   }
@@ -391,6 +427,32 @@ export async function handleDispatchWebhook(
     }
   };
 
+  // A PARKED event is deliberately NOT `processed`: the dedup gate above only
+  // skips `processed`, so an event parked as e.g. `no_matching_order` (a
+  // callback that lost the race against the `dispatch_order_map` write) is
+  // re-attempted on provider redelivery instead of being dropped forever
+  // (finding 3). The park reason rides the dedup doc so the retry is auditable;
+  // the row in `unmatched_dispatch_events` is keyed by the same deterministic
+  // `parkId`, so a redelivery never appends a second row.
+  const markParked = async (parkReason: string) => {
+    try {
+      await db.collection("dispatch_webhook_events").doc(parkId).set(
+        {
+          provider,
+          rawEvent: rawEvent || null,
+          providerOrderId: providerOrderId || null,
+          orderId: orderIdHint || null,
+          status: "parked",
+          parkReason,
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch {
+      // Best-effort: the park row is the durable review trail.
+    }
+  };
+
   // Freshness: a stale retry must not rewind newer order state.
   const eventTs = eventTimestampMs(payload);
   if (eventTs !== null) {
@@ -409,7 +471,7 @@ export async function handleDispatchWebhook(
         `Stale ${provider} event ${rawEvent || "unknown"} parked (no state rewind)`,
         "medium"
       );
-      await markProcessed();
+      await markParked("stale_event");
       return;
     }
   }
@@ -422,6 +484,29 @@ export async function handleDispatchWebhook(
     return;
   }
 
+  if (!event && isUnmappedLifecycleStatus(rawEvent)) {
+    // Documented return/reattempt lifecycle status: traceable in
+    // `unmatched_dispatch_events`, never an error snapshot (finding 16). The
+    // order is untouched — we do not pretend the status maps to a canonical
+    // event.
+    log(`Unmapped lifecycle status ${rawEvent} recorded (no canonical event)`);
+    await parkDispatchEvent(
+      provider,
+      parkId,
+      {
+        orderId: orderIdHint,
+        providerOrderId,
+        rawEvent: rawEvent || null,
+        reason: "unmapped_lifecycle_status",
+      },
+      `${provider} ${rawEvent || "unknown"} is a documented lifecycle status with no canonical mapping — recorded, no alert`,
+      "low",
+      { snapshot: false }
+    );
+    await markParked("unmapped_lifecycle_status");
+    return;
+  }
+
   if (!event) {
     log(`Unknown event parked: ${rawEvent}`);
     await parkDispatchEvent(
@@ -431,7 +516,7 @@ export async function handleDispatchWebhook(
       `Unknown ${provider} event ${rawEvent || "unknown"} parked — order untouched`,
       "medium"
     );
-    await markProcessed();
+    await markParked("unknown_event");
     return;
   }
 
@@ -444,7 +529,7 @@ export async function handleDispatchWebhook(
       `${provider} webhook with no order reference parked`,
       "medium"
     );
-    await markProcessed();
+    await markParked("no_order_reference");
     return;
   }
 
@@ -475,7 +560,7 @@ export async function handleDispatchWebhook(
             `${provider} webhook order-id conflict parked (hint ${orderIdHint} vs mapped ${mappedOrderId}) — no state flipped`,
             "high"
           );
-          await markProcessed();
+          await markParked("order_id_conflict");
           return;
         }
         orderRef = db.collection("orders").doc(mappedOrderId);
@@ -500,16 +585,41 @@ export async function handleDispatchWebhook(
         `${provider} webhook unsafe order hint parked`,
         "medium"
       );
-      await markProcessed();
+      await markParked("unsafe_order_id");
       return;
     }
     const hintDoc = await db.collection("orders").doc(orderIdHint).get();
     const hintOrder = hintDoc.exists ? hintDoc.data() : undefined;
-    // Hint is only trusted when the order's OWN dispatch binding confirms the
-    // provider order id (or the order has no dispatch binding at all yet).
+    // Hint is trusted ONLY when the order's OWN dispatch binding confirms the
+    // provider order id. An order with NO dispatch binding is not a resolution:
+    // the hint (client_order_id/COID) is attacker-chosen in a forged body, and
+    // accepting it would flip an unbound order to dispatched/delivered
+    // (finding 8). It parks instead — and because a parked event is
+    // re-attemptable on redelivery, a legitimate callback that raced the
+    // `dispatch_order_map` write still resolves on the provider retry.
     const binding = hintOrder?.dispatchOrderId || hintOrder?.porterOrderId || null;
-    if (hintOrder && (!binding || binding === providerOrderId)) {
+    // A real binding that matches is the ONLY resolution. `!binding` parks
+    // (finding 8): an unbound order must not be flipped by an attacker-chosen
+    // hint. This branch is ordered BEFORE the conflict branch so an unbound
+    // order reports `unbound_order` rather than a conflict against `null`.
+    if (hintOrder && binding && providerOrderId && binding === providerOrderId) {
       orderRef = hintDoc.ref;
+    } else if (hintOrder && !binding) {
+      log(`unbound order hint parked: order ${orderIdHint} has no dispatch binding`);
+      await parkDispatchEvent(
+        provider,
+        parkId,
+        {
+          orderId: orderIdHint,
+          providerOrderId,
+          rawEvent: rawEvent || null,
+          reason: "unbound_order",
+        },
+        `${provider} webhook hint names an order with no dispatch binding — parked, no state flipped`,
+        "medium"
+      );
+      await markParked("unbound_order");
+      return;
     } else if (hintOrder && providerOrderId && binding !== providerOrderId) {
       log(
         `hint/order conflict parked: order ${orderIdHint} bound to ${binding}, event says ${providerOrderId}`
@@ -527,7 +637,7 @@ export async function handleDispatchWebhook(
         `${provider} webhook hint/order binding conflict parked — no state flipped`,
         "high"
       );
-      await markProcessed();
+      await markParked("order_id_conflict");
       return;
     }
   }
@@ -541,7 +651,7 @@ export async function handleDispatchWebhook(
       `${provider} webhook for unmatched order parked for review`,
       "medium"
     );
-    await markProcessed();
+    await markParked("no_matching_order");
     return;
   }
 
@@ -578,13 +688,19 @@ export async function handleDispatchWebhook(
     throw new Error(`Pre-write order read failed: ${err?.message || err}`);
   }
 
-  // Terminal-state guard (mission §4): after `delivered`, EVERY event except
-  // the terminal DELIVERED flip itself is ignored. Provider retries replay
-  // stale courier updates out of order within the freshness window — a late
-  // RIDER_CANCELLED would otherwise resurrect a DELIVERED order as
-  // rider_cancelled + needsRebook and pay for a second rider.
-  if (event !== "DELIVERED" && currentOrder.deliveryStatus === "delivered") {
-    log(`Late ${rawEvent} after delivery ignored (no rewind)`);
+  // Terminal-state guard (mission §4): once the order is terminal
+  // (`delivered` OR `cancelled` — the same locked set dispatchBook enforces),
+  // EVERY event except the terminal DELIVERED flip itself is ignored. Provider
+  // retries replay stale courier updates out of order within the freshness
+  // window — a late RIDER_CANCELLED would otherwise resurrect a DELIVERED order
+  // as rider_cancelled + needsRebook and pay for a second rider, and a late
+  // courier_assigned/active would resurrect a CANCELLED order as `dispatched`
+  // (finding 10).
+  if (
+    event !== "DELIVERED" &&
+    TERMINAL_DELIVERY_STATUSES.includes(currentOrder.deliveryStatus)
+  ) {
+    log(`Late ${rawEvent} after terminal delivery status ignored (no rewind)`);
     await markProcessed();
     return;
   }

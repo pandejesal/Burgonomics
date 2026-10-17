@@ -211,6 +211,21 @@ function definedFields(o: Record<string, any>): Record<string, any> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 }
 
+/**
+ * The phone the courier is given for the pickup, in preference order: the
+ * branch's own number as snapshotted onto the order at creation (`store.phone` —
+ * a required field of the client's OrderStoreSnapshot), then the legacy
+ * `branchPhone` alias, then the customer's number. The live payload used to end
+ * this chain in a hardcoded literal, so a courier with a question rang a
+ * stranger — never fabricate a contact (audit 2026-10-17, finding 5 class).
+ */
+export function resolvePickupContactPhone(
+  order: Record<string, any> | undefined
+): string | undefined {
+  const o = order || {};
+  return o.store?.phone || o.branchPhone || o.customerPhone || undefined;
+}
+
 function storedDispatchSummary(d: any): any {
   return {
     porterOrderId: d.porterOrderId,
@@ -397,17 +412,20 @@ export async function bookPorterRider(
         delivery_instructions: order.deliveryInstructions || "Handle fresh food with care",
         pickup_details: {
           address: {
-            apartment_address: order.branchName || "Burgonomics Branch",
-            street_address1: order.branchAddress || "Store Location",
-            city: order.branchCity || "Ahmedabad",
+            // Real branch data (the order's store snapshot) ahead of the legacy
+            // branch* aliases; the trailing literals are unchanged last-resort
+            // placeholders, reported separately (audit 2026-10-17).
+            apartment_address: order.store?.name || order.branchName || "Burgonomics Branch",
+            street_address1: order.store?.address || order.branchAddress || "Store Location",
+            city: order.store?.city || order.branchCity || "Ahmedabad",
             state: order.branchState || "Gujarat",
             pincode: order.branchPincode || "380015",
             country: "India",
             lat: pickupLat,
             lng: pickupLng,
             contact_details: {
-              name: order.branchName || "Burgonomics Branch Staff",
-              phone_number: order.branchPhone || "+919876543210",
+              name: order.store?.name || order.branchName || "Burgonomics Branch Staff",
+              phone_number: resolvePickupContactPhone(order),
             },
           },
           lat: pickupLat,

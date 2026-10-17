@@ -136,9 +136,12 @@ export function dropAddressBlock(order: Record<string, any> | undefined): any {
   return {
     house: drop.house || drop.flat || drop.line1 || "",
     street: drop.street || drop.full || drop.line2 || "",
-    city: drop.city || "Ahmedabad",
-    state: drop.state || "Gujarat",
-    pincode: drop.pincode || "380015",
+    // Locality keys carry ONLY what the order actually has: defaulting to
+    // Ahmedabad/Gujarat/380015 geocoded a drop pin in another city to the wrong
+    // locality (audit finding 6). Empty means "unknown", never "somewhere else".
+    city: drop.city || "",
+    state: drop.state || "",
+    pincode: drop.pincode || "",
     line: [
       drop.house || drop.flat || drop.line1,
       drop.street || drop.full || drop.line2,
@@ -156,8 +159,13 @@ export function pickupContact(order: Record<string, any> | undefined): {
 } {
   const o = order || {};
   return {
-    name: o.branchName || "Burgonomics Branch Staff",
-    phone: o.branchPhone || undefined,
+    name: o.store?.name || o.branchName || "Burgonomics Branch Staff",
+    // The branch's own number. Real orders carry it as `store.phone` — a
+    // REQUIRED field of the client's OrderStoreSnapshot, written at order
+    // creation (OrderRepository/PaymentRepository). `branchPhone` is a legacy
+    // alias; the customer's number is a last resort for orders that predate the
+    // snapshot (no fabricated literal — audit 2026-10-17 findings 4/5).
+    phone: o.store?.phone || o.branchPhone || o.customerPhone || undefined,
   };
 }
 

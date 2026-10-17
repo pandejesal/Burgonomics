@@ -4,6 +4,8 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
   const defaultOrder = () => ({
     branchId: "branch_ahmedabad_1",
+    // The real field real orders carry (client OrderStoreSnapshot.phone).
+    store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
     branchName: "Burgonomics CG Road",
     branchCoordinates: { lat: 23.0131, lng: 72.5085 },
     deliveryAddress: {
@@ -106,6 +108,7 @@ import {
   normalizePorterEvent,
   bookPorterRider,
   rebookPorterRider,
+  resolvePickupContactPhone,
   cancelPorterBooking,
   handlePorterWebhook,
   generateDeliveryOtp,
@@ -454,6 +457,7 @@ describe("Porter Logistics Service", () => {
   describe("book/rebook idempotency + GPS fail-closed (B2-S1)", () => {
     const gpsOrder = (overrides: Record<string, any> = {}) => ({
       branchId: "branch_ahmedabad_1",
+      store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
       orderType: "delivery",
       customerPhone: "+91 99999 88888",
       customerName: "Aarav Shah",
@@ -522,6 +526,24 @@ describe("Porter Logistics Service", () => {
       expect(err?.statusCode).toBe(422);
       expect(savedDocs["orders/order_nogps_1"].porterOrderId).toBeUndefined();
       expect(savedDocs["orders/order_nogps_1"].deliveryStatus).toBeUndefined();
+    });
+
+    it("resolves the pickup contact phone from the store snapshot, never a literal", () => {
+      // `store.phone` is the field real orders carry (client OrderStoreSnapshot);
+      // `branchPhone` never existed in the data model.
+      expect(
+        resolvePickupContactPhone({
+          store: { phone: "+91 98250 12345" },
+          branchPhone: "+91 90000 00000",
+          customerPhone: "+91 99999 88888",
+        })
+      ).toBe("+91 98250 12345");
+      expect(resolvePickupContactPhone({ branchPhone: "+91 90000 00000" })).toBe("+91 90000 00000");
+      expect(resolvePickupContactPhone({ customerPhone: "+91 99999 88888" })).toBe("+91 99999 88888");
+      expect(resolvePickupContactPhone({})).toBeUndefined();
+      expect(resolvePickupContactPhone(undefined)).toBeUndefined();
+      // The old live payload ended this chain in a hardcoded stranger's number.
+      expect(resolvePickupContactPhone({})).not.toBe("+919876543210");
     });
 
     it("rebook is refused when the order is not rebookable", async () => {

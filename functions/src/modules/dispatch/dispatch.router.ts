@@ -276,7 +276,22 @@ async function runQuoteFanOut(
   ctx: DispatchQuoteContext
 ): Promise<{ outcomes: ProviderQuoteOutcome[]; ranked: ProviderQuoteOk[] }> {
   const eligible = ADAPTERS.filter((a) => a.isEligible());
-  const outcomes = await Promise.all(eligible.map((a) => quoteWithTimeout(a, ctx)));
+  // DR5 names Promise.allSettled: quoteWithTimeout cannot reject today, but the
+  // fan-out's safety must not hang off that invariant holding forever.
+  const settled = await Promise.allSettled(eligible.map((a) => quoteWithTimeout(a, ctx)));
+  const outcomes: ProviderQuoteOutcome[] = settled.map((result, index) => {
+    if (result.status === "fulfilled") return result.value;
+    const provider = eligible[index].provider;
+    const reason: unknown = result.reason;
+    return {
+      provider,
+      outcome: "transient_failure",
+      error:
+        reason instanceof Error && reason.message
+          ? reason.message
+          : `${provider} quote failed`,
+    };
+  });
   const ranked = outcomes
     .filter((o): o is ProviderQuoteOk => o.outcome === "ok")
     .sort((a, b) => a.fare - b.fare || PROVIDER_PRIORITY[a.provider] - PROVIDER_PRIORITY[b.provider]);
@@ -490,277 +505,277 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
 
   const { ctx, geoSource } = buildQuoteContext(order, params, pickup);
 
-  try {
-    const gate = checkBranchDeliveryServiceability(
-      ctx.pickup.lat,
-      ctx.pickup.lng,
-      ctx.drop.lat,
-      ctx.drop.lng,
-      DEFAULT_SERVICED_RADIUS_KM
+  const gate = checkBranchDeliveryServiceability(
+    ctx.pickup.lat,
+    ctx.pickup.lng,
+    ctx.drop.lat,
+    ctx.drop.lng,
+    DEFAULT_SERVICED_RADIUS_KM
+  );
+  if (!gate.isServiced) {
+    await releaseClaimIdle(orderDoc);
+    const err: any = new Error(
+      gate.reason || "Delivery address is outside the branch delivery zone."
     );
-    if (!gate.isServiced) {
-      await releaseClaimIdle(orderDoc);
-      const err: any = new Error(
-        gate.reason || "Delivery address is outside the branch delivery zone."
-      );
-      err.statusCode = 409;
-      err.code = "NOT_SERVICED";
-      throw err;
-    }
-
-    const { outcomes, ranked } = await runQuoteFanOut(ctx);
-
-    if (ranked.length === 0) {
-      const eligibleCount = ADAPTERS.filter((a) => a.isEligible()).length;
-      if (eligibleCount === 0) {
-        // Nothing configured — a config problem, not an order failure: leave
-        // the order clean so staff can retry once keys land.
-        await releaseClaimIdle(orderDoc);
-        throw noServiceableProviderError(outcomes);
-      }
-      await releaseClaimFailed(
-        orderDoc,
-        "All eligible providers failed to quote",
-        [],
-        { winner: null, providers: outcomes, quotedAt: Date.now() }
-      );
-      throw noServiceableProviderError(outcomes);
-    }
-
-    const quoteSnapshot = {
-      winner: ranked[0].provider,
-      providers: outcomes,
-      quotedAt: Date.now(),
-      expiresAt: ranked[0].expiresAt,
-    };
-
-    // DR7: a fare that drifted past the confirm threshold needs staff sign-off
-    // before anything is committed. Claim released — the confirm retry
-    // re-claims (no parked dispatch_pending on an unbooked confirm step).
-    if (typeof params.quotedFare === "number" && params.confirmFare !== true) {
-      const check = fareConfirmCheck(
-        params.quotedFare,
-        ranked[0].fare,
-        config.dispatch.fareConfirmDeltaInr
-      );
-      if (check.needsConfirm) {
-        await releaseClaimIdle(orderDoc, { dispatchQuote: quoteSnapshot });
-        return {
-          needsFareConfirm: true,
-          provider: ranked[0].provider,
-          quotedFare: params.quotedFare,
-          newFare: ranked[0].fare,
-          delta: Math.round(check.delta * 100) / 100,
-          threshold: Math.round(check.threshold * 100) / 100,
-          confirmEndpoint: "/dispatch/book",
-          message: `Fare changed since the quote (₹${check.delta.toFixed(2)}). Confirm to book at the new fare.`,
-        };
-      }
-    }
-
-    // Ranked walk order: preferred provider first when it quoted ok (staff
-    // override), otherwise pure cheapest-wins order (DR1).
-    let walk = ranked;
-    if (params.preferredProvider) {
-      const preferred = ranked.filter((q) => q.provider === params.preferredProvider);
-      const rest = ranked.filter((q) => q.provider !== params.preferredProvider);
-      walk = [...preferred, ...rest];
-    }
-    // Auto-rebook exclusion: the carrier that cancelled (or failed) is never
-    // re-booked by the scheduled worker — otherwise the worker would just
-    // re-book the same provider and cancel-loop forever.
-    if (params.excludeProviders && params.excludeProviders.length > 0) {
-      const excluded = new Set<string>(params.excludeProviders);
-      walk = walk.filter((q) => !excluded.has(q.provider));
-    }
-    const cheapest = ranked[0].provider;
-
-    const attempts: DispatchAttemptRecord[] = [];
-    let manual: any = null;
-    let booked: any = null;
-
-    for (const quote of walk) {
-      const adapter = ADAPTERS.find((a) => a.provider === quote.provider)!;
-      try {
-        const result = await adapter.book({ ...ctx, orderId, quote });
-        if (result.kind === "booked") {
-          booked = { ...result, quote };
-          attempts.push({ provider: quote.provider, outcome: "booked", at: Date.now() });
-          break;
-        }
-        manual = { ...result, quote };
-        attempts.push({ provider: quote.provider, outcome: "manual_required", at: Date.now() });
-        break;
-      } catch (err: any) {
-        if (isProviderDispatchError(err)) {
-          // DR6 (bounded failover): transient AND book-time not_serviced both
-          // walk on to the next serviceable quote; the attempt is recorded.
-          attempts.push({
-            provider: quote.provider,
-            outcome: failureOutcome(err.kind),
-            error: err.message,
-            at: Date.now(),
-          });
-          continue;
-        }
-        // Unexpected error = a bug or an order-level abort: release the claim
-        // so staff can retry, then surface loudly (never half-book silently).
-        await releaseClaimFailed(
-          orderDoc,
-          err?.message || "Unexpected dispatch error",
-          attempts,
-          quoteSnapshot
-        );
-        throw err;
-      }
-    }
-
-    if (manual) {
-      // DR8: no status flip — order stays actionable, paste form takes over.
-      await orderDoc.ref.set(
-        {
-          dispatchStatus: "manual_pending",
-          dispatchClaimedAt: null,
-          // The staff paste lane now owns this order: clear any auto-rebook
-          // flag/trigger so the scheduled worker cannot race the paste flow
-          // with a second (automatic) booking.
-          needsRebook: false,
-          rebookTrigger: null,
-          dispatchQuote: quoteSnapshot,
-          dispatchAttempts: attempts,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      return {
-        manual_action_required: true,
-        provider: manual.provider,
-        instructions: manual.instructions,
-        pasteEndpoint: manual.pasteEndpoint,
-        orderId,
-        quotes: quoteSnapshot,
-        attempts,
-      };
-    }
-
-    if (!booked) {
-      const detail = attempts
-        .map((a) => `${a.provider}: ${a.outcome}${a.error ? ` (${a.error})` : ""}`)
-        .join("; ");
-      await releaseClaimFailed(orderDoc, `All providers failed — ${detail}`, attempts, quoteSnapshot);
-      const err: any = new Error(
-        "All delivery providers failed to accept this booking — retry, or assign an in-house rider."
-      );
-      err.statusCode = 502;
-      err.code = "DISPATCH_FAILED";
-      err.attempts = attempts;
-      throw err;
-    }
-
-    // DR9: one normalized lifecycle regardless of which provider booked.
-    const write: Record<string, any> = {
-      dispatchProvider: booked.provider,
-      dispatchOrderId: booked.providerOrderId,
-      deliveryStatus: "dispatched",
-      dispatchStatus: "dispatched",
-      dispatchClaimedAt: null,
-      dispatchError: null,
-      riderName: booked.riderName,
-      riderPhone: booked.riderPhone,
-      riderVehicleNumber: booked.riderVehicleNumber,
-      riderTrackingUrl: booked.trackingUrl || null,
-      dispatchQuote: quoteSnapshot,
-      dispatchAttempts: attempts,
-      dispatchGeoSource: booked.geoSource || geoSource,
-      dispatchSource: booked.source || "api",
-      dispatchedBy: staffName || "Branch Staff",
-      dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
-      needsRebook: false,
-      // A successful book clears the auto-rebook trigger: the order is live
-      // again, so the scheduled worker must stop seeing it as pending.
-      rebookTrigger: null,
-      autoRebookAttempts: 0,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-    // Provider aliases: exactly ONE is non-null per order (the active
-    // dispatch). Stale ids from a previous carrier are nulled so a late
-    // webhook/poller can never bind an OLD booking to the new dispatch.
-    write.porterOrderId = booked.provider === "porter" ? booked.providerOrderId : null;
-    write.borzoOrderId = booked.provider === "borzo" ? booked.providerOrderId : null;
-    write.shadowfaxOrderId = booked.provider === "shadowfax" ? booked.providerOrderId : null;
-
-    // `order.delivery` sub-object mirror (frontend tracking contract): a
-    // COMPLETE snapshot built from the pre-write order + this book result, so
-    // Firestore's deep merge and the shallow-merge test shims converge on the
-    // same object. `undefined` is stripped — Firestore rejects it inside a
-    // write payload.
-    const prevDelivery =
-      order.delivery && typeof order.delivery === "object" ? order.delivery : {};
-    write.delivery = definedFields({
-      ...prevDelivery,
-      provider: booked.provider,
-      providerOrderId: String(booked.providerOrderId),
-      status: booked.riderName ? "rider_assigned" : "pending",
-      riderName: booked.riderName ?? null,
-      riderPhone: booked.riderPhone ?? null,
-      riderVehicleNumber: booked.riderVehicleNumber ?? null,
-      trackingUrl: booked.trackingUrl || null,
-      // New dispatch = the previous rider's GPS is stale (and would be fake
-      // data for the new carrier). Cleared until a real callback lands.
-      riderLocation: null,
-      riderLocationAt: null,
-      assignedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    await orderDoc.ref.set(write, { merge: true });
-
-    // Server orderId mapping: bind provider order id → our orderId so the
-    // webhook resolves through the map (hint stays a hint, DR10).
-    try {
-      if (isSafeDocId(booked.providerOrderId)) {
-        await db
-          .collection("dispatch_order_map")
-          .doc(booked.providerOrderId)
-          .set(
-            {
-              orderId,
-              provider: booked.provider,
-              branchId: order.branchId || null,
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-      }
-    } catch (mapErr: any) {
-      console.warn("[Dispatch] order-map write failed (non-blocking):", mapErr?.message || mapErr);
-    }
-
-    // Failover = the first provider we tried to book did NOT succeed; a
-    // staff-preferred provider booking over a cheaper quote is not a failover.
-    const firstAttempted = walk[0].provider;
-    const failover =
-      booked.provider !== firstAttempted
-        ? { from: firstAttempted, to: booked.provider, cheapestProvider: cheapest }
-        : undefined;
-
-    return {
-      provider: booked.provider,
-      providerOrderId: booked.providerOrderId,
-      riderName: booked.riderName,
-      riderPhone: booked.riderPhone,
-      riderVehicleNumber: booked.riderVehicleNumber,
-      trackingUrl: booked.trackingUrl || "",
-      status: "dispatched",
-      source: booked.source || "api",
-      attempts,
-      failover,
-      reused: booked.reused === true,
-      orderId,
-    };
-  } catch (err: any) {
-    // Route-visible status passthrough for every typed error above.
+    err.statusCode = 409;
+    err.code = "NOT_SERVICED";
     throw err;
   }
+
+  const { outcomes, ranked } = await runQuoteFanOut(ctx);
+
+  if (ranked.length === 0) {
+    const eligibleCount = ADAPTERS.filter((a) => a.isEligible()).length;
+    if (eligibleCount === 0) {
+      // Nothing configured — a config problem, not an order failure: leave
+      // the order clean so staff can retry once keys land.
+      await releaseClaimIdle(orderDoc);
+      throw noServiceableProviderError(outcomes);
+    }
+    await releaseClaimFailed(
+      orderDoc,
+      "All eligible providers failed to quote",
+      [],
+      { winner: null, providers: outcomes, quotedAt: Date.now() }
+    );
+    throw noServiceableProviderError(outcomes);
+  }
+
+  const quoteSnapshot = {
+    winner: ranked[0].provider,
+    providers: outcomes,
+    quotedAt: Date.now(),
+    expiresAt: ranked[0].expiresAt,
+  };
+
+  // Ranked walk order: preferred provider first when it quoted ok (staff
+  // override), otherwise pure cheapest-wins order (DR1).
+  let walk = ranked;
+  if (params.preferredProvider) {
+    const preferred = ranked.filter((q) => q.provider === params.preferredProvider);
+    const rest = ranked.filter((q) => q.provider !== params.preferredProvider);
+    walk = [...preferred, ...rest];
+  }
+  // Auto-rebook exclusion: the carrier that cancelled (or failed) is never
+  // re-booked by the scheduled worker — otherwise the worker would just
+  // re-book the same provider and cancel-loop forever.
+  if (params.excludeProviders && params.excludeProviders.length > 0) {
+    const excluded = new Set<string>(params.excludeProviders);
+    walk = walk.filter((q) => !excluded.has(q.provider));
+  }
+  const cheapest = ranked[0].provider;
+
+  // DR7: a fare that drifted past the confirm threshold needs staff sign-off
+  // before anything is committed. Measured against walk[0] — the quote the
+  // walk will actually commit — never the fan-out cheapest: the staff must
+  // confirm the fare of the provider that will be booked, and an excluded
+  // provider must not lend its approved fare to a booking it will not serve.
+  // Claim released — the confirm retry re-claims (no parked
+  // dispatch_pending on an unbooked confirm step).
+  if (walk.length > 0 && typeof params.quotedFare === "number" && params.confirmFare !== true) {
+    const commit = walk[0];
+    const check = fareConfirmCheck(
+      params.quotedFare,
+      commit.fare,
+      config.dispatch.fareConfirmDeltaInr
+    );
+    if (check.needsConfirm) {
+      await releaseClaimIdle(orderDoc, { dispatchQuote: quoteSnapshot });
+      return {
+        needsFareConfirm: true,
+        provider: commit.provider,
+        quotedFare: params.quotedFare,
+        newFare: commit.fare,
+        delta: Math.round(check.delta * 100) / 100,
+        threshold: Math.round(check.threshold * 100) / 100,
+        confirmEndpoint: "/dispatch/book",
+        message: `Fare changed since the quote (₹${check.delta.toFixed(2)}). Confirm to book at the new fare.`,
+      };
+    }
+  }
+
+  const attempts: DispatchAttemptRecord[] = [];
+  let manual: any = null;
+  let booked: any = null;
+
+  for (const quote of walk) {
+    const adapter = ADAPTERS.find((a) => a.provider === quote.provider)!;
+    try {
+      const result = await adapter.book({ ...ctx, orderId, quote });
+      if (result.kind === "booked") {
+        booked = { ...result, quote };
+        attempts.push({ provider: quote.provider, outcome: "booked", at: Date.now() });
+        break;
+      }
+      manual = { ...result, quote };
+      attempts.push({ provider: quote.provider, outcome: "manual_required", at: Date.now() });
+      break;
+    } catch (err: any) {
+      if (isProviderDispatchError(err)) {
+        // DR6 (bounded failover): transient AND book-time not_serviced both
+        // walk on to the next serviceable quote; the attempt is recorded.
+        attempts.push({
+          provider: quote.provider,
+          outcome: failureOutcome(err.kind),
+          error: err.message,
+          at: Date.now(),
+        });
+        continue;
+      }
+      // Unexpected error = a bug or an order-level abort: release the claim
+      // so staff can retry, then surface loudly (never half-book silently).
+      await releaseClaimFailed(
+        orderDoc,
+        err?.message || "Unexpected dispatch error",
+        attempts,
+        quoteSnapshot
+      );
+      throw err;
+    }
+  }
+
+  if (manual) {
+    // DR8: no status flip — order stays actionable, paste form takes over.
+    await orderDoc.ref.set(
+      {
+        dispatchStatus: "manual_pending",
+        dispatchClaimedAt: null,
+        // The staff paste lane now owns this order: clear any auto-rebook
+        // flag/trigger so the scheduled worker cannot race the paste flow
+        // with a second (automatic) booking.
+        needsRebook: false,
+        rebookTrigger: null,
+        dispatchQuote: quoteSnapshot,
+        dispatchAttempts: attempts,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return {
+      manual_action_required: true,
+      provider: manual.provider,
+      instructions: manual.instructions,
+      pasteEndpoint: manual.pasteEndpoint,
+      orderId,
+      quotes: quoteSnapshot,
+      attempts,
+    };
+  }
+
+  if (!booked) {
+    const detail = attempts
+      .map((a) => `${a.provider}: ${a.outcome}${a.error ? ` (${a.error})` : ""}`)
+      .join("; ");
+    await releaseClaimFailed(orderDoc, `All providers failed — ${detail}`, attempts, quoteSnapshot);
+    const err: any = new Error(
+      "All delivery providers failed to accept this booking — retry, or assign an in-house rider."
+    );
+    err.statusCode = 502;
+    err.code = "DISPATCH_FAILED";
+    err.attempts = attempts;
+    throw err;
+  }
+
+  // DR9: one normalized lifecycle regardless of which provider booked.
+  const write: Record<string, any> = {
+    dispatchProvider: booked.provider,
+    dispatchOrderId: booked.providerOrderId,
+    deliveryStatus: "dispatched",
+    dispatchStatus: "dispatched",
+    dispatchClaimedAt: null,
+    dispatchError: null,
+    riderName: booked.riderName,
+    riderPhone: booked.riderPhone,
+    riderVehicleNumber: booked.riderVehicleNumber,
+    riderTrackingUrl: booked.trackingUrl || null,
+    dispatchQuote: quoteSnapshot,
+    dispatchAttempts: attempts,
+    dispatchGeoSource: booked.geoSource || geoSource,
+    dispatchSource: booked.source || "api",
+    dispatchedBy: staffName || "Branch Staff",
+    dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
+    needsRebook: false,
+    // A successful book clears the auto-rebook trigger: the order is live
+    // again, so the scheduled worker must stop seeing it as pending.
+    rebookTrigger: null,
+    autoRebookAttempts: 0,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  // Provider aliases: exactly ONE is non-null per order (the active
+  // dispatch). Stale ids from a previous carrier are nulled so a late
+  // webhook/poller can never bind an OLD booking to the new dispatch.
+  write.porterOrderId = booked.provider === "porter" ? booked.providerOrderId : null;
+  write.borzoOrderId = booked.provider === "borzo" ? booked.providerOrderId : null;
+  write.shadowfaxOrderId = booked.provider === "shadowfax" ? booked.providerOrderId : null;
+
+  // `order.delivery` sub-object mirror (frontend tracking contract): a
+  // COMPLETE snapshot built from the pre-write order + this book result, so
+  // Firestore's deep merge and the shallow-merge test shims converge on the
+  // same object. `undefined` is stripped — Firestore rejects it inside a
+  // write payload.
+  const prevDelivery =
+    order.delivery && typeof order.delivery === "object" ? order.delivery : {};
+  write.delivery = definedFields({
+    ...prevDelivery,
+    provider: booked.provider,
+    providerOrderId: String(booked.providerOrderId),
+    status: booked.riderName ? "rider_assigned" : "pending",
+    riderName: booked.riderName ?? null,
+    riderPhone: booked.riderPhone ?? null,
+    riderVehicleNumber: booked.riderVehicleNumber ?? null,
+    trackingUrl: booked.trackingUrl || null,
+    // New dispatch = the previous rider's GPS is stale (and would be fake
+    // data for the new carrier). Cleared until a real callback lands.
+    riderLocation: null,
+    riderLocationAt: null,
+    assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await orderDoc.ref.set(write, { merge: true });
+
+  // Server orderId mapping: bind provider order id → our orderId so the
+  // webhook resolves through the map (hint stays a hint, DR10).
+  try {
+    if (isSafeDocId(booked.providerOrderId)) {
+      await db
+        .collection("dispatch_order_map")
+        .doc(booked.providerOrderId)
+        .set(
+          {
+            orderId,
+            provider: booked.provider,
+            branchId: order.branchId || null,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+    }
+  } catch (mapErr: any) {
+    console.warn("[Dispatch] order-map write failed (non-blocking):", mapErr?.message || mapErr);
+  }
+
+  // Failover = the first provider we tried to book did NOT succeed; a
+  // staff-preferred provider booking over a cheaper quote is not a failover.
+  const firstAttempted = walk[0].provider;
+  const failover =
+    booked.provider !== firstAttempted
+      ? { from: firstAttempted, to: booked.provider, cheapestProvider: cheapest }
+      : undefined;
+
+  return {
+    provider: booked.provider,
+    providerOrderId: booked.providerOrderId,
+    riderName: booked.riderName,
+    riderPhone: booked.riderPhone,
+    riderVehicleNumber: booked.riderVehicleNumber,
+    trackingUrl: booked.trackingUrl || "",
+    status: "dispatched",
+    source: booked.source || "api",
+    attempts,
+    failover,
+    reused: booked.reused === true,
+    orderId,
+  };
 }
 
 /** POST /dispatch/rebook: mirrors the porter rebook guard, re-enters §3. */
@@ -1013,6 +1028,11 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
   }
   const order = orderDoc.data()!;
   if (caller) await assertOrderBranchAccess(caller, order);
+  // Terminal guard (audit finding 1): `delivered`/`cancelled` are NOT in
+  // ACTIVE_DELIVERY_STATUSES, so the active-dispatch guards below skip exactly
+  // the orders this lane must never touch — and the write rewinded
+  // deliveryStatus to "dispatched". Same typed 409 dispatchBook throws.
+  assertDispatchNotLocked(order);
 
   const pid = String(params.porterOrderId || "").trim();
   if (!isSafeDocId(pid)) {

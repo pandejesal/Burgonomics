@@ -1,4 +1,4 @@
-import { config } from "../../../config/env";
+import { assertLiveDispatchContext, config } from "../../../config/env";
 import type {
   DispatchBookContext,
   DispatchQuoteContext,
@@ -68,10 +68,12 @@ function orderValueInr(ctx: DispatchQuoteContext): number {
   );
 }
 
-/** Contact numbers are bare 10-digit national format (doc examples). */
-function contactDigits(raw: string | undefined, fallback: string): string {
+/** Contact numbers are bare 10-digit national format (doc examples). Returns
+ * "" when no real number can be derived from either source — never the old
+ * invented literal "9876543210" (audit finding 5). */
+function contactDigits(raw: string | undefined, fallback?: string): string {
   const strip = (v: string | undefined): string => (v || "").replace(/\D/g, "").slice(-10);
-  return strip(raw) || strip(fallback) || "9876543210";
+  return strip(raw) || strip(fallback) || "";
 }
 
 function serviceabilityPayload(ctx: DispatchQuoteContext): Record<string, any> {
@@ -111,6 +113,7 @@ export const shadowfaxAdapter: ProviderAdapter = {
     );
 
     if (config.mock.shadowfaxDispatch) {
+      assertLiveDispatchContext("shadowfax quote");
       const distanceKm = fallbackKm;
       return {
         provider: "shadowfax",
@@ -167,6 +170,7 @@ export const shadowfaxAdapter: ProviderAdapter = {
 
   async book(ctx: DispatchBookContext): Promise<ProviderBookResult> {
     if (config.mock.shadowfaxDispatch) {
+      assertLiveDispatchContext("shadowfax book");
       const providerOrderId = `SFX-ORD-${Math.floor(100000 + Math.random() * 900000)}`;
       const rider = mockRider("shadowfax", ctx.orderId);
       return {
@@ -196,6 +200,17 @@ export const shadowfaxAdapter: ProviderAdapter = {
     const dropAddr = dropAddressBlock(order);
     const items = Array.isArray(order.items) ? order.items : [];
 
+    // A real contact is required to place an order: the old code fell back to
+    // the invented literal "9876543210" (audit finding 5). Fail closed instead
+    // of transmitting a fabricated number. (Shadowfax's required-field set is
+    // UNVERIFIED — their doc URL 404s and the Postman collection is auth-gated
+    // — so an omitted key would be the honest-but-unconfirmed alternative.)
+    const pickupContactNumber = contactDigits(pickup.phone, ctx.customerPhone);
+    const dropContactNumber = contactDigits(drop.phone, ctx.customerPhone);
+    if (!pickupContactNumber || !dropContactNumber) {
+      throw unparseable("shadowfax", "contact phone");
+    }
+
     const orderItems = items.length
       ? items.slice(0, 50).map((it: any, i: number) => ({
           id: String(it.id || it.productId || `item_${i + 1}`),
@@ -216,15 +231,22 @@ export const shadowfaxAdapter: ProviderAdapter = {
           ...(ctx.orderId ? { client_order_id: ctx.orderId } : {}),
         },
         pickup_details: {
-          city: order.branchCity || "Ahmedabad",
-          contact_number: contactDigits(pickup.phone, ctx.customerPhone || ""),
+          // No invented locality: an empty city is "unknown", a hardcoded
+          // "Ahmedabad" geocodes a branch in another city to the wrong place
+          // (audit finding 6, the same defect the drop-side fix removed).
+          city: order.branchCity || "",
+          contact_number: pickupContactNumber,
           name: (pickup.name || "Burgonomics Branch").slice(0, 120),
           address: (pickupAddressBlock(order) || "Burgonomics Branch").slice(0, 350),
           latitude: ctx.pickup.lat,
           longitude: ctx.pickup.lng,
         },
         drop_details: {
-          city: dropAddr.city || "Ahmedabad",
+          // No invented locality: an empty city is "unknown", a hardcoded
+          // "Ahmedabad" geocodes a drop pin in another city to the wrong place
+          // (audit finding 6). Shadowfax's required-field set is UNVERIFIED
+          // (their doc URL 404s, the Postman collection is auth-gated).
+          city: dropAddr.city || "",
           contact_number: contactDigits(drop.phone, ctx.customerPhone || ""),
           name: (drop.name || "Customer").slice(0, 120),
           address: (dropAddr.line || "Customer Delivery Address").slice(0, 350),
@@ -246,7 +268,10 @@ export const shadowfaxAdapter: ProviderAdapter = {
       providerOrderId: String(providerOrderId),
       // Rider identity arrives with the ALLOTTED callback — pending placeholder
       // until then (webhook DRIVER_ALLOCATED fills the real rider fields).
-      riderName: res.data?.rider_name || rider.name || "Shadowfax Rider",
+      // Real identity, or empty. A fabricated placeholder name would be promoted
+      // to a customer-visible `status: "rider_assigned"` (dispatch.router.ts);
+      // empty keeps the dispatch `pending` until ALLOTTED fills the real rider.
+      riderName: res.data?.rider_name || rider.name || "",
       riderPhone: res.data?.rider_contact || rider.phone || "",
       riderVehicleNumber: res.data?.rider_vehicle || rider.vehicle_number || "",
       trackingUrl: res.data?.track_url || res.data?.track || res.data?.tracking_url || "",

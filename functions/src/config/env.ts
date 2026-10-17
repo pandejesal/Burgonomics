@@ -20,6 +20,16 @@ function explicitMock(flag: string | undefined): boolean {
   return flag === "true";
 }
 
+/**
+ * Positive finite milliseconds, else the default. `Number("6s")` is NaN and
+ * `setTimeout(fn, NaN)` fires IMMEDIATELY, which would time out every dispatch
+ * quote at once (audit finding 13); 0/negative/non-numeric all fall back.
+ */
+function positiveMs(raw: string | undefined, fallback: number): number {
+  const n = Number(raw ?? "");
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export const config = {
   firebase: {
     projectId:
@@ -88,7 +98,7 @@ export const config = {
     baseUrl: process.env.SHADOWFAX_BASE_URL || "https://api.shadowfax.in",
   },
   dispatch: {
-    quoteTimeoutMs: Number(process.env.DISPATCH_QUOTE_TIMEOUT_MS || 6000),
+    quoteTimeoutMs: positiveMs(process.env.DISPATCH_QUOTE_TIMEOUT_MS, 6000),
     fareConfirmDeltaInr: Number(process.env.DISPATCH_FARE_CONFIRM_DELTA_INR || 20),
   },
   alerts: {
@@ -227,6 +237,34 @@ export function assertLivePetpoojaContext(operation: string): void {
   if (config.mock.petpoojaPos && isDeclaredProduction()) {
     throw new Error(
       `FATAL: MOCK_PETPOOJA_POS is active in production — refusing ${operation} (fail-closed).`
+    );
+  }
+}
+
+/**
+ * ZERO-MOCK runtime guard for the multi-provider dispatch path (DR11). Boot
+ * refuses a declared-production process with any MOCK_*_DISPATCH flag
+ * (assertProductionKeys), but `config.mock` is a plain mutable object: a
+ * process that boots clean can be flipped afterwards, and a flipped dispatch
+ * flag puts `[TEST]` riders and mock fares on LIVE orders with no refusal — the
+ * doc's claim that mocks "can never run in production" rested on the boot
+ * assert alone (audit finding 9). Every provider adapter calls this at the top
+ * of its mock branch.
+ */
+export function assertLiveDispatchContext(operation: string): void {
+  if (!isDeclaredProduction()) return;
+  const activeMocks = (
+    [
+      ["MOCK_PORTER_DISPATCH", config.mock.porterDispatch],
+      ["MOCK_BORZO_DISPATCH", config.mock.borzoDispatch],
+      ["MOCK_SHADOWFAX_DISPATCH", config.mock.shadowfaxDispatch],
+    ] as Array<[string, boolean]>
+  )
+    .filter(([, on]) => on)
+    .map(([name]) => name);
+  if (activeMocks.length > 0) {
+    throw new Error(
+      `FATAL: ${activeMocks.join(", ")} active in production — refusing ${operation} (fail-closed).`
     );
   }
 }
