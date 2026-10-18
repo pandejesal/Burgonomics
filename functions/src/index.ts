@@ -609,7 +609,11 @@ app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/webhook",
       outcome: "ok",
-      restId: p.rest_id ?? p.restId ?? null,
+      // Pass the raw body so the audit derives restId through the shared
+      // extractor (rest_id ?? restId ?? restID ?? restaurantid, mirroring the
+      // handler). An order-status callback carries the outlet id as `restID`,
+      // which the previous inline `rest_id ?? restId` list dropped to null.
+      payload: p,
       orderId: p.order_id ?? p.clientOrderID ?? p.client_order_id ?? null,
     });
     res.status(200).json({ status: "success" });
@@ -617,7 +621,9 @@ app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/webhook",
       outcome: "error",
-      restId: p.rest_id ?? p.restId ?? null,
+      // See the ok-branch note: derive restId from the raw body via the shared
+      // extractor so a `restID`-shaped callback is attributed, not nulled.
+      payload: p,
       orderId: p.order_id ?? p.clientOrderID ?? p.client_order_id ?? null,
       detail: err?.message,
     });
