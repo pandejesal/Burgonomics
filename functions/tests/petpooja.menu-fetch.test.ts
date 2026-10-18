@@ -487,6 +487,214 @@ describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDIN
   });
 });
 
+describe("demo re-push blast radius (isolation)", () => {
+  // A menu re-push against the demo outlet is gated on proof it cannot disturb
+  // anything outside the demo branch. The ingest writes branch-scoped
+  // `products/prod_<branchId>_<itemid>` docs + a `branches/<branchId>` stamp +
+  // a sync-log row, and runs a RETIRE pass over absent branch-scoped SKUs.
+  // These tests drive the LIVE (mock=false) path — the one the demo re-push
+  // would take — and assert the whole write set is demo-scoped, with every
+  // foreign branch's documents byte-identical afterwards.
+  //
+  // Same harness as the live-push tests above: vi.hoisted mockDb/savedDocs, the
+  // extended collection() query surface, and the branches/demo outlet link.
+  let prevMock: boolean;
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    prevMock = config.mock.petpoojaPos;
+    config.mock.petpoojaPos = false; // LIVE path — branch resolved via sharing code
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    savedDocs["branches/demo"] = { petpoojaStoreId: DEMO_REST_ID };
+  });
+
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+    vi.unstubAllGlobals();
+  });
+
+  /** Deep copy of the double's stored docs, for a before/after write diff. */
+  const snapshotDocs = (): Record<string, any> => JSON.parse(JSON.stringify(savedDocs));
+
+  /** Keys this run created or mutated, by comparing stored docs before vs after. */
+  const changedKeys = (before: Record<string, any>): string[] =>
+    Object.keys(savedDocs).filter(
+      (path) =>
+        !Object.prototype.hasOwnProperty.call(before, path) ||
+        JSON.stringify(before[path]) !== JSON.stringify(savedDocs[path])
+    );
+
+  it("writes ONLY demo-scoped documents, leaving both foreign branch docs untouched", async () => {
+    // Two foreign branches' documents, each a FULLY specified field set so a
+    // stray merge/overwrite of ANY field is detectable — not just a rename.
+    const westbankDoc = {
+      id: "prod_westbank_70001",
+      branchId: "westbank",
+      restId: "westbank-rest-id",
+      petpoojaItemId: "70001",
+      name: "Westbank Malai Kofta",
+      description: "Foreign outlet's dish — a demo push must never touch it",
+      price: 349,
+      categoryId: "cat_west_1",
+      categoryName: "Westbank Mains",
+      imageUrl: "https://cdn.example.com/westbank/70001.png",
+      inStock: true,
+      isVeg: true,
+      lastPetpoojaSync: "SEEDED_WESTBANK_SYNC",
+      updatedAt: "SEEDED_WESTBANK_UPDATED",
+    };
+    const hlRoadDoc = {
+      id: "prod_hl-road_70002",
+      branchId: "hl-road",
+      restId: "hl-road-rest-id",
+      petpoojaItemId: "70002",
+      name: "HL Road Chicken Curry",
+      description: "Foreign outlet's dish — a demo push must never touch it",
+      price: 389,
+      categoryId: "cat_hl_1",
+      categoryName: "HL Road Mains",
+      imageUrl: null,
+      inStock: true,
+      isVeg: false,
+      lastPetpoojaSync: "SEEDED_HL_SYNC",
+      updatedAt: "SEEDED_HL_UPDATED",
+    };
+    savedDocs["products/prod_westbank_70001"] = westbankDoc;
+    savedDocs["products/prod_hl-road_70002"] = hlRoadDoc;
+
+    const before = snapshotDocs();
+    const res = await handlePetpoojaMenuWebhook(REAL_PUSH_BODY);
+
+    expect(res).toEqual({ success: true, itemCount: 2 });
+    expect(fetchMock).not.toHaveBeenCalled(); // inbound catalog, not a pull
+
+    const changed = changedKeys(before);
+    const writtenProductKeys = changed.filter((k) => k.startsWith("products/"));
+
+    // (a) Every product document this run created or mutated is demo-scoped.
+    const nonDemoWrites = writtenProductKeys.filter(
+      (k) => !k.startsWith("products/prod_demo_")
+    );
+    expect(
+      nonDemoWrites,
+      `a demo push wrote non-demo product document(s): ${nonDemoWrites.join(", ")}`
+    ).toEqual([]);
+    // Positive control: the push DID write the two demo docs it should have.
+    expect(writtenProductKeys.sort()).toEqual([
+      "products/prod_demo_pp_b1",
+      "products/prod_demo_pp_s1",
+    ]);
+
+    // (b) BOTH foreign documents are exactly what was seeded — untouched.
+    expect(savedDocs["products/prod_westbank_70001"]).toEqual(westbankDoc);
+    expect(savedDocs["products/prod_hl-road_70002"]).toEqual(hlRoadDoc);
+
+    // (c) No written key names another branch (westbank / hl-road), nor the raw
+    // Petpooja sharing code as a branch segment.
+    for (const foreignToken of ["westbank", "hl-road", DEMO_REST_ID]) {
+      const offenders = changed.filter((k) => k.includes(foreignToken));
+      expect(
+        offenders,
+        `a demo push wrote a key naming '${foreignToken}': ${offenders.join(", ")}`
+      ).toEqual([]);
+    }
+
+    // (d) The branch stamp lands on branches/demo and nowhere else.
+    expect(changed.filter((k) => k.startsWith("branches/"))).toEqual(["branches/demo"]);
+    expect(savedDocs["branches/demo"]).toMatchObject({ petpoojaItemCount: 2 });
+
+    // (e) The mock-mode doc shape (prod_<restId>_<itemid>) must NOT appear on the
+    // live path — that global id is the collision the branch-scoped id prevents.
+    const mockShapeKeys = Object.keys(savedDocs).filter((k) =>
+      k.startsWith(`products/prod_${DEMO_REST_ID}_`)
+    );
+    expect(
+      mockShapeKeys,
+      `live push wrote mock-mode product id(s): ${mockShapeKeys.join(", ")}`
+    ).toEqual([]);
+    for (const item of REAL_PUSH_BODY.items) {
+      expect(savedDocs[`products/prod_${DEMO_REST_ID}_${item.itemid}`]).toBeUndefined();
+    }
+
+    // No ghost/retire write happened here (nothing demo-scoped was absent).
+    expect(snapshotRows()).toEqual([]);
+    expect(syncLogRows()).toHaveLength(1);
+    expect(savedDocs[syncLogRows()[0]]).toMatchObject({
+      storeId: "demo",
+      status: "COMPLETED",
+      created: 2,
+      simulated: false,
+    });
+  });
+
+  it("RETIREs only the absent DEMO-scoped SKU, leaving a stale foreign SKU untouched", async () => {
+    // Source `syncPetpoojaMenu` tombstone block (live-only, items.length > 0):
+    //   where("branchId","==",branchId) → per doc with a petpoojaItemId NOT in
+    //   the feed and inStock !== false:
+    //   d.ref.set({ inStock:false, ghostRetired:true,
+    //               ghostRetiredAt: serverTimestamp(),
+    //               updatedAt: serverTimestamp() }, { merge:true })
+    // `branchId` is the resolved DEMO branch, so the query is branch-scoped and
+    // cannot see another branch's docs — asserted below rather than assumed.
+    const staleDemo = {
+      id: "prod_demo_stale",
+      branchId: "demo",
+      restId: DEMO_REST_ID,
+      petpoojaItemId: "stale-from-an-older-feed",
+      name: "Stale Demo SKU",
+      price: 123,
+      inStock: true,
+    };
+    const staleForeign = {
+      id: "prod_westbank_70001",
+      branchId: "westbank",
+      restId: "westbank-rest-id",
+      petpoojaItemId: "70001",
+      name: "Westbank Malai Kofta",
+      price: 349,
+      inStock: true,
+      updatedAt: "SEEDED_WESTBANK_UPDATED",
+    };
+    savedDocs["products/prod_demo_stale"] = staleDemo;
+    savedDocs["products/prod_westbank_70001"] = staleForeign;
+
+    const res = await handlePetpoojaMenuWebhook(REAL_PUSH_BODY);
+
+    expect(res).toEqual({ success: true, itemCount: 2 });
+
+    // The stale DEMO SKU is retired EXACTLY as the source does it: merged onto
+    // the existing doc (never deleted, never re-priced/re-described), flipped
+    // out-of-stock and marked ghostRetired, with the two timestamps.
+    expect(savedDocs["products/prod_demo_stale"]).toEqual({
+      ...staleDemo,
+      inStock: false,
+      ghostRetired: true,
+      ghostRetiredAt: "MOCK_TIMESTAMP",
+      updatedAt: "MOCK_TIMESTAMP",
+    });
+    expect(savedDocs["products/prod_demo_stale"]).toMatchObject({
+      inStock: false,
+      ghostRetired: true,
+      ghostRetiredAt: "MOCK_TIMESTAMP",
+      updatedAt: "MOCK_TIMESTAMP",
+    });
+
+    // The stale FOREIGN SKU is untouched — the retire query is demo-scoped.
+    expect(savedDocs["products/prod_westbank_70001"]).toEqual(staleForeign);
+
+    // The retire pass reported exactly one retirement, for the demo branch.
+    expect(snapshotRows()).toHaveLength(1);
+    expect(savedDocs[snapshotRows()[0]]).toMatchObject({
+      source: "petpooja",
+      severity: "medium",
+      branchId: "demo",
+      message: expect.stringContaining("retired 1 ghost SKU(s)"),
+    });
+  });
+});
+
 describe("Petpooja PUSH — the vendor's OWN field spellings (category join, description, image)", () => {
   // Live Firestore showed every doc written from the 166-item captured push as
   // categoryId "uncategorized" / categoryName "Other" / description "" / imageUrl
