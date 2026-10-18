@@ -12,6 +12,13 @@ export interface PetpoojaWebhookAuditEntry {
   outcome: "ok" | "error";
   /** Petpooja's outlet id (rest_id) — never a customer field. */
   restId?: string | null;
+  /**
+   * Raw inbound body, used ONLY to derive `restId` when the caller did not
+   * supply one (`extractPetpoojaWebhookRestId`). Transient — never persisted,
+   * so the PII boundary below still holds: the audit stores ids and handler
+   * messages only.
+   */
+  payload?: unknown;
   /** Order id / item id from the payload — operational refs only. */
   orderId?: string | null;
   itemId?: string | null;
@@ -19,6 +26,29 @@ export interface PetpoojaWebhookAuditEntry {
   itemCount?: number;
   /** Handler error text (already a system message, capped defensively). */
   detail?: string;
+}
+
+/**
+ * Extracts the Petpooja outlet id from an inbound webhook body, mirroring the
+ * exact field order the ORDER-STATUS handler reads in
+ * `item86ingSync.handlePetpoojaWebhook`:
+ *
+ *   payload.rest_id ?? payload.restId ?? payload.restID ?? payload.restaurantid
+ *
+ * A real order-status callback (2026-10-17T11:30:22Z) carried the outlet id as
+ * `restID` (capital D). The route's audit call read only `rest_id` / `restId`,
+ * so it recorded `restId: null` while the SAME payload parked correctly as
+ * `unmatched_petpooja_orders/upo_bgx_variation_tax_1792168825392` with
+ * `restId: "31z58ciw0h"` — leaving inbound calls unattributable to an outlet.
+ * Returns null for a malformed body or an absent/unusable id; never throws.
+ */
+export function extractPetpoojaWebhookRestId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  const raw = p.rest_id ?? p.restId ?? p.restID ?? p.restaurantid;
+  if (typeof raw === "number") return Number.isFinite(raw) ? String(raw) : null;
+  if (typeof raw === "string") return raw.length > 0 ? raw : null;
+  return null;
 }
 
 /**
@@ -37,11 +67,16 @@ export interface PetpoojaWebhookAuditEntry {
  */
 export async function auditPetpoojaWebhook(entry: PetpoojaWebhookAuditEntry): Promise<void> {
   try {
+    // An explicitly supplied `restId` still wins (menu-sync resolves a nested
+    // sharing code elsewhere). Otherwise derive it from the raw body the same
+    // way the handler does, so an order-status callback that carries its outlet
+    // id under `restID` is attributed instead of recorded as `null`.
+    const restId = entry.restId ?? extractPetpoojaWebhookRestId(entry.payload);
     await db.collection("pos_webhook_audits").doc().set({
       source: "petpooja",
       endpoint: entry.endpoint,
       outcome: entry.outcome,
-      restId: entry.restId ?? null,
+      restId: restId ?? null,
       orderId: entry.orderId ?? null,
       itemId: entry.itemId ?? null,
       ...(entry.itemCount !== undefined ? { itemCount: entry.itemCount } : {}),

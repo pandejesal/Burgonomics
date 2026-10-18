@@ -121,6 +121,12 @@ import {
 // the /petpooja/menu-sync 503-vs-400 mapping, and importing src/index.ts in a
 // test would boot the whole app. (The barrel is owned by another change.)
 import { menuSyncFailureStatus } from "../src/modules/petpooja/menuSyncWebhook";
+// The audit trail is imported directly, not through the barrel, for the same
+// reason: it is the /petpooja/webhook route's only outlet-attribution record.
+import {
+  auditPetpoojaWebhook,
+  extractPetpoojaWebhookRestId,
+} from "../src/modules/petpooja/webhookAudit";
 import { config } from "../src/config/env";
 // Sanitized vendor-truth fixture derived from a real captured Push Menu body
 // (see the file's own header-less shape: no operator/personal fields, no
@@ -1364,5 +1370,112 @@ describe("menuSyncFailureStatus — the /petpooja/menu-sync 503-vs-400 mapping",
     const err: any = new Error("Petpooja Menu API answered for outlet x with no menu object: response was an empty object");
     err.malformedMenuBody = true;
     expect(menuSyncFailureStatus(err)).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pos_webhook_audits — OUTLET ATTRIBUTION for inbound Petpooja callbacks
+// ---------------------------------------------------------------------------
+//
+// LIVE DEFECT (2026-10-17T11:30:22Z, POST /petpooja/webhook): a real
+// order-status callback parked as
+//   unmatched_petpooja_orders/upo_bgx_variation_tax_1792168825392
+// with restId "31z58ciw0h" and rawStatus "1", but the SAME invocation's audit
+// row recorded `restId: null`. The handler reads the outlet id as
+// `rest_id ?? restId ?? restID ?? restaurantid`; the route's audit call read
+// only `rest_id` / `restId`, and this shape sends it as `restID`. An audit row
+// that cannot name the outlet is useless for attributing inbound calls, which
+// is exactly what the audit exists for during the E2E.
+const auditRow = () => savedDocs["pos_webhook_audits/undefined"];
+
+describe("auditPetpoojaWebhook — outlet attribution for the order-status callback", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+  });
+
+  it("records the outlet id from a status callback body (the observed 11:30Z shape)", async () => {
+    // Exactly the shape that arrived: outlet id under `restID`, our order ref
+    // under `clientOrderID`, and the observed rawStatus.
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/webhook",
+      outcome: "ok",
+      payload: {
+        restID: "31z58ciw0h",
+        clientOrderID: "bgx_variation_tax_1792168825392",
+        status: "1",
+      },
+      orderId: "bgx_variation_tax_1792168825392",
+    });
+
+    expect(auditRow().restId).toBe("31z58ciw0h");
+    // Additive only: every other field keeps its meaning.
+    expect(auditRow()).toMatchObject({
+      source: "petpooja",
+      endpoint: "/petpooja/webhook",
+      outcome: "ok",
+      orderId: "bgx_variation_tax_1792168825392",
+      itemId: null,
+      detail: null,
+    });
+    // The raw body is NEVER persisted (PII boundary).
+    expect(auditRow().payload).toBeUndefined();
+  });
+
+  it("still records null when the body carries no outlet id", async () => {
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/webhook",
+      outcome: "ok",
+      payload: { clientOrderID: "bgx_unknown", status: "1" },
+      orderId: "bgx_unknown",
+    });
+
+    expect(auditRow().restId).toBeNull();
+    expect(auditRow().orderId).toBe("bgx_unknown");
+  });
+
+  it("never throws on a malformed body and records null", async () => {
+    await expect(
+      auditPetpoojaWebhook({
+        endpoint: "/petpooja/webhook",
+        outcome: "error",
+        payload: null,
+        detail: "boom",
+      })
+    ).resolves.toBeUndefined();
+
+    expect(auditRow().restId).toBeNull();
+    expect(auditRow().detail).toBe("boom");
+  });
+
+  it("keeps an explicitly supplied restId (the menu-sync path) ahead of the body", async () => {
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/menu-sync",
+      outcome: "ok",
+      restId: "menu_outlet",
+      payload: { restID: "someone_else" },
+      itemCount: 3,
+    });
+
+    expect(auditRow().restId).toBe("menu_outlet");
+    expect(auditRow().itemCount).toBe(3);
+  });
+});
+
+describe("extractPetpoojaWebhookRestId — mirrors the order-status handler's field order", () => {
+  it("prefers rest_id, then restId, then restID, then restaurantid", () => {
+    expect(extractPetpoojaWebhookRestId({ rest_id: "a" })).toBe("a");
+    expect(extractPetpoojaWebhookRestId({ restId: "b" })).toBe("b");
+    expect(extractPetpoojaWebhookRestId({ restID: "c" })).toBe("c");
+    expect(extractPetpoojaWebhookRestId({ restaurantid: "d" })).toBe("d");
+    // The order the handler reads them in (first present non-null wins).
+    expect(extractPetpoojaWebhookRestId({ restaurantid: "d", restID: "c", restId: "b" })).toBe("b");
+  });
+
+  it("normalises a numeric outlet id and rejects empty / malformed bodies", () => {
+    expect(extractPetpoojaWebhookRestId({ restaurantid: "5439" })).toBe("5439");
+    expect(extractPetpoojaWebhookRestId({ restID: "" })).toBeNull();
+    expect(extractPetpoojaWebhookRestId({})).toBeNull();
+    expect(extractPetpoojaWebhookRestId(null)).toBeNull();
+    expect(extractPetpoojaWebhookRestId("not-an-object")).toBeNull();
   });
 });
