@@ -28,6 +28,8 @@ export interface PetpoojaMenuItem {
   image_url?: string;
   image?: string;
   addon_groups?: any[];
+  itemallowvariation?: string | number | boolean;
+  variation?: unknown[];
 }
 
 /**
@@ -298,6 +300,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // push answers it without a code change.
   const rawInStockValues: Record<string, number> = {};
   let inStockTrueCount = 0;
+  let unpricedSkuCount = 0;
+  let unpricedInStockCount = 0;
+  let unpricedVariationFlaggedCount = 0;
+  let unpricedInStockVariationMissingCount = 0;
 
   for (const item of items) {
     // Doc id is branch-scoped: the same Petpooja itemid exists in every
@@ -318,6 +324,22 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       rawInStock === undefined || rawInStock === null ? "(absent)" : String(rawInStock);
     rawInStockValues[rawInStockKey] = (rawInStockValues[rawInStockKey] || 0) + 1;
     if (inStock) inStockTrueCount++;
+
+    // Record-only: keep the existing price mapping and stock whitelist intact.
+    if (!(Number(item.price) > 0)) {
+      unpricedSkuCount++;
+      if (inStock) unpricedInStockCount++;
+      const variationFlagged =
+        item.itemallowvariation === "1" || item.itemallowvariation === 1 || item.itemallowvariation === true;
+      if (variationFlagged) {
+        unpricedVariationFlaggedCount++;
+        if (inStock &&
+            !(Array.isArray(item.variation) && item.variation.length > 0) &&
+            !(Array.isArray(menuData.variations) && menuData.variations.length > 0)) {
+          unpricedInStockVariationMissingCount++;
+        }
+      }
+    }
 
     const isVeg =
       item.item_attributeid !== undefined && item.item_attributeid !== null
@@ -385,6 +407,14 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       .join(", ");
     console.warn(
       `[Petpooja Menu Sync] menu sync for outlet ${restId} ingested ${items.length} items and NONE are in stock (raw in_stock: ${census}) — the whole catalogue will render as Sold Out; verify the vendor's in_stock encoding`
+    );
+  }
+
+  // PRICE OBSERVABILITY: fire only when this becomes a live money hazard,
+  // not while out-of-stock items make it harmless or on a healthy outlet.
+  if (unpricedInStockCount > 0) {
+    console.warn(
+      `[Petpooja Menu Sync] outlet ${restId} ingested ${items.length} items: ${unpricedSkuCount} unpriced, ${unpricedInStockCount} unpriced in stock; ${unpricedInStockVariationMissingCount} of those are variation-flagged without definitions — live money hazard`
     );
   }
 
@@ -493,6 +523,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       // by String(value) — e.g. { "2": 166 }. Record-only; it never influences
       // the products written, and no existing field is renamed or repurposed.
       inStockValues: rawInStockValues,
+      unpricedSkuCount,
+      unpricedInStockCount,
+      unpricedVariationFlaggedCount,
+      unpricedInStockVariationMissingCount,
       error: unexplainedVendorMessage,
       simulated: config.mock.petpoojaPos,
       source: "menuSyncWebhook",

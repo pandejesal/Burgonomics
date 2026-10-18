@@ -950,6 +950,107 @@ describe("Petpooja Menu API — a body with NO `items` array (census edge, live 
   });
 });
 
+describe("Petpooja menu PUSH — unpriced SKU observability", () => {
+  let prevMock: boolean;
+  const spyOnWarn = () => vi.spyOn(console, "warn").mockImplementation(() => {});
+  const latestSyncLog = () => savedDocs[syncLogRows()[0]];
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    prevMock = config.mock.petpoojaPos;
+    config.mock.petpoojaPos = true;
+    savedDocs["branches/demo"] = { petpoojaStoreId: DEMO_REST_ID };
+  });
+
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+  });
+
+  it("(a) records unpriced in-stock counts and warns once naming the outlet and missing variations", async () => {
+    const warn = spyOnWarn();
+    try {
+      const res = await handlePetpoojaMenuWebhook({
+        success: "1", rest_id: "demo", variations: [],
+        items: [
+          ...["1", 1, true].map((flag, index) => ({
+            itemid: `missing${index}`, itemname: "Missing variation price",
+            price: "0", in_stock: 1, itemallowvariation: flag, variation: [],
+          })),
+          { itemid: "defined", itemname: "Defined variation", price: 0, in_stock: "1", itemallowvariation: "1", variation: [{ price: "10" }] },
+          { itemid: "invalid", itemname: "Invalid price", price: "unknown", in_stock: true },
+          { itemid: "out", itemname: "Negative price", price: -1, in_stock: "2", itemallowvariation: "1" },
+        ],
+      });
+
+      expect(res).toEqual({ success: true, itemCount: 6 });
+      expect(syncLogRows()).toHaveLength(1);
+      expect(latestSyncLog()).toMatchObject({
+        unpricedSkuCount: 6, unpricedInStockCount: 5,
+        unpricedVariationFlaggedCount: 5, unpricedInStockVariationMissingCount: 3,
+        status: "COMPLETED", error: null, created: 6,
+      });
+      expect(savedDocs["products/prod_demo_missing0"]).toMatchObject({ price: 0, inStock: true });
+      expect(snapshotRows()).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        `[Petpooja Menu Sync] outlet ${DEMO_REST_ID} ingested 6 items: 6 unpriced, 5 unpriced in stock; 3 of those are variation-flagged without definitions — live money hazard`
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(b) records an out-of-stock unpriced SKU without a price warning", async () => {
+    const warn = spyOnWarn();
+    try {
+      await handlePetpoojaMenuWebhook({
+        success: "1", rest_id: "demo", variations: [],
+        items: [
+          { itemid: "out", itemname: "Unpriced", price: "0", in_stock: "2", itemallowvariation: "1", variation: [] },
+          // Keep the independent all-dark warning out of this price assertion.
+          { itemid: "ok", itemname: "Priced", price: "10", in_stock: 1 },
+        ],
+      });
+      expect(latestSyncLog()).toMatchObject({
+        unpricedSkuCount: 1, unpricedInStockCount: 0,
+        unpricedVariationFlaggedCount: 1, unpricedInStockVariationMissingCount: 0,
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(c) records zero unpriced counts and stays silent when all items are priced", async () => {
+    const warn = spyOnWarn();
+    try {
+      await handlePetpoojaMenuWebhook({ ...REAL_PUSH_BODY, rest_id: "demo" });
+      expect(latestSyncLog()).toMatchObject({
+        unpricedSkuCount: 0, unpricedInStockCount: 0,
+        unpricedVariationFlaggedCount: 0, unpricedInStockVariationMissingCount: 0,
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(d) records zero unpriced counts without throwing or warning for zero items", async () => {
+    const warn = spyOnWarn();
+    try {
+      await expect(handlePetpoojaMenuWebhook({ success: "1", rest_id: "demo", items: [] }))
+        .resolves.toEqual({ success: true, itemCount: 0 });
+      expect(latestSyncLog()).toMatchObject({
+        unpricedSkuCount: 0, unpricedInStockCount: 0,
+        unpricedVariationFlaggedCount: 0, unpricedInStockVariationMissingCount: 0,
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("menuApiFailureReason — the decision itself", () => {
   it("requires a POSITIVE failure signal: an explicit falsy success", () => {
     expect(

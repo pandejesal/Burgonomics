@@ -979,6 +979,8 @@ unknowable price as an **orderable zero**.
 > variation-flagged SKU with `price:"0"` and no variation definition be priced —
 > and did Petpooja intend to send the variation definitions in this push?
 
+The instrument: additive unpriced counts on `petpooja_sync_logs`, plus one console warning only when an unpriced SKU is in stock, with missing-variation attribution.
+
 ### 17.8 Fields the mapper reads nowhere (latent, no impact today)
 
 All single-valued in this capture, so none changes behaviour now — recorded so a
@@ -1041,11 +1043,12 @@ would stop exercising that resolution order.
 
 `firebase deploy --only functions:api` ships the **WHOLE functions bundle**, so a
 Petpooja deploy also ships whatever else is committed — including other lanes'
-dispatch work. This is the constraint §16.9's clean-worktree deploy was built
-around.
+dispatch work. That is why the deploy must be scoped and coordinated rather than
+fired off at HEAD, and why a deploy worktree needs the gitignored
+`functions/.env` copied in before it will boot (see `PRODUCTION_RUNBOOK.md` for
+the deploy/env traps).
 
-As of these commits **none of `b26d5e3` / `1627204` / `317b6ea` / `9407006` is
-deployed.** Read-only evidence:
+As of these commits **none of this lane's work is deployed.** Read-only evidence:
 
 - the newest `petpooja_sync_logs` row is still **2026-10-17T11:02:53Z**, with no
   tick rows after it — consistent with the refusal fix already deployed (§16.10)
