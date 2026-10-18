@@ -23,6 +23,44 @@ export { retryPendingRouteTransfersWorker, calculateRouteSplit } from "./routeTr
 export { getOtpHmacSecret };
 
 /**
+ * Delivery-OTP invariant, SHARED by every channel that can confirm payment
+ * (client verify primary, client-verify backfill, Razorpay webhook).
+ *
+ * The webhook path used to write CONFIRMED with no `deliveryOtpHash` at all,
+ * so an app-closed payer's delivery order could never be handed over —
+ * `verifyDeliveryOtp` throws "No delivery OTP found" — for exactly the payers
+ * the authoritative webhook channel exists to serve. One implementation keeps
+ * the rule identical everywhere:
+ *
+ *   eligible  = orderType is "delivery", or absent (legacy docs predate the
+ *               field; refusing those would strand paid orders);
+ *   mint      = only when NO hash is present yet — an existing hash is never
+ *               overwritten, which is what makes replays idempotent.
+ *
+ * The plaintext is returned ONLY so the client-verify channel can show it to
+ * the payer (the single defined delivery of the code — a product decision,
+ * A08 P2). The webhook path satisfies the hash invariant but must NOT surface
+ * a code it never showed the customer.
+ */
+export function isDeliveryOtpEligible(doc: any): boolean {
+  const ot = typeof doc?.orderType === "string" ? doc.orderType.trim() : doc?.orderType;
+  return ot === "delivery" || !ot;
+}
+
+export function hasDeliveryOtpHash(doc: any): boolean {
+  return typeof doc?.deliveryOtpHash === "string" && doc.deliveryOtpHash.length > 0;
+}
+
+/** Fresh mint for an eligible order with no hash yet; `undefined` otherwise. */
+export function mintDeliveryOtp(
+  doc: any
+): { otp: string; deliveryOtpHash: string } | undefined {
+  if (!isDeliveryOtpEligible(doc) || hasDeliveryOtpHash(doc)) return undefined;
+  const otp = String(crypto.randomInt(1000, 10000));
+  return { otp, deliveryOtpHash: computeHmacSha256(otp, getOtpHmacSecret()) };
+}
+
+/**
  * The only currency Burgonomics settles in. Route splits, refund reversal
  * (`reverse_all`), paise rounding, and the reconciliation ledgers are all
  * INR-specific — an unsupported currency must fail closed at order creation
@@ -58,6 +96,38 @@ function assertPayableAmount(amountPaise: number): number {
     throw err;
   }
   return amountPaise;
+}
+
+/**
+ * Deterministic id slug for discrepancy docs: ONE stable doc id per
+ * (order, payment) pair, so a retried verification converges on the same
+ * `payment_discrepancies/dis_*` park instead of forking duplicates for ops.
+ * Shared by the live-bind refusals (`assertLivePaymentMatchesOrder`) and the
+ * pre-split second-capture binding below.
+ */
+function slug(v: unknown): string {
+  return String(v ?? "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64) || "unknown";
+}
+
+/**
+ * Reads a server-recorded payment binding from BOTH shapes an order doc can
+ * legitimately carry: the nested `payment` object literal
+ * (`payment.razorpayPaymentId`) and the legacy dotted top-level key
+ * (`"payment.razorpayPaymentId"`). A legacy scalar `payment` value (a bare
+ * status literal) is never treated as a binding — only a non-empty STRING
+ * field counts, so malformed data can never refuse a legitimate confirmation.
+ * Nested wins when both exist (that is the canonical shape verify writes).
+ */
+function readRecordedPaymentField(
+  doc: any,
+  field: "razorpayPaymentId" | "razorpayOrderId"
+): string | null {
+  const nested =
+    doc?.payment && typeof doc.payment === "object" ? doc.payment[field] : undefined;
+  const dotted = doc?.[`payment.${field}`];
+  if (typeof nested === "string" && nested) return nested;
+  if (typeof dotted === "string" && dotted) return dotted;
+  return null;
 }
 
 /**
@@ -214,8 +284,12 @@ async function assertPayableOrderDoc(orderId: string, customerId: string): Promi
  * amount (PAYMENTS_CONTRACT_SPEC §2). Returns null when nothing trustworthy
  * is stored — never a client-written doc (the razorpayOrderId field must
  * match exactly, so a datastore query shim returning junk is ignored).
+ *
+ * Exported for the `payment.captured` / `order.paid` webhook, which needs the
+ * same server-truth amount when an order doc carries no stored total (C03/B8:
+ * never confirm an amount the server cannot prove).
  */
-async function loadPaymentIntent(razorpayOrderId: string): Promise<any | null> {
+export async function loadPaymentIntent(razorpayOrderId: string): Promise<any | null> {
   if (!razorpayOrderId || !db || typeof db.collection !== "function") return null;
   try {
     const snap = await db
@@ -778,6 +852,126 @@ export async function verifyPayment(
     });
   }
 
+  // R06 corrective: terminal orders (cancelled/refunded) must be detected
+  // before any external Route split/payment settlement. This read is performed
+  // transactionally so a race that cancels the order after the amount check
+  // cannot trigger a new payout.
+  if (!db || typeof (db as any).runTransaction !== "function") {
+    throw new Error("verifyPayment requires a transactional datastore");
+  }
+  // Same fresh read also captures the RECORDED payment binding (B7 below):
+  // it must come from this transaction, never from the step-3 `orderData`
+  // snapshot, so a competing confirm that lands after that read — or a doc
+  // already confirmed by a first capture — is always visible before any
+  // money moves.
+  const preSplitTruth = await (db as any).runTransaction(async (tx: any) => {
+    const snap = await tx.get(orderRef);
+    const fresh = (snap && snap.exists ? snap.data() : orderData) || {};
+    const code = typeof (fresh as any)?.status === "string" ? (fresh as any).status : (fresh as any)?.status?.code;
+    return {
+      statusCode: String(code || "").toUpperCase(),
+      recordedPaymentId: readRecordedPaymentField(fresh, "razorpayPaymentId"),
+      recordedRazorpayOrderId: readRecordedPaymentField(fresh, "razorpayOrderId"),
+    };
+  });
+  const statusBeforeSplit = preSplitTruth.statusCode;
+  const TERMINAL_CANCEL_REFUND = statusBeforeSplit === "CANCELLED" || statusBeforeSplit === "REFUNDED";
+  if (TERMINAL_CANCEL_REFUND) {
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Captured payment ${razorpayPaymentId} landed on ${statusBeforeSplit} order ${orderId} - parked in unmatched_payments, no confirmation`,
+      orderId,
+      razorpayPaymentId,
+    }).catch(() => undefined);
+    await db.collection("unmatched_payments").doc(`ump_term_${razorpayPaymentId}`).set(
+      {
+        eventId: `verify_${razorpayPaymentId}`,
+        event: "verify_payment",
+        razorpayPaymentId,
+        razorpayOrderId,
+        orderId,
+        amount: typeof capturedAmountPaise === "number" ? capturedAmountPaise / 100 : null,
+        currency: "INR",
+        claimedOrderId: orderId,
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "needs_review",
+        reason: statusBeforeSplit === "REFUNDED" ? "capture_on_refunded_order" : "capture_on_cancelled_order",
+        orderStatus: statusBeforeSplit,
+      },
+      { merge: true }
+    );
+    const terminalErr: any = new Error(
+      `Order ${orderId} is ${statusBeforeSplit.toLowerCase()} - payment captured and parked for reconciliation`
+    );
+    terminalErr.statusCode = 409;
+    terminalErr.code = "ORDER_TERMINAL";
+    throw terminalErr;
+  }
+
+  // B7 — SECOND DISTINCT CAPTURE. The order already records a different
+  // captured payment than the one being verified (recorded pay_A vs incoming
+  // pay_B, or a different gateway order behind the recorded binding). The old
+  // path fell through to `finishVerifiedPayment`, which checked only
+  // `alreadyCompleted` and answered `{success:true, confirmedOrderId}` —
+  // silently absorbing payer B's money into payer A's confirmed order.
+  //
+  // Bind BOTH recorded gateway/payment ids from the FRESH read above and
+  // refuse BEFORE `executeRouteSplit`: a mismatch must never move money
+  // (no claim, no `payments.transfer` POST), mint an OTP, heal a hash, write
+  // a confirmation audit, debit Grill-Coins, or push a KOT. The FIRST
+  // captured payment stays authoritative — this block only ever reads the
+  // recorded ids; nothing here rewrites them. A retried refusal converges on
+  // ONE deterministic `payment_discrepancies/dis_<order>_<payment>` doc.
+  //
+  // "Proven captured": live mode only reaches this point when the gateway
+  // fetch returned `captured` with a matching paise amount
+  // (`capturedAmountPaise`), and mock/sandbox mode treats every accepted
+  // signature as captured (it has no gateway truth to fetch at all).
+  const provenCaptured =
+    typeof capturedAmountPaise === "number" || config.mock.paymentGateway === true;
+  const firstCapturedPaymentId = preSplitTruth.recordedPaymentId;
+  const firstCapturedGatewayOrderId = preSplitTruth.recordedRazorpayOrderId;
+  const foreignPayment =
+    !!firstCapturedPaymentId && !!razorpayPaymentId && firstCapturedPaymentId !== razorpayPaymentId;
+  const foreignGatewayOrder =
+    !!firstCapturedGatewayOrderId && !!razorpayOrderId && firstCapturedGatewayOrderId !== razorpayOrderId;
+  if (provenCaptured && (foreignPayment || foreignGatewayOrder)) {
+    await db
+      .collection("payment_discrepancies")
+      .doc(`dis_${slug(orderId)}_${slug(razorpayPaymentId)}`)
+      .set(
+        {
+          orderId,
+          razorpayOrderId,
+          razorpayPaymentId,
+          expectedPaise: Number.isFinite(expectedPaise) ? expectedPaise : null,
+          actualPaise: typeof capturedAmountPaise === "number" ? capturedAmountPaise : null,
+          gatewayStatus: typeof capturedAmountPaise === "number" ? "captured" : null,
+          reason: "SECOND_CAPTURE_MISMATCH",
+          status: "needs_review",
+          recordedPaymentId: firstCapturedPaymentId,
+          recordedRazorpayOrderId: firstCapturedGatewayOrderId,
+          orderStatus: statusBeforeSplit || null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Second distinct captured payment ${razorpayPaymentId} for order ${orderId} already confirmed by ${firstCapturedPaymentId || firstCapturedGatewayOrderId || "an earlier capture"} — parked in payment_discrepancies, order NOT re-confirmed, no split`,
+      orderId,
+      razorpayPaymentId,
+    }).catch(() => undefined);
+    const secondCaptureErr: any = new Error(
+      "This order is already confirmed by a different payment — verification refused. Contact support if money left your account."
+    );
+    secondCaptureErr.statusCode = 409;
+    secondCaptureErr.code = "SECOND_CAPTURE_MISMATCH";
+    throw secondCaptureErr;
+  }
+
   // 4. Execute the Razorpay Route split. Claim-then-work lives inside
   // executeRouteSplit, which is SHARED with the authoritative
   // `payment.captured` webhook — both channels can fire for one payment and
@@ -862,6 +1056,11 @@ export async function verifyPayment(
       (!intent.customerId || intent.customerId === "guest") &&
       ((orderData as any).customerId == null ||
         (orderData as any).customerId === "guest");
+  }
+  if (!finished.success) {
+    // Payment proof exists, but the order is cancelled/refunded/terminal: do
+    // not report a fresh verified confirmation for it.
+    return { ok: false as const, ...finished };
   }
   if (!owned) {
     return { ok: true as const };
@@ -1140,7 +1339,6 @@ async function assertLivePaymentMatchesOrder(args: {
     throw unknown;
   }
 
-  const slug = (v: unknown): string => String(v ?? "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64) || "unknown";
   const parkDiscrepancy = async (reason: string, extra: Record<string, any>) => {
     const docId = `dis_${slug(orderId)}_${slug(razorpayPaymentId)}`;
     await db.collection("payment_discrepancies").doc(docId).set(
@@ -1236,90 +1434,159 @@ async function finishVerifiedPayment(args: {
 }) {
   const { orderRef, orderData, orderId, razorpayOrderId, razorpayPaymentId, transferResult, capturedAmountPaise } = args;
 
-  // Update order state in Firestore — crypto-secure OTP for India compliance
-  const deliveryOtp =
-    orderData.deliveryOtp ||
-    (orderData.orderType === "delivery" || !orderData.orderType
-      ? String(crypto.randomInt(1000, 10000))
-      : undefined);
-
-  // Canonical object form: Partner normalizes it, Delivery reads .code, and
-  // server triggers accept both shapes. Never write a bare string status.
-  const updatePayload: Record<string, any> = {
-    paymentStatus: "completed",
-    "payment.status": "completed",
-    "payment.razorpayPaymentId": razorpayPaymentId,
-    "payment.razorpayOrderId": razorpayOrderId,
-    "payment.verifiedAt": admin.firestore.FieldValue.serverTimestamp(),
-    // Live gateway truth for downstream transfer-cap checks (lane B worker
-    // refuses splits above what the customer actually paid). Mock/legacy
-    // paths leave this unset and the worker falls back to pricing paise.
-    ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
-      ? { "payment.capturedAmountPaise": capturedAmountPaise }
-      : {}),
-    status: {
-      code: "CONFIRMED",
-      label: "Order confirmed",
-      kind: "upcoming",
-      terminal: false,
-    },
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
-
-  if (deliveryOtp) {
-    // Fail-closed OTP secret (H-M24): dedicated OTP_HMAC_SECRET, never the
-    // webhook secret. Mechanical fallout of security.ts — logic unchanged.
-    updatePayload.deliveryOtpHash = computeHmacSha256(
-      deliveryOtp,
-      getOtpHmacSecret()
-    );
+  // R06 corrective pass: real transactions only. Tests implement the
+  // required `db.runTransaction` interface instead of a non-atomic shim.
+  if (!db || typeof (db as any).runTransaction !== "function") {
+    throw new Error("finishVerifiedPayment requires a transactional datastore");
   }
 
-  await orderRef.set(updatePayload, { merge: true });
+  const CONFIRMED_LATER_STATUSES = new Set([
+    "PREPARING",
+    "READY",
+    "OUT_FOR_DELIVERY",
+    "IN_TRANSIT",
+    "DELIVERED",
+    "COMPLETED",
+    "PICKED_UP",
+    "CANCELLED",
+    "REFUNDED",
+  ]);
+  const txOutcome: any = await (db as any).runTransaction(async (tx: any) => {
+    const snap = await tx.get(orderRef);
+    const fresh: any = (snap && snap.exists ? snap.data() : orderData) || {};
 
-  // Append payment audit
-  const auditId = `aud_${Date.now()}_${razorpayPaymentId.substring(0, 10)}`;
-  await db.collection("payment_audits").doc(auditId).set({
-    orderId,
-    razorpayOrderId,
-    razorpayPaymentId,
-    status: "success",
-    action: "payment_captured",
-    amountPaise: orderData.pricing?.grandTotal ? Math.round(orderData.pricing.grandTotal * 100) : null,
-    transferResult,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    const statusCodeRaw =
+      typeof fresh?.status === "string" ? fresh.status : fresh?.status?.code;
+    const normalized = String(statusCodeRaw || "").toUpperCase();
+    const alreadyCompleted =
+      fresh?.paymentStatus === "completed" ||
+      fresh?.["payment.status"] === "completed" ||
+      normalized === "CONFIRMED";
+    const laterStatus =
+      CONFIRMED_LATER_STATUSES.has(normalized) ||
+      fresh?.status?.terminal === true ||
+      fresh?.terminal === true;
+    const terminalCanceledOrRefunded =
+      normalized === "CANCELLED" || normalized === "REFUNDED";
+    const hasHash = hasDeliveryOtpHash(fresh);
+
+    const performedConfirm = !alreadyCompleted && !laterStatus && !terminalCanceledOrRefunded;
+
+    // Brand-new confirmation path. One shared mint (see mintDeliveryOtp): the
+    // hash is written in the SAME transaction as CONFIRMED, and an existing
+    // hash is never overwritten.
+    if (performedConfirm) {
+      const mintedOtp = mintDeliveryOtp(fresh);
+      const updatePayload: Record<string, any> = {
+        paymentStatus: "completed",
+        "payment.status": "completed",
+        "payment.razorpayPaymentId": razorpayPaymentId,
+        "payment.razorpayOrderId": razorpayOrderId,
+        "payment.verifiedAt": admin.firestore.FieldValue.serverTimestamp(),
+        ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
+          ? { "payment.capturedAmountPaise": capturedAmountPaise }
+          : {}),
+        status: {
+          code: "CONFIRMED",
+          label: "Order confirmed",
+          kind: "upcoming",
+          terminal: false,
+        },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (mintedOtp) {
+        updatePayload.deliveryOtpHash = mintedOtp.deliveryOtpHash;
+      }
+      tx.set(orderRef, updatePayload, { merge: true });
+      return {
+        performedConfirm: true,
+        generatedOtp: mintedOtp?.otp,
+        fresh,
+        terminalCanceledOrRefunded: false,
+        statusCode: normalized,
+      };
+    }
+
+    // Atomic exactly-once OTP/hash backfill for payments that were confirmed by
+    // the webhook (or another transaction) without a delivery OTP hash. Only
+    // when the order did not already carry a hash. Never overwrite an existing
+    // hash (idempotent), and never leak a wrong/random OTP on retry.
+    let generatedOtp: string | undefined;
+    const backfillEligible =
+      isDeliveryOtpEligible(fresh) &&
+      alreadyCompleted &&
+      !hasHash &&
+      !terminalCanceledOrRefunded &&
+      (normalized === "CONFIRMED" || laterStatus === false);
+    if (backfillEligible) {
+      const minted = mintDeliveryOtp(fresh);
+      if (minted) {
+        generatedOtp = minted.otp;
+        tx.set(
+          orderRef,
+          {
+            deliveryOtpHash: minted.deliveryOtpHash,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+    }
+
+    return {
+      performedConfirm: false,
+      generatedOtp,
+      fresh,
+      terminalCanceledOrRefunded,
+      statusCode: normalized,
+    };
   });
 
-  // Loop 63/120: confirm-time Grill-Coins debit (manual-verify path; the
-  // webhook path debits independently — both converge via the deterministic
-  // ledger id). Best-effort: never fail a verified payment over this.
-  try {
-    const redemption = await resolveIntentRedemption(razorpayOrderId);
-    if (redemption) {
-      const { debitRedeemedCoins } = await import("../customers/customerCoins");
-      await debitRedeemedCoins({ ...redemption, orderId, razorpayOrderId });
-    }
-  } catch (err: any) {
-    console.warn(
-      `[Payments] confirm-time coin debit failed for order ${orderId}:`,
-      err?.message || err
-    );
-    await captureErrorSnapshot({
-      source: "payments",
-      severity: "high",
-      message: `Confirm-time Grill-Coins debit failed for order ${orderId} — remediate via adjustCustomerCoins`,
+  if (txOutcome.performedConfirm) {
+    const auditId = `aud_${Date.now()}_${razorpayPaymentId.substring(0, 10)}`;
+    await db.collection("payment_audits").doc(auditId).set({
       orderId,
+      razorpayOrderId,
       razorpayPaymentId,
-      errorStack: err?.stack,
+      status: "success",
+      action: "payment_captured",
+      amountPaise: txOutcome.fresh?.pricing?.grandTotal
+        ? Math.round(txOutcome.fresh.pricing.grandTotal * 100)
+        : null,
+      transferResult,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    try {
+      const redemption = await resolveIntentRedemption(razorpayOrderId);
+      if (redemption) {
+        const { debitRedeemedCoins } = await import("../customers/customerCoins");
+        await debitRedeemedCoins({ ...redemption, orderId, razorpayOrderId });
+      }
+    } catch (err: any) {
+      console.warn(
+        `[Payments] confirm-time coin debit failed for order ${orderId}:`,
+        err?.message || err
+      );
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Confirm-time Grill-Coins debit failed for order ${orderId} — remediate via adjustCustomerCoins`,
+        orderId,
+        razorpayPaymentId,
+        errorStack: err?.stack,
+      });
+    }
   }
 
+  const terminalCode = txOutcome.terminalCanceledOrRefunded ? "ORDER_TERMINAL" : undefined;
   return {
-    success: true,
+    success: !txOutcome.terminalCanceledOrRefunded,
+    ...(terminalCode ? { code: terminalCode } : {}),
     confirmedOrderId: orderId,
     paymentId: razorpayPaymentId,
     transfer: transferResult,
-    deliveryOtp,
+    deliveryOtp: txOutcome.generatedOtp,
   };
 }
 

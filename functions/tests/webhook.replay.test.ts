@@ -5,6 +5,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // takeover, and unmatched-payment parking.
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
+  // The webhook confirm path now satisfies the delivery-OTP invariant (B6/C12),
+  // and getOtpHmacSecret() is FAIL-CLOSED, so this suite must provide the
+  // dedicated secret exactly as a real deployment does (functions/.env sets it;
+  // it is one of env.ts's REQUIRED_SECRETS). Without this, a delivery confirm
+  // would throw instead of minting the handover hash.
+  process.env.OTP_HMAC_SECRET = "test_otp_replay_webhook";
   const savedDocs: Record<string, any> = {};
   const docRef = (colName: string, docId: string) => ({
     id: docId,
@@ -149,6 +155,11 @@ describe("Razorpay webhook idempotency (real handler)", () => {
       branchId: "branch_surat_01",
       customerPhone: "+91 90000 00000",
       paymentStatus: "pending",
+      // B8: an order doc with NO stored amount is no longer blind-confirmed —
+      // it parks `confirm_amount_unknown`. These tests are about idempotency
+      // and dedupe, not amount resolution, so the fixture carries the known
+      // server total (₹250 = the 25000-paise capture every payload here uses).
+      pricing: { grandTotal: 250 },
     };
   });
 
