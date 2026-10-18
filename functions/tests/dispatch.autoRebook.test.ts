@@ -232,6 +232,33 @@ describe("autoRebookDispatchWorker (starvation/livelock fixes)", () => {
     expect(doc.rebookTrigger).toBeNull();
   });
 
+  it("never re-books the carrier that cancelled the dispatch (DR6 exclusion)", async () => {
+    config.porter.enabled = false;
+    // Borzo owns the cancelled dispatch AND is the cheapest mock quote
+    // (38 + 9d vs shadowfax 42 + 10d), so without the exclusion the worker would
+    // re-book the same carrier and cancel-loop forever.
+    seedOrder("ord_excl", {
+      needsRebook: true,
+      rebookTrigger: "carrier_cancelled",
+      deliveryStatus: "rider_cancelled",
+      dispatchProvider: "borzo",
+      borzoOrderId: "BZ-CANCELLED-1",
+      dispatchOrderId: "BZ-CANCELLED-1",
+    });
+
+    const res = await autoRebookDispatchWorker();
+
+    expect(res).toMatchObject({ scanned: 1, rebooked: 1, failed: 0 });
+    const doc = docOf("ord_excl");
+    expect(doc.deliveryStatus).toBe("dispatched");
+    // The NEXT provider booked; the cancelling carrier was skipped entirely.
+    expect(doc.dispatchProvider).toBe("shadowfax");
+    expect(doc.delivery.provider).toBe("shadowfax");
+    // The cancelled carrier's identifiers do not carry into the new dispatch.
+    expect(doc.borzoOrderId).toBeNull();
+    expect(doc.dispatchOrderId).not.toBe("BZ-CANCELLED-1");
+  });
+
   it("keeps the flag for a mid-budget failed attempt (retry still pending)", async () => {
     config.porter.enabled = false;
     config.mock.borzoDispatch = false;
