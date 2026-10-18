@@ -31,6 +31,7 @@ import { fareConfirmCheck } from "./providers/shared";
 import { borzoAdapter } from "./providers/borzo.adapter";
 import { shadowfaxAdapter } from "./providers/shadowfax.adapter";
 import { porterAdapter } from "./providers/porter.adapter";
+import { assertDispatchReadinessIfRequired } from "./readiness";
 
 /**
  * Multi-provider dispatch router (references/delivery_routing.md DR1–DR11).
@@ -380,6 +381,11 @@ export interface DispatchQuoteParams {
  * ok providers fails closed 503 — never a static fare (DR2).
  */
 export async function dispatchQuote(params: DispatchQuoteParams): Promise<any> {
+  // Opt-in test-window gate (DISPATCH_REQUIRE_LIVE, round-3 N1(b)): refuse before
+  // any provider traffic if a dispatch mock is active, the agreed test courier is
+  // not genuinely callable, or it would be sent to a live host. Default OFF, so
+  // dev and production behaviour is unchanged.
+  assertDispatchReadinessIfRequired();
   // NULL-ISLAND GUARD (zero-fake, DR2): a (0,0)/out-of-range pin is not
   // "outside the delivery zone" — it is a broken map pin. Fail closed 422
   // BEFORE the radius gate so we never quote a fare computed from a point in
@@ -481,6 +487,7 @@ export interface DispatchBookParams {
  * bounded ranked walk (DR6) → Porter manual lane (DR8) → normalized persist.
  */
 export async function dispatchBook(params: DispatchBookParams): Promise<any> {
+  assertDispatchReadinessIfRequired();
   const { orderId, staffName, caller } = params;
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {

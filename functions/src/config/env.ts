@@ -105,6 +105,11 @@ export const config = {
     // and every `|delta| > NaN` comparison is false, so a single env typo
     // silently disabled the confirmation gate (review finding on 39efc40).
     fareConfirmDeltaInr: positiveNumber(process.env.DISPATCH_FARE_CONFIRM_DELTA_INR, 20),
+    // Opt-in test-window preflight (round-3 N1(b), default OFF so dev and
+    // production behaviour is unchanged): when true, dispatchQuote/dispatchBook
+    // first refuse if a dispatch mock is active, if the agreed test courier is
+    // not callable, or if it would be sent to a live host. See readiness.ts.
+    requireLive: process.env.DISPATCH_REQUIRE_LIVE === "true",
   },
   alerts: {
     slackWebhookUrl: process.env.SLACK_DEV_WEBHOOK_URL || "",
@@ -158,17 +163,38 @@ const REQUIRED_SECRETS: Array<[envName: string, value: () => string]> = [
  * run half-configured (production); webhook handlers additionally deny
  * per-request via empty-secret checks, so an empty env can never accept a
  * forged webhook even where this assert is not wired.
+ *
+ * `perEnabledIntegrations` (staging only — controller C11 / round-3 ACK): a
+ * capability that is genuinely switched OFF must not demand credentials it will
+ * never use, otherwise a staging boot fails for a disabled provider. It never
+ * relaxes what an ENABLED integration needs, and it does not touch the
+ * production path (which stays unconditional) or any signature check.
  */
-export function assertWebhookSecrets(): void {
-  const missing = REQUIRED_SECRETS.filter(([, read]) => !read()).map(
-    ([name]) => name
-  );
+export function assertWebhookSecrets(
+  options: { perEnabledIntegrations?: boolean } = {}
+): void {
+  const missing = REQUIRED_SECRETS.filter(([name, read]) =>
+    options.perEnabledIntegrations
+      ? integrationEnabledForSecret(name) && !read()
+      : !read()
+  ).map(([name]) => name);
   if (missing.length > 0) {
     throw new Error(
       `FATAL: missing secrets (${missing.join(", ")}) — set them in functions/.env ` +
         `(dotenv file, not functions:config). Refusing to boot half-configured.`
     );
   }
+}
+
+/**
+ * Which integration an env secret belongs to, for the staging readiness check.
+ * Payments (Razorpay) and the delivery OTP are core paths with no off switch, so
+ * they always require their secrets; Porter/Petpooja are capability-flagged.
+ */
+function integrationEnabledForSecret(envName: string): boolean {
+  if (envName.startsWith("PORTER_")) return config.porter.enabled;
+  if (envName.startsWith("PETPOOJA_")) return config.petpooja.enabled;
+  return true;
 }
 
 // Fail-fast guard for India production: never silently run live payments,
@@ -280,10 +306,11 @@ export function assertProductionKeys(): void {
   // Using deploymentEnv() directly ensures Cloud Run containers (which always set
   // NODE_ENV=production) honor BURGONOMICS_ENV="dev" or "staging".
   const declared = deploymentEnv();
-  // Staging mirrors prod secrets without the mock ban (staging legitimately
-  // exercises fallback paths); dev runs unguarded and mock-friendly.
+  // Staging mirrors prod secrets for ENABLED integrations without the mock ban
+  // (staging legitimately exercises fallback paths); a capability that is
+  // switched off does not demand credentials it will never use (C11).
   if (declared === "staging") {
-    assertWebhookSecrets();
+    assertWebhookSecrets({ perEnabledIntegrations: true });
     return;
   }
   if (declared !== "production") return;
