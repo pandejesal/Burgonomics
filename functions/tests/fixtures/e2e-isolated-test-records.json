@@ -1,0 +1,69 @@
+{
+  "purpose": "Isolated, sanitized records for the customer-app E2E (A08 C14/C09). Nothing here touches a real outlet, a real customer, or the shared catalogue: the products are CLONES of existing orderable items placed on a NEW test-only branch whose petpoojaStoreId is deliberately null, so no KOT can ever reach a kitchen that is not ours to ring.",
+  "whyNotNullStoreId": "5639/31z58ciw0h (demo) is the ONLY outlet carrying a petpoojaStoreId, so it is the only KOT-capable branch. An order on this test branch therefore exercises checkout -> payment -> order-state -> courier-quote WITHOUT any POS write, which is what C14 requires. The KOT leg is exercised separately and explicitly on the demo outlet via the staff route, and recorded as such.",
+  "runIdPlaceholder": "<utc-yyyymmddThhmmss>",
+  "substitutions": {
+    "<runId>": "every record id below carries it, which is what makes cleanup exact rather than a broad query"
+  },
+  "branch": {
+    "path": "branches/br_test_e2e_<runId>",
+    "doc": {
+      "id": "br_test_e2e_<runId>",
+      "name": "E2E Test Kitchen (NOT A REAL OUTLET)",
+      "isTest": true,
+      "active": true,
+      "petpoojaStoreId": null,
+      "address": "E2E test address - never dispatched",
+      "razorpayAccountId": null
+    }
+  },
+  "products": {
+    "path": "products/prod_test_e2e_<runId>_<n>",
+    "sourceRule": "CLONE the price and structure of an existing orderable product; never invent a price, never carry a \"0\" price through, and never copy a vendor in_stock value (see inStockRule).",
+    "inStockRule": "Set inStock EXPLICITLY true on the clone. This is the whole point of cloning: availability becomes a fact we author, so the E2E never depends on the unresolved vendor in_stock encoding (C07/C14).",
+    "example": {
+      "id": "prod_test_e2e_<runId>_1",
+      "name": "E2E Test Item (clone)",
+      "branchId": "br_test_e2e_<runId>",
+      "price": 249,
+      "inStock": true,
+      "isTest": true
+    }
+  },
+  "controlledContact": {
+    "customerName": "E2E Test Customer",
+    "customerPhone": "+91 90000 00001",
+    "note": "This number already appears in the repo's existing hermetic test fixtures. It is NOT a fabricated real person's number, and it must never be replaced by one (C13).",
+    "address": "E2E test address - never dispatched"
+  },
+  "orderIdConvention": {
+    "clientOrderId": "e2e_<runId>_<step>",
+    "note": "per-run unique, so a rerun can never be mistaken for a previous run's order and cleanup is exact"
+  },
+  "catalogueBranchCloning": {
+    "copyFrom": "the demo outlet's prod_demo_* documents",
+    "copyTo": "br_test_e2e_<runId>",
+    "mutationOfSource": "NONE - the source docs are only read; the clones are new documents",
+    "orderableCatalogueRewrite": "not required for this E2E and still not authorised"
+  },
+  "cleanup": {
+    "matchPrefixes": ["br_test_e2e_<runId>", "prod_test_e2e_<runId>_", "e2e_<runId>_"],
+    "never": [
+      "a broad or unscoped query delete",
+      "any existing branchId, productId or orderId that does not carry this run's id",
+      "any customer-authored record"
+    ]
+  },
+  "safety": {
+    "realCharges": false,
+    "razorpayMode": "TEST keys only (the configured key id is rzp_test_*)",
+    "courierBooking": "none - a quote only, on the already-authorised Borzo TEST host",
+    "pii": "none - controlled test contact only, no export of any real customer record",
+    "customerOrderMutation": "none"
+  },
+  "stillBlockedBeforeThisCanRun": [
+    "RAZORPAY_WEBHOOK_SECRET - without it the signed-webhook leg cannot be exercised and a staging boot fails its own gate",
+    "an explicitly reviewed app artifact / preview target for the client half (C15) - the deployed runtime is dev",
+    "the vendor in_stock encoding, for the vendor acceptance cases only (NOT for this fixture, which authors availability explicitly)"
+  ]
+}
