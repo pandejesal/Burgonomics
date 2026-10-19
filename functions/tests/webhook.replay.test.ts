@@ -488,6 +488,47 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("completed");
   });
 
+  // ── OUT-OF-ORDER, the reverse sequence: the FAILURE lands first, then the
+  // capture. Razorpay does not promise the happy event arrives first, and the
+  // pay-fail-retry-pay flow produces this naturally — attempt A fails while the
+  // order is still pending, the customer retries, attempt B captures. The
+  // capture MUST win. The failure mode pinned here is the worst one available:
+  // an order left "failed" after real money moved, so the customer is told
+  // nothing was charged, the kitchen never cooks, and nothing refunds unless a
+  // human stumbles onto it. Note the earlier foreign-attempt test cannot cover
+  // this: it seeds an ALREADY-PAID order, so the `alreadyPaid` guard answers
+  // before the foreign check is ever reached.
+  it("confirms when the capture arrives AFTER a failure on the same order (out-of-order)", async () => {
+    const failedAttempt = {
+      id: "evt_ooo_fail_1",
+      event: "payment.failed",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_attempt_A",
+            amount: 25000,
+            currency: "INR",
+            notes: { orderId: "order_replay_1", branchId: "branch_surat_01" },
+          },
+        },
+      },
+    };
+    const first = mockReqRes(failedAttempt);
+    await handleRazorpayWebhook(first.req, first.res);
+    expect(first.out().statusCode).toBe(200);
+    // While the failure is the only word we have, it is believed.
+    expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("failed");
+
+    // The captured attempt lands second, for the same order, under a new id.
+    const second = mockReqRes(capturedPayload("evt_ooo_capture_1"));
+    await handleRazorpayWebhook(second.req, second.res);
+    expect(second.out().statusCode).toBe(200);
+    // Money moved: the capture is the truth that counts, and it must overwrite
+    // the failure rather than being refused because the order looks "failed".
+    expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("completed");
+    expect(savedDocs["orders/order_replay_1"]["payment.status"]).toBe("completed");
+  });
+
   it("never resurrects a ghost order from payment.failed — parks for review", async () => {
     const payload = {
       id: "evt_fail_ghost_1",
