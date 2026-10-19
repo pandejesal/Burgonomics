@@ -89,8 +89,31 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
   });
 
   const posAck = () => ({
+    ok: true,
     status: 200,
     json: async () => ({ success: "1", petpooja_order_id: "pp_ack_1" }),
+  });
+
+  it("never reads an acceptance out of an HTTP failure", async () => {
+    // Regression for a FABRICATED SUCCESS. The ack classifier inspects only the
+    // JSON body, so an HTTP failure whose body still carried success:"1" - a
+    // gateway/proxy error page, a WAF interstitial, a half-broken 5xx - was
+    // recorded as petpoojaStatus "synced" + kotPrinted:true with the push claim
+    // released, so the retry worker would never look at an order that never
+    // reached the POS. Every mock in this file previously omitted `ok`, which is
+    // exactly why the gap was invisible: the code never asked.
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      json: async () => ({ success: "1", message: "Your order is saved.", orderID: "" }),
+    });
+    const pushed = await pushOrderToPetpooja("kot_1");
+    expect(pushed).toBe(false);
+    expect(savedDocs["orders/kot_1"].petpoojaOrderId).toBeUndefined();
+    expect(savedDocs["orders/kot_1"].petpoojaAcceptedNoId).toBeUndefined();
+    expect(savedDocs["orders/kot_1"].petpoojaStatus).toBe("pending_retry");
+    expect(String(savedDocs["orders/kot_1"].lastPetpoojaError)).toContain("502");
   });
 
   it("dedupes on petpoojaOrderId presence even when status is NOT synced", async () => {
@@ -145,6 +168,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
 
   it("parks a genuine rejection in pending_retry with a fresh count + released claim", async () => {
     fetchMock.mockResolvedValueOnce({
+      ok: true,
       status: 200,
       json: async () => ({ success: "0", message: "invalid resID" }),
     });
@@ -170,6 +194,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     // relayed order is listed (the five deliverable scenarios with matching
     // clientOrderIDs and totals) despite this empty `orderID`. So: accepted.
     fetchMock.mockResolvedValueOnce({
+      ok: true,
       status: 200,
       json: async () => ({
         success: "1",
@@ -202,6 +227,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     // only read snake_case, so a REAL id would have been thrown away and
     // replaced by a fabricated one.
     fetchMock.mockResolvedValueOnce({
+      ok: true,
       status: 200,
       json: async () => ({ success: "1", message: "Your order is saved.", orderID: "PP-9911" }),
     });
@@ -220,6 +246,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     // tap, retry worker) must NOT reach the POS a second time — the first POST
     // already put the order in Petpooja's Order List.
     fetchMock.mockResolvedValueOnce({
+      ok: true,
       status: 200,
       json: async () => ({ success: "1", orderID: "" }),
     });

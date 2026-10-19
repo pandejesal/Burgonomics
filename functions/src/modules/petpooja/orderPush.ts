@@ -631,6 +631,21 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       }),
     });
 
+    // TRANSPORT TRUTH, before any body parsing. The ack below inspects only the
+    // JSON body, so an HTTP failure whose body still says success:"1" - a
+    // gateway/proxy error page, a WAF interstitial, a 5xx from a half-broken
+    // upstream - was accepted as a registered KOT. That is a fabricated success:
+    // the order is marked synced, kotPrinted:true and the claim released, so the
+    // retry worker never looks at it again. Fail closed instead and let the catch
+    // below park it as pending_retry, which is the state that is retried.
+    if (!response.ok) {
+      throw new Error(
+        `Petpooja KOT push HTTP ${response.status ?? "(no status)"}${
+          response.statusText ? ` ${response.statusText}` : ""
+        } - refusing to read an acceptance from a failed response`
+      );
+    }
+
     const result = await response.json();
 
     // Official SaveOrderResponse signals success as success:"1" (variants seen:
