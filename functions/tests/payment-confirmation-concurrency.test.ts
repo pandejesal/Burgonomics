@@ -456,6 +456,14 @@ describe("payment confirmation concurrency (verify path)", () => {
     expect(err?.statusCode).toBe(409);
     expect(docs.get("unmatched_payments/ump_term_pay_cancel_1")).toBeDefined();
     expect(confirmAudits()).toHaveLength(0);
+    // B5: the payer's own money moved against a cancelled order, so the order
+    // doc — their one readable surface — must carry the reconciliation marker.
+    // Without it only support could ever know the money was taken.
+    expect(docs.get("orders/order_cancel_1")!.data.reconciliation).toMatchObject({
+      state: "payment_review",
+      reason: "capture_on_cancelled_order",
+      razorpayPaymentId: "pay_cancel_1",
+    });
   });
 
   /**

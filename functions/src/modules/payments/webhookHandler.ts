@@ -4,6 +4,7 @@ import { db } from "../../core/firebase";
 import { config, assertLivePaymentsContext } from "../../config/env";
 import { verifyRazorpayWebhookSignature, isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
+import { markOrderReconciliation } from "./reconciliation";
 import { pushOrderToPetpooja } from "../petpooja";
 
 /**
@@ -370,6 +371,11 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             },
             { merge: true }
           );
+          await markOrderReconciliation(orderRef, {
+            state: "payment_review",
+            reason: "confirm_currency_mismatch",
+            razorpayPaymentId: razorpayPaymentId || paymentEntity?.id || null,
+          });
         } else if (storedPaise !== null && capturedPaise !== null && capturedPaise !== storedPaise) {
           await captureErrorSnapshot({
             source: "payments",
@@ -393,6 +399,11 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             },
             { merge: true }
           );
+          await markOrderReconciliation(orderRef, {
+            state: "payment_review",
+            reason: "confirm_amount_mismatch",
+            razorpayPaymentId: razorpayPaymentId || paymentEntity?.id || null,
+          });
         } else if (storedPaise === null) {
           // C03/B8 fail-closed park: the order doc carries no server-priced
           // total AND no sound server intent could supply one (fallback
@@ -425,6 +436,11 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             },
             { merge: true }
           );
+          await markOrderReconciliation(orderRef, {
+            state: "payment_review",
+            reason: "confirm_amount_unknown",
+            razorpayPaymentId: razorpayPaymentId || paymentEntity?.id || null,
+          });
         } else {
         // Atomic confirmation guard (R06): read the current order inside a
         // transaction before (re)writing CONFIRMED. A late/repeated delivery

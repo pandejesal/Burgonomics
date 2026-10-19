@@ -10,6 +10,7 @@ import {
   isSafeDocId,
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
+import { markOrderReconciliation } from "./reconciliation";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
@@ -906,6 +907,15 @@ export async function verifyPayment(
     );
     terminalErr.statusCode = 409;
     terminalErr.code = "ORDER_TERMINAL";
+    // B5: the payer's money moved but the order is cancelled/refunded, so they
+    // would otherwise see only their own terminal status with nothing pointing
+    // at the money. The order doc is their one readable surface; without this
+    // marker only support could ever know.
+    await markOrderReconciliation(orderRef, {
+      state: "payment_review",
+      reason: statusBeforeSplit === "REFUNDED" ? "capture_on_refunded_order" : "capture_on_cancelled_order",
+      razorpayPaymentId,
+    });
     throw terminalErr;
   }
 

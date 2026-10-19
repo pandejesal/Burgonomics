@@ -616,7 +616,7 @@ describe("C03 B8 — webhook never blind-confirms an unknown stored amount", () 
     (config.razorpay as any).webhookSecret = prevSecret;
   });
 
-  it("unknown stored amount + no server intent → parks confirm_amount_unknown, order untouched", async () => {
+  it("unknown stored amount + no server intent → parks confirm_amount_unknown, writes no confirmation (only the B5 reconciliation marker)", async () => {
     // Legacy doc: NO pricing, NO totals — the exact blind-confirm shape.
     control.seed("orders/order_c03_wh_unk", {
       id: "order_c03_wh_unk",
@@ -647,6 +647,13 @@ describe("C03 B8 — webhook never blind-confirms an unknown stored amount", () 
       claimedOrderId: "order_c03_wh_unk",
       amount: 250,
       amountSource: "unknown",
+    });
+    // B5: the ONE thing that does change is the customer-visible marker — the
+    // order must not read as merely unpaid when the payer's money moved.
+    expect(order.reconciliation).toMatchObject({
+      state: "payment_review",
+      reason: "confirm_amount_unknown",
+      razorpayPaymentId: "pay_c03_unk",
     });
   });
 

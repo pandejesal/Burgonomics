@@ -493,6 +493,13 @@ describe("payment confirmation concurrency (webhook path)", () => {
       reason: "confirm_amount_mismatch",
       expectedAmount: 100,
     });
+    // B5: the customer's own capture was refused, so the order they can read
+    // must say a payment is under review instead of looking merely unpaid.
+    expect(order.reconciliation).toMatchObject({
+      state: "payment_review",
+      reason: "confirm_amount_mismatch",
+      razorpayPaymentId: "pay_race_123",
+    });
   });
 
   it("normal captured delivery still confirms and runs the downstream split + KOT", async () => {
