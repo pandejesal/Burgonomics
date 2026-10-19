@@ -814,19 +814,24 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           // Monotonic: never move the recorded total downwards (a smaller
           // replayed amount must never mask a larger recorded refund).
           const nextTotal = Math.max(existingTotal, ledgerTotal);
-          // Definitive before writing: this refund matched the order BY payment
-          // id, so the gateway itself should never refund more than it
-          // captured. If our recorded reality says otherwise — a corrupt
-          // payload, a capture we recorded short, or money moved outside the
-          // capture we know about — the total still moves only UPWARDS (money
-          // truth is never rewritten downwards) but it is flagged for a human
-          // rather than accepted silently. Legacy orders with no recorded
-          // capture are left unflagged instead of guessed at.
+          // Two independent anomalies, both surfaced instead of silently
+          // accepted, and neither of which invents a capture or drops money.
+          // (1) Over-capture: this refund matched the order BY payment id, so
+          // the gateway should never refund more than it captured; when our
+          // records disagree the total still moves only UPWARDS (money truth is
+          // never rewritten downwards to hide it). (2) Refund with no recorded
+          // capture at all: the money is real, but the order we hold still
+          // looks unpaid - a contradiction support must see, because the
+          // customer would otherwise be shown "unpaid" forever.
           const capturedPaise = Number(data?.payment?.capturedAmountPaise);
+          const hasCapture = Number.isFinite(capturedPaise) && capturedPaise > 0;
+          const captureRecorded =
+            hasCapture ||
+            String(data?.paymentStatus || "").toLowerCase() === "completed" ||
+            String(data?.["payment.status"] || "").toLowerCase() === "completed";
           const overCapturedPaise =
-            Number.isFinite(capturedPaise) && capturedPaise > 0 && nextTotal > capturedPaise
-              ? nextTotal - capturedPaise
-              : 0;
+            hasCapture && nextTotal > capturedPaise ? nextTotal - capturedPaise : 0;
+          const refundWithoutCapture = !captureRecorded;
           tx.set(
             orderDoc.ref,
             {
@@ -836,13 +841,16 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               refundedTotalPaise: nextTotal,
               refundLedger: ledger,
               ...(overCapturedPaise > 0
-                ? { refundOverCapturedPaise: overCapturedPaise, refundNeedsReview: true }
+                ? { refundOverCapturedPaise: overCapturedPaise }
+                : {}),
+              ...(overCapturedPaise > 0 || refundWithoutCapture
+                ? { refundNeedsReview: true }
                 : {}),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
             { merge: true }
           );
-          return { isNewRefund, overCapturedPaise };
+          return { isNewRefund, overCapturedPaise, refundWithoutCapture };
         });
         // A refund total above the recorded capture is a money-truth anomaly:
         // surface it for a human rather than accepting it silently. The order
@@ -852,6 +860,13 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             source: "payments",
             severity: "high",
             message: `Refund total exceeds the recorded capture for order ${orderDoc.id} by ${refundOutcome.overCapturedPaise} paise (payment ${paymentId}) — monotonic truth kept, manual review required`,
+          });
+        }
+        if (refundOutcome.refundWithoutCapture) {
+          await captureErrorSnapshot({
+            source: "payments",
+            severity: "high",
+            message: `Refund recorded for order ${orderDoc.id} with no recorded capture (payment ${paymentId}) — the capture is missing on our side; reconcile before treating the order as unpaid`,
           });
         }
         // Customer notice only for a refund we had not recorded yet — a

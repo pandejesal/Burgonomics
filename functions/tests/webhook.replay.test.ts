@@ -457,6 +457,43 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect((snapshot![1] as any).severity).toBe("high");
   });
 
+  // ── Out-of-order: a refund can reach us for an order whose capture WE never
+  // recorded (capture webhook missed, or delivered after the refund). The money
+  // is real and must still be accounted for, but the resulting doc contradicts
+  // itself - a refund on an order we believe is unpaid - and support must be
+  // told rather than the customer being shown "unpaid" indefinitely. ──
+  it("flags a refund for an order with no recorded capture (money kept, contradiction surfaced)", async () => {
+    savedDocs["orders/order_rc_1"] = {
+      id: "order_rc_1",
+      branchId: "branch_surat_01",
+      paymentStatus: "pending",
+      payment: { razorpayPaymentId: "pay_rc_1", status: "pending" },
+    };
+    const call = mockReqRes({
+      id: "evt_rc_1",
+      event: "refund.processed",
+      payload: {
+        refund: {
+          entity: { id: "rfnd_rc_1", payment_id: "pay_rc_1", amount: 10000, currency: "INR" },
+        },
+      },
+    });
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+
+    const order = savedDocs["orders/order_rc_1"];
+    // The refund is never dropped - the money moved.
+    expect(order.refundedTotalPaise).toBe(10000);
+    // ...but it is surfaced, because we hold no capture to justify it.
+    expect(order.refundNeedsReview).toBe(true);
+    const snapshot = Object.entries(savedDocs).find(
+      ([k, v]) =>
+        k.startsWith("dev_error_snapshots/") &&
+        /no recorded capture/i.test(String((v as any)?.message || ""))
+    );
+    expect(snapshot, "expected a snapshot for a refund with no recorded capture").toBeTruthy();
+  });
+
   it("parks processed refunds with no matching order in unmatched_payments (never drops money)", async () => {
     const payload = {
       id: "evt_refund_orphan_1",
