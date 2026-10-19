@@ -210,6 +210,80 @@ describe("Petpooja POS Bridge Service", () => {
       expect(info.Discount.details).toHaveLength(0);
     });
 
+    it("carries the vendor's optional variation fields, as empty strings when absent", () => {
+      // Vendor "API Guide for Placing Orders on Petpooja POS" (pp.6-7) lists
+      // `variation_id` ("Unique ID for variant received from Menu Push Payload")
+      // and `variation_name` ("Half Dish or Full Dish") as OPTIONAL, and its own
+      // OrderItem example emits both as EMPTY STRINGS for a line with no variant.
+      // The sandbox outlet exposes no variation definitions (81 of 166 items are
+      // variation-flagged with an empty `variation` - see the menu census), so
+      // the absent case is what ships for V1/V2/V4 and it must be a PRESENT ""
+      // rather than an omitted key, which a stricter POS parser could read
+      // differently. There was no test on these two keys at all before this one.
+      const order = {
+        id: "ord_var_01",
+        orderNumber: "BUR-VAR-01",
+        branchId: "branch_surat_01",
+        fulfillmentType: "DELIVERY",
+        paymentMethod: "COD",
+        customerName: "Variation Case",
+        customerPhone: "+919825100009",
+        address: { street: "123 Adajan Main Rd" },
+        items: [
+          { id: "l_no_variant", petpoojaItemId: "30791", name: "Tandoori Dahi Kebab", price: 350, quantity: 1 },
+          {
+            id: "l_with_variant",
+            petpoojaItemId: "30792",
+            name: "Half Dish Case",
+            price: 200,
+            quantity: 1,
+            petpoojaVariationId: "110",
+            petpoojaVariationName: "Half Dish",
+          },
+        ],
+      };
+
+      const payload = formatPetpoojaOrderPayload(order, null, "TEST_RES_ID");
+      const [noVariant, withVariant] = payload.orderinfo.OrderItem;
+
+      expect(noVariant.variation_id).toBe("");
+      expect(noVariant.variation_name).toBe("");
+      // The key must exist; undefined/absent is the shape the guide does not show.
+      expect(Object.prototype.hasOwnProperty.call(noVariant, "variation_id")).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(noVariant, "variation_name")).toBe(true);
+
+      expect(withVariant.variation_id).toBe("110");
+      expect(withVariant.variation_name).toBe("Half Dish");
+    });
+
+    it("also resolves the legacy `variationId`/`variationName` cart-line spellings", () => {
+      // The relay reads `petpoojaVariationId || variationId` (and the matching
+      // name pair). CartLine documents in the app carry the short spelling, so
+      // a regression that kept only the prefixed one would silently strip the
+      // variant off every variation line while still passing the case above.
+      const order = {
+        id: "ord_var_02",
+        orderNumber: "BUR-VAR-02",
+        fulfillmentType: "TAKEAWAY",
+        paymentMethod: "COD",
+        items: [
+          {
+            lineId: "l1",
+            productId: "prod_branch_surat_01_30792",
+            name: "Legacy Spelling",
+            unitPrice: 200,
+            quantity: 1,
+            variationId: "110",
+            variationName: "Full Dish",
+          },
+        ],
+      };
+
+      const payload = formatPetpoojaOrderPayload(order, null, "TEST_RES_ID");
+      expect(payload.orderinfo.OrderItem[0].variation_id).toBe("110");
+      expect(payload.orderinfo.OrderItem[0].variation_name).toBe("Full Dish");
+    });
+
     it("maps takeaway and dine-in fulfillment types correctly", () => {
       const takeawayOrder = {
         id: "ord_1002",

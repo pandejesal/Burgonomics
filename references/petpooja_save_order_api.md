@@ -1066,3 +1066,74 @@ them. A **fresh Push Menu from Petpooja's dashboard** is what rewrites them — 
 that same re-push, after turning **one item off in the POS**, is what settles
 `in_stock` from the new census (§17.6).
 
+
+## 18. The vendor's own PDFs — document-backed facts (read 2026-10-19)
+
+Two vendor PDFs came with the onboarding email and are present locally
+(`Downloads`, both dated 2026-10-06): *API Guide for Placing Orders on Petpooja
+POS* (9pp) and *Petpooja Sandbox Guide for Integration Testing* (6pp). Both were
+read and their text extracted outside the repo. The coordinator lane read the
+same files independently and the readings below agree. Where a document conflicts
+with our payload, the conflict is **recorded, not silently resolved**.
+
+### 18.1 STOCK is a webhook, not a payload field
+
+The Sandbox Guide (p.4, "Menu Item On/Off") makes the **Item On/Off Webhook** the
+documented carrier of "the item stock status (in-stock or out-of-stock)", with a
+separate **Store On/Off Webhook** for store availability; §6 repeats it as the way
+to "test stock availability". **No vendor document describes an `in_stock` field
+in the Push Menu payload at all.** So the push-side values (all 166 arrived as
+`"2"`) have no documented encoding and the census cannot be read as a stock
+signal. `in_stock` stays UNKNOWN — no mapping change, no tolerant fallback
+(C07/C14). The authoritative signal is the inbound on/off webhook, which we
+already expose at `/petpooja/stockWebhook`.
+
+### 18.2 CALLBACK is `callback_url`, fronted by the dashboard base URL
+
+The Save-Order guide (p.5) lists `callback_url` as REQUIRED — "URL to receive
+order updates"; p.8 step 4 is "Receive confirmation & track via Callback URL".
+The Sandbox Guide (p.5) names the three callback actions — "Accept orders, mark
+food as ready, or reject orders via the callback URL" — i.e. the accept /
+food-ready / reject channel our `/petpooja/webhook` maps. The Sandbox Guide (p.2)
+also states the dashboard **Base URL is "The common URL used for all webhooks"**,
+so every webhook is that base plus the configured path. Neither document describes
+any callback authentication. Still UNVERIFIED (and human-gated): which base URL
+the vendor has registered — the whitelist email names a Cloud Run host form while
+the deployed config carries the `cloudfunctions.net/api` form. Both may route to
+the same service, so the string difference is not by itself a defect.
+
+### 18.3 VARIATION fields are optional, empty-string when absent
+
+Save-Order guide (pp.6-7): `variation_id` = "Unique ID for variant received from
+Menu Push Payload" (not required), `variation_name` = "Half Dish or Full Dish"
+(not required), and the OrderItem example emits **both as `""`** for a line with
+no variant. Our builder matches that shape (`|| ""`) and it is now pinned by
+tests. The sandbox outlet exposes no variation definitions at all (81 of 166 items
+set `itemallowvariation = "1"` with an empty `variation`, §17 census), so **V3/V5
+are blocked on vendor data, not on our payload**.
+
+### 18.4 DISCOUNT: no `discount` object
+
+Save-Order guide (§8): "For discounts you have to avoid 'discount' object from the
+order payload. Please use two keys: discount type and discount total from the
+'Order' object." Our builder sends `discount_type` + `discount_total` and an empty
+`Discount` member — **correct by contract**, so the earlier "does the checker want
+a line-level `item_discount`?" question is CLOSED, not open. Residual nit only:
+the guide's example shows `item_discount: ""` where we send `"0.00"`, and
+`item_discount` is absent from the guide's required-field table entirely —
+cosmetic, unchanged without a reason.
+
+### 18.5 The `final_price` tension — recorded, NOT "corrected"
+
+Guide p.6 describes `final_price` as "Item Price - Item level discount if any"
+(**a unit figure**) and its example pairs price `"250.00"` with final_price
+`"250"` at `quantity "2"`. But p.4 defines `total` = "Item Final Price [- Order
+level Discount If Any] + GST + packing charges", which balances against the
+**sum of line totals**, not against unit figures. Our builder emits `price` = unit
+including add-ons and `final_price` = unit x qty (the line total), which satisfies
+the `total` formula, and the vendor's Order List totals matched ours for the cases
+it listed. The two readings coincide at quantity 1, so a wrong choice stays
+invisible until a multi-quantity line. **Not changed** — an unverified flip could
+halve the POS total for qty>1. Pinned by the existing assertions (price
+`"249.00"`, quantity `"2"`, final_price `"498.00"`) and the comment at
+`orderPush.ts`.

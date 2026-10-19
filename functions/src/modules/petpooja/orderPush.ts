@@ -191,6 +191,20 @@ export function formatPetpoojaOrderPayload(
       id: linePetpoojaItemId(item, firestoreBranchId),
       name: item.name,
       price: money(unit),
+      // DELIBERATE DEVIATION from the guide's field description - do not
+      // "correct" it without vendor confirmation. The vendor "API Guide for
+      // Placing Orders on Petpooja POS" describes `final_price` (p.6) as
+      // "Item Price - Item level discount if any", i.e. a UNIT figure, and its
+      // OrderItem example pairs price "250.00" with final_price "250" at
+      // quantity "2". We emit the LINE total (unit x qty) instead, because the
+      // SAME guide's `total` formula (p.4) is "Item Final Price [- Order level
+      // Discount If Any] + GST + packing charges": summing our line totals
+      // reproduces the order total we send, while unit figures would require
+      // the POS to re-multiply by quantity before that formula balances. The
+      // vendor's own Order List totals matched ours for the acceptance cases
+      // it listed. The two readings coincide at quantity 1, so a wrong choice
+      // stays invisible until a multi-quantity line - which is exactly why
+      // this is pinned by tests instead of being changed on a hunch.
       final_price: money(lineTotal),
       quantity: String(qty),
       gst_liability: "restaurant",
