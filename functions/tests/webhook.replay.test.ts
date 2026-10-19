@@ -221,6 +221,86 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect(replay.out().body).toMatchObject({ status: "already_processed" });
   });
 
+  // ── Route transfer events had NO test coverage anywhere in this repo, yet
+  // they are the payout trail: a retried transfer arrives under a NEW eventId,
+  // so the doc id must be convergent on transfer+event or every retry forks a
+  // divergent duplicate of the same money movement. ──
+  it("records Route transfer events convergently: a retry under a new eventId updates ONE doc", async () => {
+    const processed = (eventId: string) => ({
+      id: eventId,
+      event: "transfer.processed",
+      payload: {
+        transfer: {
+          entity: {
+            id: "trf_evt_1",
+            recipient: "acc_branch_1",
+            amount: 9000,
+            status: "processed",
+          },
+        },
+      },
+    });
+
+    const first = mockReqRes(processed("evt_trf_1"));
+    await handleRazorpayWebhook(first.req, first.res);
+    expect(first.out().statusCode).toBe(200);
+    expect(savedDocs["route_transfer_events/rtevt_trf_evt_1_transfer.processed"]).toMatchObject({
+      event: "transfer.processed",
+      transferId: "trf_evt_1",
+      recipient: "acc_branch_1",
+      // Stored in rupees from the paise the provider sends.
+      amount: 90,
+      status: "processed",
+    });
+
+    // The SAME transfer redelivered under a DIFFERENT event id must converge on
+    // the same doc — not create a second one.
+    const retry = mockReqRes(processed("evt_trf_1_retry"));
+    await handleRazorpayWebhook(retry.req, retry.res);
+    expect(retry.out().statusCode).toBe(200);
+    expect(
+      Object.keys(savedDocs).filter((k) => k.startsWith("route_transfer_events/"))
+    ).toHaveLength(1);
+  });
+
+  it("raises a high-severity snapshot for a failed Route transfer, and records nothing for an id-less one", async () => {
+    const failed = mockReqRes({
+      id: "evt_trf_fail",
+      event: "transfer.failed",
+      payload: {
+        transfer: {
+          entity: { id: "trf_fail_1", recipient: "acc_branch_1", amount: 9000, status: "failed" },
+        },
+      },
+    });
+    await handleRazorpayWebhook(failed.req, failed.res);
+    expect(failed.out().statusCode).toBe(200);
+    expect(savedDocs["route_transfer_events/rtevt_trf_fail_1_transfer.failed"]).toMatchObject({
+      event: "transfer.failed",
+      transferId: "trf_fail_1",
+    });
+    const snapshot = Object.entries(savedDocs).find(
+      ([k, v]) =>
+        k.startsWith("dev_error_snapshots/") &&
+        /Route transfer failed: trf_fail_1/.test(String((v as any)?.message || ""))
+    );
+    expect(snapshot, "expected a high-severity snapshot for the failed transfer").toBeTruthy();
+    expect((snapshot![1] as any).severity).toBe("high");
+
+    // An id-less transfer event cannot be correlated to anything, so it must
+    // record nothing rather than an orphan doc (and still ACK).
+    const idless = mockReqRes({
+      id: "evt_trf_idless",
+      event: "transfer.processed",
+      payload: { transfer: { entity: { recipient: "acc_branch_1", amount: 9000 } } },
+    });
+    await handleRazorpayWebhook(idless.req, idless.res);
+    expect(idless.out().statusCode).toBe(200);
+    expect(
+      Object.keys(savedDocs).filter((k) => k.startsWith("route_transfer_events/"))
+    ).toHaveLength(1);
+  });
+
   it("takes over a stale claim (previous attempt died without completing)", async () => {
     savedDocs["payment_audits/aud_evt_evt_stale_1"] = {
       eventId: "evt_stale_1",
