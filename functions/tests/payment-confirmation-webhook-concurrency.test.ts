@@ -779,6 +779,39 @@ describe("payment confirmation concurrency (webhook path)", () => {
     expect(docs.get("orders/order_otp_4")!.data.deliveryOtpHash).toBe("pre_existing_hash_value");
   });
 
+  it("B6: an order.paid-only confirm (captured event missed or delayed) still mints the delivery OTP hash", async () => {
+    // Out-of-order coverage: Razorpay may deliver `order.paid` with no prior
+    // `payment.captured` (or that event may be delayed). `order.paid` carries
+    // NO payment id of its own, so this exercises the other id-resolution path
+    // (payments[]) through the same confirm transaction — the app-closed payer
+    // must still end up with a handover hash.
+    seedDeliveryOrder("order_otp_5");
+    const call = mockReqRes({
+      id: "evt_otp_5",
+      event: "order.paid",
+      payload: {
+        order: {
+          entity: {
+            id: "rzp_order_otp5",
+            amount: 25000,
+            currency: "INR",
+            notes: { orderId: "order_otp_5", branchId: "branch_surat_01" },
+            payments: ["pay_otp_5"],
+          },
+        },
+      },
+    });
+    await handleRazorpayWebhook(call.req, call.res);
+
+    expect(call.out().statusCode).toBe(200);
+    const order = docs.get("orders/order_otp_5")!.data;
+    expect(order.paymentStatus).toBe("completed");
+    expect(order.status).toMatchObject({ code: "CONFIRMED" });
+    expect(typeof order.deliveryOtpHash).toBe("string");
+    expect(order.deliveryOtpHash.length).toBeGreaterThan(0);
+    expect(order.deliveryOtp).toBeUndefined();
+  });
+
   it("deterministic contention: a competing confirm between read and commit forces a retry against the changed snapshot", async () => {
     control.seed("orders/order_race_1", {
       id: "order_race_1",
