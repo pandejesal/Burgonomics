@@ -181,6 +181,46 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBe(firstKotId);
   });
 
+  // Robustness, and the opposite failure mode to every other test here: a
+  // provider event we do not implement must be ACKed, not 500'd. Razorpay
+  // retries a non-2xx delivery forever, so throwing on an unrecognised event
+  // would turn a routine provider addition into an unbounded retry storm
+  // against our function. The claim must also COMPLETE, so a redelivery of the
+  // same event is deduped instead of reprocessed.
+  it("ACKs an unrecognised event, leaves the order untouched, and still dedups a redelivery", async () => {
+    savedDocs["orders/order_unknown_1"] = {
+      id: "order_unknown_1",
+      paymentStatus: "pending",
+      payment: { razorpayPaymentId: "pay_unknown_1" },
+    };
+    const untouched = JSON.stringify(savedDocs["orders/order_unknown_1"]);
+    const unknownEvent = () => ({
+      id: "evt_unknown_1",
+      event: "payment.authorized",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_unknown_1",
+            amount: 25000,
+            currency: "INR",
+            notes: { orderId: "order_unknown_1" },
+          },
+        },
+      },
+    });
+
+    const first = mockReqRes(unknownEvent());
+    await handleRazorpayWebhook(first.req, first.res);
+    expect(first.out().statusCode).toBe(200);
+    expect(first.out().body).toMatchObject({ status: "ok" });
+    expect(JSON.stringify(savedDocs["orders/order_unknown_1"])).toBe(untouched);
+
+    const replay = mockReqRes(unknownEvent());
+    await handleRazorpayWebhook(replay.req, replay.res);
+    expect(replay.out().statusCode).toBe(200);
+    expect(replay.out().body).toMatchObject({ status: "already_processed" });
+  });
+
   it("takes over a stale claim (previous attempt died without completing)", async () => {
     savedDocs["payment_audits/aud_evt_evt_stale_1"] = {
       eventId: "evt_stale_1",
