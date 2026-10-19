@@ -147,6 +147,14 @@ describe("Petpooja POS Bridge Service", () => {
       expect(payload.orderinfo.Order.orderID).toBe("BUR-1001");
       expect(payload.orderinfo.Order.resID).toBe("PP_SURAT_01");
       expect(payload.orderinfo.Order.restID).toBe("PP_SURAT_01");
+      // DOC VERIFIED: callback_url must be sent in EVERY save_order request, and
+      // the POS reads it from Order.details. Emitting it only at the top level
+      // was a real defect - no status callback ever reached our webhook. This
+      // pin exists so a refactor cannot silently unregister our callback and
+      // leave every order stuck at "accepted".
+      const callbackUrl = payload.orderinfo.Order.callback_url;
+      expect(typeof callbackUrl).toBe("string");
+      expect(callbackUrl).toMatch(/\/petpooja\/webhook$/);
       // Official V2.1.0 order_type is a letter code (H/P/D), not 1/2/3.
       expect(payload.orderinfo.Order.order_type).toBe("H"); // H = home delivery
       // Petpooja accepts COD / CARD / ONLINE — "Prepaid" is not a valid value.
