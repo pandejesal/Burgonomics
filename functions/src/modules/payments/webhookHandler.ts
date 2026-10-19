@@ -487,6 +487,10 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             kind: "upcoming",
             terminal: false,
           },
+          // B5: a successful confirmation RETIRES any earlier reconciliation
+          // marker (see razorpay.service.ts) so a resolved park can never leave
+          // a confirmed order still telling the payer not to pay again.
+          reconciliation: null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
          let confirmWritten = false;

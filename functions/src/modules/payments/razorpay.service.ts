@@ -1502,6 +1502,12 @@ async function finishVerifiedPayment(args: {
           kind: "upcoming",
           terminal: false,
         },
+        // B5: a successful confirmation RETIRES any earlier reconciliation
+        // marker. Without this, a park that is later resolved (customer retry,
+        // ops fix) would leave the order confirmed AND still telling the payer
+        // "payment not confirmed yet — do not pay again". `null` rather than a
+        // field delete so every datastore/mock agrees the marker is gone.
+        reconciliation: null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
       if (mintedOtp) {
@@ -1536,6 +1542,9 @@ async function finishVerifiedPayment(args: {
           orderRef,
           {
             deliveryOtpHash: minted.deliveryOtpHash,
+            // B5: this path only runs for an ALREADY-confirmed order, so it is
+            // also the natural place to retire a stale reconciliation marker.
+            reconciliation: null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }

@@ -557,6 +557,40 @@ describe("payment confirmation concurrency (webhook path)", () => {
     expect(order["payment.status"]).toBe("completed");
   });
 
+  // B5 follow-through: the marker must not OUTLIVE its cause. A park that is
+  // later resolved (the customer retries and the capture now binds, or ops fix
+  // it) confirms the order — and a confirmed order that still told the payer
+  // "do not pay again" would be exactly the untruthful state this lane exists
+  // to remove.
+  it("B5: a successful confirmation retires an earlier reconciliation marker", async () => {
+    control.seed("orders/order_b5_clear", {
+      id: "order_b5_clear",
+      branchId: "branch_surat_01",
+      pricing: { grandTotal: 250, split: { branchTransferPaise: 9000 } },
+      paymentStatus: "pending",
+      // A marker from an earlier parked attempt on this same order.
+      reconciliation: {
+        state: "payment_review",
+        reason: "confirm_amount_mismatch",
+        razorpayPaymentId: "pay_earlier_1",
+      },
+    });
+    control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+    // Prove the fixture really carries the marker, so the assertion below is
+    // about clearing it and not about it never having been there.
+    expect(docs.get("orders/order_b5_clear")!.data.reconciliation).toMatchObject({
+      state: "payment_review",
+    });
+
+    const call = mockReqRes(capturedPayload("evt_b5_clear", "order_b5_clear", "pay_now_1", 25000));
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+
+    const order = docs.get("orders/order_b5_clear")!.data;
+    expect(order.status).toMatchObject({ code: "CONFIRMED" });
+    expect(order.reconciliation).toBeNull();
+  });
+
   it("serializes concurrent captured deliveries: one transfer, one KOT, no re-POST on repeat", async () => {
     control.seed("orders/order_race_1", {
       id: "order_race_1",
