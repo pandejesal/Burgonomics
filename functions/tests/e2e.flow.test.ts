@@ -38,6 +38,15 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
         if (savedDocs[path]) {
           return { exists: true, data: () => savedDocs[path], ref };
         }
+        if (colName === "products") {
+          // Authoritative catalog: the engine refuses to price an item it
+          // cannot look up, so the fixtures' ids carry their real prices.
+          const catalog: Record<string, number> = { pp_b1: 199, pp_s1: 99 };
+          const price = catalog[docId];
+          return price === undefined
+            ? { exists: false, data: () => ({}), ref }
+            : { exists: true, data: () => ({ price, inStock: true }), ref };
+        }
         if (colName === "branches") {
           return {
             exists: true,

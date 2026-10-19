@@ -97,12 +97,14 @@ describe("money-time product eligibility (server, authoritative)", () => {
     });
   });
 
-  it("keeps the documented client-price fallback for a MISSING product, but flags it", async () => {
-    // A missing doc is a different case from an unknown field: it is the
-    // documented partial-fallback path. It must not look like a clean price.
-    const r = await calculateOrderPricing(basket("prod_ghost", 120));
-    expect(r.foodSubtotal).toBe(120);
-    expect(r.pricingDegraded).toBe(true);
+  it("REFUSES a line whose product cannot be looked up, instead of charging the client price", async () => {
+    // The catalog is the only authoritative price source. Charging the price
+    // the client happened to send for a product we cannot verify would let an
+    // arbitrary request value set the amount - so this fails CLOSED.
+    await expect(calculateOrderPricing(basket("prod_ghost", 120))).rejects.toMatchObject({
+      statusCode: 409,
+      code: "ITEM_PRICE_UNVERIFIED",
+    });
   });
 
   it("allows a legitimate zero-price component that is explicitly in stock", async () => {

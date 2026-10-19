@@ -100,7 +100,7 @@ const BASKETS: Basket[] = [
   { name: "loyalty exact", items: [{ id: "l1", productId: "prod_bigbang", name: "BB", price: 249, quantity: 2 }], orderType: "delivery", branchId: "b1", loyaltyPointsToRedeem: 40 },
   { name: "coupon plus loyalty", items: [{ id: "l1", productId: "prod_bigbang", name: "BB", price: 249, quantity: 2 }], orderType: "delivery", branchId: "b1", couponCode: "FLAT50", loyaltyPointsToRedeem: 60 },
   { name: "modifiers priced", items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1, modifiers: [{ id: "m1", name: "Cheese", priceDelta: 30 }] }], orderType: "takeaway", branchId: "b1" },
-  { name: "unknown catalog id falls back", items: [{ id: "l1", productId: "prod_ghost", name: "G", price: 120, quantity: 1 }], orderType: "takeaway", branchId: "b1" },
+  { name: "catalog-priced single", items: [{ id: "l1", productId: "prod_fries", name: "F", price: 89, quantity: 1 }], orderType: "takeaway", branchId: "b1" },
   { name: "single qty", items: [{ id: "l1", productId: "prod_fries", name: "F", price: 89, quantity: 1 }], orderType: "takeaway", branchId: "b1" },
   { name: "bulk qty", items: [{ id: "l1", productId: "prod_momos", name: "M", price: 129, quantity: 10 }], orderType: "delivery", branchId: "b1" },
   { name: "all categories", items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }, { id: "l2", productId: "prod_bigbang", name: "B", price: 249, quantity: 1 }, { id: "l3", productId: "prod_fries", name: "F", price: 89, quantity: 1 }, { id: "l4", productId: "prod_shake", name: "S", price: 159, quantity: 1 }, { id: "l5", productId: "prod_momos", name: "M", price: 129, quantity: 1 }], orderType: "delivery", branchId: "b1", couponCode: "PERC10", loyaltyPointsToRedeem: 100 },

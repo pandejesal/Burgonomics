@@ -26,6 +26,19 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
           err.code = 7;
           throw err;
         }
+        // Authoritative catalog for the fixtures: the pricing engine now
+        // REFUSES a line it cannot look up (no charging the client's price),
+        // so the product ids used by these tests must resolve with a price and
+        // explicit availability.
+        if (col === "products" && !Object.prototype.hasOwnProperty.call(savedDocs, path)) {
+          const catalog: Record<string, { price: number; inStock: boolean }> = {
+            p1: { price: 199, inStock: true },
+          };
+          const entry = catalog[id];
+          if (entry) {
+            return { exists: true, data: () => ({ ...entry }) };
+          }
+        }
         return {
           exists: Object.prototype.hasOwnProperty.call(savedDocs, path),
           data: () => savedDocs[path],

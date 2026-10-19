@@ -202,11 +202,19 @@ export async function calculateOrderPricing(
       }
       unitPrice = applyCatalogBasePrice(item, catalogPrice);
     } else {
-      // No catalog price for this line, so it is priced from client input.
-      // That fallback is deliberate (documented at the outage guard above) but
-      // it must never be silent — this flag is the only thing that tells a
-      // caller the total is not fully catalog-backed.
-      pricingDegraded = true;
+      // FAIL CLOSED on an unverifiable price. The catalog is the only
+      // authoritative price source, so charging the price the CLIENT sent for a
+      // product we cannot look up lets an arbitrary request value set the
+      // amount. A deleted, foreign or mistyped product is refused instead of
+      // silently priced, because "we could not verify it" is not a licence to
+      // charge it. Rejecting here is why pricingDegraded no longer has to carry
+      // this case on its own.
+      const unverified: any = new Error(
+        `${String((item as any)?.name || "An item")} could not be verified against the menu — please refresh your cart and try again.`
+      );
+      unverified.statusCode = 409;
+      unverified.code = "ITEM_PRICE_UNVERIFIED";
+      throw unverified;
     }
 
     const qty = Math.max(1, Math.floor(Number(item.quantity) || 1));
@@ -314,6 +322,13 @@ export async function calculateOrderPricing(
         })()
       : Promise.resolve();
   await Promise.all([branchRead, couponRead]);
+
+  // No branch to read means the default packaging fee stands. That IS a
+  // fallback, so it must be visible rather than silent — the flag loses its
+  // old meaning (client-priced lines) now that those are refused outright.
+  if (!input.branchId) {
+    pricingDegraded = true;
+  }
 
   // If takeaway or dinein, adjust delivery fee to 0
   const deliveryFee =
