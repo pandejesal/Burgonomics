@@ -788,6 +788,14 @@ export async function handleDispatchWebhook(
 
   switch (event) {
     case "DRIVER_ALLOCATED": {
+      // No rewind: a late/duplicate courier_assigned must not drag an order that
+      // is already on the road back to "dispatched". (DELIVERED/CANCELLED are
+      // handled by the terminal guard above.)
+      if (currentOrder.deliveryStatus === "in_transit") {
+        log(`Late ${rawEvent} after in_transit ignored (no rewind)`);
+        await markProcessed();
+        return;
+      }
       // Rider identity fields are written only when actually present — an
       // `undefined` Firestore value would reject the whole batch write.
       const riderName = nonEmpty(
@@ -819,16 +827,22 @@ export async function handleDispatchWebhook(
       if (riderPhone) updateData.riderPhone = riderPhone;
       if (riderVehicle) updateData.riderVehicleNumber = riderVehicle;
       if (trackingUrl) updateData.riderTrackingUrl = trackingUrl;
+      // Truthful status: only claim a rider when one is actually present. A
+      // courier_assigned callback carrying no courier must leave the customer
+      // view at `pending`, never a fabricated "rider assigned".
+      const hasRiderIdentity = !!(riderName || riderPhone);
       updateData.deliveryStatus = "dispatched";
       // courier_assigned: order status itself stays PREPARING/READY — only
       // rider details attach (mission §3).
       updateData.delivery = deliveryMirror({
-        status: "rider_assigned",
+        status: hasRiderIdentity ? "rider_assigned" : "pending",
         riderName,
         riderPhone,
         riderVehicleNumber: riderVehicle,
         trackingUrl,
-        assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...(hasRiderIdentity
+          ? { assignedAt: admin.firestore.FieldValue.serverTimestamp() }
+          : {}),
       });
       break;
     }

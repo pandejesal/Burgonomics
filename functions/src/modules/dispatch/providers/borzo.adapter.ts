@@ -339,9 +339,26 @@ export const borzoAdapter: ProviderAdapter = {
     assertBorzoResponse(res);
 
     const order = res.data?.order || {};
-    const providerOrderId =
+    const rawProviderOrderId =
       order.order_id ?? res.data?.order_id ?? res.data?.id ?? null;
-    if (!providerOrderId) throw unparseable("borzo", "create-order id");
+    const providerOrderId =
+      typeof rawProviderOrderId === "string" && rawProviderOrderId.trim() !== ""
+        ? rawProviderOrderId
+        : typeof rawProviderOrderId === "number" && Number.isFinite(rawProviderOrderId)
+          ? String(rawProviderOrderId)
+          : null;
+    if (providerOrderId === null) {
+      // The provider ACCEPTED the request (2xx and is_successful !== false) but
+      // returned no usable order id. The order may exist on their side, so this
+      // must NOT be treated as a retryable provider fault: failing over would
+      // book a SECOND real rider. Surface it loudly for reconciliation instead.
+      const err: any = new Error(
+        "Borzo create-order returned no order id (response shape differs from spec) - do not retry blindly; reconcile by client_order_id"
+      );
+      err.statusCode = 502;
+      err.code = "PROVIDER_BOOK_AMBIGUOUS";
+      throw err;
+    }
 
     // Tracking link arrives on the destination point (drop point is last).
     const points = Array.isArray(order.points) ? order.points : [];

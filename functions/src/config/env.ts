@@ -110,6 +110,11 @@ export const config = {
     // first refuse if a dispatch mock is active, if the agreed test courier is
     // not callable, or if it would be sent to a live host. See readiness.ts.
     requireLive: process.env.DISPATCH_REQUIRE_LIVE === "true",
+    // Booking-only opt-in for the TEST window (exact "true" only; inert unless
+    // requireLive is on). Quoting is read-only, but a create-order can dispatch
+    // a REAL rider, so booking stays blocked until a real-rider-exclusion
+    // confirmation is recorded. See readiness.ts.
+    allowTestBooking: process.env.DISPATCH_ALLOW_TEST_BOOKING === "true",
   },
   alerts: {
     slackWebhookUrl: process.env.SLACK_DEV_WEBHOOK_URL || "",

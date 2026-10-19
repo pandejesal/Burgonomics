@@ -518,6 +518,19 @@ describe("booked rider identity (finding D4)", () => {
     // ("Borzo Courier") was promoted to a customer-visible "rider_assigned".
     expect(booked.riderName).toBe("");
   });
+
+  it("rejects an accepted create-order with no usable id WITHOUT failing over (no second real rider)", async () => {
+    fetchHandler = () => okJson({ is_successful: true, order: { status: "new" } });
+
+    const err: any = await borzoAdapter
+      .book({ ...borzoContext(), orderId: "ord_ambiguous_book", quote: MOCK_QUOTE })
+      .catch((e: any) => e);
+
+    expect(err.code).toBe("PROVIDER_BOOK_AMBIGUOUS");
+    expect(err.statusCode).toBe(502);
+    // Not a ProviderDispatchError => the router will NOT walk to the next provider.
+    expect(err.kind).toBeUndefined();
+  });
 });
 
 describe("runtime zero-mock guard (finding 9 / DR11)", () => {

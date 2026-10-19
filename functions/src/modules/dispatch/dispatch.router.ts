@@ -31,7 +31,10 @@ import { fareConfirmCheck } from "./providers/shared";
 import { borzoAdapter } from "./providers/borzo.adapter";
 import { shadowfaxAdapter } from "./providers/shadowfax.adapter";
 import { porterAdapter } from "./providers/porter.adapter";
-import { assertDispatchReadinessIfRequired } from "./readiness";
+import {
+  assertDispatchReadinessIfRequired,
+  assertDispatchBookingReadinessIfRequired,
+} from "./readiness";
 
 /**
  * Multi-provider dispatch router (references/delivery_routing.md DR1–DR11).
@@ -488,6 +491,7 @@ export interface DispatchBookParams {
  */
 export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   assertDispatchReadinessIfRequired();
+  assertDispatchBookingReadinessIfRequired();
   const { orderId, staffName, caller } = params;
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {

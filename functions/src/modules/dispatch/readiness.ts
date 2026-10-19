@@ -156,9 +156,12 @@ export function dispatchReadinessReport(): DispatchReadinessReport {
 export function assertDispatchTestReadiness(): DispatchReadinessReport {
   const report = dispatchReadinessReport();
   if (report.violations.length > 0) {
-    throw new Error(
+    const err: any = new Error(
       `Dispatch test readiness FAILED: ${report.violations.join("; ")}`
     );
+    err.statusCode = 503;
+    err.code = "DISPATCH_READINESS_FAILED";
+    throw err;
   }
   return report;
 }
@@ -170,4 +173,23 @@ export function assertDispatchTestReadiness(): DispatchReadinessReport {
 export function assertDispatchReadinessIfRequired(): DispatchReadinessReport | null {
   if (!config.dispatch.requireLive) return null;
   return assertDispatchTestReadiness();
+}
+
+/**
+ * Booking-only gate for the TEST window. Quoting is safe (read-only), but a
+ * create-order can dispatch a REAL rider. Until someone records a
+ * real-rider-exclusion confirmation for the test account, booking stays blocked;
+ * the opt-in is an EXACT "true" and is inert unless DISPATCH_REQUIRE_LIVE is on,
+ * so dev and production bookings are unchanged.
+ */
+export function assertDispatchBookingReadinessIfRequired(): void {
+  if (!config.dispatch.requireLive) return;
+  if (config.dispatch.allowTestBooking) return;
+  const err: any = new Error(
+    "Booking is blocked in the TEST window until a real-rider-exclusion confirmation is recorded. " +
+      "Set DISPATCH_ALLOW_TEST_BOOKING=true only after that confirmation; quoting is unaffected."
+  );
+  err.statusCode = 503;
+  err.code = "DISPATCH_TEST_BOOKING_BLOCKED";
+  throw err;
 }

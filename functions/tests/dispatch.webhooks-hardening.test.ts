@@ -215,6 +215,48 @@ describe("dispatch webhook hardening (findings 3, 8, 10, 16)", () => {
     expect(savedDocs[dedupKeys[0]]).toMatchObject({ status: "parked", parkReason: "unbound_order" });
   });
 
+  it("does not claim 'rider assigned' when courier_assigned carries no courier (truthful status)", async () => {
+    seedOrder("ord_nocourier", {
+      deliveryStatus: "dispatched",
+      dispatchProvider: "borzo",
+      dispatchOrderId: "BZ-NOCOURIER-1",
+    });
+    savedDocs["dispatch_order_map/BZ-NOCOURIER-1"] = { orderId: "ord_nocourier", provider: "borzo" };
+
+    const payload = {
+      event: "COURIER_ASSIGNED",
+      order_id: "BZ-NOCOURIER-1",
+      timestamp: Date.now(),
+    };
+    const raw = JSON.stringify(payload);
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const doc = docOf("ord_nocourier");
+    // No rider identity in the payload => the customer view stays pending.
+    expect(doc.delivery?.status).toBe("pending");
+    expect(doc.riderName).toBeUndefined();
+  });
+
+  it("does not rewind an in_transit order on a late courier_assigned (no state rewind)", async () => {
+    seedOrder("ord_moving", {
+      deliveryStatus: "in_transit",
+      dispatchProvider: "borzo",
+      dispatchOrderId: "BZ-MOVING-1",
+    });
+    savedDocs["dispatch_order_map/BZ-MOVING-1"] = { orderId: "ord_moving", provider: "borzo" };
+
+    const payload = {
+      event: "COURIER_ASSIGNED",
+      order_id: "BZ-MOVING-1",
+      courier: { name: "Late Rider", phone: "918880000009" },
+      timestamp: Date.now(),
+    };
+    const raw = JSON.stringify(payload);
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    expect(docOf("ord_moving").deliveryStatus).toBe("in_transit");
+  });
+
   it("ignores a late non-DELIVERED callback on a cancelled order (no resurrection to dispatched) (finding 10)", async () => {
     seedOrder("ord_cancel", {
       deliveryStatus: "cancelled",

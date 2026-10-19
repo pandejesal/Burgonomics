@@ -1,6 +1,6 @@
 import * as crypto from "crypto";
 import { db } from "../../core/firebase";
-import { config } from "../../config/env";
+import { config, assertLiveDispatchContext } from "../../config/env";
 import { extractRiderGps } from "../dispatch/dispatch.webhooks";
 import {
   timingSafeEqual,
@@ -445,6 +445,10 @@ export async function bookPorterRider(
   let dispatchResult: any;
 
   if (config.mock.porterDispatch) {
+    // Zero-mock guard (finding 9 / DR11 parity with the dispatch adapters): a
+    // mock rider must never be minted in a declared production process, even if
+    // a runtime flag is flipped.
+    assertLiveDispatchContext("porter book");
     const mockRiders = [
       { name: "Ramesh Patel", phone: "+91 98250 11223", vehicle: "GJ-01-EE-8821" },
       { name: "Sanjay Varma", phone: "+91 97123 44556", vehicle: "GJ-27-AK-1029" },
@@ -548,8 +552,26 @@ export async function bookPorterRider(
 
       const data = await response.json();
 
+      const porterOrderId =
+        typeof data?.order_id === "string" && data.order_id.trim() !== ""
+          ? data.order_id
+          : typeof data?.order_id === "number" && Number.isFinite(data.order_id)
+            ? String(data.order_id)
+            : null;
+      if (porterOrderId === null) {
+        // A 2xx with no usable order id is AMBIGUOUS: the delivery may already
+        // exist. Never persist `dispatched` with a null id, and never let this
+        // look like a plain retryable failure.
+        const err: any = new Error(
+          "Porter create-order returned no order id - the delivery may already exist; do not retry blindly"
+        );
+        err.statusCode = 502;
+        err.code = "PROVIDER_BOOK_AMBIGUOUS";
+        throw err;
+      }
+
       dispatchResult = {
-        porterOrderId: data.order_id,
+        porterOrderId,
         // No fabricated identity (same class as the Borzo/Shadowfax placeholders):
         // an empty name keeps the dispatch `pending` until a real driver callback
         // or the active-order poll fills it in.
@@ -574,7 +596,10 @@ export async function bookPorterRider(
       try {
         await orderDoc.ref.set(
           {
-            porterDispatchStatus: "dispatch_failed",
+            porterDispatchStatus:
+              err?.code === "PROVIDER_BOOK_AMBIGUOUS"
+                ? "needs_reconciliation"
+                : "dispatch_failed",
             porterDispatchError: err?.message || "Porter booking failed",
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },

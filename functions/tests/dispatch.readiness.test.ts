@@ -53,6 +53,7 @@ import { config } from "../src/config/env";
 import {
   assertDispatchReadinessIfRequired,
   assertDispatchTestReadiness,
+  assertDispatchBookingReadinessIfRequired,
   dispatchReadinessReport,
   BORZO_PRODUCTION_HOST,
   BORZO_TEST_HOST,
@@ -189,12 +190,50 @@ describe("dispatch test-window readiness", () => {
       (e) => e
     );
     expect(String(quoteErr?.message || "")).toContain("readiness FAILED");
+    // Truthful propagation: a readiness refusal is a typed 503 the app can show,
+    // not an opaque 500.
+    expect(quoteErr?.statusCode).toBe(503);
+    expect(quoteErr?.code).toBe("DISPATCH_READINESS_FAILED");
 
     const bookErr: any = await dispatchBook({ orderId: "ord_e2e_disp_readiness" } as any).then(
       () => null,
       (e) => e
     );
     expect(String(bookErr?.message || "")).toContain("readiness FAILED");
+    expect(bookErr?.statusCode).toBe(503);
+    expect(bookErr?.code).toBe("DISPATCH_READINESS_FAILED");
+  });
+
+  it("blocks BOOKING in the test window until the real-rider-exclusion opt-in (exact true; inert otherwise)", () => {
+    const prevRequire = config.dispatch.requireLive;
+    const prevAllow = config.dispatch.allowTestBooking;
+    try {
+      // Opted into the test window, no booking confirmation recorded.
+      config.dispatch.requireLive = true;
+      config.dispatch.allowTestBooking = false;
+      const blocked: any = (() => {
+        try {
+          assertDispatchBookingReadinessIfRequired();
+          return null;
+        } catch (e) {
+          return e;
+        }
+      })();
+      expect(blocked?.code).toBe("DISPATCH_TEST_BOOKING_BLOCKED");
+      expect(blocked?.statusCode).toBe(503);
+
+      // Explicit opt-in unblocks it.
+      config.dispatch.allowTestBooking = true;
+      expect(() => assertDispatchBookingReadinessIfRequired()).not.toThrow();
+
+      // Outside the test window it is inert (dev/production unchanged).
+      config.dispatch.requireLive = false;
+      config.dispatch.allowTestBooking = false;
+      expect(() => assertDispatchBookingReadinessIfRequired()).not.toThrow();
+    } finally {
+      config.dispatch.requireLive = prevRequire;
+      config.dispatch.allowTestBooking = prevAllow;
+    }
   });
 });
 
