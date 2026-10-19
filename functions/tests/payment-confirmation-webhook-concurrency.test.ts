@@ -516,6 +516,40 @@ describe("payment confirmation concurrency (webhook path)", () => {
     expect(order.petpoojaOrderId).toMatch(/^pp_kot_/);
   });
 
+  // B4 contract guard. references/order_flow.md still describes a
+  // [pending] -> [accepted] vocabulary while the server writes CONFIRMED plus
+  // BOTH completed markers. Renaming either side is a policy change and out of
+  // scope; what is in scope is making any silent rename FAIL LOUDLY here, so
+  // the drift is a visible test failure instead of a production mismatch.
+  it("B4 contract guard: the confirm writes the documented literal shape (CONFIRMED + both completed markers)", async () => {
+    control.seed("orders/order_b4_1", {
+      id: "order_b4_1",
+      branchId: "branch_surat_01",
+      pricing: { grandTotal: 250, split: { branchTransferPaise: 9000 } },
+      paymentStatus: "pending",
+    });
+    control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+
+    const call = mockReqRes(capturedPayload("evt_b4_1", "order_b4_1", "pay_b4_123", 25000));
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+
+    const order = docs.get("orders/order_b4_1")!.data;
+    // The canonical render shape, field for field (razorpay.service.ts:1341-1355
+    // verify path / webhookHandler.ts:456-475 confirm path). `kind` and
+    // `terminal` matter to the client's active-vs-completed bucketing; a rename
+    // here silently re-buckets live orders.
+    expect(order.status).toMatchObject({
+      code: "CONFIRMED",
+      label: "Order confirmed",
+      kind: "upcoming",
+      terminal: false,
+    });
+    // BOTH markers, because clients differ on which one they read.
+    expect(order.paymentStatus).toBe("completed");
+    expect(order["payment.status"]).toBe("completed");
+  });
+
   it("serializes concurrent captured deliveries: one transfer, one KOT, no re-POST on repeat", async () => {
     control.seed("orders/order_race_1", {
       id: "order_race_1",
