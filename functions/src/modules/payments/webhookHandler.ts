@@ -792,7 +792,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         //    webhook converge on the same refund id instead of summing the
         //    same rupees twice.
         const amountPaise = Math.round((Number(amount) || 0) * 100);
-        const refundNewlyRecorded = await db.runTransaction(async (tx) => {
+        const refundOutcome = await db.runTransaction(async (tx) => {
           const snap = await tx.get(orderDoc.ref);
           const data = (snap.exists ? snap.data() : {}) as any;
           const existingTotal = Number(data.refundedTotalPaise) || 0;
@@ -814,6 +814,19 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           // Monotonic: never move the recorded total downwards (a smaller
           // replayed amount must never mask a larger recorded refund).
           const nextTotal = Math.max(existingTotal, ledgerTotal);
+          // Definitive before writing: this refund matched the order BY payment
+          // id, so the gateway itself should never refund more than it
+          // captured. If our recorded reality says otherwise — a corrupt
+          // payload, a capture we recorded short, or money moved outside the
+          // capture we know about — the total still moves only UPWARDS (money
+          // truth is never rewritten downwards) but it is flagged for a human
+          // rather than accepted silently. Legacy orders with no recorded
+          // capture are left unflagged instead of guessed at.
+          const capturedPaise = Number(data?.payment?.capturedAmountPaise);
+          const overCapturedPaise =
+            Number.isFinite(capturedPaise) && capturedPaise > 0 && nextTotal > capturedPaise
+              ? nextTotal - capturedPaise
+              : 0;
           tx.set(
             orderDoc.ref,
             {
@@ -822,15 +835,28 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               refundAmount: nextTotal / 100,
               refundedTotalPaise: nextTotal,
               refundLedger: ledger,
+              ...(overCapturedPaise > 0
+                ? { refundOverCapturedPaise: overCapturedPaise, refundNeedsReview: true }
+                : {}),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
             { merge: true }
           );
-          return isNewRefund;
+          return { isNewRefund, overCapturedPaise };
         });
+        // A refund total above the recorded capture is a money-truth anomaly:
+        // surface it for a human rather than accepting it silently. The order
+        // doc keeps the monotonic total; this is the alert, not a rewrite.
+        if (refundOutcome.overCapturedPaise > 0) {
+          await captureErrorSnapshot({
+            source: "payments",
+            severity: "high",
+            message: `Refund total exceeds the recorded capture for order ${orderDoc.id} by ${refundOutcome.overCapturedPaise} paise (payment ${paymentId}) — monotonic truth kept, manual review required`,
+          });
+        }
         // Customer notice only for a refund we had not recorded yet — a
         // duplicate delivery must not re-announce the same money.
-        if (refundNewlyRecorded) {
+        if (refundOutcome.isNewRefund) {
         try {
           const orderData = orderDoc.data() as any;
           const { pushToCustomer } = await import("../notifications/fcmClient");

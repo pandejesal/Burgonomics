@@ -399,6 +399,64 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     });
   });
 
+  // ── Money-truth anomaly: a refund that matches the order BY payment id can
+  // only ever be a refund of what that payment captured, so a cumulative total
+  // above the recorded capture means our recorded reality is wrong somewhere.
+  // It must never be silently accepted, and money truth must never be
+  // rewritten DOWNWARDS to hide it. ──
+  it("flags a cumulative refund above the recorded capture instead of silently accepting it", async () => {
+    savedDocs["orders/order_over_ref_1"] = {
+      id: "order_over_ref_1",
+      branchId: "branch_surat_01",
+      paymentStatus: "completed",
+      // Live capture truth in paise, exactly as the confirm path writes it
+      // (payment.capturedAmountPaise).
+      payment: {
+        razorpayPaymentId: "pay_over_1",
+        status: "completed",
+        capturedAmountPaise: 10000,
+      },
+    };
+    const refundPayload = (eventId: string, refundId: string, amountPaise: number) => ({
+      id: eventId,
+      event: "refund.processed",
+      payload: {
+        refund: {
+          entity: { id: refundId, payment_id: "pay_over_1", amount: amountPaise, currency: "INR" },
+        },
+      },
+    });
+
+    // Exactly the captured amount: credited, and NOT flagged (the cap is the
+    // boundary, not an anomaly).
+    const atCap = mockReqRes(refundPayload("evt_over_1", "rfnd_cap", 10000));
+    await handleRazorpayWebhook(atCap.req, atCap.res);
+    expect(atCap.out().statusCode).toBe(200);
+    const afterCap = savedDocs["orders/order_over_ref_1"];
+    expect(afterCap.refundedTotalPaise).toBe(10000);
+    expect(afterCap.refundOverCapturedPaise).toBeUndefined();
+    expect(afterCap.refundNeedsReview).toBeUndefined();
+
+    // 5000 paise MORE than was ever captured: the recorded total still moves
+    // upwards (that is the provider's truth and we do not rewrite it), but it
+    // is flagged and a high-severity snapshot is written for a human.
+    const over = mockReqRes(refundPayload("evt_over_2", "rfnd_over", 5000));
+    await handleRazorpayWebhook(over.req, over.res);
+    expect(over.out().statusCode).toBe(200);
+    const afterOver = savedDocs["orders/order_over_ref_1"];
+    expect(afterOver.refundedTotalPaise).toBe(15000);
+    expect(afterOver.refundOverCapturedPaise).toBe(5000);
+    expect(afterOver.refundNeedsReview).toBe(true);
+
+    const snapshot = Object.entries(savedDocs).find(
+      ([k, v]) =>
+        k.startsWith("dev_error_snapshots/") &&
+        /exceeds the recorded capture/.test(String((v as any)?.message || ""))
+    );
+    expect(snapshot, "expected a high-severity over-refund snapshot").toBeTruthy();
+    expect((snapshot![1] as any).severity).toBe("high");
+  });
+
   it("parks processed refunds with no matching order in unmatched_payments (never drops money)", async () => {
     const payload = {
       id: "evt_refund_orphan_1",
