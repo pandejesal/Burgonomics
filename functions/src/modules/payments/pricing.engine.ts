@@ -115,6 +115,16 @@ export async function calculateOrderPricing(
   // (db.getAll) instead of N sequential gets; degrades to sequential on
   // Firestore shims without getAll, and to client prices on read failure.
   const catalogPrices = new Map<string, number>();
+  // Availability is captured from the SAME snapshot as the price. Until now the
+  // cart was the ONLY availability gate and it is client-side: a line added
+  // before an 86, or from a stale menu, was still priced and charged. Reading
+  // it here costs no extra query and refuses to trust client cart state.
+  const catalogAvailability = new Map<string, unknown>();
+  // True when any line was priced from client input instead of the catalog.
+  // Surfaced on the result so callers can tell a clean total from a degraded
+  // one; before this it was declared and never set, so the documented signal
+  // did not exist.
+  let pricingDegraded = false;
   const wantedIds = [...new Set(input.items.map((i) => i.productId || i.id).filter(Boolean))];
   // True only when reads themselves threw (outage) — distinct from docs that
   // merely lack a price field (data shape, keeps per-item fallback).
@@ -128,6 +138,7 @@ export async function calculateOrderPricing(
           const data = snap.data();
           if (snap.exists && typeof data?.price === "number") {
             catalogPrices.set(snap.id, data.price);
+            catalogAvailability.set(snap.id, data?.inStock);
           }
         }
       } else {
@@ -137,6 +148,7 @@ export async function calculateOrderPricing(
             const data = snap.data();
             if (snap.exists && typeof data?.price === "number") {
               catalogPrices.set(id as string, data.price);
+              catalogAvailability.set(id as string, data?.inStock);
             }
           } catch {
             catalogReadFailed = true;
@@ -172,9 +184,29 @@ export async function calculateOrderPricing(
 
   for (const item of input.items) {
     let unitPrice = computeItemUnitPrice(item);
-    const catalogPrice = catalogPrices.get(item.productId || item.id);
+    const itemKey = item.productId || item.id;
+    const catalogPrice = catalogPrices.get(itemKey);
     if (catalogPrice !== undefined) {
+      // Money-time ELIGIBILITY. Fail CLOSED: only an explicit boolean true is
+      // sellable, so a doc that predates the availability field cannot be sold
+      // on an assumption. Without this, a line that went 86 after it entered
+      // the cart was still priced and charged, because the cart is a
+      // client-side gate and the server never looked.
+      if (catalogAvailability.get(itemKey) !== true) {
+        const unavailable: any = new Error(
+          `${String((item as any)?.name || "An item")} is no longer available — please review your cart.`
+        );
+        unavailable.statusCode = 409;
+        unavailable.code = "ITEM_UNAVAILABLE";
+        throw unavailable;
+      }
       unitPrice = applyCatalogBasePrice(item, catalogPrice);
+    } else {
+      // No catalog price for this line, so it is priced from client input.
+      // That fallback is deliberate (documented at the outage guard above) but
+      // it must never be silent — this flag is the only thing that tells a
+      // caller the total is not fully catalog-backed.
+      pricingDegraded = true;
     }
 
     const qty = Math.max(1, Math.floor(Number(item.quantity) || 1));
@@ -188,9 +220,6 @@ export async function calculateOrderPricing(
   let royaltyPercentage = 5; // Default 5% brand royalty (spec: 95/5 split)
   let packagingFee = input.packagingFee ?? 15; // Default ₹15 packaging
   let couponDoc: any = null;
-  // True when any pricing input fell back to defaults — surfaced on the
-  // result so callers/ops can distinguish a clean price from a degraded one.
-  let pricingDegraded = false;
 
   const couponCode = input.couponCode?.trim().toUpperCase();
   const branchRead: Promise<void> =

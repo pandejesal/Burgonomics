@@ -22,7 +22,7 @@ const { mockDb, getAllCalls } = vi.hoisted(() => {
       const price = (CATALOG as any)[docId];
       return price === undefined
         ? { exists: false, data: () => ({}), id: docId }
-        : { exists: true, data: () => ({ price }), id: docId };
+        : { exists: true, data: () => ({ price, inStock: true }), id: docId };
     }
     if (col === "branches") {
       return { exists: true, data: () => ({ royaltyPercentage: 5, packagingFee: 15 }), id: docId };
