@@ -221,6 +221,75 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect(replay.out().body).toMatchObject({ status: "already_processed" });
   });
 
+  // ── payment.failed, the outcome customers actually experience: the write
+  // that flips the order failed (the guards for the paid/foreign/ghost cases
+  // are pinned elsewhere; the LEGITIMATE path had no coverage). ──
+  it("flips a genuinely failed own payment to failed, and keeps a stale marker while flagging the contradiction", async () => {
+    savedDocs["orders/order_failed_1"] = {
+      id: "order_failed_1",
+      customerId: "cust_failed_1",
+      paymentStatus: "pending",
+      payment: { razorpayPaymentId: "pay_failed_1" },
+    };
+    const failedEvent = (orderId: string, paymentId: string) => ({
+      id: `evt_failed_${paymentId}`,
+      event: "payment.failed",
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            amount: 25000,
+            currency: "INR",
+            notes: { orderId },
+          },
+        },
+      },
+    });
+
+    const call = mockReqRes(failedEvent("order_failed_1", "pay_failed_1"));
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    // BOTH markers, because clients differ on which one they read.
+    expect(savedDocs["orders/order_failed_1"]).toMatchObject({
+      paymentStatus: "failed",
+      "payment.status": "failed",
+    });
+    // No contradiction snapshot for a clean single-attempt failure.
+    expect(
+      Object.keys(savedDocs).some((k) => k.startsWith("dev_error_snapshots/"))
+    ).toBe(false);
+
+    // Now the contradictory ordering: an order that still carries a B5 marker
+    // (an earlier capture was parked) receives a failure for its own payment.
+    // The flip stands — it is the gateway's word about THIS attempt — but the
+    // earlier money must not be silently forgotten, so the marker is kept AND
+    // a high-severity contradiction snapshot is raised.
+    savedDocs["orders/order_failed_2"] = {
+      id: "order_failed_2",
+      customerId: "cust_failed_1",
+      paymentStatus: "pending",
+      payment: { razorpayPaymentId: "pay_failed_2" },
+      reconciliation: {
+        state: "payment_review",
+        reason: "confirm_amount_mismatch",
+        razorpayPaymentId: "pay_earlier_2",
+      },
+    };
+    const second = mockReqRes(failedEvent("order_failed_2", "pay_failed_2"));
+    await handleRazorpayWebhook(second.req, second.res);
+    expect(second.out().statusCode).toBe(200);
+    const secondDoc = savedDocs["orders/order_failed_2"];
+    expect(secondDoc.paymentStatus).toBe("failed");
+    expect(secondDoc.reconciliation).toMatchObject({ state: "payment_review" });
+    const snapshot = Object.entries(savedDocs).find(
+      ([k, v]) =>
+        k.startsWith("dev_error_snapshots/") &&
+        /reconciliation marker is still present/.test(String((v as any)?.message || ""))
+    );
+    expect(snapshot, "expected a contradiction snapshot").toBeTruthy();
+    expect((snapshot![1] as any).severity).toBe("high");
+  });
+
   // ── Route transfer events had NO test coverage anywhere in this repo, yet
   // they are the payout trail: a retried transfer arrives under a NEW eventId,
   // so the doc id must be convergent on transfer+event or every retry forks a

@@ -719,6 +719,19 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               },
               { merge: true }
             );
+            // B5 interaction: if this order still carries a reconciliation
+            // marker, an earlier capture was parked and its money may genuinely
+            // have moved. The gateway's word about THIS attempt stands (the
+            // order flips to failed) and the marker is NOT silently cleared —
+            // but a human must see the contradiction instead of one signal
+            // quietly outranking the other.
+            if (orderData?.reconciliation?.state === "payment_review") {
+              await captureErrorSnapshot({
+                source: "payments",
+                severity: "high",
+                message: `Order ${orderId} flipped to failed while a reconciliation marker is still present — an earlier capture on this order may have moved money; review both signals`,
+              }).catch(() => undefined);
+            }
             // The customer otherwise stares at a spinner: tell them plainly.
             // (Status code is untouched, so no status trigger fires — push here.)
             try {
