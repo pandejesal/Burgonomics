@@ -1,9 +1,43 @@
 {
-  "purpose": "Isolated, sanitized records for the customer-app E2E (A08 C14/C09). Nothing here touches a real outlet, a real customer, or the shared catalogue: the products are CLONES of existing orderable items placed on a NEW test-only branch whose petpoojaStoreId is deliberately null, so no KOT can ever reach a kitchen that is not ours to ring.",
-  "whyNotNullStoreId": "5639/31z58ciw0h (demo) is the ONLY outlet carrying a petpoojaStoreId, so it is the only KOT-capable branch. An order on this test branch therefore exercises checkout -> payment -> order-state -> courier-quote WITHOUT any POS write, which is what C14 requires. The KOT leg is exercised separately and explicitly on the demo outlet via the staff route, and recorded as such.",
+  "purpose": "Isolated, sanitized records for the customer-app E2E (A08 C14/C09). Nothing here touches a real outlet, a real customer, or the shared catalogue: the products are CLONES placed under a NEW test-only restId whose outlet (petpoojaStoreId) is deliberately null, so no KOT can ever reach a kitchen that is not ours to ring.",
+  "schemaVerifiedAgainst": [
+    "burgonomics-foundation-core/src/features/menu/services/menuService.ts:213 - the customer menu reads products with where(\"restId\", \"==\", restId)",
+    "burgonomics-foundation-core/src/features/menu/services/menuService.ts:191-196 - resolveRestId(storeId) = stores/{storeId}.petpoojaRestId (falls back to the raw storeId when absent)",
+    "burgonomics-foundation-core/src/features/stores/services/storesService.ts:88-99 - the directory reads the `stores` collection, falling back to `admin_stores`",
+    "burgonomics-foundation-core/src/features/stores/services/storesService.ts:94 - FAIL CLOSED: a store doc without finite lat/lng is DROPPED, not rendered",
+    "burgonomics-foundation-core/src/features/stores/services/storesService.ts:60-64 - fulfillment modes are deny-by-default; `supports` must grant each mode explicitly",
+    "burgonomics-foundation-core/src/features/orders/services/ordersService.ts:465 (and payments/repositories/PaymentRepository.ts:249) - the order's branchId is stores/{id}.partnerBranchId",
+    "functions/src/modules/payments/pricing.engine.ts:206-230 - FAIL CLOSED 503 unless branches/{branchId} exists with a valid royaltyPercentage (0..100) and packagingFee",
+    "functions/src/modules/payments/routeTransfers.ts:194 - the Route split reads branches/{branchId}.razorpayAccountId"
+  ],
+  "whyNotNullStoreId": "31z58ciw0h (demo) is the outlet that carries a petpoojaStoreId, so it is the KOT-capable outlet. An order on this test store therefore exercises checkout -> payment -> order-state -> courier-quote WITHOUT any POS write, which is what C14 requires. The KOT leg is exercised separately and explicitly on the demo outlet via the staff route, and recorded as such.",
   "runIdPlaceholder": "<utc-yyyymmddThhmmss>",
   "substitutions": {
     "<runId>": "every record id below carries it, which is what makes cleanup exact rather than a broad query"
+  },
+  "restIdIsTheMenuKey": {
+    "testRestId": "e2e_rest_<runId>",
+    "rule": "Products are listed by `restId`, NOT by branch. Both the store doc's petpoojaRestId AND every cloned product's restId MUST be set to this one run-scoped value.",
+    "whyItMatters": "The store's restId is the ONLY thing that makes a cloned product appear in that store's menu, and it is the ONLY thing that keeps a clone OUT of a real outlet's menu. get docs with the wrong key are simply invisible."
+  },
+  "store": {
+    "path": "stores/st_test_e2e_<runId>",
+    "doc": {
+      "id": "st_test_e2e_<runId>",
+      "name": "E2E Test Kitchen (NOT A REAL OUTLET)",
+      "address": "E2E test address - never dispatched",
+      "city": "E2E Test City",
+      "lat": 21.1702,
+      "lng": 72.8311,
+      "isOpen": true,
+      "isTest": true,
+      "supports": { "delivery": true, "takeaway": true, "dineIn": false },
+      "petpoojaRestId": "e2e_rest_<runId>",
+      "partnerBranchId": "br_test_e2e_<runId>",
+      "deliveryRadiusKm": 5,
+      "pricing": { "deliveryFeeFlat": 0 }
+    },
+    "rule": "lat/lng MUST be finite or the app drops the store entirely (storesService.ts:94). `supports` MUST grant each mode explicitly (deny by default, :60-64). partnerBranchId is what becomes the ORDER's branchId, so it must equal the branch doc below."
   },
   "branch": {
     "path": "branches/br_test_e2e_<runId>",
@@ -13,21 +47,33 @@
       "isTest": true,
       "active": true,
       "petpoojaStoreId": null,
-      "address": "E2E test address - never dispatched",
-      "razorpayAccountId": null
-    }
+      "royaltyPercentage": 15,
+      "packagingFee": 15,
+      "razorpayAccountId": null,
+      "address": "E2E test address - never dispatched"
+    },
+    "rule": "This doc MUST exist or pricing refuses with a fail-closed 503 (pricing.engine.ts:206-230). royaltyPercentage must be 0..100 and finite - an out-of-bounds value refuses pricing rather than minting a negative branch leg. razorpayAccountId stays null: the Route leg is NOT exercised by this E2E and must not point at a real linked account."
   },
   "products": {
     "path": "products/prod_test_e2e_<runId>_<n>",
     "sourceRule": "CLONE the price and structure of an existing orderable product; never invent a price, never carry a \"0\" price through, and never copy a vendor in_stock value (see inStockRule).",
+    "restIdRule": "You MUST overwrite restId on every clone with e2e_rest_<runId>. A clone left holding the demo outlet's real restId (or any real restId) would surface as a test item inside a REAL outlet's live customer menu. Cloning without this rewrite is a shared-catalogue write by effect, which C14 forbids.",
     "inStockRule": "Set inStock EXPLICITLY true on the clone. This is the whole point of cloning: availability becomes a fact we author, so the E2E never depends on the unresolved vendor in_stock encoding (C07/C14).",
     "example": {
       "id": "prod_test_e2e_<runId>_1",
+      "restId": "e2e_rest_<runId>",
       "name": "E2E Test Item (clone)",
-      "branchId": "br_test_e2e_<runId>",
       "price": 249,
+      "categoryId": "e2e_cat_<runId>",
+      "veg": true,
       "inStock": true,
       "isTest": true
+    },
+    "fieldNamesVerified": {
+      "name": "menuService.ts:134 (name, else itemname, else \"Product\")",
+      "price": "pricing.engine.ts:129-138 - read as a NUMBER; a non-numeric price falls back per item",
+      "inStock": "menuService.ts:175 area - with isAvailable as the alternate; absent defaults to available",
+      "veg": "menuService.ts:123-128 (isVeg | veg | dietaryTag === \"veg\" | item_attributeid === \"1\")"
     }
   },
   "controlledContact": {
@@ -40,18 +86,26 @@
     "clientOrderId": "e2e_<runId>_<step>",
     "note": "per-run unique, so a rerun can never be mistaken for a previous run's order and cleanup is exact"
   },
-  "catalogueBranchCloning": {
-    "copyFrom": "the demo outlet's prod_demo_* documents",
-    "copyTo": "br_test_e2e_<runId>",
-    "mutationOfSource": "NONE - the source docs are only read; the clones are new documents",
-    "orderableCatalogueRewrite": "not required for this E2E and still not authorised"
-  },
+  "knownFailureModesIfFieldsAreWrong": [
+    "Products carrying branchId instead of restId: checkout works, the ORDER looks fine, but the store's menu is EMPTY and the E2E has nothing to add to the cart.",
+    "A missing or invalid branches/{branchId} doc: pricing refuses with 503 and no Razorpay order can be created (fail-closed by design, not a regression).",
+    "A clone that keeps a real restId: test items appear in a real outlet's live menu. This is the one failure that is also a safety breach.",
+    "Store lat/lng not finite, or supports not granting the mode: the store vanishes from the directory, or the chosen fulfillment mode is not offered."
+  ],
   "cleanup": {
-    "matchPrefixes": ["br_test_e2e_<runId>", "prod_test_e2e_<runId>_", "e2e_<runId>_"],
+    "matchPrefixes": [
+      "st_test_e2e_<runId>",
+      "br_test_e2e_<runId>",
+      "prod_test_e2e_<runId>_",
+      "e2e_cat_<runId>",
+      "e2e_rest_<runId>",
+      "e2e_<runId>_"
+    ],
     "never": [
       "a broad or unscoped query delete",
-      "any existing branchId, productId or orderId that does not carry this run's id",
-      "any customer-authored record"
+      "any existing storeId, branchId, productId or orderId that does not carry this run's id",
+      "any customer-authored record",
+      "the demo outlet's documents or any real product document - the clones are new documents, the sources are read-only"
     ]
   },
   "safety": {
@@ -59,7 +113,8 @@
     "razorpayMode": "TEST keys only (the configured key id is rzp_test_*)",
     "courierBooking": "none - a quote only, on the already-authorised Borzo TEST host",
     "pii": "none - controlled test contact only, no export of any real customer record",
-    "customerOrderMutation": "none"
+    "customerOrderMutation": "none",
+    "vendorWrites": "none - petpoojaStoreId is null on the test outlet, so no KOT/menu/86 write can target a vendor"
   },
   "stillBlockedBeforeThisCanRun": [
     "RAZORPAY_WEBHOOK_SECRET - without it the signed-webhook leg cannot be exercised and a staging boot fails its own gate",
