@@ -684,6 +684,88 @@ describe("Porter Logistics Service", () => {
     });
   });
 
+  // DR-CONTRACT parity with the Borzo adapter (dispatch.provider-contract
+  // .test.ts:529): a 2xx create-order with NO usable order id is an AMBIGUOUS
+  // booking, not a retryable failure — the delivery may already exist, so a
+  // blind staff retry could book a SECOND real rider. The live Porter branch
+  // (porter.service.ts:553-611) had no coverage at all before this.
+  describe("live Porter booking truth (no-mock, ambiguous create-order)", () => {
+    let prevLiveMock = false;
+    let prevApiKey = "";
+    let originalFetch: any;
+
+    const okJson = (body: any) =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+      }) as any;
+
+    const liveOrder = () => ({
+      branchId: "branch_ahmedabad_1",
+      store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
+      orderType: "delivery",
+      customerPhone: "+91 99999 88888",
+      customerName: "Aarav Shah",
+      branchCoordinates: { lat: 23.0131, lng: 72.5085 },
+      deliveryAddress: {
+        full: "102, Shivalik Highstreet, Vastrapur",
+        lat: 23.0338,
+        lng: 72.5262,
+      },
+    });
+
+    beforeEach(() => {
+      prevLiveMock = config.mock.porterDispatch;
+      prevApiKey = config.porter.apiKey;
+      config.mock.porterDispatch = false; // exercise the LIVE create-order branch
+      config.porter.apiKey = "test_porter_key_vitest_only";
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      config.mock.porterDispatch = prevLiveMock;
+      config.porter.apiKey = prevApiKey;
+      globalThis.fetch = originalFetch;
+    });
+
+    it("parks an accepted-but-id-less booking as needs_reconciliation, never dispatched", async () => {
+      savedDocs["orders/order_ambig_1"] = liveOrder();
+      // 2xx with an empty body: the create-order may have already succeeded
+      // provider-side, so this must NOT read as a plain dispatch_failed.
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) => okJson({}));
+
+      const err: any = await bookPorterRider("order_ambig_1", "Store Manager").then(
+        () => null,
+        (e) => e
+      );
+
+      expect(err?.code).toBe("PROVIDER_BOOK_AMBIGUOUS");
+      expect(err?.statusCode).toBe(502);
+      const doc = savedDocs["orders/order_ambig_1"];
+      expect(doc.porterDispatchStatus).toBe("needs_reconciliation");
+      expect(doc.porterDispatchError).toMatch(/no order id/i);
+      // Never persisted as a live dispatch, and no invented id.
+      expect(doc.porterOrderId).toBeUndefined();
+      expect(doc.deliveryStatus).toBeUndefined();
+    });
+
+    it("a live 2xx WITH an order id still dispatches (positive control)", async () => {
+      savedDocs["orders/order_live_ok_1"] = liveOrder();
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ order_id: "PRTR-LIVE-777", driver_details: { name: "Real Rider" } })
+      );
+
+      const res = await bookPorterRider("order_live_ok_1", "Store Manager");
+      expect(res.porterOrderId).toBe("PRTR-LIVE-777");
+      expect(res.status).toBe("dispatched");
+      const doc = savedDocs["orders/order_live_ok_1"];
+      expect(doc.porterOrderId).toBe("PRTR-LIVE-777");
+      expect(doc.deliveryStatus).toBe("dispatched");
+      expect(doc.porterDispatchStatus).not.toBe("needs_reconciliation");
+    });
+  });
+
   describe("cancelPorterBooking (staff cancel, honest provider contract)", () => {
     const ownBranchCaller = { uid: "staff_1", role: "branch_staff", branchIds: ["branch_ahmedabad_1"] };
     const otherBranchCaller = { uid: "staff_2", role: "branch_staff", branchIds: ["branch_other"] };
