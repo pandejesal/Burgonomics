@@ -71,10 +71,24 @@ export function verifyDispatchWebhookSignature(
   if (provider === "shadowfax" && timingSafeEqual(secret, signature.trim())) {
     return true;
   }
-  // Providers may send bare hex or the common `sha256=<hex>` prefix form.
-  const bare = signature.startsWith("sha256=") ? signature.slice("sha256=".length) : signature;
-  const expected = computeHmacSha256(rawBody, secret);
-  return timingSafeEqual(expected, bare);
+  // The vendor doc specifies "a HMAC hash using SHA256 and Callback Secret Key"
+  // but NOT the encoding of the header value. Our verifier historically used
+  // hex only, so a base64-sending Borzo would 401 forever and the status leg
+  // would silently die (their retry ladder gives up after 24h). Accept both
+  // standard forms of the SAME digest plus the common `sha256=` prefix.
+  // This is not an auth weakening: every accepted form must equal
+  // HMAC-SHA256(rawBody, secret), which nobody without the secret can produce.
+  const trimmed = signature.trim();
+  const prefixed = /^sha256=/i.exec(trimmed);
+  const bare = prefixed ? trimmed.slice(prefixed[0].length) : trimmed;
+  const expectedHex = computeHmacSha256(rawBody, secret);
+  const expectedBase64 = Buffer.from(expectedHex, "hex").toString("base64");
+  // Hex is case-insensitive; normalise only when it really looks like hex.
+  const hexCandidate = /^[0-9a-fA-F]+$/.test(bare) ? bare.toLowerCase() : bare;
+  return (
+    timingSafeEqual(expectedHex, hexCandidate) ||
+    timingSafeEqual(expectedBase64, bare)
+  );
 }
 
 const EVENT_ALIASES: Record<string, string> = {

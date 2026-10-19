@@ -626,6 +626,33 @@ describe("dispatch webhooks (DR10)", () => {
     config.borzo.webhookSecret = prev;
   });
 
+  it("accepts both standard encodings of the documented HMAC (vendor doc omits encoding)", () => {
+    const raw = JSON.stringify({
+      event_type: "delivery_changed",
+      delivery: { status: "parcel_picked_up", order_id: 1250032 },
+    });
+    const hex = computeHmacSha256(raw, TEST_BORZO_WEBHOOK_SECRET);
+    const b64 = Buffer.from(hex, "hex").toString("base64");
+
+    expect(verifyDispatchWebhookSignature("borzo", raw, hex)).toBe(true);
+    expect(verifyDispatchWebhookSignature("borzo", raw, hex.toUpperCase())).toBe(true);
+    expect(verifyDispatchWebhookSignature("borzo", raw, b64)).toBe(true);
+    expect(verifyDispatchWebhookSignature("borzo", raw, `sha256=${b64}`)).toBe(true);
+
+    // The SAME secret is still required: a digest under another key never
+    // verifies in either encoding, so this widening is not an auth bypass.
+    const wrongKey = computeHmacSha256(raw, "not_the_callback_secret");
+    expect(verifyDispatchWebhookSignature("borzo", raw, wrongKey)).toBe(false);
+    expect(
+      verifyDispatchWebhookSignature(
+        "borzo",
+        raw,
+        Buffer.from(wrongKey, "hex").toString("base64")
+      )
+    ).toBe(false);
+    expect(verifyDispatchWebhookSignature("borzo", raw, "")).toBe(false);
+  });
+
   it("verifies shadowfax callbacks via static shared secret or HMAC, never empty", () => {
     const raw = JSON.stringify({ order_status: "DELIVERED", sfx_order_id: "SFX-1" });
     config.shadowfax.webhookSecret = TEST_SFX_WEBHOOK_SECRET;

@@ -145,6 +145,31 @@ Fail-closed conventions unchanged (§env.ts): secrets default `""`, mocks exact 
 
 ---
 
+## 9b. Borzo callback contract (DOC VERIFIED 2026-10-20)
+
+Source: the official Borzo Business API 1.8 doc (`https://borzodelivery.com/in/business-api/doc`) — sections "Notification about order changes", "Notification about delivery changes", "How to track order/delivery", "Status model". This is the vendor's own documentation, read directly; it is not our SDK or a mirror.
+
+DOC VERIFIED:
+- The Callback URL is set per account in the Personal cabinet → **"Integration" tab**; delivery callbacks must additionally be **enabled** there. Registration is SELF-SERVICE — it is not a support ticket we must wait for.
+- **One** Callback Secret Key is shared by the order and delivery callbacks. That key is what our `BORZO_WEBHOOK_SECRET` names.
+- The header is **`X-DV-Signature`** = HMAC-SHA256 of the request data with that key. This confirms the header name our code requires is the vendor's own — it supersedes the earlier "scheme unverified" wording in the conclusive report.
+- A non-2xx response is retried at increasing intervals for up to 24h, then the event is dropped and emailed.
+- Order callback shape: `{event_datetime, event_type: order_created|order_changed, order: {…status, status_description…}}`; order.status ∈ {new, available, active, completed, reactivated, draft, canceled, delayed}.
+- Delivery callback shape: `{event_datetime, event_type: delivery_created|delivery_changed, delivery: {delivery_id, order_id, client_order_id, status, status_description, status_datetime…}}`; delivery.status ∈ {invalid, draft, planned, active, finished, canceled, delayed, courier_assigned, courier_departed, courier_at_pickup, parcel_picked_up, courier_arrived, deleted, return_*, reattempt_*}.
+- `active` is scoped and our `SCOPED_EVENT_ALIASES` matches it exactly (order-level = courier assigned and working; delivery-level = courier on the way).
+- `courier_departed` = "Courier departed to the pick-up point" — the parcel is NOT moving; `parcel_picked_up` is the handover event; `courier_arrived` = waiting for the customer; `finished` = delivered. Mapping `courier_departed` → `DRIVER_ALLOCATED` is a deliberate under-claim, not a truth error.
+- A documented status-query fallback exists: `GET /api/business/1.8/orders?order_id=&status=` (count ≤ 50) plus the courier route/location method. The "no poll fallback in code" gap therefore HAS a documented alternative; a poll worker remains unbuilt (next-action, needs a scheduler decision).
+
+STILL UNDOCUMENTED — asks, never asserted:
+- The exact encoding of `X-DV-Signature` (hex vs base64). This ambiguity is exactly why the verifier now accepts both representations of the same digest.
+- The exact bytes hashed ("request data" — assumed raw body; verify with a real TEST callback).
+- Whether the apitest (TEST) account exposes the Integration-tab Callback URL + Callback Secret Key, and whether delivery callbacks can be enabled there.
+- Whether a TEST order can ever dispatch a real courier. `DISPATCH_ALLOW_TEST_BOOKING` stays `false` until this is confirmed in writing.
+
+Shadowfax unchanged: no native contract evidence exists locally.
+
+---
+
 ## 10. Out of Scope (documented, revisit on demand)
 
 - Shiprocket Quick aggregation (6-city; would replace Borzo/Shadowfax as a single aggregator — revisit if manual provider ops become a burden).
