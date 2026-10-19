@@ -179,6 +179,85 @@ describe("Porter Logistics Service", () => {
     });
   });
 
+  describe("getDeliveryQuote - live money truth (provider guard)", () => {
+    let prevLiveMock = false;
+    let prevApiKey = "";
+    let prevCustomerId = "";
+    let originalFetch: any;
+
+    const coords = {
+      pickupLat: 23.0131,
+      pickupLng: 72.5085,
+      dropLat: 23.0338,
+      dropLng: 72.5262,
+    };
+
+    const okJson = (body: any) =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }) as any;
+
+    beforeEach(() => {
+      prevLiveMock = config.mock.porterDispatch;
+      prevApiKey = config.porter.apiKey;
+      prevCustomerId = config.porter.customerId;
+      config.mock.porterDispatch = false; // exercise the LIVE branch
+      config.porter.apiKey = "test_porter_key_vitest_only";
+      config.porter.customerId = "test_porter_customer_vitest_only";
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      config.mock.porterDispatch = prevLiveMock;
+      config.porter.apiKey = prevApiKey;
+      config.porter.customerId = prevCustomerId;
+      globalThis.fetch = originalFetch;
+    });
+
+    it("fails closed instead of inventing a live fare when the provider omits it", async () => {
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ distance: 5, eta: 4 })
+      );
+      await expect(getDeliveryQuote(coords)).rejects.toMatchObject({
+        statusCode: 503,
+      });
+    });
+
+    it("fails closed when the provider fare is not a finite number", async () => {
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ fare: "N/A", distance: 5 })
+      );
+      await expect(getDeliveryQuote(coords)).rejects.toMatchObject({
+        statusCode: 503,
+      });
+    });
+
+    it("returns the provider's finite fare unaltered and labels it porter_api_live", async () => {
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ fare: 57.5, distance: 5, eta: 4, quote_id: "Q-TEST-1" })
+      );
+      const quote = await getDeliveryQuote(coords);
+      expect(quote.estimatedFare).toBe(57.5);
+      expect(quote.source).toBe("porter_api_live");
+      expect(quote.estimatedDistanceKm).toBe(5);
+      expect(quote.estimatedPickupMinutes).toBe(4);
+      expect(quote.quoteId).toBe("Q-TEST-1");
+    });
+
+    it("never propagates a non-numeric provider distance into a numeric field", async () => {
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ fare: 57.5, distance: "N/A" })
+      );
+      const quote = await getDeliveryQuote(coords);
+      expect(typeof quote.estimatedDistanceKm).toBe("number");
+      expect(Number.isFinite(quote.estimatedDistanceKm)).toBe(true);
+      expect(quote.estimatedDistanceKm).toBeGreaterThan(0);
+    });
+  });
+
   describe("normalizePorterEvent", () => {
     it("reconciles Porter standard events with platform events", () => {
       expect(normalizePorterEvent("ASSIGNED")).toBe("DRIVER_ALLOCATED");

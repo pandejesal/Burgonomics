@@ -46,6 +46,21 @@ export interface PorterQuoteResult {
 }
 
 /**
+ * Coerce a provider-supplied field to a finite, non-negative number.
+ * Returns null for anything else (missing, "", "N/A", NaN, Infinity, negative)
+ * so a caller can FAIL CLOSED instead of propagating an invented value.
+ */
+function finiteProviderNumber(value: unknown): number | null {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
  * Calculates live Porter delivery fare quote based on pickup & drop GPS with 10-minute fee lock TTL.
  */
 export async function getDeliveryQuote(params: PorterQuoteParams): Promise<PorterQuoteResult> {
@@ -116,11 +131,28 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
 
       if (response.ok) {
         const data = await response.json();
-        const fare = data.fare || calculatePorterFare(data.distance || estimatedDistanceKm);
+        // Money truth: a LIVE quote must carry a finite, non-negative fare from
+        // the provider. The previous `data.fare || calculatePorterFare(...)`
+        // invented a local rate-card fare and returned it labelled
+        // "porter_api_live"; a non-numeric value (e.g. "N/A") also passed
+        // straight through. Both put an unverified number in front of checkout,
+        // and a non-finite fare then made the DR7 fare-confirm comparison see
+        // NaN (so the drift gate silently opened). Fail closed instead - never
+        // invent a live fare.
+        const fare = finiteProviderNumber(data.fare);
+        if (fare === null) {
+          const err: any = new Error(
+            "Porter API returned no usable fare - refusing to invent a live quote"
+          );
+          err.statusCode = 503;
+          throw err;
+        }
+        const providerDistance = finiteProviderNumber(data.distance);
+        const providerEta = finiteProviderNumber(data.eta);
         return {
-          estimatedDistanceKm: data.distance || estimatedDistanceKm,
+          estimatedDistanceKm: providerDistance ?? estimatedDistanceKm,
           estimatedFare: fare,
-          estimatedPickupMinutes: data.eta || estimatePickupMinutes(),
+          estimatedPickupMinutes: providerEta ?? estimatePickupMinutes(),
           vehicleType: "2-Wheeler (Bike Express)",
           quoteId: data.quote_id || `QTE-PRTR-${Date.now()}`,
           source: "porter_api_live",
