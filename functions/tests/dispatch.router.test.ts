@@ -908,6 +908,55 @@ describe("dispatch webhooks (DR10)", () => {
     expect(docOf("ord_delact").deliveryStatus).toBe("in_transit");
   });
 
+  it("courier_departed under-claims: en route TO pickup never flips in_transit (DOC VERIFIED meaning)", async () => {
+    seedOrder("ord_bzdeparted", { deliveryStatus: "dispatched", dispatchProvider: "borzo", dispatchOrderId: "890" });
+    savedDocs["dispatch_order_map/890"] = { orderId: "ord_bzdeparted", provider: "borzo" };
+    const payload = {
+      event_datetime: new Date().toISOString(),
+      event_type: "delivery_changed",
+      // Documented Business API 1.8 meaning: "Courier departed to the pick-up
+      // point" - the parcel is NOT moving, so this must NOT resolve to
+      // STARTED_DELIVERY (in_transit). parcel_picked_up is that event.
+      delivery: {
+        order_id: 890,
+        status: "courier_departed",
+        client_order_id: "ord_bzdeparted",
+        courier: { surname: "Patel", name: "Dev", phone: "918881111111" },
+      },
+    };
+    const raw = JSON.stringify(payload);
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const doc = docOf("ord_bzdeparted");
+    // Deliberate under-claim: identity attaches, the customer view never
+    // claims the parcel is on the way.
+    expect(doc.deliveryStatus).toBe("dispatched");
+    expect(doc.status?.code).not.toBe("OUT_FOR_DELIVERY");
+    // Status field is untouched by DRIVER_ALLOCATED (order stays PREPARING/READY).
+    expect(doc.status?.code).not.toBe("IN_TRANSIT");
+    expect(doc.delivery?.status).toBe("rider_assigned");
+    expect(doc.riderName).toBe("Patel Dev");
+    expect(doc.dispatchWebhookEvent).toBe("courier_departed");
+    expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(0);
+  });
+
+  it("courier_departed WITHOUT a courier leaves the customer view 'pending', never a fabricated rider", async () => {
+    seedOrder("ord_bzdep2", { deliveryStatus: "dispatched", dispatchProvider: "borzo", dispatchOrderId: "891" });
+    savedDocs["dispatch_order_map/891"] = { orderId: "ord_bzdep2", provider: "borzo" };
+    const payload = {
+      event_datetime: new Date().toISOString(),
+      event_type: "delivery_changed",
+      delivery: { order_id: 891, status: "courier_departed", client_order_id: "ord_bzdep2" },
+    };
+    const raw = JSON.stringify(payload);
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const doc = docOf("ord_bzdep2");
+    expect(doc.deliveryStatus).toBe("dispatched");
+    expect(doc.delivery?.status).toBe("pending");
+    expect(doc.riderName).toBeUndefined();
+  });
+
   it("marks known-but-inert Borzo lifecycle noise processed without parking", async () => {
     seedOrder("ord_ign", { deliveryStatus: "in_transit", dispatchProvider: "borzo", dispatchOrderId: "111" });
     savedDocs["dispatch_order_map/111"] = { orderId: "ord_ign", provider: "borzo" };
