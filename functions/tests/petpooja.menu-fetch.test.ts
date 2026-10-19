@@ -1090,6 +1090,87 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
     }
   });
 
+  it("(d) marks the sync row NOT catalogue-ready when the whole feed is unavailable", async () => {
+    const warn = spyOnWarn();
+    try {
+      await handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        items: [
+          { itemid: "d1", itemname: "A", price: "10", in_stock: "2" },
+          { itemid: "d2", itemname: "B", price: "10", in_stock: "2" },
+        ],
+      });
+
+      // The ingest really did complete; status keeps its meaning so nothing
+      // downstream re-routes retries on this change.
+      expect(latestSyncLog().status).toBe("COMPLETED");
+      expect(latestSyncLog().error).toBeNull();
+      // …but the row can no longer read as a healthy, orderable catalogue.
+      expect(latestSyncLog().catalogueReady).toBe(false);
+      expect(latestSyncLog().availabilityWarning).toBe("NO_ITEMS_IN_STOCK");
+      expect(latestSyncLog().inStockValues).toEqual({ "2": 2 });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(e) marks the sync row catalogue-ready when anything is orderable", async () => {
+    const warn = spyOnWarn();
+    try {
+      await handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        items: [
+          { itemid: "e1", itemname: "A", price: "10", in_stock: 1 },
+          { itemid: "e2", itemname: "B", price: "10", in_stock: "2" },
+        ],
+      });
+
+      expect(latestSyncLog().catalogueReady).toBe(true);
+      expect(latestSyncLog().availabilityWarning).toBeNull();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(f) an EMPTY feed is not an all-dark catalogue and carries no warning", async () => {
+    const warn = spyOnWarn();
+    try {
+      await handlePetpoojaMenuWebhook({ success: "1", rest_id: "demo", items: [] });
+
+      expect(latestSyncLog().catalogueReady).toBe(false);
+      expect(latestSyncLog().availabilityWarning).toBeNull();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("(g) the variation-hazard census reads ITEM-LOCAL variation only, never the deprecated top-level object", async () => {
+    await handlePetpoojaMenuWebhook({
+      success: "1",
+      rest_id: "demo",
+      // DOC VERIFIED: the vendor blueprint deprecates this top-level object and
+      // makes item-local `variation` authoritative. Reading it as a definition
+      // hid an unpriced, orderable, variation-flagged line.
+      variations: [{ variationid: "legacy_1", variationname: "Legacy Large" }],
+      items: [
+        {
+          itemid: "v1",
+          itemname: "Unpriced variation item",
+          price: "0",
+          in_stock: 1,
+          itemallowvariation: "1",
+          variation: [],
+        },
+      ],
+    });
+
+    expect(latestSyncLog().unpricedInStockVariationMissingCount).toBe(1);
+  });
+
   it("(d) treats a zero-item sync as NOT all-dark, and survives odd shapes without throwing", async () => {
     const warn = spyOnWarn();
     try {

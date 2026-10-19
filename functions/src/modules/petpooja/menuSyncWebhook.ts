@@ -333,9 +333,14 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
         item.itemallowvariation === "1" || item.itemallowvariation === 1 || item.itemallowvariation === true;
       if (variationFlagged) {
         unpricedVariationFlaggedCount++;
-        if (inStock &&
-            !(Array.isArray(item.variation) && item.variation.length > 0) &&
-            !(Array.isArray(menuData.variations) && menuData.variations.length > 0)) {
+        // Item-local `variation` ONLY. The vendor blueprint marks the top-level
+        // `variations` object deprecated ("Do not consume this object") and makes
+        // the item-local array authoritative, so a non-empty top-level array must
+        // never be read as "this item has variations". Counting it here understated
+        // the money hazard: an unpriced, in-stock, variation-flagged item whose
+        // item-local array is empty is exactly what this counter exists to catch,
+        // whatever the deprecated object happens to carry.
+        if (inStock && !(Array.isArray(item.variation) && item.variation.length > 0)) {
           unpricedInStockVariationMissingCount++;
         }
       }
@@ -394,14 +399,19 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
 
   await commitChunk();
 
+  // "The catalogue came out unorderable" gets ONE definition, shared by the
+  // operator warning and by the sync-log readiness fields, so the two can never
+  // drift apart. An EMPTY feed is deliberately not an all-dark catalogue (an API
+  // glitch must not look like a 100% 86-ing), and a partially dark catalogue is
+  // normal 86-ing — only "items ingested AND none available" qualifies.
+  const allDark = items.length > 0 && inStockTrueCount === 0;
+  const catalogueReady = items.length > 0 && inStockTrueCount > 0;
+  const availabilityWarning = allDark ? "NO_ITEMS_IN_STOCK" : null;
+
   // The warning that would have caught the 166-item Sold-Out incident. A warn
-  // only: it never throws, never alerts, and does not change `status`, `error`
-  // or the returned counts. Deliberately narrow — at least ONE item ingested AND
-  // every one of them not in stock. A zero-item sync is an empty feed, not an
-  // all-dark catalogue, so it must stay silent; and a PARTIALLY dark catalogue
-  // is just normal 86-ing, so it must stay silent too (hence `=== 0`, not
-  // "some"). Keeping this to the all-dark case is what makes it low-noise.
-  if (items.length > 0 && inStockTrueCount === 0) {
+  // only: it never throws and does not change `status`, `error` or the returned
+  // counts.
+  if (allDark) {
     const census = Object.entries(rawInStockValues)
       .map(([value, count]) => `${value} x${count}`)
       .join(", ");
@@ -517,6 +527,14 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       duration: "live",
       created: items.length,
       updated: 0,
+      // TRUTHFUL READINESS: `status` reports that the INGEST completed, which
+      // stayed true for a 100%-dark catalogue — exactly how a fully Sold-Out
+      // outlet produced a green row with `error: null`. These two fields carry
+      // what an operator or health check actually needs: whether anything in the
+      // catalogue is orderable, and why not. Additive; `status` and `error` keep
+      // their existing meanings, so no existing consumer changes behaviour.
+      catalogueReady,
+      availabilityWarning,
       deleted: 0,
       conflicts: 0,
       // ADDITIVE observability: the RAW `in_stock` values seen this run, grouped
