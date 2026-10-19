@@ -1137,3 +1137,123 @@ invisible until a multi-quantity line. **Not changed** — an unverified flip co
 halve the POS total for qty>1. Pinned by the existing assertions (price
 `"249.00"`, quantity `"2"`, final_price `"498.00"`) and the comment at
 `orderPush.ts`.
+
+## 19. Consolidated integration evidence (verified 2026-10-19/20)
+
+This section exists so the five-case status, the outlet's own limitations and the
+sync-observability contract do not have to be re-derived. Every claim is labelled
+with how it was established. Nothing here is a release authorisation.
+
+### 19.1 Documented order-status table (DOC VERIFIED)
+
+Source: Petpooja Online Ordering APIs **V2.1** blueprint, section
+`order-callback-request-response` / `callback-request` / `data-structure`,
+verbatim:
+
+> Current status of order.[-1 = Cancelled, 1/2/3 = Accepted, 4 = Dispatch,
+> 5 = Food Ready, 10 = Delivered]
+
+Independently confirmed by two readers (the blueprint JSON and the rendered
+documentation), so it is not a single-source claim.
+
+Consequences for our code:
+
+- `normalizePetpoojaStatus` (`item86ingSync.ts:12-35`) already matches this
+  table exactly: `-1 -> cancelled`, `1/2/3 -> accepted`, `4 ->
+  out_for_delivery`, `5 -> ready`, `10 -> delivered`, anything else ->
+  `unknown`. It is pinned by `petpooja.service.test.ts` (including
+  `"INVALID_STATUS" -> "unknown"`), so no invented meaning can creep in.
+- **"Fulfilled" is not a documented state.** The words fulfilled / completed /
+  served do not appear as order states anywhere in the reference. `10 Delivered`
+  is the only terminal success. Any vendor review that asks for "fulfilled order
+  IDs" is asking for something its own documentation does not define.
+
+### 19.2 The five sandbox cases (RUNTIME EVIDENCE + arithmetic reconciliation)
+
+Capture: the vendor's own Order List for `5439 - Burgonomics DEMO [135148]`,
+mapping code `31z58ciw0h`, taken 2026-10-17 14:05. The listing's "Order No."
+column carries **our** `clientOrderID`; the vendor's own order id was never
+exposed, so it is UNKNOWN and must not be invented.
+
+| Case | clientOrderID | Listed total | Listed timestamp | Last documented callback | Verdict |
+|---|---|---|---|---|---|
+| 1 Items + Tax | `bgx_items_tax_1792168821493` | 598.50 | 2026-10-16 22:10:28 | none recorded | received; fulfilment NOT VERIFIED |
+| 2 Addon + Tax | `bgx_addons_tax_1792168824749` | 419.00 | 22:10:31 | `-1 Cancelled` (2026-10-18 15:47:13Z) | cancelled at POS; NOT fulfilled |
+| 3 Variation + Tax | `bgx_variation_tax_1792168825392` | 283.50 | 22:10:31 | `5 Food Ready` (2026-10-18 15:46:42Z) | progressed; NOT fulfilled |
+| 4 Discount + Tax | `bgx_discount_tax_1792168825788` | 252.00 | 22:10:31 | none recorded | received; fulfilment NOT VERIFIED |
+| 5 Addon + Variation + Tax | `bgx_addon_variation_tax_1792168826052` | 312.95 | 22:10:30 | none recorded | received; fulfilment NOT VERIFIED |
+
+Every listed total reconciles to the paise against the harness arithmetic
+(`scripts/petpooja-sandbox-5scenarios.mjs`), which is real evidence that the
+pricing fields were carried: 570 + 5% GST = 598.50; 310 + addons 30 + 40 + 5% +
+20 packaging = 419.00; 270 + 5% = 283.50; (290 - 50) + 5% = 252.00;
+249 + addon 30 + 5% + 20 packaging = 312.95.
+
+Path: all five were sent by the scripted probe harness, **not** by a customer
+order. The harness imports the same payload builder as the Cloud Function relay
+(`functions/dist/modules/petpooja/testRunner.js`), so shape-level evidence
+transfers to the app path; end-to-end app evidence does not.
+
+### 19.3 The outlet's own configuration limit (PROVIDER-ORIGIN DATA)
+
+Extracted from the vendor's own captured push
+(`Petpooja_menu_push_error.txt`, "Menu items are successfully listed"):
+
+- `addongroups: []` - empty; every item also carries `addon: []`
+- `itemallowaddon: "0"` on all **166** items
+- `itemallowvariation: "1"` on **81** items, `"0"` on **85**
+- top-level `variations: []` - empty; every item carries `variation: []`
+
+Therefore no addon and no variation can resolve on this outlet: there is no
+valid id we could ever send. Cases 1 and 4 (items, discount) are exercisable
+today; cases 2, 3 and 5 as addon/variation cases require **vendor-side sandbox
+test configuration** (or a sandbox outlet/item that already defines them). This
+is configuration, not a payload defect on our side, and no production menu or
+stock change is requested.
+
+### 19.4 `in_stock` - one observed value, still unresolved
+
+The same push carried `in_stock: "2"` on **166 of 166** items. The whitelist
+(`menuSyncWebhook.ts:314`) recognises `1` / `"1"` / `true` only, so every item
+normalised to `inStock: false` and the whole catalogue rendered Sold Out. Whether
+`"2"` means available is **UNKNOWN** - the reference documents `in_stock` only in
+examples. The mapping is deliberately unchanged, and the raw values are censused
+on the sync-log row (`inStockValues`, e.g. `{ "2": 166 }`) so the next real push
+answers the question without a code change.
+
+### 19.5 Sync observability contract (LOCAL CODE VERIFIED)
+
+The sync-log row now distinguishes the two things that were previously one
+signal:
+
+- a **refused pull** writes `status: "FAILED"` with the vendor error and
+  `catalogueReady: false`; it never writes a green `COMPLETED` row and never
+  stamps `lastPetpoojaSync`;
+- a **completed ingest** writes `status: "COMPLETED"` plus `catalogueReady`
+  (true only if at least one item came out available) and
+  `availabilityWarning: "NO_ITEMS_IN_STOCK"` for the all-dark case only. An empty
+  feed is `catalogueReady: false` with a null warning, because an API glitch must
+  not read as a 100% 86-ing.
+
+`status` and `error` keep their original meanings, so nothing that reads them
+changes behaviour. Runtime illustration of why this matters: the deployed build
+recorded a Petpooja failure every hour from at least 2026-10-19T13:30Z to 20:30Z
+while `petpooja_sync_logs` stayed empty - failures were recorded only in
+`dev_error_snapshots`, so a sync-log reader saw "nothing" rather than "failing".
+
+### 19.6 Settled / UNKNOWN / BLOCKED
+
+- **Settled**: the status table above; `callback_url` is sent on every
+  `save_order`; `restID` is the restaurant mapping id used for both menu and
+  orders; `OrderItem` and `AddonItem` carry the documented required fields;
+  inbound callback authentication is **not documented** (so our unauthenticated
+  webhook is contract-consistent and no vendor signature may be asserted).
+- **UNKNOWN**: the meaning of `in_stock: "2"`; whether the outlet is provisioned
+  for `mapped_restaurant_menus` (the refusal string is not documented); what state
+  the vendor's review counts as "fulfilled".
+- **BLOCKED externally**: addon/variation sandbox configuration; vendor-side
+  fulfilment advancement; deployment of any local fix (the deployed artifact
+  `api-00013-gis`, built 2026-10-17T10:49:44Z, predates every fix after
+  2026-10-17T13:29Z, and also predates the vendorRefusal severity downgrade -
+  the deployed build still pages on-call at `high` for a known vendor refusal).
+  No deploy is authorised from this lane.
