@@ -68,6 +68,10 @@ import {
   autoRebookDispatchWorker,
   handleDispatchWebhook,
 } from "./modules/dispatch";
+import {
+  assertDispatchReadinessIfRequired,
+  assertDispatchBookingReadinessIfRequired,
+} from "./modules/dispatch/readiness";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import {
   createTicket,
@@ -710,10 +714,15 @@ app.post(
 
 app.post("/porter/quote", optionalAuth, validateBody(porterQuoteSchema), async (req: AuthenticatedRequest, res) => {
   try {
+    // The direct Porter lane must obey the SAME test-window readiness gate as
+    // the dispatch router. Without it this route could call a provider while a
+    // dispatch mock is active or a live host is configured, and its typed
+    // refusal was previously swallowed by a hardcoded 500.
+    assertDispatchReadinessIfRequired();
     const quote = await getDeliveryQuote(req.body);
     res.status(200).json(quote);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to calculate Porter quote" });
+    sendDispatchError(res, err, "Failed to calculate Porter quote");
   }
 });
 
@@ -725,6 +734,10 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, staffName } = req.body;
+      // Booking is gated separately from quoting: in the test window a real
+      // rider may not be booked until the exclusion is explicitly confirmed.
+      assertDispatchReadinessIfRequired();
+      assertDispatchBookingReadinessIfRequired();
       const result = await bookPorterRider(
         orderId,
         staffName || req.user?.email || "Branch Staff",
@@ -732,7 +745,7 @@ app.post(
       );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to dispatch Porter rider" });
+      sendDispatchError(res, err, "Failed to dispatch Porter rider");
     }
   }
 );
@@ -745,6 +758,8 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, staffName } = req.body;
+      assertDispatchReadinessIfRequired();
+      assertDispatchBookingReadinessIfRequired();
       const result = await rebookPorterRider(
         orderId,
         staffName || req.user?.email || "Branch Staff",
@@ -752,7 +767,7 @@ app.post(
       );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to re-book Porter rider" });
+      sendDispatchError(res, err, "Failed to re-book Porter rider");
     }
   }
 );
@@ -803,6 +818,11 @@ function sendDispatchError(res: Response, err: any, fallback: string): void {
   if (err?.attempts) extra.attempts = err.attempts;
   if (err?.providers) extra.providers = err.providers;
   if (err?.retryAfterMs) extra.retryAfterMs = err.retryAfterMs;
+  // Carry the machine-readable code through. Without it the app sees only the
+  // human message, so a typed refusal (e.g. DISPATCH_READINESS_FAILED,
+  // DISPATCH_TEST_BOOKING_BLOCKED, PROVIDER_BOOK_AMBIGUOUS) is indistinguishable
+  // from an opaque 500 and cannot be handled or logged precisely.
+  if (typeof err?.code === "string" && err.code) extra.code = err.code;
   res.status(status).json({ error: err?.message || fallback, ...extra });
 }
 
