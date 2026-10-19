@@ -473,6 +473,48 @@ describe("Petpooja POS Bridge Service", () => {
       expect(res).toBe(true);
     });
 
+    it("refuses the stock push for an UNLINKED branch without touching the vendor", async () => {
+      // Consumer-scope guard on the OUTBOUND management surface. In live mode
+      // (mock off) the push resolves the branch's linked outlet from
+      // branches/{id}.petpoojaStoreId and REFUSES when there is none
+      // (item86ingSync.ts:148-159). Refusing BEFORE any network call is the
+      // point: a toggle sent to a wrong-but-valid outlet SUCCEEDS remotely and
+      // 86s someone else's item silently (the Loop 6 note at :118-122), so a
+      // success return here would be a fabricated stock change.
+      // No branch doc is seeded, so the lookup finds no petpoojaStoreId.
+      config.mock.petpoojaPos = false;
+      const fetchSpy = vi.fn(async () => {
+        throw new Error("the outbound push must not reach the vendor for an unlinked branch");
+      });
+      vi.stubGlobal("fetch", fetchSpy);
+      try {
+        const res = await pushItemStockToPetpooja("branch_unlinked", "pp_b1", true);
+        expect(res).toBe(false);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("refuses the stock push outright when a declared-production process has the POS mock active", async () => {
+      // ZERO-MOCK runtime guard (env.ts:267-273). The boot assert alone is not
+      // enough because config.mock is a plain mutable object, so the push
+      // re-checks at its own boundary. Without this, the mock branch at
+      // item86ingSync.ts:112-115 returns TRUE for a toggle it never sent -
+      // reporting success to staff for a stock change the POS never received.
+      const prevEnv = process.env.BURGONOMICS_ENV;
+      config.mock.petpoojaPos = true; // the mock branch would otherwise "succeed"
+      process.env.BURGONOMICS_ENV = "production";
+      try {
+        await expect(
+          pushItemStockToPetpooja("branch_surat_01", "pp_b1", true)
+        ).rejects.toThrow(/MOCK_PETPOOJA_POS is active in production/);
+      } finally {
+        if (prevEnv === undefined) delete process.env.BURGONOMICS_ENV;
+        else process.env.BURGONOMICS_ENV = prevEnv;
+      }
+    });
+
     it("handles full menu webhook synchronization", async () => {
       const res = await handlePetpoojaMenuWebhook({
         rest_id: "branch_surat_01",
