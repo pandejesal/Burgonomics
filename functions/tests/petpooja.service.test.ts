@@ -428,6 +428,46 @@ describe("Petpooja POS Bridge Service", () => {
       ).toBeUndefined();
     });
 
+    it("fails CLOSED on the stock verb for every value outside the on-whitelist", async () => {
+      // The vendor documents the Item On/Off Webhook as carrying "the item stock
+      // status (in-stock or out-of-stock)" but documents NO value encoding for it
+      // - while its Push Menu payload uses "2" for all 166 items (see the
+      // in_stock census in the reference doc section 18.1). This verb is the
+      // AUTHORITATIVE stock channel, and before this test only in_stock: 0 was
+      // pinned, so the mapping for every other value was unspecified.
+      //
+      // Pin it: ONLY 1 / "1" / true mean in stock; anything else - including the
+      // push payload's "2" - resolves to out-of-stock. That is deliberately the
+      // SAFE direction (never sell what the POS 86-ed) and deliberately NOT a
+      // tolerant mapping (C07): the real encoding stays unknown until an actual
+      // on/off callback is observed, so neither branch may be "relaxed" quietly.
+      const cases: Array<[unknown, boolean]> = [
+        [1, true],
+        ["1", true],
+        [true, true],
+        [0, false],
+        ["0", false],
+        [false, false],
+        ["2", false], // the value the Push Menu payload carries for every item
+        [2, false],
+        ["ON", false],
+        [undefined, false],
+      ];
+
+      for (const [in_stock, expected] of cases) {
+        for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+        await handlePetpoojaStockWebhook({
+          rest_id: "branch_surat_01",
+          item_id: "pp_b1",
+          in_stock,
+        } as any);
+        expect(
+          savedDocs["products/prod_unlinked_pp_b1"]?.inStock,
+          `in_stock=${String(in_stock)} must resolve to inStock=${expected}`
+        ).toBe(expected);
+      }
+    });
+
     it("pushes stock toggle to Petpooja API successfully", async () => {
       const res = await pushItemStockToPetpooja("branch_surat_01", "pp_b1", true);
       expect(res).toBe(true);
