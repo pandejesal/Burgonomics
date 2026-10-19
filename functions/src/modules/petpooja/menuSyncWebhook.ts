@@ -258,6 +258,44 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
         errorStack: err.stack,
         branchId,
       });
+
+      // A refused pull used to leave NO row in `petpooja_sync_logs`, so anything
+      // reading that collection - a dashboard, a health check, a human on the
+      // bus - saw "nothing" instead of "failing". The deployed runtime showed
+      // exactly how misleading that is: the hourly job failed every hour from at
+      // least 13:30Z to 20:30Z and the sync-log collection stayed empty, which
+      // reads as "no problem" rather than "broken". The green COMPLETED row is
+      // still never written for a failed pull; this is an explicit FAILED row so
+      // that absence of data stops being ambiguous. Non-blocking on purpose: a
+      // logging problem must never mask the original error.
+      try {
+        await db.collection("petpooja_sync_logs").doc().set({
+          storeId: branchId,
+          storeName: branchId,
+          scope: "FULL",
+          status: "FAILED",
+          version: "live",
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          duration: "live",
+          created: 0,
+          updated: 0,
+          deleted: 0,
+          conflicts: 0,
+          inStockValues: {},
+          catalogueReady: false,
+          availabilityWarning: null,
+          error: err?.message || String(err),
+          simulated: config.mock.petpoojaPos,
+          source: "menuSyncWebhook",
+        });
+      } catch (logErr: any) {
+        console.warn(
+          "[Petpooja] failed-sync log persist failed (non-blocking):",
+          logErr?.message || logErr
+        );
+      }
       throw err;
     }
   }

@@ -201,9 +201,13 @@ describe("Petpooja Menu API — a 200 that reports the vendor's own failure", ()
       /refused the catalog lookup for outlet 31z58ciw0h: unable to fetch Object from s3 bucket/
     );
 
-    // The whole point: no green row, and the branch is not stamped as freshly
-    // synced. Before the fix both of these happened.
-    expect(syncLogRows()).toEqual([]);
+    // The whole point: no GREEN row, and the branch is not stamped as freshly
+    // synced. Before the fix both of these happened. A refusal now records an
+    // explicit FAILED row rather than nothing, so the sync-log collection can no
+    // longer read as "no problem" while every hourly pull is failing.
+    expect(syncLogRows().length).toBe(1);
+    expect(savedDocs[syncLogRows()[0]].status).toBe("FAILED");
+    expect(savedDocs[syncLogRows()[0]].catalogueReady).toBe(false);
     expect(savedDocs["branches/demo"].lastPetpoojaSync).toBeUndefined();
   });
 
@@ -229,6 +233,14 @@ describe("Petpooja Menu API — a 200 that reports the vendor's own failure", ()
     // hour for one outlet whose menu file is not provisioned yet.
     expect(savedDocs[rows[0]].severity).not.toBe("high");
     expect(savedDocs[rows[0]].severity).toBe("medium");
+
+    // The sync-log trail must carry the failure too, not just the snapshot:
+    // otherwise the collection is empty exactly when everything is broken.
+    expect(syncLogRows().length).toBe(1);
+    expect(savedDocs[syncLogRows()[0]].status).toBe("FAILED");
+    expect(String(savedDocs[syncLogRows()[0]].error)).toContain(
+      "unable to fetch Object from s3 bucket"
+    );
   });
 
   it("keeps an UNEXPECTED failure at high severity (no blanket downgrade)", async () => {
