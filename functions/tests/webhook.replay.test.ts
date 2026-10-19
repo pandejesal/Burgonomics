@@ -221,6 +221,38 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect(replay.out().body).toMatchObject({ status: "already_processed" });
   });
 
+  // ── ZERO-MOCK runtime guard (defense in depth behind the boot assert).
+  // `config.mock` is a plain mutable object, so a process that booted clean can
+  // be flipped afterwards; a flipped payment mock in a DECLARED PRODUCTION
+  // process would mint order_mock_* orders and skip signature checks. Every
+  // payment entrypoint must refuse. The webhook guard is the one this suite can
+  // prove, and the claim MUST NOT be written by a refused delivery — otherwise
+  // the event would be deduped away and permanently lost once the flag is
+  // fixed. ──
+  it("refuses a webhook outright when a mock payment flag is active in production (and writes no claim)", async () => {
+    const prevEnv = process.env.BURGONOMICS_ENV;
+    try {
+      process.env.BURGONOMICS_ENV = "production";
+      // The suite's own beforeEach already enables the payment mock.
+      expect(config.mock.paymentGateway).toBe(true);
+
+      const call = mockReqRes(capturedPayload("evt_mock_guard_1"));
+      await handleRazorpayWebhook(call.req, call.res);
+
+      expect(call.out().statusCode).toBe(500);
+      expect(call.out().body).toMatchObject({ error: "Webhook processing unavailable" });
+      // Nothing was confirmed, and no idempotency claim was taken.
+      expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("pending");
+      expect(savedDocs["orders/order_replay_1"].status).toBeUndefined();
+      expect(
+        Object.keys(savedDocs).filter((k) => k.startsWith("payment_audits/"))
+      ).toHaveLength(0);
+    } finally {
+      if (prevEnv === undefined) delete process.env.BURGONOMICS_ENV;
+      else process.env.BURGONOMICS_ENV = prevEnv;
+    }
+  });
+
   // ── payment.failed, the outcome customers actually experience: the write
   // that flips the order failed (the guards for the paid/foreign/ghost cases
   // are pinned elsewhere; the LEGITIMATE path had no coverage). ──
