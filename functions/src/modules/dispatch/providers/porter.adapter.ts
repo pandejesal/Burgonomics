@@ -62,6 +62,9 @@ export const porterAdapter: ProviderAdapter = {
           fare: q.estimatedFare,
           distanceKm: q.estimatedDistanceKm,
           pickupEtaMinutes: q.estimatedPickupMinutes,
+          // Pass the provenance through: a local estimate must not reach the
+          // partner card looking like Porter's own ETA.
+          etaEstimated: q.etaEstimated === true,
           quoteId: q.quoteId,
           expiresAt: q.expiresAt,
           source: q.source,
@@ -91,6 +94,8 @@ export const porterAdapter: ProviderAdapter = {
       fare: calculatePorterFare(distanceKm),
       distanceKm,
       pickupEtaMinutes: estimatePickupMinutes(),
+      // The rate card is ours end to end, so the ETA is unambiguously local.
+      etaEstimated: true,
       quoteId: `QTE-PRTR-${Math.floor(10000 + Math.random() * 90000)}`,
       expiresAt: Date.now() + QUOTE_TTL_MS,
       source: "porter_standard_rate_card",

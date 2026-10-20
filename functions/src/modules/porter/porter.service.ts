@@ -41,6 +41,11 @@ export interface PorterQuoteResult {
   source: string;
   /** True when GPS was missing and fallback coordinates priced the quote. */
   isEstimate?: boolean;
+  /**
+   * True when `estimatedPickupMinutes` is a LOCAL estimate because Porter sent
+   * no ETA. Absent/false means the number is Porter's own.
+   */
+  etaEstimated?: boolean;
   validForSeconds: number;
   expiresAt: number;
 }
@@ -153,6 +158,8 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
           estimatedDistanceKm: providerDistance ?? estimatedDistanceKm,
           estimatedFare: fare,
           estimatedPickupMinutes: providerEta ?? estimatePickupMinutes(),
+          // Provider data vs our local estimate - never silently the same thing.
+          etaEstimated: providerEta === null,
           vehicleType: "2-Wheeler (Bike Express)",
           quoteId: data.quote_id || `QTE-PRTR-${Date.now()}`,
           source: "porter_api_live",
@@ -180,6 +187,8 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
     estimatedDistanceKm,
     estimatedFare,
     estimatedPickupMinutes: estimatePickupMinutes(),
+    // The rate card is ours end to end, so the ETA is unambiguously local.
+    etaEstimated: true,
     vehicleType: "2-Wheeler (Bike Express)",
     quoteId: `QTE-PRTR-${Math.floor(10000 + Math.random() * 90000)}`,
     source: isEstimate ? "fallback_estimate" : "porter_standard_rate_card",

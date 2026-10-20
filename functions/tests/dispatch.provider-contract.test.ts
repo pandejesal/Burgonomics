@@ -423,6 +423,35 @@ describe("borzo quote warnings (D2)", () => {
   });
 });
 
+describe("quote ETA provenance (our estimate must not pose as the provider's)", () => {
+  it("flags the Borzo ETA as estimated when calculate-order sends none", async () => {
+    // No pickup_eta_minutes / eta in the response: previously a fixed 8 was
+    // returned unlabelled, indistinguishable from a real provider ETA.
+    fetchHandler = () =>
+      okJson({ is_successful: true, order: { payment_amount: "60.00" } });
+
+    const quote = await borzoAdapter.quote(borzoContext());
+
+    expect(quote.outcome).toBe("ok");
+    expect(quote.etaEstimated).toBe(true);
+  });
+
+  it("passes a real Borzo ETA through unflagged", async () => {
+    // Positive control: the flag must not be hardcoded true.
+    fetchHandler = () =>
+      okJson({
+        is_successful: true,
+        order: { payment_amount: "60.00" },
+        pickup_eta_minutes: 5,
+      });
+
+    const quote = await borzoAdapter.quote(borzoContext());
+
+    expect(quote.etaEstimated).toBe(false);
+    expect(quote.pickupEtaMinutes).toBe(5);
+  });
+});
+
 describe("borzo contact phones (findings 4, 5)", () => {
   it("never substitutes the customer's phone for the pickup contact", async () => {
     let sent: any = null;

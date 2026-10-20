@@ -249,7 +249,9 @@ export const borzoAdapter: ProviderAdapter = {
   },
 
   async quote(ctx: DispatchQuoteContext): Promise<ProviderQuoteOk> {
-    const { calculateHaversineDistanceKm } = await import("../../../core/geo");
+    const { calculateHaversineDistanceKm, estimatePickupMinutes } = await import(
+      "../../../core/geo"
+    );
     const fallbackKm = calculateHaversineDistanceKm(
       ctx.pickup.lat,
       ctx.pickup.lng,
@@ -296,17 +298,23 @@ export const borzoAdapter: ProviderAdapter = {
     );
     if (fare === null) throw unparseable("borzo", "calculate-order fare");
 
-    // calculate-order returns no distance/ETA — haversine fallback, fixed ETA 8.
+    // calculate-order returns no distance/ETA — haversine fallback for distance.
     const distanceKm =
       pickFiniteNumber(res.data?.distance_km, res.data?.calculation?.distance_km) ?? fallbackKm;
+
+    // The ETA is provider data only when Borzo actually sent one. The previous
+    // bare `?? 8` was a fixed number presented as the provider's own ETA on a
+    // customer-visible quote; same class as the Shadowfax `?? 9` (GAP 4).
+    const providerEta = pickFiniteNumber(res.data?.pickup_eta_minutes, res.data?.eta);
 
     return {
       provider: "borzo",
       outcome: "ok",
       fare,
       distanceKm,
-      pickupEtaMinutes:
-        pickFiniteNumber(res.data?.pickup_eta_minutes, res.data?.eta) ?? 8,
+      pickupEtaMinutes: providerEta ?? estimatePickupMinutes(),
+      // TRUE => that number is ours, not Borzo's; the router surfaces it.
+      etaEstimated: providerEta === null,
       quoteId: String(res.data?.quote_id || res.data?.calculation_id || `QTE-BORZO-${Date.now()}`),
       expiresAt: Date.now() + QUOTE_TTL_MS,
       source: "borzo_api_live",

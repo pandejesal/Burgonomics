@@ -244,7 +244,21 @@ describe("Porter Logistics Service", () => {
       expect(quote.source).toBe("porter_api_live");
       expect(quote.estimatedDistanceKm).toBe(5);
       expect(quote.estimatedPickupMinutes).toBe(4);
+      // Provider data, so it must NOT be labelled as our estimate.
+      expect(quote.etaEstimated).toBe(false);
       expect(quote.quoteId).toBe("Q-TEST-1");
+    });
+
+    it("flags the ETA as estimated when the live response carries none", async () => {
+      // fare is present (so the quote is usable) but eta is missing: the old
+      // shape returned a local 8 labelled porter_api_live with nothing to
+      // distinguish it from Porter's own number.
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ fare: 57.5, distance: 5, quote_id: "Q-TEST-2" })
+      );
+      const quote = await getDeliveryQuote(coords);
+      expect(quote.etaEstimated).toBe(true);
+      expect(Number.isFinite(quote.estimatedPickupMinutes)).toBe(true);
     });
 
     it("never propagates a non-numeric provider distance into a numeric field", async () => {
