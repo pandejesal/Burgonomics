@@ -329,11 +329,13 @@ async function main() {
           parsed.status === "success");
       const liveId =
         parsed && (parsed.petpooja_order_id || parsed.order_id || parsed.orderID || parsed.orderId);
-      // FULFILMENT is the POS accepting the order — NOT the response carrying an
-      // id. Petpooja answers success:"1" with an empty `orderID` while still
-      // registering the order (proven 2026-10-17: Petpooja's Order List for
-      // 5439 lists every relayed order with our clientOrderIDs and totals).
-      // Treating "no id in the body" as NOT FULFILLED was our false negative.
+      // RELAY ACCEPTANCE is the POS accepting the order — NOT fulfilment, and
+      // NOT the response carrying an id. Petpooja answers success:"1" with an
+      // empty `orderID` while still registering the order (shown 2026-10-17:
+      // Petpooja's Order List for 5439 lists every relayed order with our
+      // clientOrderIDs and totals). This harness can only observe acceptance;
+      // fulfilment needs terminal Order List/callback evidence and is NOT
+      // claimed here.
       row.posAccepted = posAccepted;
       row.petpoojaOrderId = posAccepted && typeof liveId === "string" && liveId.length > 0 ? liveId : null;
       row.petpoojaOrderIdReturned = !!row.petpoojaOrderId;
@@ -348,10 +350,10 @@ async function main() {
           `  body    : ${typeof row.response === "string" ? row.response : JSON.stringify(row.response)}\n` +
           `  verdict : ${
             !row.ok
-              ? "NOT FULFILLED (POS rejected)"
+              ? "NOT ACCEPTED (POS rejected)"
               : row.petpoojaOrderIdReturned
-                ? `FULFILLED (petpooja order id ${row.petpoojaOrderId})`
-                : "FULFILLED (POS accepted; response carried no order id — confirm on the outlet's Order List)"
+                ? `POS ACCEPTED (relay registered; id ${row.petpoojaOrderId}; fulfilment NOT verified)`
+                : "POS ACCEPTED (relay registered; no id returned; fulfilment NOT verified — confirm on the outlet's Order List)"
           }\n`
       );
     } catch (err) {
@@ -370,8 +372,9 @@ async function main() {
     dryRun: DRY_RUN,
     scenarios: results.map(({ response, ...rest }) => rest),
     verdict: DRY_RUN ? "DRY_RUN" : failures === 0 ? "PASS" : "FAIL",
-    // Fulfilment = POS accepted. `petpoojaOrderId` is null whenever Petpooja
-    // omitted the id from a response — the order is still registered.
+    // Relay acceptance only. `petpoojaOrderId` is null whenever Petpooja omitted
+    // the id from a response — the order is still registered, but fulfilment is
+    // NOT verified by this harness (see the console label).
     fulfilledIds: results
       .filter((r) => r.ok)
       .map((r) => ({
@@ -385,7 +388,7 @@ async function main() {
   fs.writeFileSync(EVIDENCE_PATH, JSON.stringify(evidence, null, 2));
 
   console.log(`Evidence written to ${path.relative(ROOT, EVIDENCE_PATH)}`);
-  console.log(`VERDICT: ${evidence.verdict} (${results.length - failures}/${results.length} fulfilled)`);
+  console.log(`VERDICT: ${evidence.verdict} (${results.length - failures}/${results.length} relay accepted; fulfilment NOT verified)`);
   if (failures > 0) process.exit(1);
 }
 

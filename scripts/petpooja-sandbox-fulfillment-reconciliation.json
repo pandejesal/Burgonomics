@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-10-17T00:00:00.000Z",
-  "purpose": "Reconciles the five deliverable scenarios against Petpooja's own Order List, because the save_order RESPONSE omits orderID even when the order registers. Establishes the fulfilment verdict independently of our runner.",
+  "purpose": "Reconciles the five deliverable scenarios against Petpooja's own Order List, because the save_order RESPONSE omits orderID even when the order registers. It establishes RECEIPT and total reconciliation independently of our runner; it does NOT establish fulfilment (that would require the vendor's terminal status/callback evidence).",
   "outlet": {
     "restaurantId": "5439",
     "name": "Burgonomics DEMO [135148]",
@@ -14,7 +14,7 @@
     "totalRecordsInOrderList": 34,
     "orderListCapturedBy": "operator, 2026-10-17",
     "sourceEvidenceFile": "scripts/petpooja-sandbox-evidence.json",
-    "caveat": "The evidence JSON scores these rows ok:false because its verdict required an orderID in the response body. That verdict has been fixed (scripts/petpooja-sandbox-5scenarios.mjs); the row-level totals and clientOrderIDs it recorded are unchanged and are what is reconciled here."
+    "caveat": "The evidence JSON scores these rows ok:false because its verdict required an orderID in the response body. That runner verdict has been corrected to RELAY ACCEPTANCE (scripts/petpooja-sandbox-5scenarios.mjs); the row-level totals and clientOrderIDs it recorded are unchanged and are what is reconciled here. Relay acceptance is not fulfilment."
   },
   "scenarios": [
     {
@@ -28,7 +28,8 @@
       "orderListOrderType": "Parcel/Pickup",
       "orderListCustomer": "Petpooja Sandbox Tester",
       "match": true,
-      "fulfilled": true
+      "received": true,
+      "fulfilmentVerified": false
     },
     {
       "scenarioId": "addon_variation_tax",
@@ -41,7 +42,8 @@
       "orderListOrderType": "Parcel/Pickup",
       "orderListCustomer": "Petpooja Sandbox Tester",
       "match": true,
-      "fulfilled": true
+      "received": true,
+      "fulfilmentVerified": false
     },
     {
       "scenarioId": "variation_tax",
@@ -54,7 +56,8 @@
       "orderListOrderType": "Parcel/Pickup",
       "orderListCustomer": "Petpooja Sandbox Tester",
       "match": true,
-      "fulfilled": true
+      "received": true,
+      "fulfilmentVerified": false
     },
     {
       "scenarioId": "addons_tax",
@@ -67,7 +70,8 @@
       "orderListOrderType": "Parcel/Pickup",
       "orderListCustomer": "Petpooja Sandbox Tester",
       "match": true,
-      "fulfilled": true
+      "received": true,
+      "fulfilmentVerified": false
     },
     {
       "scenarioId": "discount_tax",
@@ -80,14 +84,22 @@
       "orderListOrderType": "Parcel/Pickup",
       "orderListCustomer": "Petpooja Sandbox Tester",
       "match": true,
-      "fulfilled": true
+      "received": true,
+      "fulfilmentVerified": false
     }
   ],
   "verdict": {
-    "fulfilled": 5,
+    "received": 5,
     "required": 5,
-    "result": "PASS — 5/5 FULFILLED, confirmed on Petpooja's Order List, not by the save_order response"
+    "fulfilmentVerified": 0,
+    "result": "5/5 RECEIVED and total-reconciled; 0/5 fulfilment VERIFIED — the 2026-10-17 Order List snapshot records 'Waiting For Acceptance', and the later callback evidence is tracked in section 19.2 of references/petpooja_save_order_api.md"
   },
+  "history": [
+    {
+      "date": "2026-10-20",
+      "correction": "This file previously asserted 'PASS — 5/5 FULFILLED' and marked every row fulfilled:true from the Order List listing alone. That conflated RECEIVED with fulfilment. The vendor's own word 'fulfilled' is not a documented state (its terminal state is 10 Delivered); case 2 was cancelled (-1) and case 3 reached Food Ready (5), so fulfilment remains 0/5 verified. Rows now carry received/fulfilmentVerified; the original listing status is preserved verbatim below."
+    }
+  ],
   "supportingPointers": [
     {
       "claim": "The relay did place the orders despite the empty orderID",

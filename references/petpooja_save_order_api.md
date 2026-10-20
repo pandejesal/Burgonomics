@@ -213,7 +213,9 @@ authenticated successfully — no auth rejection at any point).
 
 **Blocker to raise with Petpooja** — the sandbox endpoint URL (and confirmation
 that the issued `app_key` is bound to the mapping code `31z58ciw0h`) before the
-5 required scenarios can produce fulfilled order IDs.
+5 required scenarios can produce fulfilled order IDs. The vendor's own term
+"fulfilled" is undefined in its documentation and is not a documented state
+(§19.1); this document now reports 5/5 RECEIVED and 0/5 fulfilment VERIFIED.
 
 **Implementation note** — because the PDF and the live API disagree, the relay
 (`functions/src/modules/petpooja/orderPush.ts`, `testRunner.ts`) emits **both**
@@ -683,7 +685,7 @@ code in `restaurants[0].details.menusharingcode`. It now resolves through
 outlet. Three new tests pin the resolution order (top-level → nested
 `menusharingcode` → `restaurantid` → null).
 
-### 16.8 Fulfilment is proven: the empty `orderID` is not a failure
+### 16.8 Received, not fulfilled: the empty `orderID` is not a failure
 
 On 2026-10-17 the operator captured Petpooja's **Order List** for
 `5439 - Burgonomics DEMO [135148] - 31z58ciw0h`. It holds every order this
@@ -698,12 +700,20 @@ matching our own runner evidence by `clientOrderID` **and** total:
 | Addons + Tax | `bgx_addons_tax_1792168824749` | 419.00 | 419 | 22:10:31 | Waiting For Acceptance |
 | Discount + Tax | `bgx_discount_tax_1792168825788` | 252.00 | 252 | 22:10:31 | Waiting For Acceptance |
 
+> The "status" column records the 2026-10-17 **listing snapshot** only. It is
+> not evidence of fulfilment: later callbacks for these probes are recorded in
+> §19.2 (case 2 `-1 Cancelled`, case 3 `5 Food Ready`, the rest none), and the
+> vendor's own word "fulfilled" is not a documented state (§19.1).
+
 Consequences — every one a correction to an earlier claim in this document:
 
-- **The five scenarios are FULFILLED.** `scripts/petpooja-sandbox-evidence.json`
-  scored them `ok:false` and §15 read that as 0/5. That was **our false
-  negative**: the runner required the response to carry an order id. Petpooja
-  registers the order and leaves `orderID` empty.
+- **All five scenarios were RECEIVED by the POS** and their totals reconcile to
+  the paise (see §19.2). **0/5 fulfilments are VERIFIED**: the listing snapshot
+  only shows "Waiting For Acceptance", case 2 was later cancelled, and case 3
+  reached Food Ready — not `10 Delivered`. `scripts/petpooja-sandbox-evidence.json`
+  scored them `ok:false` because the runner required an order id in the
+  response; that requirement was the wrong test, but removing it does **not**
+  upgrade the evidence to fulfilment.
 - The vendor's Order No. column displays OUR `clientOrderID`. No separate POS id
   is exposed anywhere the API can reach, so that is the only identifier Petpooja
   surfaces for these orders.
@@ -727,14 +737,17 @@ Fixes forced by this evidence:
 3. `petpooja/testRunner.ts` — `ok` now means "POS accepted"; id availability is
    reported separately (`petpoojaOrderId: string | null`,
    `petpoojaOrderIdReturned: boolean`). Acceptance without an id no longer throws.
-4. `scripts/petpooja-sandbox-5scenarios.mjs` — the verdict is fulfilment, not id
-   presence; the evidence separates `petpoojaOrderId: null` from rejection and
-   counts `acceptedWithoutId`.
+4. `scripts/petpooja-sandbox-5scenarios.mjs` — the verdict is RELAY ACCEPTANCE,
+   not fulfilment and not id presence; the evidence separates
+   `petpoojaOrderId: null` from rejection and counts `acceptedWithoutId`.
+   Fulfilment needs the vendor Order List/callbacks and is recorded in §19.2.
 
 Reconciliation artifact: `scripts/petpooja-sandbox-fulfillment-reconciliation.json`
 pairs each evidence row with its Order List row. No order-listing route exists on
 either host (§16.2), so the dashboard Order List is the only fulfilment oracle and
-the pairing is manual, by `clientOrderID` + total.
+the pairing is manual, by `clientOrderID` + total. Its current verdict is
+`received: 5`, `fulfilmentVerified: 0`; the 2026-10-20 correction is noted there
+so the earlier "5/5 FULFILLED" reading survives only as history.
 
 ### 16.9 DEMO outlet linked; placeholder Petpooja identifiers cleared (2026-10-17)
 
