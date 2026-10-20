@@ -43,7 +43,7 @@ A provider **not keyed** is excluded from the fan-out (not a failure, DR2) — *
 2. **Eligibility** — providers enabled + keyed (+ mock-flagged ones). *(No per-address `not_serviced` cache exists — see DR3.)*
 3. **Fan-out (DR5)** — parallel quotes with timeout; each result is `{ provider, outcome: "ok" | "not_serviced" | "transient_failure", fareKm?, fare?, quoteId?, expiresAt?, error? }`.
 4. **Winner (DR1)** — min fare among `ok`; ties → priority order.
-5. **Response** — winner flattened at top level for back-compat (`estimatedFare`, `estimatedDistanceKm`, `quoteId`, `vehicleType`, `source`, `expiresAt`, `validForSeconds` = 600) **plus** `winner: provider`, `providers: ProviderQuoteOutcome[]`, `serviceable`, `quotedAt`.
+5. **Response** — winner flattened at top level for back-compat (`estimatedFare`, `estimatedDistanceKm`, `estimatedPickupMinutes`, `pickupEtaEstimated`, `quoteId`, `vehicleType`, `source`, `expiresAt`, `validForSeconds` = 600) **plus** `winner: provider`, `providers: ProviderQuoteOutcome[]`, `serviceable`, `quotedAt`. `pickupEtaEstimated: true` means the ETA is our local estimate because that provider sent none — surface it as an estimate, never as the courier's own promise.
 6. **No winner** ⇒ HTTP 503 `{ serviceable: false, reason }` — never a static fare (DR2). Customer pays the winner's fare at checkout (or ₹0 free-delivery threshold — unchanged).
 
 ---
