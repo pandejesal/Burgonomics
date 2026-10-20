@@ -168,6 +168,9 @@ beforeEach(() => {
   config.shadowfax.apiKey = "";
   config.shadowfax.clientCode = "";
   config.shadowfax.webhookSecret = "";
+  // Explicit, not inherited: the live path needs a human-set contract flag, so
+  // every test starts knowing it is absent.
+  config.shadowfax.contractVerified = false;
   config.porter.enabled = true;
   config.porter.apiKey = "";
   config.porter.customerId = "";
@@ -246,6 +249,46 @@ describe("dispatchQuote (DR1/DR4/DR5)", () => {
     ).rejects.toMatchObject({ statusCode: 422, code: "DISPATCH_COORDINATES_INVALID" });
 
     expect(fetchCalls).toHaveLength(0); // guard runs before any carrier call
+  });
+
+  it("keeps a keyed Shadowfax out of the fan-out until the contract flag is set (zero wire calls)", async () => {
+    // GAP 2 at the level that actually matters: not "the report says so", but
+    // "no request leaves the process". Keys are present and the provider is
+    // enabled — only the human contract flag is missing.
+    config.porter.enabled = false;
+    config.mock.borzoDispatch = true; // keep a usable provider so the quote succeeds
+    config.mock.shadowfaxDispatch = false;
+    config.shadowfax.enabled = true;
+    config.shadowfax.apiKey = "test_sfx_token";
+    config.shadowfax.clientCode = "test_sfx_client";
+    config.shadowfax.contractVerified = false;
+    // Any response here would be an acceptable-shaped provider reply, so a leak
+    // would show up as a successful shadowfax quote rather than a parse error.
+    fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42 });
+
+    const res = await dispatchQuote({
+      pickupLat: PICKUP.lat,
+      pickupLng: PICKUP.lng,
+      dropLat: DROP.lat,
+      dropLng: DROP.lng,
+    });
+
+    expect(res.winner).toBe("borzo");
+    expect(res.providers.map((p: any) => p.provider)).not.toContain("shadowfax");
+    expect(fetchCalls.filter((c) => /shadowfax/i.test(c.url))).toHaveLength(0);
+
+    // Positive control: with the flag the provider DOES join the fan-out, so the
+    // assertion above cannot pass by shadowfax being unreachable for some other
+    // reason (disabled, unkeyed, misconfigured).
+    config.shadowfax.contractVerified = true;
+    const withContract = await dispatchQuote({
+      pickupLat: PICKUP.lat,
+      pickupLng: PICKUP.lng,
+      dropLat: DROP.lat,
+      dropLng: DROP.lng,
+    });
+    expect(withContract.providers.map((p: any) => p.provider)).toContain("shadowfax");
+    expect(fetchCalls.some((c) => /shadowfax/i.test(c.url))).toBe(true);
   });
 
   it("fails closed 503 NO_SERVICEABLE_PROVIDER when no provider is eligible", async () => {
