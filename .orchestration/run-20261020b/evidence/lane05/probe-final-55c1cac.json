@@ -1,0 +1,65 @@
+{
+  "summary": {
+    "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture",
+    "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture\\references\\delivery_routing.md",
+    "porterAdapterReferencesTag": false,
+    "codeDrifts": true,
+    "docDeclaresDeviation": true,
+    "passed": 10,
+    "failed": 0,
+    "failedIds": [],
+    "verdict": "DOC_MATCHES_CODE"
+  },
+  "results": [
+    {
+      "id": "A1",
+      "ok": true,
+      "detail": "borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS"
+    },
+    {
+      "id": "A2",
+      "ok": true,
+      "detail": "shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS"
+    },
+    {
+      "id": "A3",
+      "ok": true,
+      "detail": "porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS"
+    },
+    {
+      "id": "A4",
+      "ok": true,
+      "detail": "porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)"
+    },
+    {
+      "id": "A5",
+      "ok": true,
+      "detail": "dispatch.router.ts walks on (continue) only for ProviderDispatchError and otherwise releases the claim then rethrows"
+    },
+    {
+      "id": "A6",
+      "ok": true,
+      "detail": "borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)"
+    },
+    {
+      "id": "A7",
+      "ok": true,
+      "detail": "doc cites the concurrently-edited adapters by symbol, not by line number"
+    },
+    {
+      "id": "B1",
+      "ok": true,
+      "detail": "delivery_routing.md makes no universal-compliance claim"
+    },
+    {
+      "id": "B2",
+      "ok": true,
+      "detail": "delivery_routing.md carries a Porter deviation note with negative polarity"
+    },
+    {
+      "id": "B3",
+      "ok": true,
+      "detail": "code drifts and the doc declares the deviation (consistent)"
+    }
+  ]
+}
