@@ -140,6 +140,34 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
     expect(fetchCalls).toHaveLength(0);
   });
 
+  it("book() refuses a whitespace-only token BEFORE the clientCode check", async () => {
+    // Empty clientCode would otherwise throw a walkable transient error; the
+    // credential guard must win, otherwise the ordering hides a config fault
+    // behind a provider-failure class.
+    config.shadowfax.apiKey = "   ";
+    config.shadowfax.clientCode = "";
+
+    const err = await capture(
+      shadowfaxAdapter.book({ ...ctx(), orderId: "ord_sfx_gate_ws_book", quote: undefined as any })
+    );
+
+    expect(err.code).toBe("DISPATCH_PROVIDER_UNCONFIGURED");
+    expect(err).not.toBeInstanceOf(ProviderDispatchError);
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it("a padded token is sent TRIMMED — validate what you actually send", async () => {
+    config.shadowfax.apiKey = "  test_sfx_token  ";
+    fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42 });
+
+    await shadowfaxAdapter.quote(ctx());
+
+    expect(fetchCalls).toHaveLength(1);
+    // A newline/space pasted into the secret would otherwise reach the wire and
+    // be rejected 401 -> transient -> a silent walk for a local config fault.
+    expect(fetchCalls[0].init.headers.Authorization).toBe("Token test_sfx_token");
+  });
+
   it("positive control: a keyed quote reaches the wire exactly once with the Token header", async () => {
     config.shadowfax.apiKey = "test_sfx_token";
     fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42, pickup_eta: 6 });

@@ -45,14 +45,19 @@ import {
  *     `order_items`. Response: `sfx_order_id`, `track_url`. The rider arrives
  *     later via the ALLOTTED callback, so book falls back to a pending rider
  *     identity.
- *   - Retry-window note: place the order within minutes of a successful
- *     serviceability check (router quotes immediately before booking, DR7).
+ *   - Retry-window note (UNVERIFIED, our assumption): place the order within
+ *     minutes of a successful serviceability check (router quotes immediately
+ *     before booking, DR7).
  */
 
 function shadowfaxHeaders(): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    Authorization: `Token ${config.shadowfax.apiKey}`,
+    // Trim HERE as well as in the guard: validate-what-you-send. A token pasted
+    // with a trailing newline/space would otherwise pass the guard and reach the
+    // wire as `Authorization: Token  abc ` -> 401 -> classified transient -> a
+    // silent walk to another courier for a LOCAL config fault.
+    Authorization: `Token ${(config.shadowfax.apiKey || "").trim()}`,
   };
 }
 
@@ -64,10 +69,14 @@ function base(): string {
  * Fail closed on a missing token BEFORE any provider call. `isEligible()`
  * already requires the key, so the router never reaches this — but a direct
  * adapter call (a future caller, a test harness, a refactor) would otherwise
- * send `Authorization: Token ` and get an opaque 401 classified as transient,
- * i.e. a silent walk to another courier for a LOCAL config fault. Deliberately a
- * plain Error, not ProviderDispatchError: a missing credential is not a provider
- * failure and must never release the dispatch claim to fail over.
+ * send `Authorization: Token ` and get an opaque 401 classified as transient.
+ *
+ * Deliberately a plain Error, not ProviderDispatchError: a missing credential is
+ * not a provider failure. At BOOK time that keeps the router from releasing the
+ * claim and walking to another courier (it walks only on ProviderDispatchError);
+ * at QUOTE time the fan-out already folds any throw into a `transient_failure`
+ * outcome, which can never book a rider — so the guard's no-walk guarantee is a
+ * book-path property, and quote() simply never hits the wire unauthenticated.
  */
 function assertShadowfaxCredentials(operation: string): void {
   // Trimmed: an env value of "   " is not a token. `isEligible()` only checks
