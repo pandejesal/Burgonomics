@@ -64,8 +64,19 @@ function borzoHeaders(): Record<string, string> {
 function borzoPhone(raw: string | undefined): string | null {
   let digits = (raw || "").replace(/\D/g, "");
   if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
-  if (digits.length === 10) return `91${digits}`;
-  return digits.length >= 12 ? digits.slice(0, 12) : null;
+  // A 10-digit value that still starts with 0 is an STD/trunk form, not a
+  // national mobile number: prefixing "91" to it invents the same wrong
+  // recipient this function refuses to truncate. Unknown => null.
+  if (digits.length === 10) return digits.startsWith("0") ? null : `91${digits}`;
+  // Exactly 12 digits is the documented `91` + 10-digit national form — and only
+  // that prefix qualifies. A 12-digit value starting with anything else (e.g. a
+  // trunk 0: "098250012345") is sent as-is by neither form; refuse it. Anything
+  // LONGER used to be silently sliced to 12, which turns "+91 098250 12345"
+  // into "910982501234" — a plausible-looking, WRONG recipient handed to a
+  // live courier. A number we cannot normalise unambiguously must block the
+  // booking (null), never be truncated into a different person's line.
+  if (digits.length === 12) return digits.startsWith("91") ? digits : null;
+  return null;
 }
 
 /**
@@ -79,6 +90,12 @@ function borzoPhone(raw: string | undefined): string | null {
  * order_is_duplicate, total_payment_amount_limit_exceeded, …) is a
  * provider/account-side fault: transient, so the walk retries the NEXT provider
  * and Borzo stays eligible.
+ *
+ * CLASS SEMANTICS ONLY: this table is read by classifyBorzoError (quote path
+ * and every non-duplicate code). At create-order an `order_is_duplicate` is
+ * ACCEPTANCE AMBIGUITY, not a walkable fault — the book-time guard in book()
+ * turns it into a plain PROVIDER_BOOK_AMBIGUOUS error so the router can never
+ * fail over into a second real courier.
  */
 const BORZO_NOT_SERVICED_CODES = new Set([
   "route_not_found",
@@ -187,6 +204,19 @@ export function classifyBorzoError(
 function assertBorzoResponse(res: ProviderHttpResponse): void {
   if (res.ok && res.data?.is_successful !== false) return;
   throw classifyBorzoError("borzo", res.status, res.data, { rawBody: res.text });
+}
+
+/**
+ * Book-time acceptance ambiguity: the order MAY exist at Borzo. Deliberately a
+ * PLAIN error (no `kind`), so dispatch.router.ts cannot treat it as a walkable
+ * provider fault and book a second real courier. The router releases the claim
+ * and surfaces it for reconciliation by `client_order_id`.
+ */
+function borzoBookAmbiguous(message: string): Error {
+  const err: any = new Error(message);
+  err.statusCode = 502;
+  err.code = "PROVIDER_BOOK_AMBIGUOUS";
+  return err;
 }
 
 function buildPoints(ctx: DispatchQuoteContext, forBooking: boolean): any[] {
@@ -338,13 +368,32 @@ export const borzoAdapter: ProviderAdapter = {
         geoSource: "live_gps",
       };
     }
-
-    const res = await fetchProviderJson("borzo", `${borzoApiBase()}/create-order`, {
-      method: "POST",
-      headers: borzoHeaders(),
-      body: JSON.stringify(buildOrderPayload(ctx, true)),
-    });
-    assertBorzoResponse(res);
+    let res: ProviderHttpResponse;
+    try {
+      res = await fetchProviderJson("borzo", `${borzoApiBase()}/create-order`, {
+        method: "POST",
+        headers: borzoHeaders(),
+        body: JSON.stringify(buildOrderPayload(ctx, true)),
+      });
+    } catch (err: any) {
+      // A create-order that produced no response is NOT safely retryable: the
+      // request may already have reached Borzo, and an abort/timeout fires
+      // AFTER the request is in flight (the canonical "we may have booked it"
+      // case this whole guard exists for). Re-classify that class as acceptance
+      // ambiguity so the ranked walk cannot book a second real courier.
+      // The test is on the ABORT CLASS, not on transmission state: we cannot
+      // observe whether bytes reached Borzo (a stalled DNS/TLS handshake aborts
+      // the same way and is reported as ambiguous too — safe direction, at the
+      // cost of a reconciliation ticket). Fast pre-send failures (DNS,
+      // connection refused) do not match and stay transient/walkable.
+      const message = String(err?.message || "");
+      if (/timed?\s?out|abort/i.test(message)) {
+        throw borzoBookAmbiguous(
+          "Borzo create-order timed out with no response: the request may already have created an order - do not book another courier; reconcile by client_order_id before any rebook"
+        );
+      }
+      throw err;
+    }
 
     const order = res.data?.order || {};
     const rawProviderOrderId =
@@ -355,17 +404,60 @@ export const borzoAdapter: ProviderAdapter = {
         : typeof rawProviderOrderId === "number" && Number.isFinite(rawProviderOrderId)
           ? String(rawProviderOrderId)
           : null;
+    // Order-scoped id evidence ONLY (never the loose `res.data.id`, which can be
+    // a request/echo id on a failure body). This is what makes a failed
+    // create-order ambiguous rather than retryable.
+    const rawNamedOrderId = order.order_id ?? res.data?.order_id ?? null;
+    const namedOrderId =
+      typeof rawNamedOrderId === "string" && rawNamedOrderId.trim() !== ""
+        ? rawNamedOrderId
+        : typeof rawNamedOrderId === "number" && Number.isFinite(rawNamedOrderId)
+          ? String(rawNamedOrderId)
+          : null;
+    const accepted = res.ok && res.data?.is_successful !== false;
+    // DUPLICATE-ORDER AMBIGUITY (book-time only). A duplicate signal is
+    // provider evidence that an order for OUR client_order_id may already
+    // exist (an earlier accepted create-order, e.g. one whose response timed
+    // out client-side). It can never be a walkable transient fault: the DR6
+    // ranked walk would then book a SECOND real courier while Borzo may still
+    // dispatch the first. Checked BEFORE assertBorzoResponse so BOTH delivery
+    // shapes are covered — a 400 body, a 200 `is_successful:false` body, and a
+    // warnings-carried duplicate — and shape-independently of res.status.
+    // The check is on the duplicate CODE, not on a missing id: an id-carrying
+    // duplicate is the STRONGEST evidence the order exists, so it must make
+    // this guard stricter, never bypass it (same plain-error contract: release
+    // claim, no failover, reconcile by client_order_id). The classification
+    // table stays intact for the quote path and every other code/shape.
+    const duplicateCode =
+      borzoErrorCodes(res.data).includes("order_is_duplicate") ||
+      borzoWarningCodes(res.data).includes("order_is_duplicate");
+    if (duplicateCode && !accepted) {
+      throw borzoBookAmbiguous(
+        "Borzo create-order was refused as order_is_duplicate: Borzo may already hold an order for this client_order_id - do not book another courier; reconcile by client_order_id before any rebook"
+      );
+    }
+    // A NON-SUCCESS create-order that still names an order is the same
+    // ambiguity without the duplicate label: Borzo created something (that id
+    // is real) but the response is not a success we can bind. Failing over
+    // here would book a second courier for an order that may already exist.
+    if (!accepted && namedOrderId !== null) {
+      throw borzoBookAmbiguous(
+        `Borzo create-order did not succeed but named order ${namedOrderId}: the order may already exist - do not book another courier; reconcile by client_order_id before any rebook`
+      );
+    }
+    // A duplicate-ECHO response that IS a success and names the EXISTING order
+    // id skips the guard and binds truthfully below: the dedupe question was
+    // answered by Borzo itself.
+    assertBorzoResponse(res);
+
     if (providerOrderId === null) {
       // The provider ACCEPTED the request (2xx and is_successful !== false) but
       // returned no usable order id. The order may exist on their side, so this
       // must NOT be treated as a retryable provider fault: failing over would
       // book a SECOND real rider. Surface it loudly for reconciliation instead.
-      const err: any = new Error(
+      throw borzoBookAmbiguous(
         "Borzo create-order returned no order id (response shape differs from spec) - do not retry blindly; reconcile by client_order_id"
       );
-      err.statusCode = 502;
-      err.code = "PROVIDER_BOOK_AMBIGUOUS";
-      throw err;
     }
 
     // Tracking link arrives on the destination point (drop point is last).
