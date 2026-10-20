@@ -38,9 +38,11 @@ Register these URLs in your third-party developer consoles to receive live updat
 | **Petpooja POS** | Webhook / Callback URL | `https://api-jgxunirgwq-el.a.run.app/petpooja/webhook` | Order status changes, Out-of-Stock (86ing) updates |
 | **Petpooja POS** | Menu Sync Endpoint | `https://api-jgxunirgwq-el.a.run.app/petpooja/menu-sync` | Menu catalog updates |
 | **Razorpay** | Webhook URL | `https://api-jgxunirgwq-el.a.run.app/payments/webhook` | `payment.captured`, `payment.failed`, `refund.processed`, `transfer.processed` |
-| **Porter Logistics** | Webhook Callback URL | `https://api-jgxunirgwq-el.a.run.app/dispatch/webhook/porter` | Order status transitions (rider assigned, arrived, picked up, delivered) |
-| **Borzo Logistics** | Webhook Callback URL | `https://api-jgxunirgwq-el.a.run.app/dispatch/webhook/borzo` | Delivery updates |
-| **Shadowfax** | Webhook Callback URL | `https://api-jgxunirgwq-el.a.run.app/dispatch/webhook/shadowfax` | Rider telemetry and tracking updates |
+| **Porter Logistics** | Webhook Callback URL | `https://api-jgxunirgwq-el.a.run.app/porter/webhook` | Order status transitions (rider assigned, arrived, picked up, delivered) |
+| **Borzo Logistics** | Webhook Callback URL | `https://api-jgxunirgwq-el.a.run.app/dispatch/webhooks/borzo` | Delivery updates — **contract-gated**: do not register until the Borzo contract is confirmed |
+| **Shadowfax** | Webhook Callback URL | `https://api-jgxunirgwq-el.a.run.app/dispatch/webhooks/shadowfax` | Rider telemetry — **contract-gated**: requires `SHADOWFAX_CONTRACT_VERIFIED` and vendor confirmation first |
+
+> Paths above are the deployed Cloud Run forms. Behind the Cloud Functions host the same routes sit under the function name (`...cloudfunctions.net/api/petpooja/webhook`, etc.). Route spellings verified against the current `functions/src/index.ts` route table on 2026-10-20; the earlier `/dispatch/webhook/<provider>` spelling was wrong and has been corrected.
 
 ---
 

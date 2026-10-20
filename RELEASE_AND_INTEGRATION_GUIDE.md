@@ -1,8 +1,9 @@
 # BURGONOMICS — Master Release, Integration & Store Publication Guide
 
-> **Authoritative Guide for Live Gateways (Petpooja POS & Porter Delivery), Production Deployment, and App Store & Google Play Store Publishing.**  
+> **Release, Integration & Store Publication Guide — Petpooja POS and Porter Delivery gateways, production deployment, and App Store / Google Play publishing.**
+> **Scope (current):** the Borzo and Shadowfax dispatch adapters and their callback routes ship in `functions/` but are **outside this guide** and remain contract-gated — see §9.
 > **Target Project ID**: `burgonomics-7faa8` (or Client GCP Project) | **Region**: `asia-south1` (Mumbai)  
-> **System Verification**: 602 Tests Passing (230 Functions, 151 Partner POS, 221 Customer App)
+> **System verification (historical snapshot; the original record carries no date)**: 602 tests reported passing (230 Functions, 151 Partner POS, 221 Customer App). This is **not current evidence** — the suite inventory has grown since; run §8 at the current commit and record the SHA, date and actual counts.
 
 ---
 
@@ -16,6 +17,7 @@
 6. [Reviewer Demo Credentials & Sandbox Mode](#6-reviewer-demo-credentials--sandbox-mode)
 7. [Environment Secrets & Production Deployment Checklist](#7-environment-secrets--production-deployment-checklist)
 8. [Automated Verification & Build Commands](#8-automated-verification--build-commands)
+9. [Current limitations](#9-current-limitations-recorded-2026-10-20)
 
 ---
 
@@ -48,9 +50,9 @@ Burgonomics operates as a modern dual-app QSR platform powered by Firebase Cloud
    └───────────────────────────────────┘                            └───────────────────────────────────┘
 ```
 
-Both 3rd-party gateway integrations have been architected with **fail-safe fallback triggers**:
-- In **development / sandbox mode**, they gracefully return simulated data if credentials are missing or contain `"mock"`.
-- In **production mode**, providing live credentials and setting `MOCK_PETPOOJA_POS=false` and `MOCK_PORTER_DISPATCH=false` executes real, authoritative HTTP requests.
+Gateway behaviour is **fail-closed**, not fail-open:
+- Mocks are explicit opt-in flags (`MOCK_PETPOOJA_POS`, `MOCK_PORTER_DISPATCH`, `MOCK_BORZO_DISPATCH`, `MOCK_SHADOWFAX_DISPATCH`; exact `"true"` only). Missing credentials do **not** return simulated data — a dispatch provider simply becomes ineligible and the quote fails closed.
+- In **production mode**, live credentials with the mock flags set to `false` execute real HTTP requests; production boot refuses active mocks (`assertProductionKeys`).
 
 ---
 
@@ -71,7 +73,7 @@ Both 3rd-party gateway integrations have been architected with **fail-safe fallb
 | **KOT Push** | Payment capture (`verifyPayment` or `payment.captured` webhook) | `POST /save_order` with `app_key`, `app_secret`, `access_token`, and nested `orderinfo` (including `clientOrderID` dedup hook). | Sends order to kitchen thermal printer; saves returned `petpoojaOrderId` to Firestore. |
 | **Menu Ingestion** | Hourly Cloud Scheduler (`hourlyPetpoojaMenuSync`) or Manual Partner Trigger | `POST /mapped_restaurant_menus` (Menu API host) with `rest_id` and auth headers. | Writes items to Firestore `products` collection with MRP, `isVeg`, `inStock`, and category mappings. |
 | **Instant 86ing (Stock Out)** | Petpooja POS Terminal toggle | `POST /api/petpooja/stockWebhook` (Inbound webhook) | Sets `inStock = false` on the specific product doc in real time, disabling it on customer app. |
-| **Kitchen Webhook & Refund** | Chef cancels item or entire order in Petpooja POS | `POST /api/petpooja/webhook` (Inbound webhook) | Updates order status to `cancelled` and automatically triggers an instant partial/full Razorpay refund. |
+| **Kitchen Webhook & Refund** | Chef cancels item or entire order in Petpooja POS | `POST /api/petpooja/webhook` (Inbound webhook) | Sets the order to the cancelled state and **parks a refund request for staff approval** (`refunds/refund_pos_cancel_<orderId>`, `status: PENDING`, `payment.refundStatus: PENDING_APPROVAL`). It does **not** auto-refund — per the recorded 2026-09-23 product decision in `item86ingSync.ts`. |
 
 ### How to Switch to Live Petpooja
 In `functions/.env` (and GCP Secret Manager):
@@ -84,7 +86,7 @@ PETPOOJA_ACCESS_TOKEN=your_live_access_token
 PETPOOJA_MENU_URL=https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1
 PETPOOJA_ORDER_URL=https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1
 ```
-*In Firestore: Ensure each branch document (`branches/{branchId}`) contains the branch's specific Petpooja restaurant ID under `petpooja.restId`.*
+*In Firestore: Ensure each branch document (`branches/{branchId}`) carries the branch's Petpooja restaurant ID in the **top-level field `petpoojaStoreId`** — read by menu sync, 86ing and KOT push. A nested `petpooja.restId` is not read anywhere and will fail closed ("no linked Petpooja outlet").*
 
 ---
 
@@ -122,8 +124,8 @@ PORTER_BASE_URL=https://api.porter.in
 ## 4. Apple App Store Publication Guide
 
 ### App Identifiers
-- **Customer App**: `com.glassdoorsstudio.burgonomics`
-- **Partner POS App**: `com.glassdoorsstudio.burgonomics.partner`
+- **Customer App**: `com.burgonomics`
+- **Partner POS App**: `com.burgonomics.partner`
 
 ### Prerequisites
 1. **Apple Developer Account** enrolled at [developer.apple.com](https://developer.apple.com).
@@ -159,8 +161,8 @@ chmod +x mac-build.sh
 ## 5. Google Play Store Publication Guide
 
 ### App Identifiers
-- **Customer App**: `com.glassdoorsstudio.burgonomics`
-- **Partner POS App**: `com.glassdoorsstudio.burgonomics.partner`
+- **Customer App**: `com.burgonomics`
+- **Partner POS App**: `com.burgonomics.partner`
 
 ### Prerequisites
 1. **Google Play Console Account** at [play.google.com/console](https://play.google.com/console).
@@ -268,25 +270,34 @@ npx firebase-tools deploy --only hosting --project burgonomics-7faa8
 
 ## 8. Automated Verification & Build Commands
 
-All 602 tests across the three monorepo packages are green:
+**Historical record only — not current evidence.** The counts below were recorded in an earlier snapshot and have not been re-verified by this document. Run the commands at the current commit and record the SHA, date and actual counts instead of quoting this table:
 
 ```bash
-# 1. Backend Functions (230 tests)
+# 1. Backend Functions (historical count: 230)
 cd functions
 npx tsc --noEmit && npm test && npm run build
 
-# 2. Partner POS App (151 tests)
+# 2. Partner POS App (historical count: 151)
 cd ../burgonomics-partner
 npx tsc --noEmit && npm test && npm run build
 
-# 3. Customer App (221 tests)
+# 3. Customer App (historical count: 221)
 cd ../burgonomics-foundation-core
 npx tsc --noEmit && npm test && npm run build
 ```
 
-| Package | Test Suites | Total Tests | Status |
+| Package | Test Suites (historical) | Total Tests (historical) | Status |
 |---|---|---|---|
-| **Backend Functions** (`functions/`) | 23 Suites | **230 passed** | ✅ Clean (`dist/index.js`) |
-| **Partner POS App** (`burgonomics-partner/`) | 30 Suites | **151 passed** | ✅ Clean (`dist/`) |
-| **Customer App** (`burgonomics-foundation-core/`) | 38 Suites | **221 passed** | ✅ Clean (`dist/mobile`) |
-| **Total Monorepo Suite** | **91 Suites** | **602 passed** | ✅ **Release Ready** |
+| **Backend Functions** (`functions/`) | 23 Suites | **230 passed** | Historical snapshot — re-run to verify |
+| **Partner POS App** (`burgonomics-partner/`) | 30 Suites | **151 passed** | Historical snapshot — re-run to verify |
+| **Customer App** (`burgonomics-foundation-core/`) | 38 Suites | **221 passed** | Historical snapshot — re-run to verify |
+| **Total Monorepo Suite** | **91 Suites** | **602 passed** | **Not a release-readiness claim** |
+
+---
+
+## 9. Current limitations (recorded 2026-10-20)
+
+- **Borzo / Shadowfax dispatch** ship in `functions/src/modules/dispatch/**` with callback routes `POST /dispatch/webhooks/borzo` and `POST /dispatch/webhooks/shadowfax`, but are **not** covered by this guide. Their environment keys live in `functions/.env.example` (single source of truth) and both remain contract-gated: Shadowfax additionally requires `SHADOWFAX_CONTRACT_VERIFIED`. Do not register vendor callbacks or enable live traffic from this document alone.
+- **App identifiers are `com.burgonomics` (customer) and `com.burgonomics.partner` (Partner) on both stores** — Android `applicationId`, Capacitor `appId` and the iOS `PRODUCT_BUNDLE_IDENTIFIER` all agree. Any other identifier in older handover material is stale.
+- **Verification counts in §8 are historical.** This guide must not be cited as evidence that a suite is currently green.
+- **Reviewer credentials** referenced in §6 are not reproduced as proof of anything and are pending an owner decision (rotate and store outside the repository, or formally accept). This document does not assert they are live or usable.
