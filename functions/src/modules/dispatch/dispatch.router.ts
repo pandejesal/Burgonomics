@@ -1081,48 +1081,29 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
     }
   }
 
-  const deliveryStatus = order.deliveryStatus as string | undefined;
-  const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(deliveryStatus || "");
-
-  // Replay: already dispatched WITH this porter id → idempotent success.
-  if (active && (order.dispatchOrderId || order.porterOrderId) === pid) {
-    return storedDispatchSummary(order);
-  }
-  // Another provider owns this active dispatch — never overwrite its ids.
-  if (active && (order.dispatchOrderId || order.porterOrderId) && order.dispatchProvider !== "porter") {
-    const err: any = new Error(
-      `This order is already dispatched via ${order.dispatchProvider || "another provider"} — cancel that dispatch before pasting a Porter order.`
-    );
-    err.statusCode = 409;
-    err.code = "DISPATCH_EXISTS";
-    throw err;
-  }
-  // A live API book is in flight — pasting now would race it. Both claim
-  // classes block: the generic book claim AND Porter's own direct-tap claim
-  // (the same pair claimDispatch's busyCheck uses at the top of this file;
-  // the paste lane previously honoured only the generic one, so a paste
-  // racing a live /porter/book window flipped the order to dispatched while
-  // a REAL Porter booking was still in flight — two live riders for one
-  // order, the orphan invisible to the maps).
-  if (isFreshGenericPending(order) || isFreshPorterPending(order)) {
-    throw dispatchInProgressError();
-  }
-
-  const now = admin.firestore.FieldValue.serverTimestamp();
-  const prevDelivery =
-    order.delivery && typeof order.delivery === "object" ? order.delivery : {};
-  await orderDoc.ref.set(
-    {
+  // ---- Guard + write decision (one snapshot of truth) ----
+  // The guards and the flip must observe the SAME document state. The paste
+  // lane previously decided from a pre-read snapshot and then wrote directly
+  // (check-then-act TOCTOU): a /porter/book claim landing after the pre-read
+  // sailed through and flipped the order while a real rider was being booked.
+  // Transaction-then-decide when the runtime supports it (same posture as
+  // claimDispatch above); a shim fallback re-applies the IDENTICAL rules on
+  // the pre-read for Firestore shims without transactions.
+  const buildPasteWrite = (baseDelivery: any) => {
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    return {
       deliveryStatus: "dispatched",
       dispatchProvider: "porter",
       dispatchOrderId: pid,
       porterOrderId: pid,
-      // Mirror porter.service's SUCCESS write shape (bookPorterRider): a
-      // settled paste marks the porter claim settled too — a stale
-      // dispatch_pending marker on a successfully pasted order is exactly the
-      // "is this claim live?" ambiguity this lane's guard exists for.
+      // Mirror porter.service's SUCCESS write shape (bookPorterRider) — same
+      // settled status fields, plus clearing the claim lease (claimedAt):
+      // a stale dispatch_pending marker on a successfully pasted order is
+      // exactly the "is this claim live?" ambiguity this lane's guard
+      // exists for, and the lease must not be re-readable from a settled doc.
       porterDispatchStatus: "dispatched",
       porterDispatchError: null,
+      porterDispatchClaimedAt: null,
       // One active alias per order — the pasted Porter id supersedes any
       // stale id left by a previous carrier's dispatch.
       borzoOrderId: null,
@@ -1140,7 +1121,7 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
       // Tracking mirror for the customer app (rider identity arrives with the
       // porter webhook — never invented here).
       delivery: definedFields({
-        ...prevDelivery,
+        ...(baseDelivery && typeof baseDelivery === "object" ? baseDelivery : {}),
         provider: "porter",
         providerOrderId: pid,
         status: "pending",
@@ -1153,11 +1134,77 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
         updatedAt: now,
       }),
       updatedAt: now,
-    },
-    { merge: true }
-  );
+    };
+  };
+
+  const foreignDispatchError = (d: any) => {
+    // Truthful copy (DS review of 70a09be): a direct /porter/book never writes
+    // dispatchProvider, so "status set + porterOrderId present" is a PORTER
+    // dispatch — telling staff to "cancel another provider" would be false.
+    const provider = typeof d?.dispatchProvider === "string" ? d.dispatchProvider : null;
+    const isPorterDispatch = provider === "porter" || (!provider && d?.porterOrderId);
+    const message = isPorterDispatch
+      ? "This order is already dispatched via Porter — cancel that dispatch before pasting a different Porter order."
+      : `This order is already dispatched via ${provider || "another provider"} — cancel that dispatch before pasting a Porter order.`;
+    const err: any = new Error(message);
+    err.statusCode = 409;
+    err.code = "DISPATCH_EXISTS";
+    return err;
+  };
+  const orderMissingError = () => {
+    const err: any = new Error(`Order ${orderId} not found`);
+    err.statusCode = 404;
+    err.code = "ORDER_NOT_FOUND";
+    return err;
+  };
+
+  if (db && typeof (db as any).runTransaction === "function") {
+    const outcome: any = await (db as any).runTransaction(async (tx: any) => {
+      const fresh = await tx.get(orderDoc.ref);
+      const d = fresh.exists ? (fresh.data() as any) : undefined;
+      if (!d) return { missing: true as const };
+      // Terminal orders stay frozen for BOTH callers of the snapshot (the
+      // pre-read already refused the common case; this re-check closes the
+      // same race window for a delivered/cancelled flip landing in-flight).
+      assertDispatchNotLocked(d);
+      const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(d.deliveryStatus || "");
+      const holder = d.dispatchOrderId || d.porterOrderId;
+      // Replay: already dispatched WITH this porter id → idempotent success.
+      if (active && holder === pid) return { reuse: d };
+      // Another provider owns this active dispatch — never overwrite its ids.
+      if (active && holder && d.dispatchProvider !== "porter") {
+        return { foreignDispatch: d };
+      }
+      // Both claim classes block (generic book claim AND Porter's own
+      // direct-tap claim — the identical pair claimDispatch checks).
+      if (isFreshGenericPending(d) || isFreshPorterPending(d)) return { busy: true as const };
+      // The mirror base is the FRESH delivery snapshot — never the pre-read.
+      tx.set(orderDoc.ref, buildPasteWrite(d.delivery), { merge: true });
+      return { ok: true as const };
+    });
+    if (outcome?.missing) throw orderMissingError();
+    if (outcome?.reuse) return storedDispatchSummary(outcome.reuse);
+    if (outcome?.foreignDispatch) throw foreignDispatchError(outcome.foreignDispatch);
+    if (outcome?.busy) throw dispatchInProgressError();
+    // Fail closed on an unrecognised outcome: a future return shape must not
+    // silently degrade to "maps written, success reported, order unflipped".
+    if (!outcome?.ok) throw new Error("savePorterManualBooking: unrecognised transaction outcome");
+  } else {
+    // Fallback for Firestore shims without transactions: same rules, one
+    // snapshot (the pre-read), no weaker guarantee than before.
+    assertDispatchNotLocked(order);
+    const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(order.deliveryStatus || "");
+    const holder = order.dispatchOrderId || order.porterOrderId;
+    if (active && holder === pid) return storedDispatchSummary(order);
+    if (active && holder && order.dispatchProvider !== "porter") {
+      throw foreignDispatchError(order);
+    }
+    if (isFreshGenericPending(order) || isFreshPorterPending(order)) throw dispatchInProgressError();
+    await orderDoc.ref.set(buildPasteWrite(order.delivery), { merge: true });
+  }
 
   // Both bindings: dispatch webhook resolution + porter's own webhook/poller.
+  const mapTs = admin.firestore.FieldValue.serverTimestamp();
   for (const [col, id] of [
     ["dispatch_order_map", pid],
     ["porter_order_map", pid],
@@ -1170,7 +1217,7 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
           {
             orderId,
             branchId: order.branchId || null,
-            createdAt: now,
+            createdAt: mapTs,
             ...(col === "dispatch_order_map" ? { provider: "porter" } : {}),
           },
           { merge: true }

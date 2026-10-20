@@ -25,12 +25,23 @@
  *                                NOT blocking (the release path must not
  *                                wedge the paste lane).
  *   6. Timestamp-shaped claim (toMillis()) -> 202 when fresh.
+ *   7. RACE-WINDOW — the order becomes claimed between the paste's initial
+ *      read and its final write (claim lands after the branch/terminal
+ *      checks) -> the paste must STILL refuse with 202 and mutate nothing.
+ *      THIS CASE EXERCISES THE SNAPSHOT-TOCTOU: the pre-fix implementation
+ *      decided from the stale pre-read and proceeded.
  * Harness mirrors tests/dispatch.router.test.ts (refreshable snapshot fake).
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockDb, savedDocs, defaultOrder } = vi.hoisted(() => {
+const { mockDb, savedDocs, defaultOrder, race, readCounts } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
+  const readCounts: Record<string, number> = {};
+  const race: { docKey: string | null; afterRead: number; hook: null | (() => void) } = {
+    docKey: null,
+    afterRead: 2,
+    hook: null,
+  };
   const defaultOrder = () => ({
     branchId: "branch_ahmedabad_1",
     branchName: "Burgonomics CG Road",
@@ -52,9 +63,22 @@ const { mockDb, savedDocs, defaultOrder } = vi.hoisted(() => {
     };
   };
   const readDoc: any = (colName: string, docId: string) => {
+    const key = `${colName}/${docId}`;
+    readCounts[key] = (readCounts[key] || 0) + 1;
+    // Race hook (case 7): mutates the doc right before the chosen read of a
+    // chosen path — models a claim landing between the paste's pre-read and
+    // its final decision/write. Fires exactly once (a later read must NOT
+    // re-trigger, so the assertion target of a case stays unambiguous).
+    if (race.docKey === key && race.hook && readCounts[key] >= race.afterRead) {
+      race.hook();
+      race.hook = null;
+    }
+    // COPIES, not live references (DS round-3 minor 1): if data() returned the
+    // live store object, the paste's pre-read would alias the very state the
+    // hook mutates, and a snapshot-stale implementation could pass case 7.
     const snap: any = {
       exists: true,
-      data: () => savedDocs[`${colName}/${docId}`] || defaultOrder(),
+      data: () => ({ ...(savedDocs[`${colName}/${docId}`] || defaultOrder()) }),
       ref: {
         get: vi.fn(async () => readDoc(colName, docId)),
         set: vi.fn(async (data: any) => mergeSet(colName, docId, data)),
@@ -82,7 +106,7 @@ const { mockDb, savedDocs, defaultOrder } = vi.hoisted(() => {
       })
     ),
   };
-  return { mockDb, savedDocs, defaultOrder };
+  return { mockDb, savedDocs, defaultOrder, race, readCounts };
 });
 
 vi.mock("firebase-admin", () => {
@@ -119,11 +143,23 @@ function docOf(id: string): any {
   return savedDocs[`orders/${id}`];
 }
 
+function resetRace() {
+  race.docKey = null;
+  race.afterRead = 2;
+  race.hook = null;
+  for (const k of Object.keys(readCounts)) delete readCounts[k];
+  mockDb.runTransaction.mockClear();
+}
+
 // DISPATCH_CLAIM_TTL_MS is 10 minutes in dispatch.router.ts — 11 minutes back
 // is unambiguously stale without knowing the exact constant.
 const STALE = Date.now() - 11 * 60 * 1000;
 
 describe("savePorterManualBooking vs claims (porter-paste double-book guard)", () => {
+  beforeEach(() => {
+    resetRace();
+  });
+
   it("1. RED — fresh /porter/book claim must 202 DISPATCH_IN_PROGRESS and mutate NOTHING", async () => {
     seedOrder("ord_porterclaim", {
       deliveryStatus: "preparing",
@@ -162,6 +198,10 @@ describe("savePorterManualBooking vs claims (porter-paste double-book guard)", (
 
     expect(res).toMatchObject({ success: true, provider: "porter", porterOrderId: "POR-AFTER-TTL" });
     expect(docOf("ord_porterstale").deliveryStatus).toBe("dispatched");
+    // Settled paste wipes the claim lease: no stale dispatch_pending marker
+    // survives (DS round-3 minor 4).
+    expect(docOf("ord_porterstale").porterDispatchStatus).toBe("dispatched");
+    expect(docOf("ord_porterstale").porterDispatchClaimedAt).toBeNull();
   });
 
   it("3. PARITY — fresh generic claim still refuses with 202 (unchanged)", async () => {
@@ -224,5 +264,82 @@ describe("savePorterManualBooking vs claims (porter-paste double-book guard)", (
     ).rejects.toMatchObject({ statusCode: 202, code: "DISPATCH_IN_PROGRESS" });
     expect(docOf("ord_tsclaim").deliveryStatus).toBeUndefined();
     expect(savedDocs["porter_order_map/POR-TS"]).toBeUndefined();
+  });
+
+  it("7. SNAPSHOT-TOCTOU — a claim landing after the paste's pre-read still refuses (zero mutation)", async () => {
+    seedOrder("ord_race");
+    race.docKey = "orders/ord_race";
+    race.afterRead = 2; // after the paste's initial order read, before its write
+    race.hook = () => {
+      // A /porter/book claim commits in this window (numeric Date.now shape).
+      docOf("ord_race").porterDispatchStatus = "dispatch_pending";
+      docOf("ord_race").porterDispatchClaimedAt = Date.now();
+    };
+
+    await expect(
+      savePorterManualBooking({ orderId: "ord_race", porterOrderId: "POR-RACE-WIN", staffName: "Ops" })
+    ).rejects.toMatchObject({ statusCode: 202, code: "DISPATCH_IN_PROGRESS" });
+
+    // Zero mutation: the stale-snapshot decision never lands.
+    expect(docOf("ord_race").deliveryStatus).toBeUndefined();
+    expect(docOf("ord_race").dispatchOrderId).toBeUndefined();
+    expect(docOf("ord_race").porterOrderId).toBeUndefined();
+    expect(docOf("ord_race").needsRebook).toBeUndefined();
+    expect(savedDocs["dispatch_order_map/POR-RACE-WIN"]).toBeUndefined();
+    // The race decision rode the transaction, not a second snapshot read.
+    expect(mockDb.runTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("8. TRUTHFUL COPY — pasting a DIFFERENT porter id over a PORTER-dispatched order 409s with Porter copy", async () => {
+    seedOrder("ord_paste_over_paste", {
+      deliveryStatus: "dispatched",
+      dispatchProvider: undefined,
+      porterOrderId: "POR-FIRST",
+      dispatchOrderId: "POR-FIRST",
+    });
+
+    await expect(
+      savePorterManualBooking({ orderId: "ord_paste_over_paste", porterOrderId: "POR-SECOND", staffName: "Ops" })
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "DISPATCH_EXISTS",
+      message: expect.stringContaining("already dispatched via Porter"),
+    });
+    // The first binding is untouched — no silent rebind, no orphan.
+    expect(docOf("ord_paste_over_paste").porterOrderId).toBe("POR-FIRST");
+    expect(docOf("ord_paste_over_paste").dispatchOrderId).toBe("POR-FIRST");
+  });
+
+  it("9. FALLBACK PATH — a shim without runTransaction applies the SAME rules and still flips", async () => {
+    seedOrder("ord_shim");
+    const hadTx = mockDb.runTransaction;
+    try {
+      delete (mockDb as any).runTransaction;
+      const res = await savePorterManualBooking({ orderId: "ord_shim", porterOrderId: "POR-SHIM", staffName: "Ops" });
+      expect(res).toMatchObject({ success: true, provider: "porter", porterOrderId: "POR-SHIM" });
+      expect(docOf("ord_shim").deliveryStatus).toBe("dispatched");
+      expect(docOf("ord_shim").porterDispatchStatus).toBe("dispatched");
+      expect(docOf("ord_shim").porterDispatchClaimedAt).toBeNull();
+    } finally {
+      mockDb.runTransaction = hadTx;
+    }
+  });
+
+  it("10. TERMINAL IN-FLIGHT — an order delivered between pre-read and tx refuses with the typed lock error", async () => {
+    seedOrder("ord_race_terminal");
+    race.docKey = "orders/ord_race_terminal";
+    race.afterRead = 2;
+    race.hook = () => {
+      docOf("ord_race_terminal").deliveryStatus = "delivered";
+      docOf("ord_race_terminal").status = { terminal: true };
+    };
+
+    await expect(
+      savePorterManualBooking({ orderId: "ord_race_terminal", porterOrderId: "POR-RACE-T", staffName: "Ops" })
+    ).rejects.toMatchObject({ statusCode: 409 });
+    // Zero mutation: the terminal flip was observed before any write.
+    expect(docOf("ord_race_terminal").dispatchOrderId).toBeUndefined();
+    expect(docOf("ord_race_terminal").porterOrderId).toBeUndefined();
+    expect(savedDocs["dispatch_order_map/POR-RACE-T"]).toBeUndefined();
   });
 });
