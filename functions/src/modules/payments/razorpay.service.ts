@@ -391,6 +391,180 @@ export async function resolveIntentRedemption(
 }
 
 /**
+ * Payment-intent reuse contract (lane 7).
+ *
+ * The stored intent is the server-written binding gatewayOrder -> internal
+ * orderId. Returning it for a DIFFERENT internal order would only surface at
+ * `verifyPayment` (409 ORDER_MISMATCH) — after the customer's money moved, as
+ * happens when the client mints a new internal order after a modal dismiss or
+ * a reload while the basket fingerprint (and so the idempotency key) stays the
+ * same. A live reused intent is therefore handed out ONLY to the order it is
+ * bound to; a missing/corrupt binding is refused, never guessed.
+ *
+ * Expiry is decided first: an expired lease holds no live binding, so the
+ * freshly minted order supersedes it (this is also what makes the 24h TTL
+ * effective — the lost-claim path used to resurrect the stale winner).
+ */
+function hasUsableGatewayIntent(intent: any): boolean {
+  // STRICT numeric amount: a numeric string/boolean is a corrupt money field,
+  // not a reusable total (the pre-existing read-hit gate is strict too).
+  const paise = intent?.amountPaise;
+  return (
+    typeof intent?.razorpayOrderId === "string" &&
+    intent.razorpayOrderId.length > 0 &&
+    typeof paise === "number" &&
+    Number.isFinite(paise) &&
+    paise > 0
+  );
+}
+
+function isIntentExpired(intent: any): boolean {
+  const expiresAtMs = Number(intent?.expiresAtMs);
+  // A non-finite lease is corrupt, not live: it must never be reused.
+  return !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now();
+}
+
+function intentBoundOrderId(intent: any): string {
+  return typeof intent?.orderId === "string" ? intent.orderId : "";
+}
+
+/** Refusal is a typed, metadata-free 409: no stored ids leak to the client. */
+function paymentIntentOrderMismatchError(): Error {
+  const err: any = new Error(
+    "This checkout cannot reuse an earlier payment attempt for a different order. Nothing was charged — please review your cart and start a new order."
+  );
+  err.statusCode = 409;
+  err.code = "PAYMENT_INTENT_ORDER_MISMATCH";
+  return err;
+}
+
+/**
+ * A legacy caller that names no internal order keeps today's behaviour (the
+ * intent itself is the only binding it has). Once an internal order is named,
+ * the live intent must match it exactly.
+ */
+function assertIntentBoundToOrder(intent: any, orderId?: string): void {
+  if (!orderId) return;
+  if (intentBoundOrderId(intent) !== orderId) throw paymentIntentOrderMismatchError();
+}
+
+function newOrderResponse(args: {
+  razorpayOrderId: string;
+  amountPaise: number;
+  receipt: string;
+  pricing: any;
+}) {
+  return {
+    razorpayOrderId: args.razorpayOrderId,
+    amountPaise: args.amountPaise,
+    amountRupees: args.pricing.grandTotal,
+    // Legacy aliases (PAYMENTS_CONTRACT_SPEC §1): `orderId` here is the
+    // GATEWAY order id (what old checkout code read), `amount` is rupees.
+    orderId: args.razorpayOrderId,
+    amount: args.pricing.grandTotal,
+    currency: ORDER_CURRENCY,
+    receipt: args.receipt,
+    pricing: args.pricing,
+    keyId: getRazorpayKeyId(),
+  };
+}
+
+function reusedIntentResponse(intent: any) {
+  return {
+    razorpayOrderId: intent.razorpayOrderId,
+    amountPaise: intent.amountPaise,
+    amountRupees: intent.amountPaise / 100,
+    // Legacy aliases (PAYMENTS_CONTRACT_SPEC §1) — same shape as a fresh order.
+    orderId: intent.razorpayOrderId,
+    amount: intent.amountPaise / 100,
+    currency: ORDER_CURRENCY,
+    receipt: intent.receipt,
+    pricing: intent.pricing,
+    keyId: getRazorpayKeyId(),
+    reused: true as const,
+  };
+}
+
+type LostClaimResolution =
+  | { kind: "reuse"; intent: any }
+  | { kind: "superseded" }
+  | { kind: "mismatch" }
+  | { kind: "unreadable" };
+
+/**
+ * Replaces an EXPIRED intent with the freshly minted one, keeping the prior
+ * gateway id for audit. Transactional so an intent that became live while we
+ * were deciding is never overwritten (the caller re-reads and re-applies the
+ * live-binding rule).
+ */
+async function supersedeExpiredIntent(
+  intentRef: any,
+  freshIntent: Record<string, any>,
+  prior: any
+): Promise<boolean> {
+  const supersededId = typeof prior?.razorpayOrderId === "string" ? prior.razorpayOrderId : null;
+  const doc = { ...freshIntent, supersedes: supersededId };
+  if (db && typeof (db as any).runTransaction === "function") {
+    return !!(await (db as any).runTransaction(async (tx: any) => {
+      const snap = await tx.get(intentRef);
+      const current = snap && snap.exists ? snap.data() : null;
+      if (current && hasUsableGatewayIntent(current) && !isIntentExpired(current)) return false;
+      tx.set(intentRef, doc);
+      return true;
+    }));
+  }
+  // No transactional datastore: a blind overwrite could clobber an intent that
+  // became live concurrently, so fail closed (caller re-reads → 503).
+  return false;
+}
+
+/**
+ * Lost the `create()` claim race: converge on the winner, but never on a
+ * winner that belongs to another internal order.
+ */
+async function resolveLostClaim(args: {
+  intentRef: any;
+  freshIntent: Record<string, any>;
+  orderId?: string;
+}): Promise<LostClaimResolution> {
+  const { intentRef, freshIntent, orderId } = args;
+  let winner: any;
+  try {
+    const snap = await intentRef.get();
+    winner = snap && snap.exists ? snap.data() : null;
+  } catch {
+    return { kind: "unreadable" };
+  }
+  if (!hasUsableGatewayIntent(winner)) return { kind: "unreadable" };
+
+  if (isIntentExpired(winner)) {
+    let superseded = false;
+    try {
+      superseded = await supersedeExpiredIntent(intentRef, freshIntent, winner);
+    } catch {
+      // Transaction contention/abort must not escape as an unclassified 500:
+      // fail closed to the existing 503 retry-same-key path.
+      return { kind: "unreadable" };
+    }
+    if (superseded) {
+      return { kind: "superseded" };
+    }
+    try {
+      const again = await intentRef.get();
+      const next = again && again.exists ? again.data() : null;
+      if (!hasUsableGatewayIntent(next) || isIntentExpired(next)) return { kind: "unreadable" };
+      if (orderId && intentBoundOrderId(next) !== orderId) return { kind: "mismatch" };
+      return { kind: "reuse", intent: next };
+    } catch {
+      return { kind: "unreadable" };
+    }
+  }
+
+  if (orderId && intentBoundOrderId(winner) !== orderId) return { kind: "mismatch" };
+  return { kind: "reuse", intent: winner };
+}
+
+/**
  * Creates a Razorpay server order with authoritative price calculation and route notes.
  */
 export async function createPaymentOrder(params: CreateOrderParams) {
@@ -424,6 +598,10 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // toMillis trap.
   const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
   if (params.idempotencyKey && db && typeof db.collection === "function") {
+    // The binding refusal is decided OUTSIDE the lookup try/catch: a mismatch
+    // is a proven 409, not an unavailable-service 503.
+    let reusableIntent: any = null;
+    let corruptIntent = false;
     try {
       const prior = await db.collection("payment_intents").doc(params.idempotencyKey).get();
       // Require a real stored order id AND sane numeric totals — ghost docs
@@ -441,20 +619,12 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         Number.isFinite(expiresAtMs) &&
         expiresAtMs > Date.now()
       ) {
-        return {
-          razorpayOrderId: data.razorpayOrderId,
-          amountPaise: data.amountPaise,
-          amountRupees: data.amountPaise / 100,
-          // Legacy aliases (PAYMENTS_CONTRACT_SPEC §1): old clients read
-          // `orderId` (= the GATEWAY order id) and `amount` (= rupees).
-          orderId: data.razorpayOrderId,
-          amount: data.amountPaise / 100,
-          currency: ORDER_CURRENCY,
-          receipt: data.receipt,
-          pricing: data.pricing,
-          keyId: getRazorpayKeyId(),
-          reused: true as const,
-        };
+        reusableIntent = data;
+      } else if (prior.exists && data && !isIntentExpired(data)) {
+        // Present, not expired, but its gateway id/amount is corrupt. Never
+        // mint behind an unreadable binding: that strands one gateway order
+        // per retry. Refuse before the mint (same 503 retry contract).
+        corruptIntent = true;
       }
     } catch (err: any) {
       // Fail CLOSED: minting a fresh order when the lookup blips creates a
@@ -473,6 +643,27 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       const refused: any = new Error("Payment service is temporarily unavailable — please retry checkout (you will not be charged twice).");
       refused.statusCode = 503;
       throw refused;
+    }
+    if (reusableIntent) {
+      // Bound to the SAME internal order? A live intent from another order is
+      // refused here — before any gateway order is handed out — instead of
+      // surfacing as a post-capture ORDER_MISMATCH at verify.
+      assertIntentBoundToOrder(reusableIntent, params.orderId);
+      return reusedIntentResponse(reusableIntent);
+    }
+    if (corruptIntent) {
+      // No key in the log/snapshot: the idempotency key is a client basket
+      // fingerprint, not an operational reference.
+      console.warn("[Payments] stored payment intent is unreadable — refused before minting");
+      const { captureErrorSnapshot } = await import("../../core/errors");
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: "stored payment intent unreadable (bad gateway id/amount) — refused before minting a fresh order",
+      });
+      const refusedCorrupt: any = new Error("Payment service is temporarily unavailable — please retry checkout (you will not be charged twice).");
+      refusedCorrupt.statusCode = 503;
+      throw refusedCorrupt;
     }
   }
 
@@ -596,37 +787,22 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       if (!alreadyClaimed) {
         console.warn("[Payments] idempotency store failed (non-blocking):", err?.message || err);
       } else {
-        // Lost the claim race — reuse the winner's order (same shape as the
-        // read-hit path above). A corrupt winner doc fails closed to 503:
-        // the client retries the SAME key and converges on the winner.
-        try {
-          const winnerSnap = await intentRef.get();
-          const winner = (winnerSnap.exists ? (winnerSnap.data() as any) : undefined) as any;
-          const winnerPaise = winner?.amountPaise;
-          if (
-            typeof winner?.razorpayOrderId === "string" &&
-            winner.razorpayOrderId.length > 0 &&
-            typeof winnerPaise === "number" &&
-            Number.isFinite(winnerPaise) &&
-            winnerPaise > 0
-          ) {
-            return {
-              razorpayOrderId: winner.razorpayOrderId,
-              amountPaise: winner.amountPaise,
-              amountRupees: winner.amountPaise / 100,
-              // Legacy aliases (spec §1) — same shape as the read-hit path.
-              orderId: winner.razorpayOrderId,
-              amount: winner.amountPaise / 100,
-              currency: ORDER_CURRENCY,
-              receipt: winner.receipt,
-              pricing: winner.pricing,
-              keyId: getRazorpayKeyId(),
-              reused: true as const,
-            };
-          }
-        } catch {
-          // Fall through to 503 below.
+        // Lost the claim race — converge on the winner, but NEVER on a winner
+        // bound to a different internal order: that is a pre-payment 409, not
+        // a post-capture surprise. An EXPIRED winner is superseded by our
+        // freshly minted order (the TTL has to be effective here too); an
+        // unreadable winner keeps the existing 503 refusal.
+        const resolution = await resolveLostClaim({
+          intentRef,
+          freshIntent: intentDoc,
+          orderId: params.orderId,
+        });
+        if (resolution.kind === "reuse") return reusedIntentResponse(resolution.intent);
+        if (resolution.kind === "superseded") {
+          return newOrderResponse({ razorpayOrderId, amountPaise, receipt, pricing });
         }
+        if (resolution.kind === "mismatch") throw paymentIntentOrderMismatchError();
+
         console.warn("[Payments] idempotency claim lost with unreadable winner — refusing fresh order (retry same key)");
         const { captureErrorSnapshot } = await import("../../core/errors");
         await captureErrorSnapshot({
@@ -641,19 +817,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     }
   }
 
-  return {
-    razorpayOrderId,
-    amountPaise,
-    amountRupees: pricing.grandTotal,
-    // Legacy aliases (PAYMENTS_CONTRACT_SPEC §1): `orderId` here is the
-    // GATEWAY order id (what old checkout code read), `amount` is rupees.
-    orderId: razorpayOrderId,
-    amount: pricing.grandTotal,
-    currency: ORDER_CURRENCY,
-    receipt,
-    pricing,
-    keyId: getRazorpayKeyId(),
-  };
+  return newOrderResponse({ razorpayOrderId, amountPaise, receipt, pricing });
 }
 
 export interface VerifyPaymentParams {
