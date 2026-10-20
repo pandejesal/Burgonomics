@@ -154,6 +154,123 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
     expect(savedDocs["orders/ord_1"].status).toMatchObject({ code: "DELIVERED" });
   });
 
+  // -------------------------------------------------------------------------
+  // G1 pins: expectedStatus is Partner vocabulary; expected/actual compare via
+  // the canonical tables incl. fulfillment forks; response carries the meta
+  // the server WROTE; cancellationReason is a cancellation-only attribute.
+  // -------------------------------------------------------------------------
+
+  it("matches a Partner-vocabulary expectedStatus against a Delivery-code state", async () => {
+    savedDocs["orders/ord_1"].status = { code: "CONFIRMED" };
+    await bumpOrderStatus({
+      orderId: "ord_1",
+      status: "preparing",
+      expectedStatus: "accepted", // partner vocab the KDS screen actually sends
+      caller: ownBranchCaller,
+    });
+    expect(savedDocs["orders/ord_1"].status).toMatchObject({ code: "PREPARING" });
+  });
+
+  it("matches a dinein expectedStatus through the READY_TO_SERVE fork", async () => {
+    // The dinein order sits at CONFIRMED-your vocab "accepted"; a later bump
+    // leaves it READY_TO_SERVE. THEN the client re-refs with expectedStatus
+    // "ready" and the screen's stored state must still count as the same state
+    // (the fork, not the generic READY_FOR_PICKUP).
+    savedDocs["orders/ord_dinein"] = { branchId: "b1", fulfillmentType: "dinein", status: { code: "CONFIRMED" } };
+    await bumpOrderStatus({ orderId: "ord_dinein", status: "ready", caller: ownBranchCaller });
+    expect(savedDocs["orders/ord_dinein"].status).toMatchObject({ code: "READY_TO_SERVE", terminal: false });
+    // the fork-for-back match:
+    await bumpOrderStatus({
+      orderId: "ord_dinein",
+      status: "delivered",
+      expectedStatus: "ready",
+      caller: ownBranchCaller,
+    });
+    expect(savedDocs["orders/ord_dinein"].status).toMatchObject({ code: "COMPLETED", terminal: true });
+  });
+
+  it("responds with the meta actually written (dinein READY_TO_SERVE, not generic READY_FOR_PICKUP)", async () => {
+    savedDocs["orders/ord_dinein2"] = { branchId: "b1", fulfillmentType: "dinein", status: { code: "CONFIRMED" } };
+    const res: any = await bumpOrderStatus({
+      orderId: "ord_dinein2",
+      status: "ready",
+      caller: ownBranchCaller,
+    });
+    expect(res.status).toMatchObject({ code: "READY_TO_SERVE" });
+    expect(savedDocs["orders/ord_dinein2"].status).toMatchObject({ code: "READY_TO_SERVE" });
+  });
+
+  it("responds with takeaway PICKED_UP on delivered", async () => {
+    savedDocs["orders/ord_away"] = { branchId: "b1", fulfillmentType: "takeaway", status: { code: "READY_FOR_PICKUP" } };
+    const res: any = await bumpOrderStatus({
+      orderId: "ord_away",
+      status: "delivered",
+      caller: ownBranchCaller,
+    });
+    expect(res.status).toMatchObject({ code: "PICKED_UP", terminal: true });
+  });
+
+  it("accepts canonical Delivery codes and case-insensitive spellings in expectedStatus", async () => {
+    savedDocs["orders/ord_ofd"] = { branchId: "b1", status: { code: "OUT_FOR_DELIVERY" } };
+    await bumpOrderStatus({
+      orderId: "ord_ofd",
+      status: "delivered",
+      expectedStatus: "out_for_delivery", // lowercase canonical spelling
+      caller: ownBranchCaller,
+    });
+    expect(savedDocs["orders/ord_ofd"].status).toMatchObject({ code: "DELIVERED", terminal: true });
+  });
+
+  it("rejects unknown expected vocabulary (409 STALE_ORDER_STATUS, not a silent apply)", async () => {
+    savedDocs["orders/ord_1"].status = { code: "PLACED" };
+    for (const bad of ["quarantine", "banana"]) {
+      await expect(
+        bumpOrderStatus({
+          orderId: "ord_1",
+          status: "preparing",
+          expectedStatus: bad,
+          caller: ownBranchCaller,
+        })
+      ).rejects.toMatchObject({ statusCode: 409, code: "STALE_ORDER_STATUS" });
+      expect(savedDocs["orders/ord_1"].status).toMatchObject({ code: "PLACED" });
+    }
+  });
+
+  it("rejects a CONFLICTING valid alias (expected not the real current state)", async () => {
+    savedDocs["orders/ord_1"].status = { code: "PLACED" };
+    await expect(
+      bumpOrderStatus({
+        orderId: "ord_1",
+        status: "preparing",
+        expectedStatus: "ready", // valid vocab, wrong state
+        caller: ownBranchCaller,
+      })
+    ).rejects.toMatchObject({ statusCode: 409, code: "STALE_ORDER_STATUS" });
+  });
+
+  it("cancellationReason rides cancellation only, never a live cooking bump", async () => {
+    await bumpOrderStatus({
+      orderId: "ord_1",
+      status: "preparing",
+      cancellationReason: "stray reason on a live order",
+      caller: ownBranchCaller,
+    });
+    expect(savedDocs["orders/ord_1"].cancellationReason).toBeUndefined();
+    expect(savedDocs["orders/ord_1"].status).toMatchObject({ code: "PREPARING" });
+  });
+
+  it("terminal orders stay frozen even when expectedStatus matches", async () => {
+    savedDocs["orders/ord_term"] = { branchId: "b1", status: { code: "DELIVERED", terminal: true } };
+    await expect(
+      bumpOrderStatus({
+        orderId: "ord_term",
+        status: "pending",
+        expectedStatus: "delivered",
+        caller: ownBranchCaller,
+      })
+    ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_STATUS_CONFLICT" });
+  });
+
   it("still allows a backward recall between non-terminal states", async () => {
     savedDocs["orders/ord_1"].status = { code: "PREPARING", terminal: false };
     await bumpOrderStatus({

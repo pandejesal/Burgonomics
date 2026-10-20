@@ -51,6 +51,30 @@ const PARTNER_TO_DELIVERY: Record<string, DeliveryStatusMeta> = {
   cancelled: { code: "CANCELLED", label: "Cancelled", kind: "cancelled", terminal: true },
 };
 
+/**
+ * Normalizes an `expectedStatus` into the set of Delivery codes that count as
+ * THE SAME visible state (G1): the raw value when the caller already speaks
+ * canonical Delivery vocabulary (case-insensitively), plus the fulfillment-
+ * specific code for that state via the EXISTING partner tables (pending->PLACED,
+ * ready->READY_FOR_PICKUP, dinein ready->READY_TO_SERVE, takeaway/dinein
+ * delivered->PICKED_UP/COMPLETED). Unknown vocabulary is empty-safe: it only
+ * matches if it happens to be the order's literal current code.
+ */
+function allowedExpectedCodes(expected: string, fulfillment: string): Set<string> {
+  const raw = expected.trim();
+  if (!raw) return new Set();
+  const codes = new Set<string>([raw.toUpperCase()]);
+  const canonical = ALIAS_TO_CANONICAL[raw] ?? raw;
+  const meta: DeliveryStatusMeta | undefined = (PARTNER_TO_DELIVERY as Record<string, DeliveryStatusMeta>)[canonical];
+  if (meta) {
+    codes.add(meta.code);
+    if (canonical === "ready" && fulfillment === "dinein") codes.add("READY_TO_SERVE");
+    if (canonical === "delivered" && fulfillment === "takeaway") codes.add("PICKED_UP");
+    if (canonical === "delivered" && fulfillment === "dinein") codes.add("COMPLETED");
+  }
+  return codes;
+}
+
 export interface BumpOrderStatusParams {
   orderId: string;
   status: BumpStatus;
@@ -95,7 +119,12 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     status: finalMeta,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
-  if (cancellationReason) payload.cancellationReason = cancellationReason;
+  // Narrow: a reason is a CANCELLATION attribute. The previous unconditional
+  // write stamped a cancel reason onto a live cooking order (the scheme let
+  // cancellationReason ride any bump).
+  if (canonical === "cancelled" && cancellationReason) {
+    payload.cancellationReason = cancellationReason;
+  }
   if (timelineEvent) {
     payload.timeline = admin.firestore.FieldValue.arrayUnion({
       ...timelineEvent,
@@ -126,7 +155,11 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     // The client told us which state its screen was showing. If the stored
     // state has moved on (another staff member acted, a webhook landed), this
     // bump is stale and must not be applied.
-    if (expected && current.code !== expected) {
+    // G1: the Partner app sends ITS vocabulary (pending/accepted/ready//...) in
+    // expectedStatus; the server stores uppercase Delivery codes like
+    // READY_TO_SERVE/PICKED_UP, so the raw compare rejected nearly every
+    // accompanied bump. Compare through the canonical vocabulary tables.
+    if (expected && !allowedExpectedCodes(expected, fulfillment).has(String(current.code || "").toUpperCase())) {
       throw serviceError(
         "STALE_ORDER_STATUS",
         `Order ${orderId} moved to ${current.code || "unknown"} since the screen loaded; refresh before acting`,
@@ -136,5 +169,8 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     tx.update(orderRef, payload);
   });
 
-  return { orderId, status: meta };
+  // Return the meta we actually WROTE (fulfillment-specific), not the generic
+  // delivery meta - the KDS response is a state artifact and dinein/takeaway
+  // bumps must not claim DELIVERED/READY_FOR_PICKUP the doc does not carry.
+  return { orderId, status: finalMeta };
 }
