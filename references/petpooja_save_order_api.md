@@ -602,7 +602,10 @@ inbound path could not have received one:
    accepting callback promotes `pending_retry -> synced`, but only a proven
    POS-derived id is stored as `petpoojaOrderId`. A documented client-ref callback
    records `petpoojaAcceptedNoId` + `petpoojaCallbackClientRef` instead, so the
-   retry worker stops re-pushing without fabricating a POS id. A contradictory
+   retry worker stops re-pushing without fabricating a POS id. The inbound
+   callback body is kept in `petpoojaCallbackAck`;
+   `petpoojaAcceptedNoIdAck` remains the push-time `save_order` response and is
+   never overwritten. A contradictory
    client ref/outlet, an ambiguous pair of refs, or a claimed outlet that does not
    resolve is parked for review rather than applied.
 
@@ -755,8 +758,9 @@ Fixes forced by this evidence:
 
 Reconciliation artifact: `scripts/petpooja-sandbox-fulfillment-reconciliation.json`
 pairs each evidence row with its Order List row. No order-listing route exists on
-either host (§16.2), so the dashboard Order List is the only fulfilment oracle and
-the pairing is manual, by `clientOrderID` + total. Its current verdict is
+either host (§16.2), so the dashboard Order List is the only RECEIPT/listing
+oracle available here and the pairing is manual, by `clientOrderID` + total.
+Fulfilment needs a terminal `10 Delivered` state (§19.2). Its current verdict is
 `received: 5`, `fulfilmentVerified: 0`; the 2026-10-20 correction is noted there
 so the earlier "5/5 FULFILLED" reading survives only as history.
 

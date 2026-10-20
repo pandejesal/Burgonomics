@@ -54,9 +54,11 @@ describe("Petpooja five-case evidence stays received, not fulfilled", () => {
     // The listing is not a fulfilment oracle, and the callback-id contract is
     // recorded next to the documented status table.
     expect(reference).not.toMatch(/only the dashboard Order List does/);
+    expect(reference).not.toMatch(/fulfilment oracle/i);
     expect(reference.replace(/>/g, " ").replace(/\s+/g, " ")).toMatch(
       /Unique client order id which is used to update order status at client side/
     );
+    expect(reference).toMatch(/petpoojaCallbackAck/);
     expect(reference).not.toMatch(/the order stores `petpoojaOrderId`/);
   });
 
