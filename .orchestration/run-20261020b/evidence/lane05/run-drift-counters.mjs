@@ -40,6 +40,11 @@ const vUniversal = doc + "\n\nThis rule holds for Borzo, Shadowfax AND Porter.\n
 const vExtends = doc + "\n\nThe no-failover guarantee extends to Porter too.\n";
 // Variant 3: "Porter preserves the ambiguous-book contract" (found by the GLM verifier).
 const vPreserves = doc + "\n\nPorter preserves the ambiguous-book contract.\n";
+// Variant 4: a compliance claim that carries an unrelated negation word ("fails"),
+// found by the final DeepSeek review — negation must not be satisfiable by "fail".
+const vNegationEvasion =
+  doc +
+  "\n\nPorter now satisfies the rule. porter.adapter.ts rethrows the ambiguous tag unchanged, so the router never books a second courier for an order Porter may already hold, even when a book fails.\n";
 // Variant 4: the deviation note replaced by a false resolution claim.
 const i = doc.indexOf("KNOWN DEVIATION");
 const j = doc.indexOf(".**", i);
@@ -54,6 +59,7 @@ const variants = [
   { name: "negative-paraphrased-universal", doc: vUniversal, repo: ROOT, expect: 1 },
   { name: "negative-extends-to-porter-too", doc: vExtends, repo: ROOT, expect: 1 },
   { name: "negative-porter-preserves-contract", doc: vPreserves, repo: ROOT, expect: 1 },
+  { name: "negative-negation-evasion", doc: vNegationEvasion, repo: ROOT, expect: 1 },
   { name: "negative-false-resolution-note", doc: vFalseResolution, repo: ROOT, expect: 1 },
 ];
 

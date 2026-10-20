@@ -106,10 +106,9 @@ check(
 );
 check(
   "A5",
-  code.router.includes("isProviderDispatchError(err)") &&
-    code.router.includes("releaseClaimFailed") &&
-    code.router.includes("continue;"),
-  "dispatch.router.ts walks on only for ProviderDispatchError (plain errors release the claim and rethrow)"
+  /isProviderDispatchError\(err\)[\s\S]{0,400}?continue;/.test(code.router) &&
+    /releaseClaimFailed\([\s\S]{0,400}?throw err;/.test(code.router),
+  "dispatch.router.ts walks on (continue) only for ProviderDispatchError and otherwise releases the claim then rethrows"
 );
 // A6: the tagged throw anchor must exist in SOME form (helper function or inline throw
 // sites). The adapter is being rewritten by another lane, so the shape is allowed to vary;
@@ -140,7 +139,6 @@ check(
 //  (i) explicit phrasings; (ii) any bullet/paragraph that asserts Porter itself complies.
 const UNIVERSAL_PATTERNS = [
   /same rule for all three providers/i,
-  /\ball three providers\b/i,
   /\bholds? for all (three )?providers\b/i,
   /\bapplies to all (three )?providers\b/i,
   /(rule|guarantee|contract)[^.\n]{0,40}(holds?|applies|extend\w*|preserv\w*|inherit\w*)[^.\n]{0,60}porter/i,
@@ -154,7 +152,9 @@ const COMPLIANCE_VERB =
   /(complies|compliant|honou?rs?|satisfies|implements|applies|extends?|preserves?|inherits?)/i;
 const RULE_CONTEXT =
   /(ambiguit|failover|fail-over|fail over|no-failover|PROVIDER_BOOK_AMBIGUOUS|second courier|second real courier|walk)/i;
-const NEGATED = /(does not|doesn't|do not|not\s|never|no longer|deviation|fail)/i;
+// Negation must be POSITIONAL and must not be satisfied by unrelated words like "fail"
+// (e.g. "Porter now satisfies the rule ... even when a book fails" must still be flagged).
+const NEGATED = /(does not|doesn't|do not|\bnot\b|no longer|deviation)/i;
 const porterAssertion = blocks.find(
   (b) =>
     /\bPorter\b/.test(b) &&

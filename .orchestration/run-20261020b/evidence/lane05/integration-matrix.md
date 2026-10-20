@@ -7,7 +7,9 @@ the code as it exists in the working tree. Provenance is labelled on every fact:
 - **[DOC]** — the vendor's own document, as recorded in `references/**` with its access date.
 - **[UNKNOWN]** — no primary vendor evidence on this machine; never asserted.
 
-Reviewed by lane 05 (`ses_ea5c88b2fffeMMzjFL6tYZzs5W`) on 2026-10-20 against root `4be553b`,
+Reviewed by lane 05 (`ses_ea5c88b2fffeMMzjFL6tYZzs5W`) on 2026-10-20/21 against the root tree at
+the lane05 evidence commit (root HEAD was `4be553b` when the survey started and had advanced to
+`70a09be` while the bundle was in review; the dispatch code paths below did not change in between),
 customer `29fd0e6`, partner `09fe39b`. Every third-party mirror is treated as secondary.
 
 ---
@@ -72,7 +74,7 @@ customer `29fd0e6`, partner `09fe39b`. Every third-party mirror is treated as se
 |---|---|
 | Auth | `PORTER_API_KEY` + `PORTER_CUSTOMER_ID` + `PORTER_WEBHOOK_SECRET` for the API path; **manual paste lane needs no key** [CODE `dispatch/providers/porter.adapter.ts:26-32`, `config/env.ts:73-76`] |
 | Base URL | `https://api.porter.in` [CODE `config/env.ts:76`] |
-| Endpoints | quote `POST /v1/orders/quote`, book `POST /v1/orders/create` [DOC §1 matrix], webhook `x-porter-signature` HMAC [DOC §5] |
+| Endpoints | quote `POST /v1/orders/quote`, book `POST /v1/orders/create` [CODE `porter.service.ts` — the same doc's §1 matrix previously said `/v1/orders`; that drift is fixed in this bundle], webhook `x-porter-signature` HMAC [DOC §5] |
 | Signature scheme | HMAC `x-porter-signature` (existing Porter secret) [DOC §5] |
 | Callback semantics | Existing Porter status semantics, normalized to the same canonical lifecycle (DR9) [DOC §5] |
 | Idempotency | Preclaimed flag avoids double-guard/202 on the same tap [CODE `porter.adapter.ts:121-125`] |
@@ -110,8 +112,9 @@ customer `29fd0e6`, partner `09fe39b`. Every third-party mirror is treated as se
    over and book a second courier. Source fix proposed to lane 04 (dispatch) — see the proposal post
    on `fresh-run-2-ownership`.
    - Repro + control: `evidence/lane05/verify-doc-code-drift.mjs`.
-   - Positive: 10/10 PASS, `DOC_MATCHES_CODE`, exit 0 (`probe-post-glmfix.json`).
-   - Negative controls (all exit 1, all captured in `probe-counter-tests-2026-10-20.txt`,
+   - Positive: 10/10 PASS, `DOC_MATCHES_CODE`, exit 0 (`probe-final-<sha>.json`, regenerated in a
+     clean worktree at the committed SHA).
+   - Negative controls (all exit 1, all captured in `counters-final-<sha>.txt`,
      regenerated deterministically by `run-drift-counters.mjs`): the original universal-claim
      wording re-inserted synthetically (`B1/B2/B3` fail) · paraphrased universal claim appended
      (`B1` fails) · "extends to Porter too" (`B1` fails) · "Porter preserves the ambiguous-book
@@ -123,10 +126,22 @@ customer `29fd0e6`, partner `09fe39b`. Every third-party mirror is treated as se
    - Line-number citations for the two concurrently-edited adapters were dropped in favour of
      symbol anchors (`borzoBookAmbiguous()`, the shadowfax create-order throw) after the DeepSeek
      reviewer caught them going stale mid-review — foreign files changed under us.
-   - Probe hardening is itself reviewed: DeepSeek (child `ses_ea554f449ffeyywZuMqNBtfMZ8`)
-     APPROVE_WITH_CHANGES → findings applied; GLM (child `ses_ea5376817ffeV8IeTjjjSsbxvL`)
-     VERIFIED_WITH_RESIDUALS → two regex/consistency loopholes found and closed (polarity-aware
-     deviation check, bidirectional code↔doc consistency check, tag-reference detection).
-2. **Doc pointer corrected.** The same bullet pointed at `providers/shared.ts` as the home of the
+   - Cross-request caveat added after the final DeepSeek pass: the no-failover rule is per request.
+     A plain ambiguous throw still reaches `releaseClaimFailed` (`needsRebook: true`,
+     `rebookTrigger: "dispatch_failed"`), and the scheduled auto-rebook worker re-enters the ranked
+     walk with an exclusion set derived only from `dispatchProvider` / provider order ids — none of
+     which an ambiguous book writes. Staff must reconcile before a rebook is approved.
+   - Probe hardening is itself reviewed across three rounds: DeepSeek (child
+     `ses_ea554f449ffeyywZuMqNBtfMZ8`) APPROVE_WITH_CHANGES → applied; GLM (child
+     `ses_ea5376817ffeV8IeTjjjSsbxvL`) VERIFIED_WITH_RESIDUALS → polarity + bidirectional
+     consistency checks added; final DeepSeek pass on the committed bytes (child
+     `ses_ea4a16e42ffeeWNP1e80Z4YeD4`) APPROVE_WITH_CHANGES → negation-evasion hole closed
+     (a compliance claim can no longer hide behind the word "fails"), A5 tightened to book-failover
+     adjacency, misleading hash reference dropped from the doc, captures regenerated from the
+     committed tree rather than the dirty working tree.
+2. **Porter book endpoint drift (fixed in the same doc).** The same doc's §1 provider matrix listed
+   Porter's book call as `POST /v1/orders`; `porter.service.ts` posts to `/v1/orders/create` (and
+   `/v1/orders/quote` for quotes). The matrix row now matches the code.
+3. **Doc pointer corrected.** The §3 bullet pointed at `providers/shared.ts` as the home of the
    rule; that module holds HTTP classification, address assembly, fare math and mock riders — the
    rule lives in the adapters.
