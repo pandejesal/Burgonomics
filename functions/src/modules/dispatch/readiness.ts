@@ -38,6 +38,8 @@ export interface DispatchProviderReadiness {
   keyPresent: boolean;
   host: string;
   testHost: boolean;
+  /** Shadowfax only: a human has verified the native contract (keys alone are not enough). */
+  contractVerified?: boolean;
 }
 
 export interface DispatchReadinessReport {
@@ -62,6 +64,7 @@ export function dispatchReadinessReport(): DispatchReadinessReport {
     keyPresent: boolean;
     baseUrl: string;
     testHostName: string;
+    contractVerified?: boolean;
   }> = [
     {
       provider: "borzo",
@@ -80,6 +83,7 @@ export function dispatchReadinessReport(): DispatchReadinessReport {
       keyPresent: !!config.shadowfax.apiKey && !!config.shadowfax.clientCode,
       baseUrl: config.shadowfax.baseUrl,
       testHostName: SHADOWFAX_TEST_HOST,
+      contractVerified: config.shadowfax.contractVerified,
     },
     {
       provider: "porter",
@@ -103,6 +107,7 @@ export function dispatchReadinessReport(): DispatchReadinessReport {
     keyPresent: e.keyPresent,
     host: hostOf(e.baseUrl),
     testHost: e.testHostName !== "" && hostOf(e.baseUrl) === e.testHostName,
+    ...(e.provider === "shadowfax" ? { contractVerified: e.contractVerified === true } : {}),
   }));
   const byId = (id: ReadinessProviderId) =>
     providers.find((p) => p.provider === id)!;
@@ -141,6 +146,18 @@ export function dispatchReadinessReport(): DispatchReadinessReport {
   if (shadowfax.eligible) {
     violations.push(
       "shadowfax: eligible while its contract and credentials are unverified — it must stay excluded (C06/C13)"
+    );
+  }
+  // Grant-day guard: credentials alone must not put an unverified contract into
+  // the fan-out. isEligible() now requires contractVerified, so this reports the
+  // intermediate state truthfully instead of leaving it invisible.
+  if (
+    shadowfax.enabled &&
+    shadowfax.keyPresent &&
+    shadowfax.contractVerified !== true
+  ) {
+    violations.push(
+      "shadowfax: credentials present but the native contract is NOT verified (SHADOWFAX_CONTRACT_VERIFIED) — keys alone must not enable live traffic"
     );
   }
   const porter = byId("porter");

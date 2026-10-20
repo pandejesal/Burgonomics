@@ -55,6 +55,8 @@ A provider **not keyed** is excluded from the fan-out (not a failure, DR2) — *
 1. Load order; existing dispatch claim TTL guard applies (no double-book).
 2. Fresh quote via §2 (DR7) unless a non-expired quote is supplied.
 3. Book the winner; on `transient_failure` walk the ranked `ok` list (DR6), recording every attempt on the order (`dispatchAttempts[]`).
+   - **Ambiguous is never transient.** A provider returning 2xx with no usable order id has *accepted* the request; the delivery may already exist. That case throws a **plain** (non-`ProviderDispatchError`) `502 PROVIDER_BOOK_AMBIGUOUS`, so the router releases the claim and stops instead of walking to the next rider and booking a second real courier for one order. Same rule for all three providers (Borzo, Porter, Shadowfax) — see `functions/src/modules/dispatch/providers/shared.ts`.
+   - **Missing local input is never transient either.** A missing pickup/drop contact phone is *our* gap, not a provider failure: `422 DISPATCH_CONTACT_MISSING` (plain error), no failover, because no provider can serve that order.
 4. Winner/provider **manual lane** (DR8) ⇒ `manual_action_required` + instructions, no status flip.
 5. On book success: persist `dispatchProvider`, `dispatchOrderId` (+ provider-specific alias, e.g. `porterOrderId`), rider identity, `deliveryStatus: "dispatched"`, `dispatch_order_map` binding, dispatch claim release. Status flip to `out_for_delivery` stays a client action after server confirmation (unchanged Loop 16 semantics).
 6. All providers fail ⇒ `dispatchStatus: "dispatch_failed"` + `needsRebook: true` (order stays otherwise actionable) + loud 502 staff error (never a fake fulfillment signal).
@@ -136,7 +138,8 @@ BORZO_API_KEY, BORZO_CUSTOMER_ID?, BORZO_BASE_URL (default https://robot-in.borz
   test https://robotapitest-in.borzodelivery.com; adapter appends /api/business/1.8),
 BORZO_WEBHOOK_SECRET (Personal-cabinet Callback Secret Key), MOCK_BORZO_DISPATCH
 SHADOWFAX_API_KEY, SHADOWFAX_CLIENT_CODE, SHADOWFAX_BASE_URL (default https://api.shadowfax.in),
-SHADOWFAX_WEBHOOK_SECRET, MOCK_SHADOWFAX_DISPATCH
+SHADOWFAX_WEBHOOK_SECRET, SHADOWFAX_CONTRACT_VERIFIED (human-set `"true"` only after the
+  native contract is confirmed — keys alone must not enable live traffic), MOCK_SHADOWFAX_DISPATCH
 DISPATCH_QUOTE_TIMEOUT_MS (default 6000), DISPATCH_FARE_CONFIRM_DELTA_INR (default 20)
 PORTER_* unchanged
 ```

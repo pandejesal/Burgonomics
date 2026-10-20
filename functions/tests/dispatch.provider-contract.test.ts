@@ -533,6 +533,95 @@ describe("booked rider identity (finding D4)", () => {
   });
 });
 
+describe("shadowfax ambiguous booking (Borzo parity, dbd1626)", () => {
+  // Live book path: unmocked, both creds present, so the response shape is the
+  // only thing under test.
+  const liveCtx = (order: Record<string, any>) =>
+    borzoContext({
+      order: {
+        branchName: "Burgonomics CG Road",
+        store: { phone: "+91 98250 12345" },
+        deliveryAddress: { full: "Some street", lat: DROP.lat, lng: DROP.lng },
+        customerPhone: "+91 90000 33333",
+        ...order,
+      },
+    });
+
+  beforeEach(() => {
+    config.mock.shadowfaxDispatch = false;
+    config.shadowfax.enabled = true;
+    config.shadowfax.apiKey = "test_sfx_token";
+    config.shadowfax.clientCode = "test_sfx_client";
+    // GAP 2: the live path requires the explicit contract-verified flag.
+    config.shadowfax.contractVerified = true;
+  });
+
+  it("a 2xx with NO order id is an AMBIGUOUS 502 that cannot fail over (no second rider)", async () => {
+    // Accepted by the provider, but no id we can bind: the delivery may exist.
+    fetchHandler = () => okJson({ track_url: "https://sfx/track/1" });
+
+    const err: any = await shadowfaxAdapter
+      .book({ ...liveCtx({}), orderId: "ord_sfx_ambig", quote: MOCK_QUOTE as any })
+      .catch((e: any) => e);
+
+    expect(err.code).toBe("PROVIDER_BOOK_AMBIGUOUS");
+    expect(err.statusCode).toBe(502);
+    // Not a ProviderDispatchError => dispatch.router.ts releases the claim and
+    // throws instead of walking to the next provider, so no SECOND real rider.
+    expect(err.kind).toBeUndefined();
+    expect(err.name).not.toBe("ProviderDispatchError");
+    expect(err.message).toMatch(/no order id/i);
+  });
+
+  it("a 2xx WITH an order id still books (positive control)", async () => {
+    fetchHandler = () => okJson({ sfx_order_id: "SFX-AMBIG-POS-1" });
+
+    const booked = await shadowfaxAdapter.book({
+      ...liveCtx({}),
+      orderId: "ord_sfx_pos",
+      quote: MOCK_QUOTE as any,
+    });
+
+    expect(booked.kind).toBe("booked");
+    expect(booked.providerOrderId).toBe("SFX-AMBIG-POS-1");
+    // Identity arrives with the ALLOTTED callback — never fabricated here.
+    expect(booked.riderName).toBe("");
+  });
+
+  it("a missing contact phone is a LOCAL input error, not a transient provider fault", async () => {
+    // No store phone (pickup contact) and no customer phone (drop contact).
+    const ctx = borzoContext({
+      order: { deliveryAddress: { full: "Some street", lat: DROP.lat, lng: DROP.lng } },
+    });
+
+    const err: any = await shadowfaxAdapter
+      .book({ ...ctx, orderId: "ord_sfx_nophone", quote: MOCK_QUOTE as any })
+      .catch((e: any) => e);
+
+    expect(err.code).toBe("DISPATCH_CONTACT_MISSING");
+    expect(err.statusCode).toBe(422);
+    // Non-transient: a phone cannot be fixed by trying another provider.
+    expect(err.kind).toBeUndefined();
+    // And the message no longer blames Shadowfax for our own missing field.
+    expect(err.message).not.toMatch(/shadowfax returned/i);
+    expect(err.message).not.toMatch(/unparseable/i);
+    expect(err.message).toMatch(/add the .* phone/i);
+  });
+
+  it("flags a LOCAL ETA when the provider omits pickup_eta, passes a real one through", async () => {
+    fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42 });
+    const estimated = await shadowfaxAdapter.quote(borzoContext());
+    expect(estimated.etaEstimated).toBe(true);
+    // Pre-fix this was the fabricated constant 9 with no flag.
+    expect(Number.isFinite(estimated.pickupEtaMinutes)).toBe(true);
+
+    fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42, pickup_eta: 6 });
+    const provider = await shadowfaxAdapter.quote(borzoContext());
+    expect(provider.etaEstimated).toBe(false);
+    expect(provider.pickupEtaMinutes).toBe(6);
+  });
+});
+
 describe("runtime zero-mock guard (finding 9 / DR11)", () => {
   it("refuses a mock borzo quote and book in a declared production process", async () => {
     process.env.BURGONOMICS_ENV = "production";
@@ -573,6 +662,7 @@ describe("dispatchBook end-to-end: an account failure is never an address verdic
     config.mock.shadowfaxDispatch = false;
     config.shadowfax.apiKey = "test_sfx_token";
     config.shadowfax.clientCode = "test_sfx_client";
+    config.shadowfax.contractVerified = true;
     savedDocs["orders/ord_cls"] = {
       ...defaultOrder(),
       branchPhone: "+91 98250 12345",
@@ -612,6 +702,7 @@ describe("dispatchBook end-to-end: an account failure is never an address verdic
     config.mock.shadowfaxDispatch = false;
     config.shadowfax.apiKey = "test_sfx_token";
     config.shadowfax.clientCode = "test_sfx_client";
+    config.shadowfax.contractVerified = true;
     let sent: any = null;
     fetchHandler = (_url, init) => {
       sent = JSON.parse(init.body);

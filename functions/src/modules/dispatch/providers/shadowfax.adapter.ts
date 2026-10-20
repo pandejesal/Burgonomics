@@ -96,15 +96,22 @@ export const shadowfaxAdapter: ProviderAdapter = {
     // Both creds are required: quote needs the token, book needs client_code.
     // A keyed-but-incomplete provider is EXCLUDED (DR2), never walked into a
     // guaranteed book failure.
+    // Key grant alone is NOT enough: Shadowfax's native contract is UNVERIFIED,
+    // so a keyed provider stays out of the live fan-out until a human records
+    // SHADOWFAX_CONTRACT_VERIFIED=true. Without this, "keys granted" would
+    // silently send real traffic to an unconfirmed integration the moment
+    // DISPATCH_REQUIRE_LIVE was off (GAP 2, readiness gate is opt-in).
     return (
       config.shadowfax.enabled &&
-      ((!!config.shadowfax.apiKey && !!config.shadowfax.clientCode) ||
+      ((!!config.shadowfax.apiKey &&
+        !!config.shadowfax.clientCode &&
+        config.shadowfax.contractVerified) ||
         config.mock.shadowfaxDispatch)
     );
   },
 
   async quote(ctx: DispatchQuoteContext): Promise<ProviderQuoteOk> {
-    const { calculateHaversineDistanceKm } = await import("../../../core/geo");
+    const { calculateHaversineDistanceKm, estimatePickupMinutes } = await import("../../../core/geo");
     const fallbackKm = calculateHaversineDistanceKm(
       ctx.pickup.lat,
       ctx.pickup.lng,
@@ -154,13 +161,19 @@ export const shadowfaxAdapter: ProviderAdapter = {
     const fare = pickFiniteNumber(res.data?.delivery_cost);
     if (fare === null) throw unparseable("shadowfax", "serviceability delivery_cost");
 
+    // Provider ETA when it actually sent one; otherwise a LOCAL estimate that is
+    // flagged. The previous bare `?? 9` was a fabricated provider-looking number
+    // on a customer-visible quote with nothing distinguishing it from real data.
+    const providerEta = pickFiniteNumber(res.data?.pickup_eta);
+
     return {
       provider: "shadowfax",
       outcome: "ok",
       fare,
       // The serviceability response carries no distance — haversine fallback.
       distanceKm: fallbackKm,
-      pickupEtaMinutes: pickFiniteNumber(res.data?.pickup_eta) ?? 9,
+      pickupEtaMinutes: providerEta ?? estimatePickupMinutes(),
+      etaEstimated: providerEta === null,
       // No server-side quote id exists; the local id + fare are the proof (DR7).
       quoteId: `QTE-SFX-${Date.now()}`,
       expiresAt: Date.now() + QUOTE_TTL_MS,
@@ -208,7 +221,18 @@ export const shadowfaxAdapter: ProviderAdapter = {
     const pickupContactNumber = contactDigits(pickup.phone);
     const dropContactNumber = contactDigits(drop.phone, ctx.customerPhone);
     if (!pickupContactNumber || !dropContactNumber) {
-      throw unparseable("shadowfax", "contact phone");
+      // MISSING LOCAL INPUT, not a provider response. The old error blamed
+      // Shadowfax ("returned an unparseable contact phone") and was classified
+      // transient, which invited a failover for an order no provider can serve.
+      // Plain Error => the router aborts without walking to another rider.
+      const err: any = new Error(
+        !pickupContactNumber
+          ? "Shadowfax booking needs a pickup contact phone - add the branch phone to the branch profile, then retry dispatch."
+          : "Shadowfax booking needs a delivery contact phone - add the customer's phone to the order, then retry dispatch."
+      );
+      err.statusCode = 422;
+      err.code = "DISPATCH_CONTACT_MISSING";
+      throw err;
     }
 
     const orderItems = items.length
@@ -258,8 +282,27 @@ export const shadowfaxAdapter: ProviderAdapter = {
     });
     assertProviderOk(res, "shadowfax");
 
-    const providerOrderId = res.data?.sfx_order_id ?? res.data?.id ?? null;
-    if (!providerOrderId) throw unparseable("shadowfax", "place-order id");
+    const rawProviderOrderId = res.data?.sfx_order_id ?? res.data?.id ?? null;
+    const providerOrderId =
+      typeof rawProviderOrderId === "string" && rawProviderOrderId.trim() !== ""
+        ? rawProviderOrderId
+        : typeof rawProviderOrderId === "number" && Number.isFinite(rawProviderOrderId)
+          ? String(rawProviderOrderId)
+          : null;
+    if (providerOrderId === null) {
+      // The provider ACCEPTED the request (2xx) but returned no usable id. The
+      // delivery may already exist, so this is AMBIGUOUS, never transient:
+      // walking to the next provider could book a SECOND real rider for the same
+      // order (Borzo parity, dbd1626). A PLAIN Error keeps the property that
+      // matters — dispatch.router.ts only walks on for ProviderDispatchError, so
+      // anything else releases the claim and throws instead of failing over.
+      const err: any = new Error(
+        "Shadowfax create-order returned no order id (response shape differs from spec) - do not retry blindly; reconcile with the provider"
+      );
+      err.statusCode = 502;
+      err.code = "PROVIDER_BOOK_AMBIGUOUS";
+      throw err;
+    }
 
     const rider = res.data?.rider || {};
     return {

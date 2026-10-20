@@ -98,6 +98,12 @@ export const config = {
     webhookSecret: process.env.SHADOWFAX_WEBHOOK_SECRET || "",
     // Hyperlocal Marketplace production base (staging: https://hlbackend.staging.shadowfax.in).
     baseUrl: process.env.SHADOWFAX_BASE_URL || "https://api.shadowfax.in",
+    // Fail-closed contract gate. Shadowfax's native contract (paths, auth header,
+    // order/serviceability/tracking shape, callback schema) is UNVERIFIED — the
+    // adapter's field names are ours, not evidence. Granting keys must therefore
+    // NOT by itself put an unverified provider into the live fan-out; a human
+    // flips this only after the contract is confirmed. Default false.
+    contractVerified: process.env.SHADOWFAX_CONTRACT_VERIFIED === "true",
   },
   dispatch: {
     quoteTimeoutMs: positiveNumber(process.env.DISPATCH_QUOTE_TIMEOUT_MS, 6000),

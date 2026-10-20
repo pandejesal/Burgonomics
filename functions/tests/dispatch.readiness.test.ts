@@ -135,11 +135,26 @@ describe("dispatch test-window readiness", () => {
     expect(dispatchReadinessReport().violations.join(" ")).toContain("porter: eligible");
   });
 
-  it("refuses when Shadowfax becomes eligible while its contract is unverified", () => {
+  it("keeps a keyed-but-contract-unverified Shadowfax out of the fan-out, and reports it", () => {
     config.shadowfax.enabled = true;
     config.shadowfax.apiKey = "sfx-placeholder";
     config.shadowfax.clientCode = "sfx-client";
-    expect(dispatchReadinessReport().violations.join(" ")).toContain("shadowfax: eligible");
+
+    // GAP 2: granting keys must NOT by itself make an unverified contract
+    // eligible — the opt-in DISPATCH_REQUIRE_LIVE gate is not a standing guard.
+    const gated = dispatchReadinessReport();
+    const gatedSfx = gated.providers.find((p) => p.provider === "shadowfax")!;
+    expect(gatedSfx.eligible).toBe(false);
+    expect(gatedSfx.contractVerified).toBe(false);
+    expect(gated.violations.join(" ")).toContain(
+      "credentials present but the native contract is NOT verified"
+    );
+
+    // Positive control: the explicit human flag is what enables it.
+    config.shadowfax.contractVerified = true;
+    const verified = dispatchReadinessReport();
+    expect(verified.providers.find((p) => p.provider === "shadowfax")!.eligible).toBe(true);
+    expect(verified.violations.join(" ")).not.toContain("NOT verified");
   });
 
   it("refuses when the agreed test courier is disabled or unkeyed", () => {

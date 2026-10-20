@@ -67,6 +67,12 @@ export interface ProviderQuoteOk {
   fare: number;
   distanceKm: number;
   pickupEtaMinutes: number;
+  /**
+   * TRUE when `pickupEtaMinutes` is a LOCAL estimate because the provider sent
+   * no ETA. Absent/false means provider data (or a mock/rate-card source that
+   * `source` already labels).
+   */
+  etaEstimated?: boolean;
   quoteId: string;
   expiresAt: number;
   source: string;

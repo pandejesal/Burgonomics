@@ -437,6 +437,9 @@ export async function dispatchQuote(params: DispatchQuoteParams): Promise<any> {
     estimatedFare: winner.fare,
     estimatedDistanceKm: winner.distanceKm,
     estimatedPickupMinutes: winner.pickupEtaMinutes,
+    // TRUE when that ETA is our local estimate rather than provider data, so a
+    // consumer never presents a fallback number as the courier's own ETA.
+    pickupEtaEstimated: winner.etaEstimated === true,
     quoteId: winner.quoteId,
     vehicleType: "2-Wheeler (Bike Express)",
     source: winner.source,
