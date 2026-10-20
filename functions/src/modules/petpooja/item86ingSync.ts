@@ -339,16 +339,24 @@ export async function handlePetpoojaWebhook(
   auth: PetpoojaWebhookAuth = {}
 ): Promise<void> {
   const untrusted = auth.authenticated === false;
-  // Our own order reference: the Firestore doc id we send as Order.orderID.
-  let orderId = payload.order_id || payload.clientOrderID || payload.client_order_id;
-  // The POS-assigned id the documented order-status callback carries. Read in
-  // addition to `order_id`, because a payload may carry either or both.
-  const posOrderId =
-    payload.orderID != null && payload.orderID !== ""
-      ? String(payload.orderID)
-      : payload.petpooja_order_id != null && payload.petpooja_order_id !== ""
-        ? String(payload.petpooja_order_id)
-        : "";
+  // Our own order references. `order_id` / `clientOrderID` are the legacy
+  // client fields. The documented order-status callback instead carries
+  // `orderID` = "Unique client order id which is used to update order status at
+  // client side" (vendor Apiary V2.1 blueprint), so it is a CLIENT reference
+  // first — not automatically the POS's own id.
+  const legacyClientRef = payload.order_id || payload.clientOrderID || payload.client_order_id;
+  const callbackOrderId =
+    payload.orderID != null && payload.orderID !== "" ? String(payload.orderID) : "";
+  // Explicit POS id field, when the vendor sends one.
+  const explicitPosOrderId =
+    payload.petpooja_order_id != null && payload.petpooja_order_id !== ""
+      ? String(payload.petpooja_order_id)
+      : "";
+  // Candidate POS id: the callback `orderID` is only treated as POS-issued when
+  // the POS-id fallback below proves it (a matching branch-scoped order), or
+  // when the payload carries the explicit petpooja_order_id field.
+  const posOrderId = callbackOrderId || explicitPosOrderId;
+  let orderId = legacyClientRef;
 
   // A payload carrying a POS order id is an ORDER event, never a store-status
   // ping, so it must not be swallowed by the store-status branch below. (A real
@@ -399,28 +407,86 @@ export async function handlePetpoojaWebhook(
     payload.rest_id ?? payload.restId ?? payload.restID ?? payload.restaurantid ?? ""
   );
 
-  // Resolve the order: our own doc id first, then the POS-assigned id. The POS
-  // path is what makes a callback usable at all — the outbound relay only writes
-  // `petpoojaOrderId` when save_order returns one, so a callback that arrives
-  // with the POS id and no client reference must still find its order.
+  // Resolve the order: CLIENT references first (the documented callback shape),
+  // then the POS-assigned id. The POS path stays for callbacks that genuinely
+  // carry a POS id, but it must not be used to bypass a contradictory client
+  // reference — an id that names another outlet's order is a contradiction, not
+  // a miss. Every reference is branch-scoped by the callback's restID.
   let orderDoc: any = null;
-  if (orderId) {
-    const byDocId = await db.collection("orders").doc(String(orderId)).get();
-    if (byDocId.exists) orderDoc = byDocId;
+  let resolvedBy: "client-callback" | "client-legacy" | "pos" | null = null;
+  let parkReason: string | null = null;
+  const scopedBranchId = restIdRaw ? await resolveBranchIdForRestId(restIdRaw) : null;
+
+  const clientCandidates: Array<{
+    ref: string;
+    kind: "client-callback" | "client-legacy";
+  }> = [];
+  if (legacyClientRef != null && legacyClientRef !== "") {
+    clientCandidates.push({ ref: String(legacyClientRef), kind: "client-legacy" });
   }
-  if (!orderDoc && posOrderId) {
-    const branchId = restIdRaw ? await resolveBranchIdForRestId(restIdRaw) : null;
-    orderDoc = await resolveOrderByPosOrderId(posOrderId, branchId);
-    if (!orderDoc) {
+  // The documented `orderID` client ref is only resolvable when the callback
+  // names an outlet we can scope it to; a bare id must never reach an order.
+  if (
+    callbackOrderId &&
+    scopedBranchId &&
+    !clientCandidates.some((candidate) => candidate.ref === callbackOrderId)
+  ) {
+    clientCandidates.push({ ref: callbackOrderId, kind: "client-callback" });
+  }
+
+  const clientMatches: Array<{
+    doc: any;
+    kind: "client-callback" | "client-legacy";
+  }> = [];
+  for (const candidate of clientCandidates) {
+    const snap = await db.collection("orders").doc(candidate.ref).get();
+    if (!snap.exists) continue;
+    const docBranch = String(((snap.data() || {}) as any).branchId ?? "");
+    if (scopedBranchId && docBranch !== scopedBranchId) {
+      // Contradictory client ref/outlet: PARK. Falling through to the POS-id
+      // path could apply this callback to a different outlet's order.
+      parkReason = `client ref ${candidate.ref} belongs to branch ${
+        docBranch || "none"
+      }, outside callback outlet ${scopedBranchId}`;
+      clientMatches.length = 0;
+      break;
+    }
+    clientMatches.push({ doc: snap, kind: candidate.kind });
+  }
+
+  if (!parkReason && clientMatches.length > 0) {
+    const distinct = new Set(
+      clientMatches.map((match) => match.doc.id || match.doc.ref?.id)
+    );
+    if (distinct.size > 1) {
+      // Two references naming two different orders is ambiguous — never pick.
+      parkReason = `conflicting client refs ${[...distinct].join(", ")} in one callback`;
+    } else {
+      orderDoc = clientMatches[0].doc;
+      resolvedBy = clientMatches[0].kind;
+    }
+  }
+
+  if (!orderDoc && !parkReason && posOrderId) {
+    orderDoc = await resolveOrderByPosOrderId(posOrderId, scopedBranchId);
+    if (orderDoc) {
+      resolvedBy = "pos";
+    } else {
       console.warn(
-        `[Petpooja Webhook] POS id ${posOrderId} did not match a tracked order (restID ${restIdRaw || "absent"}, ${branchId ? `branch ${branchId}` : "UNLINKED"})`
+        `[Petpooja Webhook] POS id ${posOrderId} did not match a tracked order (restID ${
+          restIdRaw || "absent"
+        }, ${scopedBranchId ? `branch ${scopedBranchId}` : "UNLINKED"})`
       );
     }
   }
 
   if (!orderDoc) {
-    const refKey = orderId || posOrderId;
-    console.warn(`[Petpooja Webhook] Order ${refKey} not found in Firestore.`);
+    const refKey = orderId || callbackOrderId || posOrderId;
+    console.warn(
+      `[Petpooja Webhook] Order ${refKey} not resolved${
+        parkReason ? ` (${parkReason})` : ""
+      }.`
+    );
     try {
       await db
         .collection("unmatched_petpooja_orders")
@@ -429,9 +495,11 @@ export async function handlePetpoojaWebhook(
           {
             orderId: orderId ?? null,
             posOrderId: posOrderId || null,
+            callbackOrderId: callbackOrderId || null,
             rawStatus: payload.status || payload.order_status || null,
             restId: restIdRaw || null,
             status: "needs_review",
+            reason: parkReason,
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
@@ -439,7 +507,9 @@ export async function handlePetpoojaWebhook(
       await captureErrorSnapshot({
         source: "petpooja",
         severity: "medium",
-        message: `Petpooja webhook for unknown order ${refKey} parked for review`,
+        message: `Petpooja webhook for ${
+          parkReason ? "conflicting/unknown" : "unknown"
+        } order ${refKey} parked for review${parkReason ? `: ${parkReason}` : ""}`,
         orderId: refKey,
       });
     } catch (err) {
@@ -570,18 +640,53 @@ export async function handlePetpoojaWebhook(
   //   from the retry queue. What they claim is recorded under a separate field.
   // - a `Reject`/unknown status must not be promoted to a plain `synced` state
   //   with no signal that the KOT was refused.
+  //
+  // PROVENANCE: only a POS-DERIVED id may become `petpoojaOrderId`. When the
+  // callback only carried our client reference (`orderID` per the documented
+  // contract), the order is known to the POS but we still hold no POS-issued id:
+  // record the existing accepted-no-id marker (truthful, keeps dedupe/retry from
+  // re-pushing) and NEVER stamp the client reference as a POS id.
+  const accepting = canonicalStatus !== "cancelled" && canonicalStatus !== "unknown";
+  const posDerivedId =
+    explicitPosOrderId || (resolvedBy === "pos" ? posOrderId : "");
   if (
     !untrusted &&
-    posOrderId &&
-    orderData.petpoojaOrderId !== posOrderId &&
-    canonicalStatus !== "cancelled" &&
-    canonicalStatus !== "unknown"
+    posDerivedId &&
+    orderData.petpoojaOrderId !== posDerivedId &&
+    accepting
   ) {
-    updateData.petpoojaOrderId = posOrderId;
+    updateData.petpoojaOrderId = posDerivedId;
     updateData.petpoojaStatus = "synced";
     updateData.petpoojaSyncStatus = "synced";
-  } else if (untrusted && posOrderId && orderData.petpoojaOrderId !== posOrderId) {
-    updateData.petpoojaCallbackOrderId = posOrderId;
+  } else if (
+    !untrusted &&
+    accepting &&
+    (resolvedBy === "client-callback" ||
+      (resolvedBy === "client-legacy" && callbackOrderId))
+  ) {
+    updateData.petpoojaAcceptedNoId = true;
+    updateData.petpoojaAcceptedNoIdAt = admin.firestore.FieldValue.serverTimestamp();
+    updateData.petpoojaAcceptedNoIdAck = JSON.stringify(payload).slice(0, 500);
+    updateData.petpoojaAcceptedNoIdSource =
+      resolvedBy === "client-callback" ? "callback_client_ref" : "callback_unproven_id";
+    updateData.petpoojaStatus = "synced";
+    updateData.petpoojaSyncStatus = "synced";
+    // Visibility only: an id the callback claimed but we could not prove is
+    // POS-issued. It never becomes `petpoojaOrderId` and never drives dedupe.
+    if (resolvedBy === "client-callback") {
+      updateData.petpoojaCallbackClientRef = callbackOrderId;
+    } else if (callbackOrderId) {
+      updateData.petpoojaCallbackOrderId = callbackOrderId;
+    }
+  } else if (untrusted) {
+    const claimedId =
+      posDerivedId ||
+      (callbackOrderId && resolvedBy !== "client-callback" ? callbackOrderId : "");
+    if (claimedId && orderData.petpoojaOrderId !== claimedId) {
+      updateData.petpoojaCallbackOrderId = claimedId;
+    } else if (resolvedBy === "client-callback" && callbackOrderId) {
+      updateData.petpoojaCallbackClientRef = callbackOrderId;
+    }
   }
   if (eventId) {
     // Replay marker rides on the order doc so a redelivery of the SAME event

@@ -273,7 +273,7 @@ describe("handlePetpoojaWebhook — POS-assigned order id (documented callback s
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];
   });
 
-  it("records the POS id a callback teaches us and promotes the order out of pending_retry", async () => {
+  it("records an unproven callback id without claiming it as the POS id, and promotes out of pending_retry", async () => {
     savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h", name: "HL Road" };
     // The outbound relay parks an order here when save_order echoes orderID:"".
     savedDocs["orders/ord_pos"] = {
@@ -292,7 +292,13 @@ describe("handlePetpoojaWebhook — POS-assigned order id (documented callback s
     const doc = savedDocs["orders/ord_pos"];
     expect(doc.status).toMatchObject({ code: "CONFIRMED" });
     expect(doc.petpoojaKitchenStatus).toBe("Accept");
-    expect(doc.petpoojaOrderId).toBe("PP-9001");
+    // The documented callback `orderID` is a CLIENT id. With no POS-issued id
+    // proven, it must not be promoted onto petpoojaOrderId (that would fabricate
+    // provenance and poison the outbound dedupe). It is kept for visibility and
+    // the order is marked accepted-no-id truthfully.
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.petpoojaCallbackOrderId).toBe("PP-9001");
+    expect(doc.petpoojaAcceptedNoId).toBe(true);
     // Promoted, or the retry worker would keep re-pushing an accepted order.
     expect(doc.petpoojaStatus).toBe("synced");
     expect(doc.petpoojaSyncStatus).toBe("synced");
@@ -427,5 +433,150 @@ describe("handlePetpoojaWebhook — POS-assigned order id (documented callback s
     // The POS refused the KOT: no id, no "synced".
     expect(doc.petpoojaOrderId).toBeUndefined();
     expect(doc.petpoojaStatus).toBe("pending_retry");
+  });
+});
+
+// Documented contract (vendor Apiary V2.1, order-callback-request-response):
+// the callback carries `orderID` = "Unique client order id which is used to
+// update order status at client side". It is therefore OUR reference, not the
+// POS-issued id. These cases pin the client-ref-first resolution, the branch
+// contradiction park, and the provenance rule that a client ref never becomes
+// petpoojaOrderId.
+describe("handlePetpoojaWebhook — documented client-ref callback (orderID only)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+  });
+
+  const seedLinkedOrder = (id: string, extra: Record<string, any> = {}) => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h", name: "HL Road" };
+    savedDocs[`orders/${id}`] = {
+      id,
+      branchId: "branch_t1",
+      petpoojaStatus: "pending_retry",
+      petpoojaSyncStatus: "pending_retry",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+      ...extra,
+    };
+  };
+
+  it("resolves the documented shape and records acceptance without inventing a POS id", async () => {
+    seedLinkedOrder("ord_cb1");
+    await handlePetpoojaWebhook({ restID: "31z58ciw0h", orderID: "ord_cb1", status: "5" });
+    const doc = savedDocs["orders/ord_cb1"];
+    expect(doc.status).toMatchObject({ code: "READY_FOR_PICKUP" });
+    expect(doc.petpoojaKitchenStatus).toBe("5");
+    // Truthful provenance: no POS id was issued, so none is claimed.
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.petpoojaAcceptedNoId).toBe(true);
+    expect(doc.petpoojaAcceptedNoIdSource).toBe("callback_client_ref");
+    expect(doc.petpoojaCallbackClientRef).toBe("ord_cb1");
+    // Promoted out of pending_retry so the retry worker cannot duplicate a KOT.
+    expect(doc.petpoojaStatus).toBe("synced");
+    expect(doc.petpoojaSyncStatus).toBe("synced");
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_cb1"]).toBeUndefined();
+  });
+
+  it("PARKS a client reference that contradicts the callback's outlet and does not fall back to the POS path", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["branches/branch_t2"] = { petpoojaStoreId: "OTHER-REST" };
+    // The client ref names branch_t1's order ...
+    savedDocs["orders/ord_cb2"] = {
+      id: "ord_cb2",
+      branchId: "branch_t1",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    // ... while a POS-shaped lookup under the callback's outlet WOULD match this
+    // decoy. A contradiction must park, never retry the POS path and apply here.
+    savedDocs["orders/ord_decoy"] = {
+      id: "ord_decoy",
+      branchId: "branch_t2",
+      petpoojaOrderId: "ord_cb2",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({ restID: "OTHER-REST", orderID: "ord_cb2", status: "5" });
+    expect(savedDocs["orders/ord_cb2"].status).toMatchObject({ code: "PENDING" });
+    expect(savedDocs["orders/ord_cb2"].petpoojaKitchenStatus).toBeUndefined();
+    expect(savedDocs["orders/ord_decoy"].status).toMatchObject({ code: "PENDING" });
+    expect(savedDocs["orders/ord_decoy"].petpoojaKitchenStatus).toBeUndefined();
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_cb2"].reason).toMatch(
+      /outside callback outlet/
+    );
+  });
+
+  it("parks a documented client ref when restID is missing or unlinked", async () => {
+    seedLinkedOrder("ord_cb3");
+    await handlePetpoojaWebhook({ restID: "UNLINKED-REST", orderID: "ord_cb3", status: "5" });
+    expect(savedDocs["orders/ord_cb3"].status).toMatchObject({ code: "PENDING" });
+    expect(savedDocs["orders/ord_cb3"].petpoojaKitchenStatus).toBeUndefined();
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_cb3"]).toBeDefined();
+  });
+
+  it("parks an unknown client ref without touching any order", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    await handlePetpoojaWebhook({ restID: "31z58ciw0h", orderID: "does_not_exist", status: "5" });
+    expect(savedDocs["unmatched_petpooja_orders/upo_does_not_exist"]).toMatchObject({
+      callbackOrderId: "does_not_exist",
+      status: "needs_review",
+    });
+  });
+
+  it("lets an untrusted client-ref callback change status but never promote sync state", async () => {
+    seedLinkedOrder("ord_cb5");
+    await handlePetpoojaWebhook(
+      { restID: "31z58ciw0h", orderID: "ord_cb5", status: "5" },
+      { authenticated: false }
+    );
+    const doc = savedDocs["orders/ord_cb5"];
+    // Bounded status change is preserved ...
+    expect(doc.status).toMatchObject({ code: "READY_FOR_PICKUP" });
+    // ... but the retry/dedupe state stays untouched, and the claim is only
+    // recorded under the visibility field.
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.petpoojaAcceptedNoId).toBeUndefined();
+    expect(doc.petpoojaStatus).toBe("pending_retry");
+    expect(doc.petpoojaSyncStatus).toBe("pending_retry");
+    expect(doc.petpoojaCallbackClientRef).toBe("ord_cb5");
+  });
+
+  it("keeps the genuine POS-id fallback working when the callback carries a proven POS id", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_pos2"] = {
+      id: "ord_pos2",
+      branchId: "branch_t1",
+      petpoojaOrderId: "PP-9100",
+      petpoojaStatus: "synced",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({ restID: "31z58ciw0h", orderID: "PP-9100", status: "Accept" });
+    const doc = savedDocs["orders/ord_pos2"];
+    expect(doc.status).toMatchObject({ code: "CONFIRMED" });
+    expect(doc.petpoojaOrderId).toBe("PP-9100");
+    expect(doc.petpoojaCallbackClientRef).toBeUndefined();
+  });
+
+  it("parks conflicting client refs instead of choosing one", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_legit"] = {
+      id: "ord_legit",
+      branchId: "branch_t1",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    savedDocs["orders/ord_other"] = {
+      id: "ord_other",
+      branchId: "branch_t1",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({
+      order_id: "ord_legit",
+      restID: "31z58ciw0h",
+      orderID: "ord_other",
+      status: "5",
+    });
+    expect(savedDocs["orders/ord_legit"].status).toMatchObject({ code: "PENDING" });
+    expect(savedDocs["orders/ord_legit"].petpoojaKitchenStatus).toBeUndefined();
+    expect(savedDocs["orders/ord_other"].status).toMatchObject({ code: "PENDING" });
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_legit"].reason).toMatch(
+      /conflicting client refs/
+    );
   });
 });
