@@ -61,10 +61,6 @@ function shadowfaxHeaders(): Record<string, string> {
   };
 }
 
-function base(): string {
-  return (config.shadowfax.baseUrl || "").replace(/\/+$/, "");
-}
-
 /**
  * Fail closed on a missing token BEFORE any provider call. `isEligible()`
  * already requires the key, so the router never reaches this — but a direct
@@ -91,6 +87,115 @@ function assertShadowfaxCredentials(operation: string): void {
     err.code = "DISPATCH_PROVIDER_UNCONFIGURED";
     throw err;
   }
+}
+
+function shadowfaxBaseMisconfigured(operation: string, raw: string): never {
+  const snippet = raw ? ` "${redactedBaseSlice(raw)}"` : " (empty)";
+  const err: any = new Error(
+    `Shadowfax ${operation} requires a usable absolute https:// SHADOWFAX_BASE_URL - got${snippet}, refusing to send the auth token to a misconfigured base`
+  );
+  err.statusCode = 503;
+  err.code = "DISPATCH_PROVIDER_MISCONFIGURED";
+  throw err;
+}
+
+/**
+ * The failure path echoes a config value into staff-visible dispatchError and
+ * captureErrorSnapshot alerts. Redact BEFORE slicing: 60-char truncation is
+ * truncation, not redaction. Three leak shapes (GLM verify findings):
+ *   1. scheme://userinfo@ — redact the userinfo.
+ *   2. query/fragment secrets — the guard refuses any ?/# anyway, so the echo
+ *      is truncated at the first ?/# and nothing diagnostic is lost.
+ *   3. credential-shaped authority with NO @ ("https://key:secret") — the
+ *      @-rule cannot match it, so the whole authority is elided; the operator
+ *      still sees the value type, the secret never leaves the guard.
+ * A plain hostname is kept — it is the one piece a debugging operator needs
+ * and never a secret.
+ */
+function redactedBaseSlice(raw: string): string {
+  let echo = raw.split(/[?#]/)[0];
+  let redactedAt = false;
+  const atForm = /([a-z][a-z0-9+.-]*:\/\/)[^@/\s]*@/i;
+  if (atForm.test(echo)) {
+    echo = echo.replace(atForm, "$1[redacted]@");
+    redactedAt = true;
+  }
+  const schemeMatch = echo.match(/^([a-z][a-z0-9+.-]*:\/\/)([^\s]*)$/i);
+  // Credential-shaped colon only (GLM r2 finding 2): a plain "host:8443"
+  // authority must stay visible for the operator — elide when the part after
+  // the first colon contains a second colon or any non-digit, i.e. looks like
+  // a secret, not a port.
+  const authority = schemeMatch ? schemeMatch[2] : "";
+  const colonAt = authority.indexOf(":");
+  const rest = colonAt >= 0 ? authority.slice(colonAt + 1) : "";
+  if (
+    schemeMatch &&
+    !redactedAt &&
+    /[:@]/.test(authority) &&
+    (colonAt < 0 || /:.+:/.test(authority) || /[^0-9]/.test(rest))
+  ) {
+    return `${schemeMatch[1]}[authority elided]`;
+  }
+  // Scheme-less pastes have no :// anchor for the rules above (DS r2 finding
+  // 3): "key:secret@host", "key:secret", "//key:secret@host", "mailto:key:secret".
+  // Redact any <token>@ generically (idempotent for the [redacted]@ form
+  // already produced), then elide a colon-pair value with no endpoint content.
+  echo = echo.replace(/([^@\s]+)@/g, "[redacted]@");
+  const deScheme = echo.replace(/^\/\//, "");
+  if (!/:\/\//.test(echo) && /^[^\s/]+:[^\s/]+$/.test(deScheme)) {
+    return "[value elided]";
+  }
+  return echo.slice(0, 60);
+}
+
+/**
+ * Fail closed on a misconfigured SHADOWFAX_BASE_URL BEFORE any provider call.
+ * `env.ts` only falls back to the default for EMPTY values, so a truthy-garbage
+ * env value (paste whitespace, a scheme-less host, an http:// base) used to
+ * reach `fetch` verbatim: URL construction threw `TypeError: Failed to parse
+ * URL` inside fetchProviderJson, where classifyThrown() relabels EVERY throw
+ * as a provider `transient` — the same defect class the empty-token guard
+ * closed (4be553b): a LOCAL config fault indistinguishable from the provider
+ * having a bad day (walkable at book time). `http://` additionally sends the
+ * bearer token in cleartext. Plain Error, not ProviderDispatchError: a
+ * misconfigured base is not a provider failure, so the router cannot release
+ * the claim and walk to another courier for it.
+ *
+ * Refuses: unparseable values; non-https schemes; empty hosts; userinfo,
+ * query- or fragment-bearing values; and non-root paths. The endpoints are
+ * APPENDED to the base, so a bare query marker ("https://host?" — whatwg-parsed
+ * search is the EMPTY string, an empty `hash` for "#") would swallow the
+ * appended path into the query string, and a non-root path would join into
+ * "/v1/api/v1/…" — both are a guaranteed provider 4xx, i.e. a local typo
+ * mislabelled not_serviced. Never checks reachability, port, or host shape:
+ * a parseable https:// single-label host still goes out (documented residual).
+ * Returns the validated base so guard and wire read the same value and cannot
+ * drift around an await (DS r2 finding 7).
+ */
+function assertShadowfaxBaseUrl(operation: string): string {
+  const raw = (config.shadowfax.baseUrl || "").trim();
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    parsed = null;
+  }
+  if (
+    !parsed ||
+    parsed.protocol !== "https:" ||
+    !parsed.hostname ||
+    parsed.username ||
+    parsed.password ||
+    // `https://host?` parses with an EMPTY search (and `#` an empty hash), so
+    // the parsed-truthiness checks alone miss the bare markers — test the raw.
+    parsed.search ||
+    parsed.hash ||
+    /[\?#]/.test(raw) ||
+    parsed.pathname.replace(/\/+$/, "") !== ""
+  ) {
+    shadowfaxBaseMisconfigured(operation, raw);
+  }
+  return parsed.origin;
 }
 
 /** Shadowfax `paid` is the string "true"/"false" (never a boolean). */
@@ -152,6 +257,15 @@ export const shadowfaxAdapter: ProviderAdapter = {
         config.shadowfax.contractVerified) ||
         config.mock.shadowfaxDispatch)
     );
+    // A garbage SHADOWFAX_BASE_URL is DELIBERATELY not an exclusion here: the
+    // adapter refuses it pre-wire with the loud DISPATCH_PROVIDER_MISCONFIGURED
+    // plain Error, staff-visible through dispatchQuote.providers[].error, which
+    // surfaces the operator typo; silently excluding the provider instead would
+    // tuck the misconfiguration behind a clean fan-out miss (DR2 demands
+    // exclusion for "not keyed", not for config it can name and refuse).
+    // NOTE: dispatch.readiness() currently records only urlHost/TEST-host for
+    // shadowfax and adds NO violation for a garbage base — the base-refusal
+    // lives solely in this adapter (readiness hunk proposed to lane 04).
   },
 
   async quote(ctx: DispatchQuoteContext): Promise<ProviderQuoteOk> {
@@ -179,10 +293,11 @@ export const shadowfaxAdapter: ProviderAdapter = {
     }
 
     assertShadowfaxCredentials("quote");
+    const shadowfaxBase = assertShadowfaxBaseUrl("quote");
 
     const res = await fetchProviderJson(
       "shadowfax",
-      `${base()}/api/v1/order-serviceability/`,
+      `${shadowfaxBase}/api/v1/order-serviceability/`,
       {
         method: "PUT",
         headers: shadowfaxHeaders(),
@@ -246,8 +361,16 @@ export const shadowfaxAdapter: ProviderAdapter = {
     }
 
     assertShadowfaxCredentials("book");
+    // Before the clientCode check: a base-url config fault must surface as the
+    // local MISCONFIGURED Error, not be outrun by the walkable transient that a
+    // missing clientCode throws.
+    const shadowfaxBase = assertShadowfaxBaseUrl("book");
 
-    if (!config.shadowfax.clientCode) {
+    // Trimmed like the token (GLM r2 finding 3): a whitespace-pasted
+    // SHADOWFAX_CLIENT_CODE is not a code — it would reach the wire verbatim
+    // as a guaranteed 4xx mislabelled transient; refuse it as missing instead.
+    const clientCode = (config.shadowfax.clientCode || "").trim();
+    if (!clientCode) {
       throw new ProviderDispatchError(
         "shadowfax",
         "transient",
@@ -292,11 +415,11 @@ export const shadowfaxAdapter: ProviderAdapter = {
         }))
       : [{ id: "order", name: "Food order", price: orderValueInr(ctx), quantity: 1 }];
 
-    const res = await fetchProviderJson("shadowfax", `${base()}/api/v2/orders/`, {
+    const res = await fetchProviderJson("shadowfax", `${shadowfaxBase}/api/v2/orders/`, {
       method: "POST",
       headers: shadowfaxHeaders(),
       body: JSON.stringify({
-        client_code: config.shadowfax.clientCode,
+        client_code: clientCode,
         order_details: {
           order_value: orderValueInr(ctx),
           paid: paidFlag(ctx),
