@@ -555,7 +555,10 @@ export async function handlePetpoojaWebhook(
           .set(
             {
               orderId: resolvedOrderId,
-              posOrderId: posOrderId || null,
+              // Same rule as the primary park: a client ref is never labelled a
+              // POS id in the review queue.
+              posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+              callbackOrderId: callbackOrderId || null,
               rawStatus: payload.status || payload.order_status || null,
               restId: restIdRaw || null,
               status: "needs_review",
@@ -694,6 +697,11 @@ export async function handlePetpoojaWebhook(
     // POS-issued. It never becomes `petpoojaOrderId` and never drives dedupe.
     if (resolvedBy === "client-callback") {
       updateData.petpoojaCallbackClientRef = callbackOrderId;
+      // Visibility only for an explicit POS-id claim: it never becomes
+      // petpoojaOrderId unless the order already held that proven id.
+      if (explicitPosOrderId) {
+        updateData.petpoojaCallbackOrderId = explicitPosOrderId;
+      }
     } else if (callbackOrderId) {
       updateData.petpoojaCallbackOrderId = callbackOrderId;
     }
