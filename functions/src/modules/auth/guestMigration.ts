@@ -263,36 +263,54 @@ export async function migrateGuestAccount(
     throw new Error("Migration refused: target account does not match the authenticated caller.");
   }
 
-  // Signed guest-ownership proof: when the client presents one it MUST
-  // verify (timing-safe). Absent-proof callers stay allowed during the
-  // batch-5 client rollout, but the guest-relink guard below still confines
-  // them to guest-owned docs only.
-  if (guestProof !== undefined && !verifyGuestOwnershipProof(guestSessionId, guestProof)) {
-    throw new Error("Migration refused: invalid guest-ownership proof.");
-  }
+  // H1 FAIL-CLOSED (orchestrator decision 2026-10-20T03:00Z): a guest-session
+  // relink is reachable ONLY with a VALID signed guest-ownership proof,
+  // verified timing-safe AGAINST that session id - and the refusal runs
+  // BEFORE any read or write. The previous "unproven batch-5 rollout stage"
+  // made a session id (unguessable by design, but not by POSSESSION)
+  // sufficient to relink guest-owned docs; Admin-SDK writes bypass client
+  // Firestore rules and requireRole confirms role only, so those were never
+  // a backstop. Unproven relink is a security regression, not a product
+  // policy: MISSING/invalid/garbage proof => typed 403, session-ID-only
+  // migration no longer exists.
   if (guestSessionId) {
     assertUnguessableSessionId(guestSessionId);
+    if (!verifyGuestOwnershipProof(guestSessionId, guestProof)) {
+      const e = new Error(
+        "Migration refused: a valid signed guest-ownership proof is required for session relink."
+      ) as Error & { code?: string; statusCode?: number };
+      e.code = "MIGRATION_PROOF_REQUIRED";
+      e.statusCode = 403;
+      throw e;
+    }
+  } else if (guestProof !== undefined) {
+    // A proof with no session id verifies against nothing: refuse instead of
+    // silently treating the call as proofless.
+    const e = new Error(
+      "Migration refused: a guest-ownership proof was provided without a guest session id."
+    ) as Error & { code?: string; statusCode?: number };
+    e.code = "MIGRATION_PROOF_REQUIRED";
+    e.statusCode = 403;
+    throw e;
   }
 
-  // Ownership proof for the anonymous-UID path: the source UID must be a real
-  // Firebase ANONYMOUS account in this project. Claiming orders from an
-  // identified (phone/email/password) account via a caller-supplied UID is
-  // an order-hijack — refuse it. (Residual: a shared-device anonymous UID is
-  // unguessable by design; prefer client-side Firebase account linking, which
-  // keeps one UID and needs no migration at all.)
+  // anonymousUid CROSS-ACCOUNT relink FAILS CLOSED (same decision). Looking up
+  // the source UID and observing that it "is anonymous" proves nothing about
+  // caller POSSESSION of that account: Admin-SDK lookups are not
+  // authorization, and unguessability is not an access control. No supported
+  // source-possession token exists in this project yet, so cross-UID relink
+  // stays BLOCKED until one is ratified (e.g. a Firebase account-link
+  // migration flow minted server-side). Same-UID upgrade is NOT a cross-UID
+  // relink and remains unaffected. LEGITIMATE PATH AFFECTED: the batch-5
+  // anonymous->permanent upgrade flow - disclosed here explicitly rather
+  // than silently relinking, per the fail-closed instruction.
   if (anonymousUid && anonymousUid !== permanentUid) {
-    let sourceUser: admin.auth.UserRecord;
-    try {
-      sourceUser = await auth.getUser(anonymousUid);
-    } catch {
-      throw new Error("Anonymous session not found — migration refused.");
-    }
-    const isAnonymous =
-      sourceUser.providerData.length === 0 ||
-      sourceUser.providerData.every((p) => p.providerId === "anonymous");
-    if (!isAnonymous) {
-      throw new Error("Migration refused: source account is not anonymous.");
-    }
+    const e = new Error(
+      "Migration refused: cross-UID relink requires verifiable source ownership - no supported source-proof mechanism exists (BLOCKED)."
+    ) as Error & { code?: string; statusCode?: number };
+    e.code = "MIGRATION_SOURCE_UNOWNED";
+    e.statusCode = 403;
+    throw e;
   }
 
   // OTP-verified phone link (C7): only the ID-token-verified phone_number
