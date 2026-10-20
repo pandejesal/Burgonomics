@@ -70,7 +70,11 @@ function base(): string {
  * failure and must never release the dispatch claim to fail over.
  */
 function assertShadowfaxCredentials(operation: string): void {
-  if (!config.shadowfax.apiKey) {
+  // Trimmed: an env value of "   " is not a token. `isEligible()` only checks
+  // truthiness, so a whitespace-only key would otherwise pass the eligibility
+  // gate and reach the wire as `Authorization: Token    ` (opaque 401).
+  const token = (config.shadowfax.apiKey || "").trim();
+  if (!token) {
     const err: any = new Error(
       `Shadowfax ${operation} requires SHADOWFAX_API_KEY - refusing to call the provider with an empty token`
     );

@@ -131,6 +131,15 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
     expect(fetchCalls).toHaveLength(0);
   });
 
+  it("a whitespace-only token is treated as missing (isEligible only checks truthiness)", async () => {
+    config.shadowfax.apiKey = "   ";
+
+    const err = await capture(shadowfaxAdapter.quote(ctx()));
+
+    expect(err.code).toBe("DISPATCH_PROVIDER_UNCONFIGURED");
+    expect(fetchCalls).toHaveLength(0);
+  });
+
   it("positive control: a keyed quote reaches the wire exactly once with the Token header", async () => {
     config.shadowfax.apiKey = "test_sfx_token";
     fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42, pickup_eta: 6 });
