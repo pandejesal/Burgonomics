@@ -398,6 +398,12 @@ describe("autoRefund fail-closed + idempotent (B2-S1)", () => {
       refundStatus: "refunded",
       refundId: "rfnd_orig_2",
       refundAmount: 50,
+      // Ledger PROOF of full refund. The claim guard is grounded on the
+      // recorded money, not the bare status string: the old stamp alone
+      // also appeared after the FIRST partial (webhook + record write),
+      // wrongly 409-blocking the designed remainder refund.
+      refundLedger: { rfnd_orig_2: 10000 },
+      refundedTotalPaise: 10000,
     };
     const err: any = await autoRefund({
       orderId: "order_rf_2",

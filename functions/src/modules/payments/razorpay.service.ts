@@ -1886,15 +1886,80 @@ export async function autoRefund(
     const data = ((snap.exists ? snap.data() : {}) || {}) as any;
     const existingTotal = Number(data.refundedTotalPaise) || 0;
 
-    // Idempotent replay: the same (payment, amount) refund returns the stored
-    // receipt instead of POSTing a second refund. A completed full refund
-    // followed by a DIFFERENT amount is a double-spend attempt — refuse.
-    if (data.refundStatus === "refunded" && data.refundId) {
-      const sameAmount =
-        (data.refundAmount ?? undefined) === (amountRupees ?? undefined);
-      if (sameAmount) {
-        return { replay: { id: data.refundId, payment_id: razorpayPaymentId, status: "processed", reused: true as const } };
-      }
+    // Refund-claim guard's FULLNESS is decided by the recorded LEDGER against
+    // the known capture — never by the bare status string. The webhook +
+    // autoRefund post-gateway writes stamp "partially_refunded" while the
+    // cumulative total is below the capture (see refund.processed), and
+    // stamping the first partial "refunded" here used to 409-block the
+    // designed remainder refund (ALREADY_REFUNDED) its own cap logic invites.
+    const ledgerSum =
+      data.refundLedger && typeof data.refundLedger === "object" && !Array.isArray(data.refundLedger)
+        ? Object.values(data.refundLedger as Record<string, number>).reduce(
+            (sum, v) => sum + (Number(v) || 0),
+            0
+          )
+        : 0;
+    const recordedRefundedPaise = Math.max(existingTotal, ledgerSum);
+    // Capture AUTHORITY (B1): the live gateway capture truth
+    // (payment.capturedAmountPaise, both storage shapes) outranks the priced
+    // total — a points-discounted payable captures LESS than grandTotal, and
+    // capping/status-computing against the price would grant refunds beyond
+    // the money Razorpay actually holds. Priced total stays the fallback for
+    // docs written before the capture stamp existed.
+    const recordedCapturePaise =
+      Number(data?.payment?.capturedAmountPaise) ||
+      Number(data?.["payment.capturedAmountPaise"]) ||
+      0;
+    const authorityCapturePaise =
+      Number.isFinite(recordedCapturePaise) && recordedCapturePaise > 0
+        ? recordedCapturePaise
+        : capturedPaise;
+
+    // Idempotent replay (B2) — LEDGER-KEYED first: refund identity is the
+    // (order, amount) refund, the same key the gateway-side
+    // X-Refund-Idempotency fingerprint uses. Any ledger entry worth exactly
+    // the requested paise IS that refund — replay its stored receipt instead
+    // of POSTing (and never double-count it in the record write). A
+    // DIFFERENT amount falls through: no entry matches ⇒ not a replay.
+    const replayEntry =
+      requestedPaise !== null
+        ? Object.entries(ledgerSum > 0 ? (data.refundLedger as Record<string, number>) : {}).find(
+            ([, paise]) => Math.round(Number(paise) || 0) === requestedPaise
+          )
+        : undefined;
+    if (replayEntry) {
+      return { replay: { id: replayEntry[0], payment_id: razorpayPaymentId, status: "processed", reused: true as const } };
+    }
+    // Legacy fallback for pre-ledger docs only (ledgerSum === 0): the status
+    // replay that predates the ledger. Docs WITH a ledger never reach this —
+    // their scripts write per-refund amounts sometimes cumulative (webhook
+    // refundAmount = running total), which would false-positive.
+    if (
+      ledgerSum === 0 &&
+      (data.refundStatus === "refunded" || data.refundStatus === "partially_refunded") &&
+      data.refundId &&
+      (data.refundAmount ?? undefined) === (amountRupees ?? undefined)
+    ) {
+      return { replay: { id: data.refundId, payment_id: razorpayPaymentId, status: "processed", reused: true as const } };
+    }
+
+    // Terminal-without-proof: "refunded" is trusted as FULL only when
+    //   (a) the recorded ledger/total actually reaches the capture, or
+    //   (b) it is the full-request shape — refundAmount === null is written
+    //       ONLY by a full (amountRupees-unset) autoRefund call, so the
+    //       intent is unambiguous even when the gateway echo (or the mock)
+    //       disagrees with the priced capture (M4).
+    // A webhook/A-partial stamp below the capture ("refunded" + a positive
+    // per-refund amount) is NOT full — the designed remainder refund proceeds.
+    const fullIntentShape =
+      data.refundStatus === "refunded" &&
+      !!data.refundId &&
+      (data.refundAmount ?? null) === null;
+    const fullyRefunded =
+      authorityCapturePaise !== null
+        ? recordedRefundedPaise >= authorityCapturePaise || fullIntentShape
+        : data.refundStatus === "refunded" && !!data.refundId;
+    if (fullyRefunded) {
       const dup: any = new Error("Order is already fully refunded — refusing a second refund.");
       dup.statusCode = 409;
       dup.code = "ALREADY_REFUNDED";
@@ -1915,22 +1980,36 @@ export async function autoRefund(
     }
 
     // Cumulative partial-refund cap: sequential partials may never exceed
-    // the captured total. A "full" request after partials is refused with
-    // the exact remaining paise (operator refunds the remainder explicitly —
-    // no magic remainder that could double-pay).
-    if (requestedPaise !== null && capturedPaise !== null) {
-      if (requestedPaise + existingTotal > capturedPaise) {
+    // the captured total, and the cap is LEDGER-AUTHORITATIVE (M1) — the
+    // scalar total can lag a webhook-updated ledger, so the refundable
+    // remaining is computed against max(total, ledgerSum). A "full" request
+    // after partials is refused with the exact remaining paise (operator
+    // refunds the remainder explicitly — no magic remainder that could
+    // double-pay).
+    if (requestedPaise !== null && authorityCapturePaise !== null) {
+      if (requestedPaise + recordedRefundedPaise > authorityCapturePaise) {
         const over: any = new Error(
-          `Refund of ${requestedPaise}pa exceeds the remaining refundable ${capturedPaise - existingTotal}pa — refused.`
+          `Refund of ${requestedPaise}pa exceeds the remaining refundable ${authorityCapturePaise - recordedRefundedPaise}pa — refused.`
         );
         over.statusCode = 400;
         over.code = "REFUND_EXCEEDS_REMAINING";
         throw over;
       }
     }
-    if (requestedPaise === null && existingTotal > 0 && capturedPaise !== null) {
+    // Fail-closed (B6): with an unknown capture a second partial cannot be
+    // bounded — refuse rather than refund blindly. Same-amount replays above
+    // still work (identity = (order, amount)).
+    if (requestedPaise !== null && authorityCapturePaise === null && recordedRefundedPaise > 0) {
+      const unsure: any = new Error(
+        "Refund amount cannot be bounded against an unknown captured total — record the capture first."
+      );
+      unsure.statusCode = 409;
+      unsure.code = "REFUND_CAPTURE_UNKNOWN";
+      throw unsure;
+    }
+    if (requestedPaise === null && recordedRefundedPaise > 0 && authorityCapturePaise !== null) {
       const partials: any = new Error(
-        `Order already has partial refunds (${existingTotal}pa) — refund the remaining ${capturedPaise - existingTotal}pa explicitly.`
+        `Order already has partial refunds (${recordedRefundedPaise}pa) — refund the remaining ${authorityCapturePaise - recordedRefundedPaise}pa explicitly.`
       );
       partials.statusCode = 409;
       partials.code = "REFUND_PARTIALS_EXIST";
@@ -1946,18 +2025,11 @@ export async function autoRefund(
       },
       { merge: true }
     );
-    // Snapshot the per-refund ledger with the claim so the post-gateway write
-    // can merge THIS refund into it exactly once (see refundLedger below).
-    const priorLedger =
-      data.refundLedger && typeof data.refundLedger === "object" && !Array.isArray(data.refundLedger)
-        ? { ...(data.refundLedger as Record<string, number>) }
-        : {};
-    return { existingTotal, priorLedger };
+    // The post-gateway record write re-reads the ledger fresh inside its own
+    // transaction, so no claim-time ledger snapshot is needed here.
+    return { existingTotal };
   });
   if ((claimed as any).replay) return (claimed as any).replay;
-  const existingTotalPaise = (claimed as { existingTotal: number }).existingTotal;
-  const priorRefundLedger = ((claimed as { priorLedger?: Record<string, number> }).priorLedger ||
-    {}) as Record<string, number>;
 
   const refundPayload: any = {
     reverse_all: true, // Automatically reverses split transfer proportionally from branch
@@ -2013,32 +2085,76 @@ export async function autoRefund(
   // sequential partials and webhook replays converge instead of overwriting
   // (see webhookHandler refund.processed). The lease marker is cleared.
   //
-  // refundLedger counts each gateway refund id EXACTLY ONCE: `autoRefund`
-  // (this write) and the `refund.processed` webhook both land for the same
-  // refund under different triggers, so the total is
-  // max(recorded, ledger-sum) — never summed twice (double credit of the
-  // refundable balance), never under-counted (a smaller follow-up partial).
-  const refundedPaise = Number(refundResult.amount) || 0;
-  const refundLedger: Record<string, number> = { ...priorRefundLedger };
-  if (typeof refundResult.id === "string" && refundResult.id && refundedPaise > 0) {
-    refundLedger[refundResult.id] = refundedPaise;
-  }
-  const ledgerTotal = Object.values(refundLedger).reduce(
-    (sum, v) => sum + (Number(v) || 0),
-    0
-  );
-  await orderRef.set(
-    {
-      refundStatus: "refunded",
-      refundAmount: amountRupees ?? null,
-      refundedTotalPaise: Math.max(existingTotalPaise + refundedPaise, ledgerTotal),
-      refundLedger,
-      refundClaimedAt: admin.firestore.FieldValue.delete(),
-      refundId: refundResult.id,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
+  // Written INSIDE one transaction with a FRESH read (M3): a refund.processed
+  // webhook can land between the claim and this write, and a plain merge-set
+  // computed from the claim-time snapshot could silently DECREASE the doc's
+  // scalar total below what the webhook had recorded. The fresh max(total,
+  // ledgerSum) is monotonic by construction.
+  //
+  // refundLedger counts each gateway refund id EXACTLY ONCE (M2): autoRefund
+  // and the refund.processed webhook both land for the same refund under
+  // different triggers, and the gateway can also ECHO BACK an id that is
+  // already in the ledger (lost-response retry of the same (order, amount)
+  // key). A replayed id adds NO new money — merging it only refreshes the map;
+  // never `total + refundedPaise` again on top of an already-counted id.
+  // (M3) The full-vs-partial intent marker is decided once, from the request.
+  const isFullRequest = amountRupees === undefined || amountRupees === null;
+  // Update order record. refundedTotalPaise accumulates monotonically so
+  // sequential partials and webhook replays converge instead of overwriting —
+  // see the full context above.
+  const refundedTotal = await runTx(async (tx) => {
+    const snap = await tx.get(orderRef);
+    const fresh = ((snap && snap.exists ? snap.data() : {}) || {}) as any;
+    const freshLedger: Record<string, number> =
+      fresh.refundLedger && typeof fresh.refundLedger === "object" && !Array.isArray(fresh.refundLedger)
+        ? { ...(fresh.refundLedger as Record<string, number>) }
+        : {};
+    const refundId = typeof refundResult.id === "string" ? refundResult.id : "";
+    if (refundId && (Number(refundResult.amount) || 0) > 0 && freshLedger[refundId] === undefined) {
+      freshLedger[refundId] = Number(refundResult.amount);
+    }
+    const ledgerTotal = Object.values(freshLedger).reduce((sum, v) => sum + (Number(v) || 0), 0);
+    const freshTotal = Number(fresh.refundedTotalPaise) || 0;
+    // Monotonic merge: never below the fresh basis, never double-carrying an
+    // already-ledgered id. The claim tx also snapshotted this refund with it,
+    // so a NEW id typically grows the ledger sum by exactly its paise.
+    const nextTotal = Math.max(freshTotal, ledgerTotal);
+    // State honesty (mirrors refund.processed): the terminal "refunded" stamp
+    // means the order is genuinely done, not merely "a refund happened".
+    // - A FULL request (amountRupees unset) refunds the whole capture by
+    //   intent — the terminal stamp applies even though the gateway echo
+    //   (and in mock mode, especially) may not match the priced capture; the
+    //   claim guard accepts that shape via fullIntentShape (refundAmount null).
+    // - A partial request is terminal only when the cumulative total has
+    //   reached the capture authority; below it records "partially_refunded"
+    //   so the claim guard still allows the designed remainder refund.
+    // - Unknown capture keeps the legacy "refunded" stamp (nothing to compare).
+    const freshCapture =
+      Number(fresh?.payment?.capturedAmountPaise) ||
+      Number(fresh?.["payment.capturedAmountPaise"]) ||
+      0;
+    const captureAuthority =
+      Number.isFinite(freshCapture) && freshCapture > 0 ? freshCapture : capturedPaise;
+    const refundStatusValue =
+      isFullRequest || captureAuthority === null || nextTotal >= captureAuthority
+        ? "refunded"
+        : "partially_refunded";
+    tx.set(
+      orderRef,
+      {
+        refundStatus: refundStatusValue,
+        refundAmount: amountRupees ?? null,
+        refundedTotalPaise: nextTotal,
+        refundLedger: freshLedger,
+        refundClaimedAt: admin.firestore.FieldValue.delete(),
+        refundId: refundResult.id,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return nextTotal;
+  });
+  void refundedTotal;
 
   // Append audit trail
   const auditId = `aud_rfnd_${Date.now()}_${refundResult.id}`;

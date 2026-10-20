@@ -351,7 +351,10 @@ describe("End-to-End Platform Integration Flow", () => {
     });
 
     expect(refundResult.id).toBeDefined();
-    expect(savedDocs[`orders/${orderId}`].refundStatus).toBe("refunded");
+    // State honesty: ₹104 of a ₹577 order is a PARTIAL refund — the old
+    // code stamped the terminal "refunded" on it, which both lied to the
+    // board and blocked any designed remainder refund afterward.
+    expect(savedDocs[`orders/${orderId}`].refundStatus).toBe("partially_refunded");
     expect(savedDocs[`orders/${orderId}`].refundAmount).toBe(104);
   });
 

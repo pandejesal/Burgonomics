@@ -862,7 +862,12 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           // capture at all: the money is real, but the order we hold still
           // looks unpaid - a contradiction support must see, because the
           // customer would otherwise be shown "unpaid" forever.
-          const capturedPaise = Number(data?.payment?.capturedAmountPaise);
+          // Capture truth in both storage shapes (B4): the confirm path
+          // writes the nested map, merge-set writers the dotted literal.
+          const capturedPaise =
+            Number(data?.payment?.capturedAmountPaise) ||
+            Number(data?.["payment.capturedAmountPaise"]) ||
+            0;
           const hasCapture = Number.isFinite(capturedPaise) && capturedPaise > 0;
           const captureRecorded =
             hasCapture ||
@@ -874,7 +879,16 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           tx.set(
             orderDoc.ref,
             {
-              refundStatus: "refunded",
+              // State honesty: BELOW the known capture this is a PARTIAL
+              // refund — stamping the terminal "refunded" here both lied to
+              // the board and let the refund-claim guard block the designed
+              // remainder refund (ALREADY_REFUNDED) after the first partial.
+              // Unknown-capture docs keep the legacy "refunded" stamp (the
+              // replay tests pin it; nothing downstream can compare totals).
+              refundStatus:
+                hasCapture && nextTotal < capturedPaise
+                  ? "partially_refunded"
+                  : "refunded",
               refundId,
               refundAmount: nextTotal / 100,
               refundedTotalPaise: nextTotal,
