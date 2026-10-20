@@ -449,7 +449,13 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         // recorded for a different captured payment.
         const WH_CONFIRMED_LATER = new Set([
           "PREPARING",
+          // Real KDS/bump vocabulary (orderStatus.ts:48,84). The guard used to
+          // list "READY", which no bump writes, so a duplicate payment.captured
+          // arriving after a staff bump fell through and regressed the order to
+          // CONFIRMED - losing the ready-for-pickup / ready-to-serve truth.
           "READY",
+          "READY_FOR_PICKUP",
+          "READY_TO_SERVE",
           "OUT_FOR_DELIVERY",
           "IN_TRANSIT",
           "DELIVERED",

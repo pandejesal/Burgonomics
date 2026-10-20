@@ -335,6 +335,67 @@ describe("payment confirmation concurrency (webhook path)", () => {
     });
   });
 
+  // Real bump vocabulary: orderStatus.ts writes READY_FOR_PICKUP (pickup and
+  // delivery) and READY_TO_SERVE (dine-in). The guard used to list "READY",
+  // which no bump ever writes, so a duplicate/late payment.captured on a ready
+  // order fell through and regressed it back to CONFIRMED. These pin the code.
+  it("isolated later-state guard: READY_FOR_PICKUP is not regressed by a late capture", async () => {
+    control.seed("orders/order_race_1", {
+      id: "order_race_1",
+      branchId: "branch_surat_01",
+      pricing: { grandTotal: 250, split: { branchTransferPaise: 9000 } },
+      paymentStatus: "pending",
+      status: {
+        code: "READY_FOR_PICKUP",
+        label: "Ready for pickup",
+        kind: "in_progress",
+        terminal: false,
+      },
+    });
+
+    const call = mockReqRes(capturedPayload("evt_race_pick_1"));
+    await handleRazorpayWebhook(call.req, call.res);
+
+    expect(call.out().statusCode).toBe(200);
+    const order = docs.get("orders/order_race_1")!.data;
+    expect(order.status).toMatchObject({ code: "READY_FOR_PICKUP" });
+    expect(order.paymentStatus).toBe("pending");
+    expect(order.routeTransferStatus).toBeUndefined();
+    expect(order.petpoojaOrderId).toBeUndefined();
+    expect(docs.get("unmatched_payments/ump_evt_race_pick_1")!.data).toMatchObject({
+      reason: "suppressed_later_state",
+      status: "needs_review",
+    });
+  });
+
+  it("isolated later-state guard: READY_TO_SERVE is not regressed by a late capture", async () => {
+    control.seed("orders/order_race_1", {
+      id: "order_race_1",
+      branchId: "branch_surat_01",
+      pricing: { grandTotal: 250, split: { branchTransferPaise: 9000 } },
+      paymentStatus: "pending",
+      status: {
+        code: "READY_TO_SERVE",
+        label: "Ready to serve",
+        kind: "in_progress",
+        terminal: false,
+      },
+    });
+
+    const call = mockReqRes(capturedPayload("evt_race_serve_1"));
+    await handleRazorpayWebhook(call.req, call.res);
+
+    expect(call.out().statusCode).toBe(200);
+    const order = docs.get("orders/order_race_1")!.data;
+    expect(order.status).toMatchObject({ code: "READY_TO_SERVE" });
+    expect(order.paymentStatus).toBe("pending");
+    expect(order.routeTransferStatus).toBeUndefined();
+    expect(order.petpoojaOrderId).toBeUndefined();
+    expect(docs.get("unmatched_payments/ump_evt_race_serve_1")!.data).toMatchObject({
+      reason: "suppressed_later_state",
+    });
+  });
+
   it("isolated terminal guard: pending + DELIVERED (terminal) is not regressed by a late capture", async () => {
     control.seed("orders/order_race_1", {
       id: "order_race_1",
