@@ -210,9 +210,11 @@ describe("assertTicketBranchAccess fail-closed contract (Loop 7 hardening)", () 
     }
   });
 
-  it("legacy branchless ticket docs remain staff-actionable (documented backstop)", async () => {
-    // Preconditions changing this rule must be explicit: rules + requireRole
-    // remain backstop; scoped staff on an unbranched doc is allowed here.
+  it("fails closed on a branchless (corrupt/legacy) ticket doc - even for matched scoped staff", async () => {
+    // createTicketSchema + firestore rules require branchId on NEW tickets, so
+    // a branchless doc is corrupt/legacy. A scoped role cannot scope an
+    // unspecifiable document, and such docs still carry refund paths - the
+    // previously-ALLOWED case was a widening (peer-review M1), now denied.
     savedDocs["support_tickets/tk_scope_legacy"] = {
       ticketNumber: "TICK-SCOPE-LEGACY",
       customerId: "cust_9",
@@ -222,8 +224,46 @@ describe("assertTicketBranchAccess fail-closed contract (Loop 7 hardening)", () 
       resolveTicketNote({
         ticketId: "tk_scope_legacy",
         resolution: "legacy doc",
-        caller: { uid: "staff_1", role: "branch_staff", branchIds: [] },
+        caller: { uid: "staff_1", role: "branch_staff", branchIds: ["branch_a"] },
       })
-    ).resolves.toMatchObject({ success: true });
+    ).rejects.toMatchObject({ code: "TICKET_FORBIDDEN", statusCode: 403 });
+    // Money path: a branchless doc with a captured payment is refused too.
+    savedDocs["support_tickets/tk_scope_legacy2"] = {
+      ticketNumber: "TICK-SCOPE-LEGACY2",
+      customerId: "cust_9",
+      orderId: "order_legacy_paid",
+      status: "open",
+    };
+    savedDocs["orders/order_legacy_paid"] = { payment: { razorpayPaymentId: "pay_live_legacy_1" } };
+    await expect(
+      resolveTicket({
+        ticketId: "tk_scope_legacy2",
+        resolvedBy: "staff_1",
+        resolvedByName: "Staff One",
+        action: "full_refund",
+        notes: "branchless money path",
+        caller: { uid: "staff_g", role: "branch_owner" }, // a global role bypasses branch PROOF, but not corrupt docs
+      })
+    ).rejects.toMatchObject({ code: "TICKET_FORBIDDEN", statusCode: 403 });
+    expect(savedDocs["orders/order_legacy_paid"].refundStatus).toBeUndefined();
+  });
+
+  it("rejects caller-less direct calls on messages (no silent visibility skip)", async () => {
+    savedDocs["support_tickets/tk_scope_l2"] = {
+      ticketNumber: "TICK-SCOPE-L2",
+      customerId: "cust_9",
+      branchId: "branch_a",
+      status: "open",
+    };
+    await expect(
+      addTicketMessage({
+        ticketId: "tk_scope_l2",
+        senderId: "ghost",
+        senderName: "Ghost",
+        senderRole: "customer",
+        text: "no caller at all",
+      })
+    ).rejects.toMatchObject({ code: "TICKET_FORBIDDEN", statusCode: 403 });
+    expect(savedDocs["support_tickets/tk_scope_l2"].timeline).toBeUndefined();
   });
 });

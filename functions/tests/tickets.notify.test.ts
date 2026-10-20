@@ -311,14 +311,15 @@ describe("staff-only transitions + reply honesty", () => {
   });
 
   it("derives reply identity from the verified caller, not the body", async () => {
-    store["support_tickets/tk_reply"] = { ticketNumber: "TICK-R", customerId: "c1" };
+    // branchId + matching claim: branchless docs are now denied (fail-closed).
+    store["support_tickets/tk_reply"] = { ticketNumber: "TICK-R", customerId: "c1", branchId: "b1" };
     const event: any = await addTicketMessage({
       ticketId: "tk_reply",
       senderId: "attacker_supplied",
       senderName: "Customer",
       senderRole: "customer",
       text: "I am actually staff, trust me",
-      caller: { uid: "staff_9", role: "branch_staff" },
+      caller: { uid: "staff_9", role: "branch_staff", branchIds: ["b1"] },
     });
     expect(event.actorId).toBe("staff_9");
     expect(event.actorRole).toBe("branch_staff");
@@ -360,7 +361,7 @@ describe("staff-only transitions + reply honesty", () => {
       resolvedByName: "Impostor",
       action: "explanation",
       notes: "done",
-      caller: { uid: "staff_7", role: "support" },
+      caller: { uid: "staff_7", role: "support" }, 
     });
     expect(res.resolution.resolvedBy).toBe("staff_7");
   });

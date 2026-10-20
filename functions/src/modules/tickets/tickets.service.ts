@@ -68,7 +68,17 @@ export function assertTicketBranchAccess(
   // or the customer-ownership path (addTicketMessage) - helper is inert.
   if (!role || !STAFF_ROLES.has(role)) return;
   if (GLOBAL_TICKET_ROLES.has(role)) return;
-  if (!ticketBranchId) return; // legacy branchless ticket (documented)
+  // NO branchless-doc allowance: createTicketSchema proves branchId and the
+  // rules require it on new tickets, so any ticket WITHOUT a branch is either
+  // corrupt or legacy - and legacy docs still carry refund paths. A scoped
+  // role cannot scope an unspecifiable document: fail closed here too.
+  if (!ticketBranchId) {
+    throw serviceError(
+      "TICKET_FORBIDDEN",
+      "Forbidden: ticket has no resolvable branch; cannot scope this action",
+      403
+    );
+  }
   const held = Array.isArray(caller.branchIds) ? caller.branchIds : [];
   if (!held.includes(ticketBranchId)) {
     throw serviceError(
@@ -385,6 +395,13 @@ export async function addTicketMessage(params: {
     throw serviceError("TICKET_NOT_FOUND", `Ticket ${ticketId} not found`, 404);
   }
   const ticket = ticketSnap.data() as any;
+  if (!caller || !caller.uid) {
+    // Fail-closed: a caller-less message previously skipped the visibility
+    // check entirely. Route requireAuth always binds req.user, so the only
+    // "caller-less" calls are direct module calls - reject rather than trust
+    // the body's senderId.
+    throw serviceError("TICKET_FORBIDDEN", "Forbidden: caller is required to message tickets", 403);
+  }
   if (caller && caller.uid) {
     if (!caller.role || !STAFF_ROLES.has(caller.role)) {
       if (ticket.customerId !== caller.uid) {
@@ -398,14 +415,6 @@ export async function addTicketMessage(params: {
       // Loop 7 hardening (fail-closed): scoped staff MUST prove the branch.
       assertTicketBranchAccess(caller, ticket.branchId, "message tickets");
     }
-  } else if (caller && !caller.uid) {
-    // A caller object without a bound identity cannot prove anything:
-    // reject rather than silently skipping the visibility check.
-    throw serviceError(
-      "TICKET_FORBIDDEN",
-      "Forbidden: caller identity is not bound; refusing ticket messages",
-      403
-    );
   }
 
   const event: TicketTimelineEvent = {
