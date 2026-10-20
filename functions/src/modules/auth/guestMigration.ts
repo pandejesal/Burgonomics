@@ -3,36 +3,13 @@ import { auth, db } from "../../core/firebase";
 import * as admin from "firebase-admin";
 import { computeHmacSha256, timingSafeEqual } from "../../core/security";
 
-export const AddressSchema = z.object({
-  id: z.string().optional(),
-  label: z.string().optional(),
-  full: z.string().optional(),
-  fullAddress: z.string().optional(),
-  street: z.string().optional(),
-  area: z.string().optional(),
-  city: z.string().optional(),
-  pincode: z.string().optional(),
-  lat: z.number().optional(),
-  lng: z.number().optional(),
-  isDefault: z.boolean().optional(),
-});
+import { AddressSchema, MigrateGuestSchema, MigratableAddress } from "./guestMigration.schema";
 
-export type MigratableAddress = z.infer<typeof AddressSchema>;
-
-export const MigrateGuestSchema = z.object({
-  guestSessionId: z.string().optional(),
-  anonymousUid: z.string().optional(),
-  permanentUid: z.string().min(1, "Permanent UID is required"),
-  phone: z.string().optional(),
-  email: z.string().optional(),
-  name: z.string().optional(),
-  addresses: z.array(AddressSchema).optional().default([]),
-  // Signed guest-ownership proof (HMAC-SHA256 hex over the session id, see
-  // mintGuestOwnershipProof). Optional during the client rollout (batch 5):
-  // when present it MUST verify; when absent only guest-owned docs relink
-  // (identified users' docs are never stolen — the guest-relink guard below).
-  guestProof: z.string().optional(),
-});
+// FIX2 (C1): the wire/service shape contract is now shared with the route
+// layer via the PURE schema module. Re-exported under the same names so the
+// service typing and existing tests are untouched; the routes their fields
+// carry are validated once, at the boundary, and never silently stripped.
+export { AddressSchema, MigrateGuestSchema, MigratableAddress };
 
 export type MigrateGuestInput = z.infer<typeof MigrateGuestSchema>;
 

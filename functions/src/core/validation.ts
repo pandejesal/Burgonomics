@@ -381,12 +381,15 @@ export const revokeRoleSchema = z.object({
   targetUid: z.string().min(1).max(128),
 });
 
-// Auth: migrate guest
-export const migrateGuestSchema = z.object({
-  permanentUid: z.string().min(1).max(128),
-  phone: z.string().max(20).optional(),
-  email: z.string().email().max(254).optional(),
-});
+// Auth: migrate guest. FIX2 (C1): this route schema previously kept only
+// {permanentUid, phone, email} and validateBody REPLACED req.body with that
+// subset - the service never saw guestSessionId/anonymousUid/name/addresses/
+// guestProof and the endpoint silently migrated NOTHING while still answering
+// success:true. The route now binds the SERVICE's own bounded schema
+// (modules/auth/guestMigration.schema.ts, pure zod) so every accepted field
+// reaches the service, with caps and .strict() making oversized/unknown
+// payloads a loud 400 instead of a truncated relink.
+export { MigrateGuestSchema as migrateGuestSchema } from "../modules/auth/guestMigration.schema";
 
 // Auth: verify bonus eligibility
 export const verifyBonusSchema = z.object({
