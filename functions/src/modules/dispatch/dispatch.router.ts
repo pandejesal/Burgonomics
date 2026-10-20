@@ -1097,8 +1097,16 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
     err.code = "DISPATCH_EXISTS";
     throw err;
   }
-  // A live API book is in flight — pasting now would race it.
-  if (isFreshGenericPending(order)) throw dispatchInProgressError();
+  // A live API book is in flight — pasting now would race it. Both claim
+  // classes block: the generic book claim AND Porter's own direct-tap claim
+  // (the same pair claimDispatch's busyCheck uses at the top of this file;
+  // the paste lane previously honoured only the generic one, so a paste
+  // racing a live /porter/book window flipped the order to dispatched while
+  // a REAL Porter booking was still in flight — two live riders for one
+  // order, the orphan invisible to the maps).
+  if (isFreshGenericPending(order) || isFreshPorterPending(order)) {
+    throw dispatchInProgressError();
+  }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   const prevDelivery =
@@ -1109,6 +1117,12 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
       dispatchProvider: "porter",
       dispatchOrderId: pid,
       porterOrderId: pid,
+      // Mirror porter.service's SUCCESS write shape (bookPorterRider): a
+      // settled paste marks the porter claim settled too — a stale
+      // dispatch_pending marker on a successfully pasted order is exactly the
+      // "is this claim live?" ambiguity this lane's guard exists for.
+      porterDispatchStatus: "dispatched",
+      porterDispatchError: null,
       // One active alias per order — the pasted Porter id supersedes any
       // stale id left by a previous carrier's dispatch.
       borzoOrderId: null,
