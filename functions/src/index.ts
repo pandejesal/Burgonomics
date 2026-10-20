@@ -1401,15 +1401,35 @@ app.post(
         res.status(400).json({ error: "Missing authenticated customer UID" });
         return;
       }
-      const result = await migrateGuestAccount({
-        ...req.body,
-        permanentUid,
-        phone: req.body.phone || (req.user as any)?.phone_number,
-        email: req.body.email || (req.user as any)?.email,
-      });
+      const result = await migrateGuestAccount(
+        {
+          ...req.body,
+          permanentUid,
+          phone: req.body.phone || (req.user as any)?.phone_number,
+          email: req.body.email || (req.user as any)?.email,
+        },
+        // M4: the second argument is the ID-token-verified caller. Without it
+        // the service's caller/target bind and the OTP-verified-phone
+        // contradiction guard are dead code, so a body phone could overwrite
+        // the profile and a client-supplied target would go unchecked.
+        req.user
+      );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to migrate guest session" });
+      // Deliberate refusals (target mismatch, contradictory body phone,
+      // missing/invalid guest proof) are typed 4xx. Pass them through so the
+      // client can act (re-auth / pick the right account) instead of retrying
+      // a 500; anything else stays a fail-closed 500.
+      const typed =
+        typeof err?.statusCode === "number" &&
+        err.statusCode >= 400 &&
+        err.statusCode < 500
+          ? err.statusCode
+          : 500;
+      res.status(typed).json({
+        error: err.message || "Failed to migrate guest session",
+        ...(typeof err?.code === "string" && err.code ? { code: err.code } : {}),
+      });
     }
   }
 );
