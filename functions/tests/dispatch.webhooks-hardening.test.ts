@@ -152,7 +152,11 @@ describe("dispatch webhook hardening (findings 3, 8, 10, 16)", () => {
     const payload = { event: "DELIVERED", order_id: "BZ-HEAL-1", timestamp: Date.now() };
     const raw = JSON.stringify(payload);
 
-    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+    // Parked AND retry-requested: without the non-2XX answer Borzo would stop
+    // retrying and the race below could never heal on its own.
+    await expect(
+      handleDispatchWebhook("borzo", raw, borzoSig(raw), payload)
+    ).rejects.toMatchObject({ code: "DISPATCH_WEBHOOK_RETRY" });
 
     // No resolution possible yet → parked, order untouched.
     expect(docOf("ord_heal").deliveryStatus).toBe("dispatched");
@@ -199,7 +203,12 @@ describe("dispatch webhook hardening (findings 3, 8, 10, 16)", () => {
     };
     const raw = JSON.stringify(payload);
 
-    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+    // Parked, and the provider is asked to retry: the callback may simply have
+    // raced the dispatch_order_map write, and a 200 would end Borzo's retry
+    // schedule (it retries until 2XX), leaving the order stuck.
+    await expect(
+      handleDispatchWebhook("borzo", raw, borzoSig(raw), payload)
+    ).rejects.toMatchObject({ statusCode: 503, code: "DISPATCH_WEBHOOK_RETRY" });
 
     const doc = docOf("ord_unbound");
     expect(doc.deliveryStatus).toBe("ready"); // never resolved, never flipped
@@ -353,16 +362,34 @@ describe("dispatch webhook hardening (findings 3, 8, 10, 16)", () => {
     const payload = { event: "DELIVERED", order_id: "BZ-NOALERT-1", timestamp: Date.now() };
     const raw = JSON.stringify(payload);
 
-    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+    await expect(
+      handleDispatchWebhook("borzo", raw, borzoSig(raw), payload)
+    ).rejects.toMatchObject({ code: "DISPATCH_WEBHOOK_RETRY" });
     expect(snapshotSpy).toHaveBeenCalledTimes(1); // a first park is a real alert
     const parkKeys = keysWithPrefix("unmatched_dispatch_events/");
     expect(parkKeys).toHaveLength(1);
 
     // The provider retries the byte-identical body: re-attempted (finding 3) but
     // the operator is not alerted twice, and the review row stays single.
-    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+    await expect(
+      handleDispatchWebhook("borzo", raw, borzoSig(raw), payload)
+    ).rejects.toMatchObject({ code: "DISPATCH_WEBHOOK_RETRY" });
     expect(snapshotSpy).toHaveBeenCalledTimes(1);
     expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(1);
+  });
+
+  it("asks for a retry only when a real provider order is named - not for unreferenceable garbage", async () => {
+    // Control for the retry signal: an event with no provider order and no hint
+    // can never match, so it must park WITHOUT a retry request. 24h of retries
+    // for an unmatchable body would be noise, not self-healing.
+    const payload = { event: "DELIVERED", timestamp: Date.now() };
+    const raw = JSON.stringify(payload);
+
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const parkKeys = keysWithPrefix("unmatched_dispatch_events/");
+    expect(parkKeys).toHaveLength(1);
+    expect(savedDocs[parkKeys[0]]).toMatchObject({ reason: "no_order_reference" });
   });
 
   it("dedups a reserialized redelivery of the same event, but not different content (finding 15)", async () => {
@@ -376,11 +403,15 @@ describe("dispatch webhook hardening (findings 3, 8, 10, 16)", () => {
     const rawB = `{"timestamp":${ts},"order_id":"BZ-RESER-1","event":"DELIVERED"}`;
     expect(rawB).not.toBe(rawA); // the bytes really do differ
 
-    await handleDispatchWebhook("borzo", rawA, borzoSig(rawA), payload);
+    await expect(
+      handleDispatchWebhook("borzo", rawA, borzoSig(rawA), payload)
+    ).rejects.toMatchObject({ code: "DISPATCH_WEBHOOK_RETRY" });
     expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(1);
     expect(snapshotSpy).toHaveBeenCalledTimes(1);
 
-    await handleDispatchWebhook("borzo", rawB, borzoSig(rawB), payload);
+    await expect(
+      handleDispatchWebhook("borzo", rawB, borzoSig(rawB), payload)
+    ).rejects.toMatchObject({ code: "DISPATCH_WEBHOOK_RETRY" });
     // One canonical dedup id -> one review row and one alert, not a second of each.
     // (Pre-fix the raw-byte hash made this a brand-new event.)
     expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(1);
@@ -391,7 +422,9 @@ describe("dispatch webhook hardening (findings 3, 8, 10, 16)", () => {
     // neither the event name nor the provider order id).
     const payloadC = { ...payload, courier: { name: "Amit", phone: "918880000001" } };
     const rawC = JSON.stringify(payloadC);
-    await handleDispatchWebhook("borzo", rawC, borzoSig(rawC), payloadC);
+    await expect(
+      handleDispatchWebhook("borzo", rawC, borzoSig(rawC), payloadC)
+    ).rejects.toMatchObject({ code: "DISPATCH_WEBHOOK_RETRY" });
     expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(2);
   });
 });

@@ -84,6 +84,8 @@ A provider **not keyed** is excluded from the fan-out (not a failure, DR2) — *
 
 Common pipeline: verify signature → dedup by deterministic park id (`dispatch_webhook_events`) → freshness window (event time from `timestamp`/`event_datetime`/per-status time fields) → resolve order via `dispatch_order_map` (hint-conflict ⇒ park) → known-inert noise ⇒ mark processed; unknown ⇒ park → late non-terminal event after `delivered` ⇒ ignore (no rewind) → apply canonical order fields (rider fields written only when present) → branch rebook FCM alert on cancellation events. Parks land in `unmatched_dispatch_events` with `reason` + `captureErrorSnapshot` (never silent drops).
 
+**Retry signalling (why a park is not always a 200).** Binding rows are written *after* the provider's book response, so a callback can legitimately arrive first. For the one park class a retry can still resolve — an event naming a real provider order that is not bound *yet* (`unbound_order`, `no_matching_order`) — the handler parks the event and then answers **503 `DISPATCH_WEBHOOK_RETRY`** (`DispatchWebhookRetryRequested`), keeping the provider's documented retry schedule alive (Borzo retries with increasing intervals for 24h until it gets a 2XX). Terminal parks (id conflict, unsafe hint, unknown event, no reference at all) still answer **2XX**, because retrying cannot change them and 24h of retries would be noise. Redelivery stays idempotent: only `processed` dedups, a parked row is re-parked with one review row and no second alert.
+
 ---
 
 ## 6. Data Model

@@ -26,7 +26,10 @@ import { dispatchFCM } from "../notifications/fcm.service";
  *      silently; a documented-but-unmapped return/reattempt status is recorded
  *      for review WITHOUT an error snapshot; unknown parks.
  *   4. Deterministic dedup + freshness gate. Only `processed` dedups — a
- *      PARKED event stays re-attemptable on provider redelivery.
+ *      PARKED event stays re-attemptable on provider redelivery. To make that
+ *      real on the wire, the race class (a provider order with no binding yet)
+ *      answers non-2XX via DispatchWebhookRetryRequested so the vendor's own
+ *      retry schedule keeps running; terminal parks still answer 2XX.
  *   5. Order resolution via dispatch_order_map FIRST, hint only when the
  *      order's own dispatchOrderId confirms it (conflict AND an unbound order
  *      → park, never guess).
@@ -37,6 +40,35 @@ import { dispatchFCM } from "../notifications/fcm.service";
  */
 
 export type DispatchWebhookProvider = "borzo" | "shadowfax";
+
+/**
+ * "Parked, but ask the provider to retry."
+ *
+ * Thrown AFTER the event is parked, for the one park class that a retry can
+ * still resolve: an event that names a real provider order with no binding yet
+ * (the callback raced our `dispatch_order_map` write, which happens after the
+ * provider's book response). Evidence: Borzo's Integration doc retries a
+ * callback with increasing intervals for 24h until it receives a 2XX — so
+ * returning 200 on a race would silently END the retry schedule and leave the
+ * order stuck until a human reads the review row. A non-2XX keeps the vendor's
+ * own retry loop alive, and parked events are re-attemptable by design (only
+ * `processed` dedups).
+ *
+ * Deliberately NOT thrown for terminal parks (id conflict, unsafe hint, unknown
+ * event, no reference at all): retrying cannot change those, and 24h of retries
+ * would be noise. This is a plain Error with a statusCode, so index.ts's
+ * existing error path maps it without a handler change.
+ */
+export class DispatchWebhookRetryRequested extends Error {
+  statusCode: number;
+  code: string;
+  constructor(message: string) {
+    super(message);
+    this.name = "DispatchWebhookRetryRequested";
+    this.statusCode = 503;
+    this.code = "DISPATCH_WEBHOOK_RETRY";
+  }
+}
 
 const DISPATCH_WEBHOOK_FRESHNESS_MS = 15 * 60 * 1000;
 const DISPATCH_WEBHOOK_FUTURE_SKEW_MS = 5 * 60 * 1000;
@@ -658,7 +690,9 @@ export async function handleDispatchWebhook(
     // accepting it would flip an unbound order to dispatched/delivered
     // (finding 8). It parks instead — and because a parked event is
     // re-attemptable on redelivery, a legitimate callback that raced the
-    // `dispatch_order_map` write still resolves on the provider retry.
+    // `dispatch_order_map` write still resolves on the provider retry. That
+    // retry only happens if we answer non-2XX, so this branch throws
+    // DispatchWebhookRetryRequested after parking (see the class doc).
     const binding = hintOrder?.dispatchOrderId || hintOrder?.porterOrderId || null;
     // A real binding that matches is the ONLY resolution. `!binding` parks
     // (finding 8): an unbound order must not be flipped by an attacker-chosen
@@ -681,6 +715,13 @@ export async function handleDispatchWebhook(
         "medium"
       );
       await markParked("unbound_order");
+      // A real provider order is named but not bound YET: only a retry can
+      // resolve this, so ask for one instead of answering 200.
+      if (providerOrderId) {
+        throw new DispatchWebhookRetryRequested(
+          `${provider} webhook parked (unbound_order) for ${String(providerOrderId).slice(0, 64)} - retry requested`
+        );
+      }
       return;
     } else if (hintOrder && providerOrderId && binding !== providerOrderId) {
       log(
@@ -714,6 +755,15 @@ export async function handleDispatchWebhook(
       "medium"
     );
     await markParked("no_matching_order");
+    // Bindings are written after the provider's book response, so a callback
+    // that names a real provider order can legitimately arrive before the map
+    // row exists. Retry-signal that case; an event with no usable id at all is
+    // terminal (nothing will ever match it).
+    if (providerOrderId) {
+      throw new DispatchWebhookRetryRequested(
+        `${provider} webhook parked (no_matching_order) for ${String(providerOrderId).slice(0, 64)} - retry requested`
+      );
+    }
     return;
   }
 
