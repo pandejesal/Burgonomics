@@ -1221,30 +1221,28 @@ app.post("/notifications/registerToken", requireAuth, validateBody(registerToken
       res.status(400).json({ error: "platform must be ios, android, or web" });
       return;
     }
-    const { db } = await import("./core/firebase");
     const uid = req.user?.uid;
     if (!uid) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const now = admin.firestore.FieldValue.serverTimestamp();
-    await db
-      .collection("device_tokens")
-      .doc(token)
-      .set(
-        { token, userId: uid, platform: platform || "unknown", appVersion: appVersion || null, updatedAt: now },
-        { merge: true }
-      );
-    await db
-      .collection("users")
-      .doc(uid)
-      .set(
-        { fcmTokens: admin.firestore.FieldValue.arrayUnion(token), updatedAt: now },
-        { merge: true }
-      );
-    res.status(200).json({ success: true });
+    // Ownership gate (standing claim): the handler BELOW used to merge
+    // userId: uid unconditionally — a foreign caller silently rebound a token
+    // owned by another account, concurrent registers raced (last write
+    // wins), and ownerless legacy docs were claimable by anyone. The seam
+    // makes claim/refresh/refuse one transaction: authenticated uid only,
+    // foreign/ownerless binding refuses race-safe, and the exact wire
+    // contract (200 {success}, generic 409) is pinned by httpResponseFor's
+    // unit tests.
+    const { registerDeviceToken, httpResponseFor } = await import("./core/deviceTokenRegister");
+    const result = await registerDeviceToken({ token, uid, platform, appVersion });
+    const http = httpResponseFor(result);
+    res.status(http.status).json(http.body);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to register token" });
+    // Fixed body: transaction retry-exhaustion / infra text must not leak to
+    // the client; the detail is logged instead.
+    console.error("[registerToken] registration failed:", err?.message || err);
+    res.status(500).json({ error: "Failed to register token" });
   }
 });
 
