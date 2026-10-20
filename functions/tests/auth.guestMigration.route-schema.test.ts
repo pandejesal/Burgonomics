@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // FIX2 (C1) route-boundary regression: the /auth/migrateGuest route previously
 // validated the body with a 3-field schema and REPLACED req.body with that
@@ -13,6 +13,7 @@
 //     not silently delete the evidence).
 
 const calls: any[] = [];
+const callers: any[] = [];
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
   const docRef = (colName: string, docId: string) => ({
@@ -47,8 +48,9 @@ vi.mock("../src/modules/auth/guestMigration", async () => {
   })();
   return {
     ...(actualService as any),
-    migrateGuestAccount: (input: any) => {
+    migrateGuestAccount: (input: any, callerArg?: unknown) => {
       calls.push(input);
+      callers.push(callerArg);
       return Promise.resolve({
         success: true,
         permanentUid: input?.permanentUid,
@@ -129,6 +131,7 @@ const FULL_BODY = {
 describe("migrateGuest route-boundary contract (FIX2)", () => {
   beforeEach(() => {
     calls.length = 0;
+    callers.length = 0;
   });
 
   it("the wire schema preserves every field the service consumes", () => {
@@ -147,8 +150,11 @@ describe("migrateGuest route-boundary contract (FIX2)", () => {
     const { next, statuses } = runMiddleware({ ...FULL_BODY });
     expect(next).toHaveBeenCalledTimes(1);
     expect(statuses).toHaveLength(0);
-    const caller: unknown = { uid: "perm_uid_1234567890", phone_number: "+919876543210", email: "customer@example.com" };
-    await migrateGuestAccount({ ...(migrateGuestSchema.parse({ ...FULL_BODY })), caller } as any);
+    // ROUTE-SHAPED hand-off: the real handler calls migrateGuestAccount(payload, req.user) -
+    // the caller is the SECOND ARGUMENT, never a body field (the strict schema
+    // would reject it). Coordinator f0fbd2a + pin 15c011d define the seam.
+    const caller = { uid: "perm_uid_1234567890", phone_number: "+919876543210", email: "customer@example.com" };
+    await migrateGuestAccount(migrateGuestSchema.parse({ ...FULL_BODY }), caller as any);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       guestSessionId: "sess_ok_1234567890",
@@ -157,13 +163,16 @@ describe("migrateGuest route-boundary contract (FIX2)", () => {
       permanentUid: "perm_uid_1234567890",
     });
     expect(calls[0].addresses).toHaveLength(1);
+    // The caller travels as argument 2 - the payload must not carry it.
+    expect(calls[0].caller).toBeUndefined();
+    expect(callers[0]).toMatchObject({ uid: "perm_uid_1234567890", phone_number: "+919876543210" });
   });
 
   it("a forged-looking guestProof is not stripped and still reaches the service", async () => {
     const body = { ...FULL_BODY, guestProof: "f0rged-not-hex!!" };
     const parsed = migrateGuestSchema.safeParse(body);
     expect(parsed.success).toBe(true);
-    await migrateGuestAccount({ ...(migrateGuestSchema.parse(body)), caller: { uid: "perm_uid_1234567890" } } as any);
+    await migrateGuestAccount(migrateGuestSchema.parse(body), { uid: "perm_uid_1234567890" });
     expect(calls[0]?.guestProof).toBe("f0rged-not-hex!!");
   });
 
