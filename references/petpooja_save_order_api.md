@@ -261,11 +261,14 @@ both the item lines and `tax_details`, `order_type:"H"`, tax computed from the
 outlet's own 2.5% + 2.5% rows, and no `Discount` object. Result:
 **HTTP 200, `success:"1"`, `orderID:""`** — still no order id.
 
-> **Correction (2026-10-17, see §16.8).** This section treated an empty
-> `orderID` as evidence the relay had not landed. It has not: Petpooja's own
-> Order List for outlet 5439 shows the orders these probes placed, plus the five
-> deliverable scenarios. An empty `orderID` is the normal shape of a successful
-> save and says nothing about fulfilment — only the dashboard Order List does.
+> **Correction (2026-10-17, amended 2026-10-20; see §16.8/§19.2).** This section
+> treated an empty `orderID` as evidence the relay had not landed. It has not:
+> Petpooja's own Order List for outlet 5439 shows the orders these probes placed,
+> plus the five deliverable scenarios. An empty `orderID` is the normal shape of a
+> successful save and says nothing about fulfilment. The listing snapshot itself
+> is not proof of fulfilment either — only a terminal `10 Delivered` state is; the
+> 2026-10-17 snapshot shows "Waiting For Acceptance" and later evidence is 0/5
+> fulfilment VERIFIED (§19.2).
 
 The same probe re-tests the flat contract with those real ids: still
 `{"success":"0","message":"Invalid order relay payload "}`. So the flat body is
@@ -584,16 +587,24 @@ inbound path could not have received one:
    Fixed: the documented callback shape (`restID` + `status`) is now accepted,
    everything else keeps the fail-closed 401, and integrity is enforced in the
    handler rather than by a static header.
-2. **The POS id was never read.** `payload.orderID` was ignored, so a callback was
+2. **The callback id was never read.** `payload.orderID` was ignored, so a callback was
    swallowed by the store-status branch. Fixed: `orderID` is read, and a payload
-   carrying it is never treated as a store-status ping.
-3. **Nothing was keyed on the POS id.** Fixed: `resolveOrderByPosOrderId` resolves
+   carrying it is never treated as a store-status ping. **Current contract:** the
+   vendor blueprint defines callback `orderID` as "Unique client order id which is
+   used to update order status at client side" (§19.1), so it is resolved as OUR
+   reference first; it is treated as the POS id only when a branch-scoped
+   `petpoojaOrderId` lookup proves it.
+3. **Nothing was keyed on a POS id.** Fixed: `resolveOrderByPosOrderId` resolves
    `orders.petpoojaOrderId == orderID` (single-field equality, so no composite
-   index), and refuses a match outside the `restID`'s branch.
-4. **The callback never persisted the POS id.** Fixed: when a callback teaches us
-   the id, the order stores `petpoojaOrderId` and is promoted
-   `pending_retry -> synced`, so the retry worker stops re-pushing an order the POS
-   has already accepted.
+   index), and refuses a match outside the `restID`'s branch. It is the fallback,
+   not the primary path.
+4. **Callback sync state was conflated with POS-id provenance.** Current: any
+   accepting callback promotes `pending_retry -> synced`, but only a proven
+   POS-derived id is stored as `petpoojaOrderId`. A documented client-ref callback
+   records `petpoojaAcceptedNoId` + `petpoojaCallbackClientRef` instead, so the
+   retry worker stops re-pushing without fabricating a POS id. A contradictory
+   client ref/outlet, an ambiguous pair of refs, or a claimed outlet that does not
+   resolve is parked for review rather than applied.
 
 Tests added: four in `petpooja.webhook-terminal.test.ts`, one in
 `env.failclosed.test.ts`.
@@ -1165,9 +1176,16 @@ verbatim:
 
 > Current status of order.[-1 = Cancelled, 1/2/3 = Accepted, 4 = Dispatch,
 > 5 = Food Ready, 10 = Delivered]
+>
+> `orderID` — "Unique client order id which is used to update order status at
+> client side."
 
 Independently confirmed by two readers (the blueprint JSON and the rendered
-documentation), so it is not a single-source claim.
+documentation), so it is not a single-source claim. The `orderID` definition is
+why the inbound handler resolves a callback as OUR client reference first
+(`item86ingSync.ts`); it treats the value as a POS id only when a branch-scoped
+`orders.petpoojaOrderId` match proves it. A client reference is never stamped as
+`petpoojaOrderId`.
 
 Consequences for our code:
 

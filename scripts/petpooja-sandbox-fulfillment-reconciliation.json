@@ -8,7 +8,7 @@
   },
   "method": {
     "oracle": "Petpooja dashboard -> Order List, filtered to Restaurant name 5439 - Burgonomics DEMO [135148] - 31z58ciw0h",
-    "whyNotApi": "Neither API host exposes an order-listing/fetch route - scripts/petpooja-route-matrix.mjs proved only save_order, update_order_status and mapped_restaurant_menus exist. The dashboard is therefore the only fulfilment oracle.",
+    "whyNotApi": "Neither API host exposes an order-listing/fetch route - scripts/petpooja-route-matrix.mjs proved only save_order, update_order_status and mapped_restaurant_menus exist. The dashboard is therefore the only RECEIPT/listing oracle available here; fulfilment needs a terminal 10 Delivered state (callback or Order List detail), not a listing row.",
     "pairingKey": "clientOrderID (the value we send as orderinfo.Order.orderID) plus the order total",
     "orderListOrderNoColumn": "Petpooja displays OUR clientOrderID in its 'Order No.' column; no separate POS-issued id is exposed.",
     "totalRecordsInOrderList": 34,

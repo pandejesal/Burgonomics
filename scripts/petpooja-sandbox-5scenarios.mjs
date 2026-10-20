@@ -375,7 +375,8 @@ async function main() {
     // Relay acceptance only. `petpoojaOrderId` is null whenever Petpooja omitted
     // the id from a response — the order is still registered, but fulfilment is
     // NOT verified by this harness (see the console label).
-    fulfilledIds: results
+    fulfilmentVerified: false,
+    relayAcceptedIds: results
       .filter((r) => r.ok)
       .map((r) => ({
         scenarioId: r.scenarioId,

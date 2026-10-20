@@ -51,11 +51,25 @@ describe("Petpooja five-case evidence stays received, not fulfilled", () => {
     expect(reference).toMatch(/fulfilment NOT VERIFIED/);
     expect(reference).toMatch(/cancelled at POS; NOT fulfilled/);
     expect(reference).toMatch(/progressed; NOT fulfilled/);
+    // The listing is not a fulfilment oracle, and the callback-id contract is
+    // recorded next to the documented status table.
+    expect(reference).not.toMatch(/only the dashboard Order List does/);
+    expect(reference.replace(/>/g, " ").replace(/\s+/g, " ")).toMatch(
+      /Unique client order id which is used to update order status at client side/
+    );
+    expect(reference).not.toMatch(/the order stores `petpoojaOrderId`/);
+  });
+
+  it("reconciliation describes the listing as a receipt oracle, not fulfilment", () => {
+    expect(reconciliation.method.whyNotApi).not.toMatch(/only fulfilment oracle/i);
+    expect(JSON.stringify(reconciliation.verdict)).toMatch(/0\/5 fulfilment VERIFIED/);
   });
 
   it("probe harness labels relay acceptance, never fulfilment", () => {
     expect(harness).toMatch(/relay accepted; fulfilment NOT verified/i);
     expect(harness).toMatch(/fulfilment NOT verified — confirm on the outlet's Order List/i);
+    expect(harness).toMatch(/fulfilmentVerified: false/);
+    expect(harness).not.toMatch(/fulfilledIds/);
     expect(harness).not.toMatch(/FULFILLED \(POS accepted/);
     expect(harness).not.toMatch(/FULFILLED \(petpooja order id/);
   });
