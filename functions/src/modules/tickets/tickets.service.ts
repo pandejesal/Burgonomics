@@ -52,8 +52,11 @@ const GLOBAL_TICKET_ROLES = new Set(["brand_owner", "developer", "support"]);
  * - global roles (brand_owner/developer/support) -> allowed.
  * - every other STAFF role: branchIds must CONTAIN ticket.branchId;
  *   missing/empty/mismatched -> 403.
- * - legacy ticket doc without a branchId: nothing to deny against - allowed
- *   here, backstopped by Firestore rules + route requireRole.
+ * - a ticket WITHOUT branchId is corrupt or legacy: FAILS CLOSED for scoped
+ *   roles (cannot scope an unspecifiable doc; Admin SDK writes never pass
+ *   through client rules, and requireRole confirms role only). Global roles
+ *   bypass branch PROOF only - same-rule corrupt-doc denials are pinned in
+ *   tests/tickets.branch-scope.test.ts.
  */
 export function assertTicketBranchAccess(
   caller: TicketCaller,
