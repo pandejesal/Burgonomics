@@ -163,9 +163,13 @@ export function assertBranchAccess(
  * resolved through the AUTHORITATIVE stores/{id}.partnerBranchId mapping.
  *
  * The customer app writes a NESTED store snapshot (ordersService.ts:393-398
- * `store: input.store`) and NO top-level storeId on delivery orders, so the
- * previous storeId-only lookup never matched them and every scoped-staff
- * action on such an order was denied as unresolvable. The nested snapshot's
+ * `store: input.store`) and, for orders that rely on it, the previous
+ * storeId-only lookup had nothing to read - those orders denied as
+ * unresolvable. NOTE: the same customer writer also stamps an explicit
+ * `branchId` (ordersService.ts:470) and that field is client-writable, so an
+ * explicit branchId is a client CLAIM, not a server truth; a future
+ * cross-check against the store mapping must be a policy decision (see
+ * resolveOrderBranchId comment below) before it is loosened OR trusted. The nested snapshot's
  * `store.id` is now accepted as a lookup KEY - after verifying the writer's
  * shape (object with a string id) - and, critically, we never trust any
  * claim INSIDE the client-copyable snapshot: `partnerBranchId` must come
@@ -178,10 +182,13 @@ export function assertBranchAccess(
 export async function resolveOrderBranchId(
   order: Record<string, any>
 ): Promise<string | null> {
+  // CAUTION: an explicit branchId on the order doc is user-input-shaped (the
+  // customer writer stamps it); it stays the priority per current policy, but
+  // treat it as a claim, not a provenance guarantee.
   if (typeof order.branchId === "string" && order.branchId) return order.branchId;
 
   const candidates: string[] = [];
-  if (typeof order.storeId === "string" && order.storeId) {
+  if (typeof order.storeId === "string" && order.storeId && order.storeId.length <= 100) {
     candidates.push(order.storeId);
   }
   if (
@@ -189,7 +196,8 @@ export async function resolveOrderBranchId(
     typeof order.store === "object" &&
     !Array.isArray(order.store) &&
     typeof order.store.id === "string" &&
-    order.store.id
+    order.store.id &&
+    order.store.id.length <= 100 // cap: a giant client-copied id is garbage, not a lookup key
   ) {
     candidates.push(order.store.id);
   }

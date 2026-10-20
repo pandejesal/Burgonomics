@@ -221,6 +221,32 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
     expect(savedDocs["orders/ord_ofd"].status).toMatchObject({ code: "DELIVERED", terminal: true });
   });
 
+  it("matches UPPERCASE member vocabulary through the lowercase-keyed tables", async () => {
+    savedDocs["orders/ord_1"].status = { code: "CONFIRMED" };
+    await bumpOrderStatus({
+      orderId: "ord_1",
+      status: "preparing",
+      expectedStatus: "ACCEPTED",
+      caller: ownBranchCaller,
+    });
+    expect(savedDocs["orders/ord_1"].status).toMatchObject({ code: "PREPARING" });
+  });
+
+  it("treats an EMPTY expectedStatus as a client bug (400), never a silent guard drop", async () => {
+    savedDocs["orders/ord_1"].status = { code: "PLACED" };
+    for (const empty of ["", "   "]) {
+      await expect(
+        bumpOrderStatus({
+          orderId: "ord_1",
+          status: "preparing",
+          expectedStatus: empty,
+          caller: ownBranchCaller,
+        })
+      ).rejects.toMatchObject({ code: "STALE_ORDER_STATUS", statusCode: 400 });
+      expect(savedDocs["orders/ord_1"].status).toMatchObject({ code: "PLACED" });
+    }
+  });
+
   it("rejects unknown expected vocabulary (409 STALE_ORDER_STATUS, not a silent apply)", async () => {
     savedDocs["orders/ord_1"].status = { code: "PLACED" };
     for (const bad of ["quarantine", "banana"]) {

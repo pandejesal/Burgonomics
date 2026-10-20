@@ -64,13 +64,17 @@ function allowedExpectedCodes(expected: string, fulfillment: string): Set<string
   const raw = expected.trim();
   if (!raw) return new Set();
   const codes = new Set<string>([raw.toUpperCase()]);
-  const canonical = ALIAS_TO_CANONICAL[raw] ?? raw;
+  // Vocabulary tables are lowercase-keyed, normalized before the lookups so
+  // "ACCEPTED" still resolves to CONFIRMED and "READY" to the dinein fork.
+  const lower = raw.toLowerCase();
+  const canonical = ALIAS_TO_CANONICAL[lower] ?? lower;
   const meta: DeliveryStatusMeta | undefined = (PARTNER_TO_DELIVERY as Record<string, DeliveryStatusMeta>)[canonical];
   if (meta) {
     codes.add(meta.code);
     if (canonical === "ready" && fulfillment === "dinein") codes.add("READY_TO_SERVE");
-    if (canonical === "delivered" && fulfillment === "takeaway") codes.add("PICKED_UP");
-    if (canonical === "delivered" && fulfillment === "dinein") codes.add("COMPLETED");
+    // delivered forks (PICKED_UP/COMPLETED) are corruption-tolerance only:
+    // those states are terminal (terminal guard throws before this compare),
+    // so a matching expectation can never be consultable on healthy docs.
   }
   return codes;
 }
@@ -135,7 +139,13 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
   // Optimistic-concurrency + terminal guard, enforced inside a transaction so
   // two staff racing on the same order cannot both win (last-write-wins used to
   // let a delayed second tap silently reverse a newer state).
-  const expected = params.expectedStatus?.trim();
+  const expectedRaw = params.expectedStatus;
+  const expected = expectedRaw?.trim();
+  if (expectedRaw !== undefined && !expected) {
+    // An empty precondition is a client bug: refusing is honest, silently
+    // dropping the stale-screen guard is not.
+    throw serviceError("STALE_ORDER_STATUS", "Order: expectedStatus was empty", 400);
+  }
   await db.runTransaction(async (tx) => {
     const live = await tx.get(orderRef);
     if (!live.exists) {
