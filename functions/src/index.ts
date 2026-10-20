@@ -73,6 +73,7 @@ import {
   assertDispatchBookingReadinessIfRequired,
 } from "./modules/dispatch/readiness";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
+import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
 import {
   createTicket,
   addTicketMessage,
@@ -956,20 +957,11 @@ app.post(
       const result = await bumpOrderStatus({ ...req.body, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
-      // bumpOrderStatus throws DOCUMENTED refusals carrying their own status:
-      // 400 (bad transition), 404 (unknown order) and 409 STALE_ORDER_STATUS
-      // (the screen moved since it loaded -> "refresh before acting"). Only
-      // 400/404 were honoured here, so the documented 409 surfaced as a 500
-      // and the caller could not tell a deliberate refusal from a server fault.
-      const status =
-        err.statusCode === 400 || err.statusCode === 404 || err.statusCode === 409
-          ? err.statusCode
-          : staffErrorStatus(err, 500);
-      res.status(status).json({
-        error: err.message || "Failed to update order status",
-        // Preserve the machine-readable code for the documented refusals.
-        ...(typeof err?.code === "string" && err.code ? { code: err.code } : {}),
-      });
+      // Scoped mapping (bumpRouteErrors): documented 400/403/404/409 refusals
+      // keep their status and machine-readable code; anything else stays the
+      // staff fallback (500) without widening what the body leaks.
+      const { status, body } = bumpStatusErrorResponse(err);
+      res.status(status).json(body);
     }
   }
 );
