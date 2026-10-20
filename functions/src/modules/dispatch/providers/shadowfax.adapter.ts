@@ -22,18 +22,29 @@ import {
 } from "./shared";
 
 /**
- * Shadowfax adapter — Hyperlocal Marketplace API, doc-confirmed
- * (https://developer.shadowfax.in/docs/hyperlocal/marketplace):
- *   - Auth: `Authorization: Token <api_token>` (shared by the Shadowfax team).
- *   - Quote = serviceability: `PUT /api/v1/order-serviceability/` →
+ * Shadowfax adapter — Hyperlocal Marketplace API.
+ *
+ * CONTRACT STATUS: PARTIALLY DOCUMENTED / UNVERIFIED (2026-10-20). The doc URL
+ * this file used to call "doc-confirmed"
+ * (https://developer.shadowfax.in/docs/hyperlocal/marketplace) returns HTTP 404,
+ * the Postman collection is auth-gated (see the book() note), and
+ * references/delivery_routing.md records that no native contract evidence exists
+ * locally. Every path/field below is therefore OUR READING of partial evidence —
+ * verify each one at key grant. The provider stays behind
+ * SHADOWFAX_CONTRACT_VERIFIED until a human confirms the contract; credentials
+ * alone never enable live traffic.
+ *   - Auth (UNVERIFIED): `Authorization: Token <api_token>`, token issued by the
+ *     Shadowfax team.
+ *   - Quote = serviceability (UNVERIFIED): `PUT /api/v1/order-serviceability/` →
  *     `{ serviceable, pickup_eta, delivery_cost }`. HTTP 400 (non-serviceable
  *     area) and a 200 body with `serviceable:false` both class not_serviced
  *     (DR3) — no fare is invented (DR2). No distance field → haversine.
- *   - Book: `POST /api/v2/orders/` with `client_code` (SHADOWFAX_CLIENT_CODE),
- *     `order_details` (paid is the STRING "true"/"false"), pickup/drop details
- *     (latitude/longitude as numbers), `order_items`. Response: `sfx_order_id`,
- *     `track_url`. The rider arrives later via the ALLOTTED callback, so book
- *     falls back to a pending rider identity.
+ *   - Book (UNVERIFIED): `POST /api/v2/orders/` with `client_code`
+ *     (SHADOWFAX_CLIENT_CODE), `order_details` (paid is the STRING
+ *     "true"/"false"), pickup/drop details (latitude/longitude as numbers),
+ *     `order_items`. Response: `sfx_order_id`, `track_url`. The rider arrives
+ *     later via the ALLOTTED callback, so book falls back to a pending rider
+ *     identity.
  *   - Retry-window note: place the order within minutes of a successful
  *     serviceability check (router quotes immediately before booking, DR7).
  */
@@ -47,6 +58,26 @@ function shadowfaxHeaders(): Record<string, string> {
 
 function base(): string {
   return (config.shadowfax.baseUrl || "").replace(/\/+$/, "");
+}
+
+/**
+ * Fail closed on a missing token BEFORE any provider call. `isEligible()`
+ * already requires the key, so the router never reaches this — but a direct
+ * adapter call (a future caller, a test harness, a refactor) would otherwise
+ * send `Authorization: Token ` and get an opaque 401 classified as transient,
+ * i.e. a silent walk to another courier for a LOCAL config fault. Deliberately a
+ * plain Error, not ProviderDispatchError: a missing credential is not a provider
+ * failure and must never release the dispatch claim to fail over.
+ */
+function assertShadowfaxCredentials(operation: string): void {
+  if (!config.shadowfax.apiKey) {
+    const err: any = new Error(
+      `Shadowfax ${operation} requires SHADOWFAX_API_KEY - refusing to call the provider with an empty token`
+    );
+    err.statusCode = 503;
+    err.code = "DISPATCH_PROVIDER_UNCONFIGURED";
+    throw err;
+  }
 }
 
 /** Shadowfax `paid` is the string "true"/"false" (never a boolean). */
@@ -134,6 +165,8 @@ export const shadowfaxAdapter: ProviderAdapter = {
       };
     }
 
+    assertShadowfaxCredentials("quote");
+
     const res = await fetchProviderJson(
       "shadowfax",
       `${base()}/api/v1/order-serviceability/`,
@@ -198,6 +231,8 @@ export const shadowfaxAdapter: ProviderAdapter = {
         geoSource: "live_gps",
       };
     }
+
+    assertShadowfaxCredentials("book");
 
     if (!config.shadowfax.clientCode) {
       throw new ProviderDispatchError(
