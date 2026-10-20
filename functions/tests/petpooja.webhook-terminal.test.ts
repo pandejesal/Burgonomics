@@ -263,12 +263,14 @@ describe("handlePetpoojaWebhook — store-status pings", () => {
   });
 });
 
-// The documented order-status callback carries the POS-assigned id under
-// `orderID` and no client reference at all. Before this, that key was never
-// read, nothing in the codebase was keyed on `petpoojaOrderId`, and such a
-// payload was swallowed by the store-status branch — so a genuine Accept/Reject
-// could never reach the order it referred to.
-describe("handlePetpoojaWebhook — POS-assigned order id (documented callback shape)", () => {
+// The documented order-status callback carries `orderID` as a CLIENT reference
+// (vendor blueprint); it is treated as a POS id only when a branch-scoped
+// petpoojaOrderId lookup proves it. Before this, the key was never read, nothing
+// in the codebase was keyed on `petpoojaOrderId`, and such a payload was
+// swallowed by the store-status branch — so a genuine Accept/Reject could never
+// reach the order it referred to. The cases below pin BOTH readings: proven POS
+// ids still resolve, and unproven ids never become petpoojaOrderId.
+describe("handlePetpoojaWebhook — POS-assigned order id (only when proven)", () => {
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];
   });
@@ -347,16 +349,17 @@ describe("handlePetpoojaWebhook — POS-assigned order id (documented callback s
     expect(savedDocs["unmatched_petpooja_orders/upo_PP-9003"]).toBeDefined();
   });
 
-  it("parks an unknown POS id rather than rejecting the callback", async () => {
+  it("parks an unknown POS-shaped id rather than rejecting the callback", async () => {
     await handlePetpoojaWebhook({
       restID: "31z58ciw0h",
       orderID: "PP-9999",
       status: "Accept",
     });
-    expect(savedDocs["unmatched_petpooja_orders/upo_PP-9999"]).toMatchObject({
-      posOrderId: "PP-9999",
-      status: "needs_review",
-    });
+    const parked = savedDocs["unmatched_petpooja_orders/upo_PP-9999"];
+    expect(parked).toMatchObject({ status: "needs_review" });
+    // Unproven ids are not labelled POS ids in the review queue.
+    expect(parked.posOrderId).toBeNull();
+    expect(parked.callbackOrderId).toBe("PP-9999");
   });
 
   // ---- Untrusted (shape-admitted, no credential) callers ----
@@ -578,5 +581,77 @@ describe("handlePetpoojaWebhook — documented client-ref callback (orderID only
     expect(savedDocs["unmatched_petpooja_orders/upo_ord_legit"].reason).toMatch(
       /conflicting client refs/
     );
+  });
+
+  it("parks a credentialed legacy client ref whose claimed outlet does not resolve", async () => {
+    seedLinkedOrder("ord_cb7");
+    await handlePetpoojaWebhook({ order_id: "ord_cb7", restID: "NOPE-999", status: "5" });
+    expect(savedDocs["orders/ord_cb7"].status).toMatchObject({ code: "PENDING" });
+    expect(savedDocs["orders/ord_cb7"].petpoojaKitchenStatus).toBeUndefined();
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_cb7"].reason).toMatch(
+      /did not resolve to a linked branch/
+    );
+  });
+
+  it("parks a documented client ref with no restID at all (no unscoped lookup)", async () => {
+    seedLinkedOrder("ord_cb8");
+    await handlePetpoojaWebhook({ orderID: "ord_cb8", status: "5" });
+    expect(savedDocs["orders/ord_cb8"].status).toMatchObject({ code: "PENDING" });
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_cb8"]).toBeDefined();
+  });
+
+  it("does not overwrite a proven POS id with a second claimed id in the same payload", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_ab"] = {
+      id: "ord_ab",
+      branchId: "branch_t1",
+      petpoojaOrderId: "PP-A",
+      petpoojaStatus: "synced",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({
+      restID: "31z58ciw0h",
+      orderID: "PP-A",
+      petpooja_order_id: "PP-B",
+      status: "Accept",
+    });
+    const doc = savedDocs["orders/ord_ab"];
+    // The lookup proved PP-A; the explicit PP-B is only a claim and must not win.
+    expect(doc.petpoojaOrderId).toBe("PP-A");
+    expect(doc.status).toMatchObject({ code: "CONFIRMED" });
+  });
+
+  it("does not mark accepted-no-id on an order that already holds a proven POS id, and preserves the push ack", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_hasid"] = {
+      id: "ord_hasid",
+      branchId: "branch_t1",
+      petpoojaOrderId: "PP-1",
+      petpoojaStatus: "synced",
+      petpoojaAcceptedNoIdAck: '{"success":"1"}',
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({ restID: "31z58ciw0h", orderID: "ord_hasid", status: "5" });
+    const doc = savedDocs["orders/ord_hasid"];
+    expect(doc.status).toMatchObject({ code: "READY_FOR_PICKUP" });
+    expect(doc.petpoojaAcceptedNoId).toBeUndefined();
+    expect(doc.petpoojaAcceptedNoIdAck).toBe('{"success":"1"}');
+  });
+
+  it("does not reuse an unproven callback id as a later POS lookup key", async () => {
+    seedLinkedOrder("ord_taught");
+    await handlePetpoojaWebhook({
+      order_id: "ord_taught",
+      restID: "31z58ciw0h",
+      orderID: "PP-7",
+      status: "Accept",
+    });
+    expect(savedDocs["orders/ord_taught"].petpoojaOrderId).toBeUndefined();
+    expect(savedDocs["orders/ord_taught"].petpoojaCallbackOrderId).toBe("PP-7");
+    // A later POS-id-only event carrying the unproven value must park: it was
+    // never proven to be a POS id, so it cannot become a lookup key.
+    await handlePetpoojaWebhook({ restID: "31z58ciw0h", orderID: "PP-7", status: "5" });
+    expect(savedDocs["orders/ord_taught"].status).toMatchObject({ code: "CONFIRMED" });
+    expect(savedDocs["unmatched_petpooja_orders/upo_PP-7"]).toBeDefined();
   });
 });

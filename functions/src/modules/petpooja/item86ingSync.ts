@@ -417,6 +417,14 @@ export async function handlePetpoojaWebhook(
   let parkReason: string | null = null;
   const scopedBranchId = restIdRaw ? await resolveBranchIdForRestId(restIdRaw) : null;
 
+  // A callback that CLAIMS an outlet we cannot resolve must not fall back to an
+  // unscoped client lookup: the claim cannot be verified, so park it. (A payload
+  // with no restID at all keeps the legacy behaviour below; the store-status
+  // shape was already handled above.)
+  if (restIdRaw && !scopedBranchId) {
+    parkReason = `restID ${restIdRaw} did not resolve to a linked branch`;
+  }
+
   const clientCandidates: Array<{
     ref: string;
     kind: "client-callback" | "client-legacy";
@@ -494,7 +502,8 @@ export async function handlePetpoojaWebhook(
         .set(
           {
             orderId: orderId ?? null,
-            posOrderId: posOrderId || null,
+            // Never label a client ref as a POS id in the review queue.
+            posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
             callbackOrderId: callbackOrderId || null,
             rawStatus: payload.status || payload.order_status || null,
             restId: restIdRaw || null,
@@ -647,8 +656,14 @@ export async function handlePetpoojaWebhook(
   // record the existing accepted-no-id marker (truthful, keeps dedupe/retry from
   // re-pushing) and NEVER stamp the client reference as a POS id.
   const accepting = canonicalStatus !== "cancelled" && canonicalStatus !== "unknown";
+  // Only an id the lookup PROVED may be stamped. An explicit field is a claim:
+  // it is accepted only when it already equals this order's stored POS id.
   const posDerivedId =
-    explicitPosOrderId || (resolvedBy === "pos" ? posOrderId : "");
+    resolvedBy === "pos"
+      ? posOrderId
+      : explicitPosOrderId && orderData.petpoojaOrderId === explicitPosOrderId
+        ? explicitPosOrderId
+        : "";
   if (
     !untrusted &&
     posDerivedId &&
@@ -661,12 +676,16 @@ export async function handlePetpoojaWebhook(
   } else if (
     !untrusted &&
     accepting &&
+    !orderData.petpoojaOrderId &&
     (resolvedBy === "client-callback" ||
       (resolvedBy === "client-legacy" && callbackOrderId))
   ) {
     updateData.petpoojaAcceptedNoId = true;
     updateData.petpoojaAcceptedNoIdAt = admin.firestore.FieldValue.serverTimestamp();
-    updateData.petpoojaAcceptedNoIdAck = JSON.stringify(payload).slice(0, 500);
+    // Do NOT overwrite `petpoojaAcceptedNoIdAck`: that field holds the raw
+    // save_order response recorded at push time (kot-race pins it). A callback
+    // payload is a different audit fact.
+    updateData.petpoojaCallbackAck = JSON.stringify(payload).slice(0, 500);
     updateData.petpoojaAcceptedNoIdSource =
       resolvedBy === "client-callback" ? "callback_client_ref" : "callback_unproven_id";
     updateData.petpoojaStatus = "synced";
