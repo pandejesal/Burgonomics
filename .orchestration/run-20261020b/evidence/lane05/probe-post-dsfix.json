@@ -1,0 +1,58 @@
+{
+  "summary": {
+    "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+    "doc": "C:\\Users\\DELL\\Desktop\\Burgonomics\\references\\delivery_routing.md",
+    "porterAdapterPreservesTag": false,
+    "passed": 9,
+    "failed": 0,
+    "failedIds": [],
+    "verdict": "DOC_MATCHES_CODE"
+  },
+  "results": [
+    {
+      "id": "A1",
+      "ok": true,
+      "detail": "borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS"
+    },
+    {
+      "id": "A2",
+      "ok": true,
+      "detail": "shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS"
+    },
+    {
+      "id": "A3",
+      "ok": true,
+      "detail": "porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS"
+    },
+    {
+      "id": "A4",
+      "ok": true,
+      "detail": "porter.adapter.ts does NOT preserve the tag (drift: ambiguity is re-wrapped as transient)"
+    },
+    {
+      "id": "A5",
+      "ok": true,
+      "detail": "dispatch.router.ts walks on only for ProviderDispatchError (plain errors release the claim and rethrow)"
+    },
+    {
+      "id": "A6",
+      "ok": true,
+      "detail": "borzo.adapter.ts exposes the borzoBookAmbiguous() helper with >=3 throw sites"
+    },
+    {
+      "id": "A7",
+      "ok": true,
+      "detail": "doc cites the concurrently-edited adapters by symbol, not by line number"
+    },
+    {
+      "id": "B1",
+      "ok": true,
+      "detail": "delivery_routing.md no longer claims universality"
+    },
+    {
+      "id": "B2",
+      "ok": true,
+      "detail": "delivery_routing.md carries an explicit Porter KNOWN DEVIATION note"
+    }
+  ]
+}
