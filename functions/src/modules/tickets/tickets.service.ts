@@ -31,6 +31,54 @@ function assertStaff(caller: TicketCaller, action: string): void {
   }
 }
 
+// RBAC scope classes (references/rbac.md L29-L34; NO new roles invented):
+// brand_owner/developer are brand-global; support is "Global Tickets";
+// branch_owner/branch_staff/regional_manager act on ASSIGNED branches and
+// must prove it. Any future STAFF_ROLES member defaults to scoped (fail-closed).
+const GLOBAL_TICKET_ROLES = new Set(["brand_owner", "developer", "support"]);
+
+/**
+ * Fail-closed branch scoping for STAFF ticket actions (Loop 7 hardening).
+ * The four previous inline checks gated the deny on `branchIds.length > 0`,
+ * so a branch-scoped staff claim with a MISSING or EMPTY branchIds list
+ * skipped the check entirely and could act on any branch's ticket -
+ * including resolveTicket's refund paths. Mirrors assertOrderBranchAccess
+ * (core/middleware.ts): a scoped role MUST hold the ticket's branch.
+ *
+ * Runs AFTER assertStaff and BEFORE any side effect (refunds, snapshots,
+ * status writes). Rules:
+ * - caller absent or bound with no uid -> 403 (unauthenticated identity;
+ *   module callers without an HTTP caller must now pass a caller too).
+ * - global roles (brand_owner/developer/support) -> allowed.
+ * - every other STAFF role: branchIds must CONTAIN ticket.branchId;
+ *   missing/empty/mismatched -> 403.
+ * - legacy ticket doc without a branchId: nothing to deny against - allowed
+ *   here, backstopped by Firestore rules + route requireRole.
+ */
+export function assertTicketBranchAccess(
+  caller: TicketCaller,
+  ticketBranchId: string | undefined,
+  action: string
+): void {
+  if (!caller || !caller.uid) {
+    throw serviceError("TICKET_FORBIDDEN", `Forbidden: caller is required (unauthenticated) to ${action}`, 403);
+  }
+  const role = caller.role;
+  // Non-staff callers are owned by assertStaff (resolve/escalate/resolveNote)
+  // or the customer-ownership path (addTicketMessage) - helper is inert.
+  if (!role || !STAFF_ROLES.has(role)) return;
+  if (GLOBAL_TICKET_ROLES.has(role)) return;
+  if (!ticketBranchId) return; // legacy branchless ticket (documented)
+  const held = Array.isArray(caller.branchIds) ? caller.branchIds : [];
+  if (!held.includes(ticketBranchId)) {
+    throw serviceError(
+      "TICKET_FORBIDDEN",
+      "Forbidden: ticket is outside your assigned branches",
+      403
+    );
+  }
+}
+
 // Spam/abuse backstops (M14 follow-up; rules bind customerId==uid, routes
 // throttle per-IP — this is the per-customer server-side ceiling).
 const TICKET_CREATE_WINDOW_MS = 10 * 60 * 1000;
@@ -187,20 +235,9 @@ export async function resolveTicketNote(input: ResolveNoteInput) {
   if (ticket.status === "resolved" || ticket.status === "closed") {
     throw serviceError("TICKET_NOT_PENDING", "Ticket is already resolved.", 409);
   }
-  if (
-    input.caller?.uid &&
-    input.caller.role !== "brand_owner" &&
-    input.caller.role !== "developer" &&
-    Array.isArray(input.caller.branchIds) &&
-    input.caller.branchIds.length > 0 &&
-    !input.caller.branchIds.includes(ticket.branchId)
-  ) {
-    throw serviceError(
-      "TICKET_FORBIDDEN",
-      "Forbidden: ticket is outside your assigned branches",
-      403
-    );
-  }
+  // Loop 7 hardening (fail-closed): scoped staff MUST prove the ticket's
+  // branch. Missing/empty/mismatched branchIds -> 403 BEFORE side effects.
+  assertTicketBranchAccess(input.caller, ticket.branchId, "resolve tickets");
   const resolution = String(input.resolution || "").trim().slice(0, 2000) || "Resolved by staff.";
   const event: TicketTimelineEvent = {
     action: "resolved_note",
@@ -357,19 +394,18 @@ export async function addTicketMessage(params: {
           403
         );
       }
-    } else if (
-      caller.role !== "brand_owner" &&
-      caller.role !== "developer" &&
-      Array.isArray(caller.branchIds) &&
-      caller.branchIds.length > 0 &&
-      !caller.branchIds.includes(ticket.branchId)
-    ) {
-      throw serviceError(
-        "TICKET_FORBIDDEN",
-        "Forbidden: ticket is outside your assigned branches",
-        403
-      );
+    } else {
+      // Loop 7 hardening (fail-closed): scoped staff MUST prove the branch.
+      assertTicketBranchAccess(caller, ticket.branchId, "message tickets");
     }
+  } else if (caller && !caller.uid) {
+    // A caller object without a bound identity cannot prove anything:
+    // reject rather than silently skipping the visibility check.
+    throw serviceError(
+      "TICKET_FORBIDDEN",
+      "Forbidden: caller identity is not bound; refusing ticket messages",
+      403
+    );
   }
 
   const event: TicketTimelineEvent = {
@@ -411,20 +447,9 @@ export async function resolveTicket(input: ResolveTicketInput) {
 
   // Loop 7: branch scoping (mirrors addTicketMessage) — any staff role on
   // the route must not close another branch's ticket. Brand roles bypass.
-  if (
-    input.caller?.uid &&
-    input.caller.role !== "brand_owner" &&
-    input.caller.role !== "developer" &&
-    Array.isArray(input.caller.branchIds) &&
-    input.caller.branchIds.length > 0 &&
-    !input.caller.branchIds.includes(ticket.branchId)
-  ) {
-    throw serviceError(
-      "TICKET_FORBIDDEN",
-      "Forbidden: ticket is outside your assigned branches",
-      403
-    );
-  }
+  // Loop 7 hardening (fail-closed): scoped staff MUST prove the ticket's
+  // branch. Missing/empty/mismatched branchIds -> 403 BEFORE side effects.
+  assertTicketBranchAccess(input.caller, ticket.branchId, "resolve tickets");
 
   // Double-refund guard (Loop 57 adversarial finding): a resolved/closed
   // ticket must never resolve again. The second pass would re-fire autoRefund
@@ -616,20 +641,9 @@ export async function escalateTicket(input: EscalateTicketInput) {
 
   // Loop 7: branch scoping (mirrors addTicketMessage/resolveTicket) — staff
   // must not escalate another branch's ticket. Brand roles bypass.
-  if (
-    input.caller?.uid &&
-    input.caller.role !== "brand_owner" &&
-    input.caller.role !== "developer" &&
-    Array.isArray(input.caller.branchIds) &&
-    input.caller.branchIds.length > 0 &&
-    !input.caller.branchIds.includes(ticket.branchId)
-  ) {
-    throw serviceError(
-      "TICKET_FORBIDDEN",
-      "Forbidden: ticket is outside your assigned branches",
-      403
-    );
-  }
+  // Loop 7 hardening (fail-closed): scoped staff MUST prove the ticket's
+  // branch. Missing/empty/mismatched branchIds -> 403 BEFORE side effects.
+  assertTicketBranchAccess(input.caller, ticket.branchId, "escalate tickets");
 
   // If escalated to developer team, create a formal error snapshot & dispatch alert.
   // The operator-supplied reason is NOT persisted here: reporters paste PII

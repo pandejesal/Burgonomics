@@ -69,6 +69,10 @@ const BASE = {
   resolvedBy: "staff_1",
   resolvedByName: "Staff One",
   notes: "test resolution",
+  // Loop 7 hardening: the service now rejects caller-less resolves (fail-closed).
+  // This suite drives REFUND behavior, not the auth boundary, so it presents a
+  // global caller (rbac.md: brand_owner acts brand-wide without branch scoping).
+  caller: { uid: "staff_1", role: "brand_owner" },
 } as const;
 
 describe("resolveTicket (real money paths)", () => {

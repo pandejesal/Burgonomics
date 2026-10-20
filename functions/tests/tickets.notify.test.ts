@@ -257,7 +257,7 @@ describe("ticket create -> escalate -> push flow (honest + PII-free)", () => {
       reason: "Branch unresponsive",
       escalatedBy: "staff_1",
       escalatedByName: "Staff One",
-      caller: { uid: "staff_1", role: "branch_owner" },
+      caller: { uid: "staff_1", role: "branch_owner", branchIds: ["b1"] },
     });
     expect(esc.success).toBe(true);
 
