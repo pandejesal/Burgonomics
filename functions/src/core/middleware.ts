@@ -158,19 +158,54 @@ export function assertBranchAccess(
   }
 }
 
-/** Effective branch of an order doc: explicit branchId, else linked delivery store. */
+/** Effective branch of an order doc. Priority: an explicit authoritative
+ * `branchId` (staff/pos backend writes), else the linked delivery store
+ * resolved through the AUTHORITATIVE stores/{id}.partnerBranchId mapping.
+ *
+ * The customer app writes a NESTED store snapshot (ordersService.ts:393-398
+ * `store: input.store`) and NO top-level storeId on delivery orders, so the
+ * previous storeId-only lookup never matched them and every scoped-staff
+ * action on such an order was denied as unresolvable. The nested snapshot's
+ * `store.id` is now accepted as a lookup KEY - after verifying the writer's
+ * shape (object with a string id) - and, critically, we never trust any
+ * claim INSIDE the client-copyable snapshot: `partnerBranchId` must come
+ * back from the authoritative stores doc itself.
+ *
+ * Conflicting (top-level storeId != nested store.id) or malformed references
+ * fail CLOSED (null => deny), preserving the deny semantics for scoped and
+ * global callers alike (assertOrderBranchAccess below does the enforcement).
+ */
 export async function resolveOrderBranchId(
   order: Record<string, any>
 ): Promise<string | null> {
   if (typeof order.branchId === "string" && order.branchId) return order.branchId;
-  const storeId = order.storeId;
-  if (typeof storeId === "string" && storeId) {
+
+  const candidates: string[] = [];
+  if (typeof order.storeId === "string" && order.storeId) {
+    candidates.push(order.storeId);
+  }
+  if (
+    order.store &&
+    typeof order.store === "object" &&
+    !Array.isArray(order.store) &&
+    typeof order.store.id === "string" &&
+    order.store.id
+  ) {
+    candidates.push(order.store.id);
+  }
+  // Both references present but disagreeing: the order contradicts itself -
+  // fail closed instead of picking whichever suits the caller.
+  if (new Set(candidates).size > 1) {
+    return null;
+  }
+
+  for (const storeId of candidates) {
     try {
       const snap = await db.collection("stores").doc(storeId).get();
       const linked = snap.exists ? (snap.data() as any)?.partnerBranchId : undefined;
       if (typeof linked === "string" && linked) return linked;
     } catch {
-      // Fall through to null — unresolvable means deny for scoped callers.
+      // Unresolvable means deny (null falls through below).
     }
   }
   return null;
