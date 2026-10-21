@@ -52,6 +52,14 @@ export interface PetpoojaTestRunnerResult {
   petpoojaOrderId: string | null;
   /** Whether the POS response actually carried an order id. */
   petpoojaOrderIdReturned: boolean;
+  /**
+   * OUR client reference (`pp_test_<scenario>_<ts>`), sent as Order.orderID.
+   * The vendor's Order List displays it in the Order No. column and no POS id
+   * is reachable through the API, so this echo is the only key a support
+   * request can be reconciled against (evidence §16.2/§16.8). Carried even
+   * when `petpoojaOrderId` is null — it is our say, independent of the id.
+   */
+  clientOrderID: string | null;
 }
 
 export interface ScenarioModifier {
@@ -786,6 +794,7 @@ export async function runPetpoojaTestScenario(
       scenarioId: params.scenarioId,
       petpoojaOrderId: clientOrderID,
       petpoojaOrderIdReturned: true,
+      clientOrderID,
     };
   }
 
@@ -810,5 +819,6 @@ export async function runPetpoojaTestScenario(
     scenarioId: params.scenarioId,
     petpoojaOrderId: outcome.petpoojaOrderId ?? null,
     petpoojaOrderIdReturned: !!outcome.petpoojaOrderId,
+    clientOrderID,
   };
 }
