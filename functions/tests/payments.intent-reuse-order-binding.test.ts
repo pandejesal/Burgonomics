@@ -163,7 +163,7 @@ describe("createPaymentOrder — reused intent must stay bound to the same inter
     config.mock.paymentGateway = true;
     // Branch config is money-critical: the pricing engine refuses to price
     // without a branch doc (royalty/packaging source).
-    savedDocs["branches/branch_c1"] = { razorpayAccountId: "acc_c1" };
+    savedDocs["branches/branch_c1"] = { razorpayAccountId: "acc_c1d2e3" };
     seedOrder("ord_a");
     seedOrder("ord_b");
   });

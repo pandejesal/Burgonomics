@@ -24,6 +24,13 @@ export interface RouteTransferAttempt {
   unknown?: boolean;
   /** TRUE when an equivalent existing transfer was found and reused (no POST). */
   reconciled?: boolean;
+  /**
+   * TRUE for a CONFIGURATION error (e.g. malformed linked-account id): a
+   * retry cannot fix a stored value, so the worker must park the order for
+   * manual settlement instead of spending the 4-attempt retry budget (~20 min)
+   * and then marking it terminally failed with no trail.
+   */
+  configError?: boolean;
 }
 
 /**
@@ -34,6 +41,21 @@ export interface RouteTransferAttempt {
  */
 const TRANSFER_POST_TIMEOUT_MS = 30_000;
 const TRANSFER_RECONCILE_TIMEOUT_MS = 15_000;
+
+/**
+ * Linked-account shape, enforced at the money chokepoint (last line of
+ * defense — some config surfaces validate loosely or not at all). Real
+ * Razorpay Route account ids are `acc_` + alphanumerics (~14 chars); the
+ * repo's documented demo fixtures use underscores (`acc_Rzp_Surat_01`), so
+ * the accepted set is `[A-Za-z0-9_]` with a >=6-char suffix. This rejects
+ * the actual defect class — bare `acc_`, `acc_x`, arbitrary text — before
+ * any POST, while keeping the documented fixture shape working.
+ */
+const ROUTE_ACCOUNT_ID_SHAPE = /^acc_[A-Za-z0-9_]{6,}$/;
+
+export function isRouteAccountIdShape(value: string | null | undefined): boolean {
+  return typeof value === "string" && ROUTE_ACCOUNT_ID_SHAPE.test(value.trim());
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -217,13 +239,30 @@ export async function attemptRouteTransfer(
           `(split ${splitPaise} paise > captured ${capturedAmountPaise} paise)`,
       };
     }
-    const razorpayAccountId = typeof rawAccountId === "string" && rawAccountId ? rawAccountId : null;
+    const razorpayAccountId = typeof rawAccountId === "string" && rawAccountId.trim() ? rawAccountId.trim() : null;
 
     if (!razorpayAccountId) {
       return {
         ok: false,
         skipped: true,
         error: "No linked Razorpay account for branch",
+      };
+    }
+
+    // Shape guard before ANY money movement (mock branch included): a
+    // typo'd/loose id would otherwise be POSTed (definite 4xx → endless
+    // pending_retry with a misleading gateway error) or, in mock mode,
+    // stamped as a successful transfer for an account that cannot receive
+    // money. This is a CONFIG error — the worker parks the order for manual
+    // settlement (configError) rather than burning its retry budget on a
+    // value no retry can change.
+    if (!isRouteAccountIdShape(razorpayAccountId)) {
+      return {
+        ok: false,
+        configError: true,
+        error:
+          `Invalid Razorpay Route account id shape for branch ${branchId} — ` +
+          `refusing transfer; fix branches.razorpayAccountId (acc_ + at least 6 chars)`,
       };
     }
 
@@ -503,6 +542,29 @@ export async function retryPendingRouteTransfersWorker() {
             // never failed over a missing payout.
             routeTransferNeedsManualSettlement: true,
             routeTransferError: attempt.error,
+            // Symmetry with the configError lane + flagManualSettlement:
+            // release the claim lease (inert once the doc is `failed`, but
+            // the lanes should not diverge).
+            routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return false;
+      }
+
+      if (attempt.configError) {
+        // Malformed linked-account id: a retry cannot fix a stored config
+        // value. Park exactly like the unlinked lane (manual settlement
+        // flag, no retry-budget spend, no terminal "failed"-without-trail
+        // after ~20 min) so staff fix branches.razorpayAccountId and settle
+        // by hand.
+        await doc.ref.set(
+          {
+            routeTransferStatus: "failed",
+            routeTransferNeedsManualSettlement: true,
+            routeTransferError: attempt.error,
+            routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }

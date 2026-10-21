@@ -330,7 +330,7 @@ describe("C03 B7 — verify refuses a second distinct captured payment", () => {
 
   it("captured pay_A recorded, captured pay_B verified → 409 + one deterministic park, zero side effects", async () => {
     control.seed("orders/order_c03_a", confirmedBy("pay_A", { id: "order_c03_a" }));
-    control.seed("branches/branch_c03", { razorpayAccountId: "acc_c03" });
+    control.seed("branches/branch_c03", { razorpayAccountId: "acc_c03abc1" });
     __setPaymentsFetchForTests(capturedFetch("pay_B"));
 
     const err: any = await verifyPayment(verifyParams("order_c03_a", "pay_B")).then(
@@ -433,7 +433,7 @@ describe("C03 B7 — verify refuses a second distinct captured payment", () => {
       routeTransferError: "Route transfer failed",
       routeTransferRetryCount: 0,
     });
-    control.seed("branches/branch_c03", { razorpayAccountId: "acc_c03" });
+    control.seed("branches/branch_c03", { razorpayAccountId: "acc_c03abc1" });
     // …then a competing confirm (pay_A) commits BEFORE the pre-split
     // transaction reads: only the FRESH read can see it.
     control.injectAfterOrderRead(() =>

@@ -153,7 +153,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
     // transfer suites below flip this back to live + a stubbed SDK client.
     config.mock.paymentGateway = true;
     process.env.OTP_HMAC_SECRET = "test_otp_contract_spec_only";
-    savedDocs["branches/branch_c1"] = { razorpayAccountId: "acc_c1" };
+    savedDocs["branches/branch_c1"] = { razorpayAccountId: "acc_c1d2e3" };
   });
 
   afterEach(() => {
@@ -424,7 +424,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         "branch_c1",
         { branchTransferPaise: 4000 },
         "ord_r1",
-        "acc_c1",
+        "acc_c1d2e3",
         5000
       );
       expect(attempt.ok).toBe(true);
@@ -454,7 +454,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         "branch_c1",
         { branchTransferPaise: 4000 },
         "ord_r2",
-        "acc_c1",
+        "acc_c1d2e3",
         5000
       );
       expect(attempt.ok).toBe(true);
@@ -478,7 +478,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         "branch_c1",
         { branchTransferPaise: 4000 },
         "ord_r3",
-        "acc_c1",
+        "acc_c1d2e3",
         5000
       );
       expect(attempt.ok).toBe(false);
@@ -500,7 +500,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         "branch_c1",
         { branchTransferPaise: 4000 },
         "ord_r4",
-        "acc_c1",
+        "acc_c1d2e3",
         5000
       );
       expect(a.ok).toBe(false);
@@ -520,7 +520,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         "branch_c1",
         { branchTransferPaise: 4000 },
         "ord_r5",
-        "acc_c1",
+        "acc_c1d2e3",
         5000
       );
       expect(b.ok).toBe(false);
