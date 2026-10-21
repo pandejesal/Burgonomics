@@ -32,6 +32,16 @@ flowchart LR
    - Receives automatic `dev_error_snapshots` containing request payloads, Razorpay IDs, and stack traces.
    - Optional Slack/Discord webhook alerts for critical payment/POS bugs.
 
+### Client-write boundary
+- Terminal status and money-action resolution maps are server-owned. Client staff cannot
+  reopen, rewrite the resolution, or reassign a `resolved`/`closed` ticket, in either
+  `support_tickets` or legacy `tickets`.
+- The existing reply fallback may update only `timeline` and `updatedAt` on terminal
+  tickets. This is a field allowlist, not an append-only history guarantee.
+- Stored money-audit maps cannot be replaced by client resolution strings, even on an
+  inconsistent nonterminal document. Unknown keys (including `resolutionClaim`) remain
+  denied; a lease must not be described as shipped without a committed implementation.
+
 ---
 
 ## 3. 60-Minute Inactivity Reminder Cron
