@@ -1,0 +1,315 @@
+lane05 drift-probe counter tests
+probe: .orchestration\run-20261020b\evidence\lane05\verify-doc-code-drift.mjs
+ran: 2026-10-21T00:34:22.225Z
+
+### positive-working-tree-doc
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+PASS B1 - delivery_routing.md makes no universal-compliance claim
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+PASS B3 - code drifts and the doc declares the deviation (consistent)
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\Desktop\\Burgonomics\\references\\delivery_routing.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": true,
+  "passed": 11,
+  "failed": 0,
+  "failedIds": [],
+  "verdict": "DOC_MATCHES_CODE"
+}
+
+exit=0 (expected 0) OK
+
+### negative-original-universal-wording
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+FAIL B1 - delivery_routing.md still asserts compliance the code does not provide (/same rule for all three providers/i)
+FAIL B2 - delivery_routing.md has no Porter KNOWN DEVIATION note
+FAIL B3 - code drifts but the doc does not declare the deviation
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-original-universal-wording.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": false,
+  "passed": 8,
+  "failed": 3,
+  "failedIds": [
+    "B1",
+    "B2",
+    "B3"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-paraphrased-universal
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+FAIL B1 - delivery_routing.md still asserts compliance the code does not provide (/(rule|guarantee|contract)[^.\n]{0,40}(holds?|applies|extend\w*|preserv\w*|inherit\w*)[^.\n]{0,60}porter/i)
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+PASS B3 - code drifts and the doc declares the deviation (consistent)
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-paraphrased-universal.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": true,
+  "passed": 10,
+  "failed": 1,
+  "failedIds": [
+    "B1"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-extends-to-porter-too
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+FAIL B1 - delivery_routing.md still asserts compliance the code does not provide (/(rule|guarantee|contract)[^.\n]{0,40}(holds?|applies|extend\w*|preserv\w*|inherit\w*)[^.\n]{0,60}porter/i)
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+PASS B3 - code drifts and the doc declares the deviation (consistent)
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-extends-to-porter-too.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": true,
+  "passed": 10,
+  "failed": 1,
+  "failedIds": [
+    "B1"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-porter-preserves-contract
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+FAIL B1 - delivery_routing.md still asserts compliance the code does not provide (/porter[^.\n]{0,60}(preserv\w*|inherit\w*|extend\w*)[^.\n]{0,40}(ambiguit|contract|rule|guarantee|no-failover)/i)
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+PASS B3 - code drifts and the doc declares the deviation (consistent)
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-porter-preserves-contract.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": true,
+  "passed": 10,
+  "failed": 1,
+  "failedIds": [
+    "B1"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-negation-evasion
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+FAIL B1 - delivery_routing.md still asserts compliance the code does not provide (a Porter compliance assertion: "Porter now satisfies the rule. porter.adapter.ts rethrows the ambiguous tag unchanged, so the router never books a secon")
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+PASS B3 - code drifts and the doc declares the deviation (consistent)
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-negation-evasion.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": true,
+  "passed": 10,
+  "failed": 1,
+  "failedIds": [
+    "B1"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-false-resolution-note
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+PASS B1 - delivery_routing.md makes no universal-compliance claim
+FAIL B2 - the deviation note does not state Porter fails the rule
+FAIL B3 - code drifts but the doc does not declare the deviation
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-false-resolution-note.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": false,
+  "passed": 9,
+  "failed": 2,
+  "failedIds": [
+    "B2",
+    "B3"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-table-row-compliance
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+FAIL B1 - delivery_routing.md still asserts compliance the code does not provide (a Porter compliance assertion: "| Porter | no-failover | ambiguous books are rethrown unchanged; the router never books a second courier |")
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+PASS B3 - code drifts and the doc declares the deviation (consistent)
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-table-row-compliance.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": true,
+  "passed": 10,
+  "failed": 1,
+  "failedIds": [
+    "B1"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-double-negative-compliance
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+FAIL B1 - delivery_routing.md still asserts compliance the code does not provide (a Porter compliance assertion: "Porter does not fail the no-failover rule: its ambiguous book is rethrown unchanged, so no second courier is ever booked")
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+PASS B3 - code drifts and the doc declares the deviation (consistent)
+{
+  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-double-negative-compliance.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": true,
+  "passed": 10,
+  "failed": 1,
+  "failedIds": [
+    "B1"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-code-fixed-doc-stale
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+FAIL A4 - porter.adapter.ts references the tag - ambiguity may now be preserved; re-check the doc deviation note
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+PASS A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+PASS B1 - delivery_routing.md makes no universal-compliance claim
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+FAIL B3 - code no longer drifts but the doc still declares an open deviation (stale)
+{
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\fakerepo",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\fakerepo\\references\\delivery_routing.md",
+  "porterAdapterReferencesTag": true,
+  "codeDrifts": false,
+  "docDeclaresDeviation": true,
+  "passed": 9,
+  "failed": 2,
+  "failedIds": [
+    "A4",
+    "B3"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+### negative-router-release-arm-folded-into-walk
+PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A2 - shadowfax.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
+PASS A3 - porter.service.ts tags the no-order-id condition as PROVIDER_BOOK_AMBIGUOUS
+PASS A4 - porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)
+PASS A5 - dispatch.router.ts walks on (continue) only for ProviderDispatchError
+FAIL A5b - dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)
+PASS A6 - borzo.adapter.ts uses the borzoBookAmbiguous() helper with 4 throw site(s)
+PASS A7 - doc cites the concurrently-edited adapters by symbol, not by line number
+PASS B1 - delivery_routing.md makes no universal-compliance claim
+PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
+PASS B3 - code drifts and the doc declares the deviation (consistent)
+{
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\fakerepo-mutated-router",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\fakerepo-mutated-router\\references\\delivery_routing.md",
+  "porterAdapterReferencesTag": false,
+  "codeDrifts": true,
+  "docDeclaresDeviation": true,
+  "passed": 10,
+  "failed": 1,
+  "failedIds": [
+    "A5b"
+  ],
+  "verdict": "DRIFT_PRESENT"
+}
+
+exit=1 (expected 1) OK
+
+ALL COUNTER TESTS OK - every negative variant exits non-zero, the positive exits 0

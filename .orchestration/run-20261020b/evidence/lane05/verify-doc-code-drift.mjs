@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * lane05 — doc-vs-code drift probe for the ambiguous-book contract.
+ * lane05 - doc-vs-code drift probe for the ambiguous-book contract.
  *
  * WHAT IT CHECKS
  *  A) CODE FACTS (must hold in the working tree):
@@ -56,7 +56,7 @@ const read = (p) => readFileSync(p, "utf8");
 const results = [];
 const check = (id, ok, detail) => {
   results.push({ id, ok, detail });
-  console.log(`${ok ? "PASS" : "FAIL"} ${id} — ${detail}`);
+  console.log(`${ok ? "PASS" : "FAIL"} ${id} - ${detail}`);
 };
 
 let code, doc;
@@ -102,13 +102,19 @@ check(
   porterAdapterReferencesTag === false,
   porterAdapterReferencesTag === false
     ? "porter.adapter.ts does NOT reference the tag (drift: ambiguity is re-wrapped as transient)"
-    : "porter.adapter.ts references the tag — ambiguity may now be preserved; re-check the doc deviation note"
+    : "porter.adapter.ts references the tag - ambiguity may now be preserved; re-check the doc deviation note"
 );
 check(
   "A5",
-  /isProviderDispatchError\(err\)[\s\S]{0,400}?continue;/.test(code.router) &&
-    /releaseClaimFailed\([\s\S]{0,400}?throw err;/.test(code.router),
-  "dispatch.router.ts walks on (continue) only for ProviderDispatchError and otherwise releases the claim then rethrows"
+  /isProviderDispatchError\(err\)\) \{[\s\S]{0,600}?continue;/.test(code.router),
+  "dispatch.router.ts walks on (continue) only for ProviderDispatchError"
+);
+check(
+  "A5b",
+  /\/\/[^\n]*(?:Unexpected error|release the claim)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*await releaseClaimFailed\([\s\S]{0,300}?\);\s*throw err;/.test(
+    code.router
+  ),
+  "dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)"
 );
 // A6: the tagged throw anchor must exist in SOME form (helper function or inline throw
 // sites). The adapter is being rewritten by another lane, so the shape is allowed to vary;
@@ -148,19 +154,30 @@ const UNIVERSAL_PATTERNS = [
 const explicitHit = UNIVERSAL_PATTERNS.find((re) => re.test(doc));
 // Bullet/paragraph-level scan: split on blank lines and list/heading markers.
 const blocks = doc.split(/\r?\n(?=\s*(?:[-*#|]|\d+\.))|\r?\n\s*\r?\n/);
-const COMPLIANCE_VERB =
-  /(complies|compliant|honou?rs?|satisfies|implements|applies|extends?|preserves?|inherits?)/i;
 const RULE_CONTEXT =
   /(ambiguit|failover|fail-over|fail over|no-failover|PROVIDER_BOOK_AMBIGUOUS|second courier|second real courier|walk)/i;
-// Negation must be POSITIONAL and must not be satisfied by unrelated words like "fail"
-// (e.g. "Porter now satisfies the rule ... even when a book fails" must still be flagged).
-const NEGATED = /(does not|doesn't|do not|\bnot\b|no longer|deviation)/i;
+// Positive-guarantee phrasings: asserting a property that only a FIXED adapter could have.
+const POSITIVE_GUARANTEE =
+  /(never books a second|no second courier is (ever )?(booked|added|possible)|cannot book a second)/i;
+// Negation must be positional AND scoped to a rule-violation word. "Porter does not FAIL the
+// no-failover rule" phrased that way still asserts compliance, so a bare "not"/"never" must NOT
+// buy the exemption (GLM counter 2); only drift-conceding verbs do.
+const SCOPED_NEGATION =
+  /(does not|doesn't|do not|\bnot\b|no longer)[^.;]{0,40}(satisf|holds\b|compl|implement)/i;
+const DEVIATION_PHRASES =
+  /(does not satisfy|does not implement|not satisfied|does not hold|do not rely on|KNOWN DEVIATION|deviation)/i;
+// Porter must be the GRAMMATICAL subject (±40 chars) of a rule-compliance verb -- "staff books
+// a rider in the Porter app" (DR8) is normal usage, so "books"/"books a rider" is excluded and
+// only ambiguity-rule compliance verbs count here.
+const SUBJECT_COMPLIANCE =
+  /(\bPorter\b[^.;\n]{0,40}\b(complies|compliant|honou?r[sz]?\w*|satisfies|implements|applies|extends?|preserves?|inherits?|rethrow\w*|reraise\w*|throws?)\b|\b(complies|compliant|honou?r[sz]?\w*|satisfies|implements|applies|extends?|preserves?|inherits?|rethrow\w*|reraise\w*|throws?)\b[^.;\n]{0,40}\bPorter\b)/i;
 const porterAssertion = blocks.find(
   (b) =>
     /\bPorter\b/.test(b) &&
-    COMPLIANCE_VERB.test(b) &&
     RULE_CONTEXT.test(b) &&
-    !NEGATED.test(b)
+    (SUBJECT_COMPLIANCE.test(b) || POSITIVE_GUARANTEE.test(b)) &&
+    !SCOPED_NEGATION.test(b) &&
+    !DEVIATION_PHRASES.test(b)
 );
 const universalHit = explicitHit
   ? String(explicitHit)
@@ -203,7 +220,7 @@ check(
         : "the deviation note does not state Porter fails the rule"
 );
 
-// B3: bidirectional consistency — note present iff the code drifts.
+// B3: bidirectional consistency - note present iff the code drifts.
 const codeDrifts = porterAdapterReferencesTag === false;
 const consistent = codeDrifts ? docDeclaresDeviation : !docDeclaresDeviation;
 check(
