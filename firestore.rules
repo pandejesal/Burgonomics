@@ -146,13 +146,45 @@ service cloud.firestore {
       }
     }
 
+    // Lane 07: users/{uid}.fcmTokens is the push fan-out list that
+    // fcmClient.ts/dispatch actually reads. It is REMOVAL-ONLY for EVERY
+    // client role (owner and brand alike): the only writers allowed to ADD a
+    // token are the Admin SDK seams registerToken
+    // (core/deviceTokenRegister.ts) and unregisterToken
+    // (modules/notifications/unregisterToken.ts), which prove device_tokens
+    // ownership and refuse foreign/ownerless bindings. A client-side append
+    // would re-create exactly the foreign-token adoption those seams reject
+    // (HTTP 409) through the SDK instead, so a client can never introduce a
+    // token value that is not already stored on that same doc: the list may
+    // only shrink (or repeat stored values within the stored size bound).
+    // Legit client write: notificationsService.unlinkUserFromDeviceToken
+    // fallback -> fcmTokens: arrayRemove(token) on the caller's OWN doc.
+    function fcmTokensRemovalOnly() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fcmTokens'])
+        || (
+          request.resource.data.get('fcmTokens', []) is list
+          && resource.data.get('fcmTokens', []) is list
+          && request.resource.data.get('fcmTokens', []).hasOnly(resource.data.get('fcmTokens', []))
+          // hasOnly is a subset test that ignores multiplicity, so the explicit
+          // size bound is what stops duplicate-inflation of the fan-out list.
+          && request.resource.data.get('fcmTokens', []).size() <= resource.data.get('fcmTokens', []).size()
+        );
+    }
+
     match /users/{userId} {
       allow read: if isUser(userId) || isAdmin();
       allow create: if isUser(userId)
-        && !request.resource.data.keys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints']);
-      allow update: if isBrandOwner() || (
+        && !request.resource.data.keys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints'])
+        // First token link is server-stamped by POST /notifications/registerToken.
+        && !request.resource.data.keys().hasAny(['fcmTokens']);
+      // Brand/operator authority is bounded by the SAME fan-out invariant:
+      // attaching a token is server-only for every role, so no client path
+      // (owner or brand) can re-create a foreign-token binding the
+      // registerToken gate refuses. Role/tenant fields stay brand-writable.
+      allow update: if (isBrandOwner() && fcmTokensRemovalOnly()) || (
         isUser(userId)
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints'])
+        && fcmTokensRemovalOnly()
       );
       allow delete: if false;
 
