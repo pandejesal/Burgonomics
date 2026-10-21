@@ -1,6 +1,6 @@
 lane05 drift-probe counter tests
 probe: .orchestration\run-20261020b\evidence\lane05\verify-doc-code-drift.mjs
-ran: 2026-10-21T00:34:22.225Z
+ran: 2026-10-21T00:35:29.289Z
 
 ### positive-working-tree-doc
 PASS A1 - borzo.adapter.ts throws a plain error tagged PROVIDER_BOOK_AMBIGUOUS
@@ -15,8 +15,8 @@ PASS B1 - delivery_routing.md makes no universal-compliance claim
 PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
 PASS B3 - code drifts and the doc declares the deviation (consistent)
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
-  "doc": "C:\\Users\\DELL\\Desktop\\Burgonomics\\references\\delivery_routing.md",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
+  "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2\\references\\delivery_routing.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,
   "docDeclaresDeviation": true,
@@ -41,7 +41,7 @@ FAIL B1 - delivery_routing.md still asserts compliance the code does not provide
 FAIL B2 - delivery_routing.md has no Porter KNOWN DEVIATION note
 FAIL B3 - code drifts but the doc does not declare the deviation
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
   "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-original-universal-wording.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,
@@ -71,7 +71,7 @@ FAIL B1 - delivery_routing.md still asserts compliance the code does not provide
 PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
 PASS B3 - code drifts and the doc declares the deviation (consistent)
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
   "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-paraphrased-universal.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,
@@ -99,7 +99,7 @@ FAIL B1 - delivery_routing.md still asserts compliance the code does not provide
 PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
 PASS B3 - code drifts and the doc declares the deviation (consistent)
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
   "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-extends-to-porter-too.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,
@@ -127,7 +127,7 @@ FAIL B1 - delivery_routing.md still asserts compliance the code does not provide
 PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
 PASS B3 - code drifts and the doc declares the deviation (consistent)
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
   "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-porter-preserves-contract.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,
@@ -155,7 +155,7 @@ FAIL B1 - delivery_routing.md still asserts compliance the code does not provide
 PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
 PASS B3 - code drifts and the doc declares the deviation (consistent)
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
   "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-negation-evasion.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,
@@ -183,7 +183,7 @@ PASS B1 - delivery_routing.md makes no universal-compliance claim
 FAIL B2 - the deviation note does not state Porter fails the rule
 FAIL B3 - code drifts but the doc does not declare the deviation
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
   "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-false-resolution-note.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,
@@ -212,7 +212,7 @@ FAIL B1 - delivery_routing.md still asserts compliance the code does not provide
 PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
 PASS B3 - code drifts and the doc declares the deviation (consistent)
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
   "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-table-row-compliance.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,
@@ -240,7 +240,7 @@ FAIL B1 - delivery_routing.md still asserts compliance the code does not provide
 PASS B2 - delivery_routing.md carries a Porter deviation note with negative polarity
 PASS B3 - code drifts and the doc declares the deviation (consistent)
 {
-  "repo": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
   "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-counters\\negative-double-negative-compliance.md",
   "porterAdapterReferencesTag": false,
   "codeDrifts": true,

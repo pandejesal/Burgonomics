@@ -1,11 +1,11 @@
 {
   "summary": {
-    "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture",
-    "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture\\references\\delivery_routing.md",
+    "repo": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2",
+    "doc": "C:\\Users\\DELL\\AppData\\Local\\Temp\\lane05-capture2\\references\\delivery_routing.md",
     "porterAdapterReferencesTag": false,
     "codeDrifts": true,
     "docDeclaresDeviation": true,
-    "passed": 10,
+    "passed": 11,
     "failed": 0,
     "failedIds": [],
     "verdict": "DOC_MATCHES_CODE"
@@ -34,7 +34,12 @@
     {
       "id": "A5",
       "ok": true,
-      "detail": "dispatch.router.ts walks on (continue) only for ProviderDispatchError and otherwise releases the claim then rethrows"
+      "detail": "dispatch.router.ts walks on (continue) only for ProviderDispatchError"
+    },
+    {
+      "id": "A5b",
+      "ok": true,
+      "detail": "dispatch.router.ts releases the claim then RETHROWS for plain errors, anchored on the comment immediately above the call (a mutation that folds plain errors into the walk must fail this)"
     },
     {
       "id": "A6",

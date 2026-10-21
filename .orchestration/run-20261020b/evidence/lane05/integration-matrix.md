@@ -112,9 +112,9 @@ customer `29fd0e6`, partner `09fe39b`. Every third-party mirror is treated as se
    over and book a second courier. Source fix proposed to lane 04 (dispatch) — see the proposal post
    on `fresh-run-2-ownership`.
    - Repro + control: `evidence/lane05/verify-doc-code-drift.mjs`.
-   - Positive: 10/10 PASS, `DOC_MATCHES_CODE`, exit 0 (`probe-final-<sha>.json`, regenerated in a
+   - Positive: 11/11 PASS, `DOC_MATCHES_CODE`, exit 0 (`probe-final-fee8b16.json`, regenerated in a
      clean worktree at the committed SHA).
-   - Negative controls (all exit 1, all captured in `counters-final-<sha>.txt`,
+   - Negative controls (all exit 1, all captured in `counters-final-fee8b16.txt`,
      regenerated deterministically by `run-drift-counters.mjs`): the original universal-claim
      wording re-inserted synthetically (`B1/B2/B3` fail) · paraphrased universal claim appended
      (`B1` fails) · "extends to Porter too" (`B1` fails) · "Porter preserves the ambiguous-book
@@ -131,14 +131,18 @@ customer `29fd0e6`, partner `09fe39b`. Every third-party mirror is treated as se
      `rebookTrigger: "dispatch_failed"`), and the scheduled auto-rebook worker re-enters the ranked
      walk with an exclusion set derived only from `dispatchProvider` / provider order ids — none of
      which an ambiguous book writes. Staff must reconcile before a rebook is approved.
-   - Probe hardening is itself reviewed across three rounds: DeepSeek (child
-     `ses_ea554f449ffeyywZuMqNBtfMZ8`) APPROVE_WITH_CHANGES → applied; GLM (child
-     `ses_ea5376817ffeV8IeTjjjSsbxvL`) VERIFIED_WITH_RESIDUALS → polarity + bidirectional
-     consistency checks added; final DeepSeek pass on the committed bytes (child
-     `ses_ea4a16e42ffeeWNP1e80Z4YeD4`) APPROVE_WITH_CHANGES → negation-evasion hole closed
-     (a compliance claim can no longer hide behind the word "fails"), A5 tightened to book-failover
-     adjacency, misleading hash reference dropped from the doc, captures regenerated from the
-     committed tree rather than the dirty working tree.
+   - Probe hardening is itself reviewed across rounds: DeepSeek child `ses_ea554f449ffeyywZuMqNBtfMZ8`
+     APPROVE_WITH_CHANGES -> applied; GLM child `ses_ea5376817ffeV8IeTjjjSsbxvL`
+     VERIFIED_WITH_RESIDUALS -> polarity + bidirectional consistency checks added; final DeepSeek
+     pass on the committed bytes (child `ses_ea4a16e42ffeeWNP1e80Z4YeD4`) APPROVE_WITH_CHANGES ->
+     negation-evasion hole closed, A5 tightened, misleading hash reference dropped, captures
+     regenerated from the committed tree; second GLM pass (child `ses_ea4339fe3ffe1XeExichW4KbB0`)
+     VERIFIED_WITH_RESIDUALS -> Borzo provenance corrected to the four COMMITTED throw shapes
+     (the duplicate/named-id shapes had been landed by lane 09 commit `b4d43ed`, so the
+     "uncommitted" wording was false), A5 gained the mutation-proof A5b pin on the
+     release-then-rethrow arm, compliance detection became subject-scoped with scoped negation
+     (table-row and double-negative evasions closed) and the synthetic router mutation
+     (release arm folded into the failover walk) joined the counter variants.
 2. **Porter book endpoint drift (fixed in the same doc).** The same doc's §1 provider matrix listed
    Porter's book call as `POST /v1/orders`; `porter.service.ts` posts to `/v1/orders/create` (and
    `/v1/orders/quote` for quotes). The matrix row now matches the code.
