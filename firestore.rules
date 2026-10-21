@@ -448,13 +448,55 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // Branch launch announcements (partner useBranches broadcastLaunchAlert addDoc)
-    // B3-S1: operator-writable (branch owners broadcast for their outlets),
-    // still closed to customers/anonymous. Reads stay public (announcements).
+    // Branch launch announcements (partner useBranches broadcastLaunchAlert
+    // addDoc — src/hooks/useBranches.ts:156-186). The companion call posts
+    // /notifications/dispatch (partnerFunctionsApi.ts:809), and `upcoming_*`
+    // topics are NOT in the server's subscribable allowlist
+    // (notifications/topics.ts), so today the fan-out 403s for every role —
+    // the doc write is the public-read audit record, and defacement/attribution
+    // of that record is the risk this block bounds.
+    // Writes are therefore: BRANCH-SCOPED (the doc carries a caller-stamped
+    // branchId/targetTopic pair; an operator of branch_02 used to publish,
+    // rewrite or delete for branch_01 — or aim targetTopic at another branch's
+    // subscribers), TOPIC-BOUND (targetTopic == 'upcoming_' + branchId), and
+    // SHAPE-BOUNDED to the exact payload the app sends (title/body caps mirror
+    // BroadcastSchema). Global brand/support operators keep their shipped
+    // all-branch write; regional_manager was city-clamped upstream, never
+    // correct here (UI visibility change is lane 02's call — posted).
+    // APPEND-ONLY: no client update/delete path exists in either app (partner
+    // only addDoc'ed the record), so the record cannot be rewritten into
+    // another branch (or at all) after creation; server moderation goes
+    // through the Admin SDK.
+    // RESIDUAL (accepted, no reader exists in either app today): branchName/
+    // title/body text is caller-chosen, so a global writer could still mislabel
+    // the displayed outlet name; binding it would cost one get() per write.
+    function branchAnnouncementTopicBound() {
+      return request.resource.data.branchId is string
+        && request.resource.data.branchId.size() > 0
+        && request.resource.data.targetTopic is string
+        && request.resource.data.targetTopic == 'upcoming_' + request.resource.data.branchId;
+    }
+
+    function branchAnnouncementShape() {
+      return request.resource.data.keys().hasOnly([
+          'branchId', 'branchName', 'title', 'body', 'targetTopic', 'createdAt'
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.body is string
+        && request.resource.data.body.size() <= 1000;
+    }
+
+    function globalAnnouncementWriter() {
+      return hasRole(['brand_owner', 'developer', 'support']);
+    }
+
     match /branch_announcements/{docId} {
       allow read: if true;
-      allow create: if isStaff();
-      allow update, delete: if isStaff();
+      allow create: if (globalAnnouncementWriter() || ownsBranch(request.resource.data.branchId))
+        && branchAnnouncementTopicBound()
+        && branchAnnouncementShape();
+      allow update, delete: if false;
     }
 
     // =========================================================================
