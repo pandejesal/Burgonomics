@@ -251,24 +251,32 @@ export async function resolveTicketNote(input: ResolveNoteInput) {
   // Loop 7 hardening (fail-closed): scoped staff MUST prove the ticket's
   // branch. Missing/empty/mismatched branchIds -> 403 BEFORE side effects.
   assertTicketBranchAccess(input.caller, ticket.branchId, "resolve tickets");
-  const resolution = String(input.resolution || "").trim().slice(0, 2000) || "Resolved by staff.";
-  const event: TicketTimelineEvent = {
-    action: "resolved_note",
-    actorId,
-    actorName,
-    actorRole: "staff",
-    message: resolution,
-    timestamp: new Date().toISOString(),
-  };
-  await ticketRef.set(
-    {
+  // Same resolution lease as the money path: without it two concurrent notes
+  // both pass the snapshot guard and the later write overwrites the earlier
+  // note/timeline identity (audit trail corruption).
+  const { claimToken } = await claimTicketResolution(ticketRef, actorId, "TICKET_NOT_PENDING");
+  let committed = false;
+  try {
+    const resolution = String(input.resolution || "").trim().slice(0, 2000) || "Resolved by staff.";
+    const event: TicketTimelineEvent = {
+      action: "resolved_note",
+      actorId,
+      actorName,
+      actorRole: "staff",
+      message: resolution,
+      timestamp: new Date().toISOString(),
+    };
+    await commitResolvedTicket(ticketRef, claimToken, {
       status: "resolved",
       resolution,
+      resolutionClaim: admin.firestore.FieldValue.delete(),
       timeline: admin.firestore.FieldValue.arrayUnion(event),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
+    });
+    committed = true;
+  } finally {
+    if (!committed) await releaseResolutionClaim(ticketRef, claimToken);
+  }
   return { success: true, ticketId: input.ticketId };
 }
 
@@ -440,6 +448,173 @@ export async function addTicketMessage(params: {
 }
 
 /**
+ * Resolution lease (double-resolution guard hardening — lane 04).
+ *
+ * The status guard alone is check-then-act: it reads the pre-flight snapshot,
+ * runs provider side effects, and writes the final resolution many awaits
+ * later. Two concurrent resolutions BOTH pass it; the later write overwrites
+ * the earlier `resolution` (the audit trail loses the action that actually
+ * ran) and refund paths enter autoRefund twice (whose money safety then rides
+ * only on the payments lane's own lease). This lease serializes resolutions:
+ * the winner writes `resolutionClaim` in the SAME transaction that re-checks
+ * the terminal status, the loser gets 409 TICKET_RESOLUTION_IN_PROGRESS, and
+ * the claim is cleared on success and released best-effort on failure. A
+ * crashed resolver leaves the claim behind; the TTL lets the next staff
+ * member retry without admin intervention.
+ *
+ * Fencing: the commit and the release are CONDITIONAL on the caller still
+ * holding the claim it wrote (claimToken {claimedAt, actorUid} === the stored
+ * resolutionClaim's {claimedAt, actorUid}). A
+ * resolver whose lease expired and was taken over can therefore neither
+ * overwrite the successor's resolution nor wipe the successor's claim.
+ *
+ * TTL sizing: the resolve routes live under the 60-second api function
+ * timeout (index.ts), so a crashed instance cannot outlive a 2.5-minute
+ * lease; anything longer would lock staff out for minutes of nothing.
+ */
+export const RESOLUTION_CLAIM_TTL_MS = 2.5 * 60 * 1000;
+
+type ClaimToken = { claimedAt: number; actorUid: string | null };
+type ClaimedTicket = { ticket: Record<string, any>; claimToken: ClaimToken };
+
+async function claimTicketResolution(
+  ticketRef: FirebaseFirestore.DocumentReference,
+  actorId: string,
+  alreadyResolvedCode: "TICKET_ALREADY_RESOLVED" | "TICKET_NOT_PENDING"
+): Promise<ClaimedTicket> {
+  const claimedAt = Date.now();
+  let ticket: Record<string, any>;
+  try {
+    ticket = await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+      const snap = await tx.get(ticketRef);
+      if (!snap.exists) {
+        throw serviceError("TICKET_NOT_FOUND", `Ticket ${ticketRef.id} not found`, 404);
+      }
+      const t = (snap.data() || {}) as Record<string, any>;
+      if (t.status === "resolved" || t.status === "closed") {
+        throw serviceError(
+          alreadyResolvedCode,
+          `Ticket ${ticketRef.id} is already ${t.status} — reopen it before resolving again.`,
+          409
+        );
+      }
+      const claim = t.resolutionClaim;
+      if (
+        claim &&
+        typeof claim.claimedAt === "number" &&
+        Date.now() - claim.claimedAt < RESOLUTION_CLAIM_TTL_MS
+      ) {
+        throw serviceError(
+          "TICKET_RESOLUTION_IN_PROGRESS",
+          `Ticket ${ticketRef.id} is being resolved by another staff member right now — try again in a moment.`,
+          409
+        );
+      }
+      tx.set(
+        ticketRef,
+        { resolutionClaim: { actorUid: actorId || null, claimedAt } },
+        { merge: true }
+      );
+      return t;
+    });
+  } catch (err: any) {
+    // Contention exhaustion (ABORTED / code 10) is a busy signal, not a
+    // server fault: surface a typed retryable 503 instead of a bare 500.
+    if (err?.code === 10 || err?.code === "ABORTED") {
+      throw serviceError(
+        "TICKET_RESOLUTION_RETRY",
+        `Ticket ${ticketRef.id} is being updated concurrently — retry in a moment.`,
+        503
+      );
+    }
+    throw err;
+  }
+  return { ticket, claimToken: { claimedAt, actorUid: actorId || null } };
+}
+
+/**
+ * Conditional final write: the resolution commits ONLY if this caller still
+ * holds the lease. A takeover after TTL expiry makes this a typed 409 rather
+ * than a silent overwrite of the successor's resolution.
+ */
+async function commitResolvedTicket(
+  ticketRef: FirebaseFirestore.DocumentReference,
+  claimToken: ClaimToken,
+  payload: Record<string, any>
+): Promise<void> {
+  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+    const snap = await tx.get(ticketRef);
+    const claim = snap.exists ? ((snap.data() || {}) as any).resolutionClaim : undefined;
+    // Token = epoch ms + actor: two claims in the SAME millisecond (DS n-8)
+    // must not be interchangeable, or a release could erase a successor.
+    if (
+      !snap.exists ||
+      claim?.claimedAt !== claimToken.claimedAt ||
+      (claim?.actorUid ?? null) !== claimToken.actorUid
+    ) {
+      throw serviceError(
+        "TICKET_RESOLUTION_CLAIM_LOST",
+        `Ticket ${ticketRef.id}: the resolution lease moved on before this write — no overwrite performed.`,
+        409
+      );
+    }
+    // set+merge (not update): identical effect on an existing doc and usable
+    // by every Firestore shim in the suite (Transaction.update coverage is
+    // sparse there).
+    tx.set(ticketRef, payload, { merge: true });
+  });
+}
+
+/** Best-effort conditional lease release after a failed resolution. */
+async function releaseResolutionClaim(
+  ticketRef: FirebaseFirestore.DocumentReference,
+  claimToken: ClaimToken
+): Promise<void> {
+  try {
+    await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+      const snap = await tx.get(ticketRef);
+      const claim = snap.exists ? ((snap.data() || {}) as any).resolutionClaim : undefined;
+      // Never erase a claim this caller no longer holds (takeover safety).
+      if (
+        claim?.claimedAt !== claimToken.claimedAt ||
+        (claim?.actorUid ?? null) !== claimToken.actorUid
+      ) {
+        return;
+      }
+      tx.set(ticketRef, { resolutionClaim: admin.firestore.FieldValue.delete() }, { merge: true });
+    });
+  } catch (err: any) {
+    console.warn(
+      `[Tickets] resolution claim release failed for ${ticketRef.id}:`,
+      err?.message || err
+    );
+  }
+}
+
+/**
+ * Validates a loyalty credit amount and returns it narrowed to `number`.
+ * Pure, so it can run both before the lease (fail fast, burn no claim) and at
+ * the credit site (where the compiler needs the narrowing back).
+ */
+function assertLoyaltyAmount(amount: number | undefined): number {
+  if (!amount) {
+    throw serviceError(
+      "TICKET_LOYALTY_NO_AMOUNT",
+      "Cannot credit loyalty: no coin amount was specified.",
+      400
+    );
+  }
+  if (!Number.isInteger(amount) || amount <= 0 || amount > 5000) {
+    throw serviceError(
+      "TICKET_LOYALTY_AMOUNT_INVALID",
+      "Loyalty credit must be a whole number of points between 1 and 5000.",
+      400
+    );
+  }
+  return amount;
+}
+
+/**
  * Resolves a ticket with specific action (full/partial refund, coupon, loyalty credit, or explanation).
  */
 export async function resolveTicket(input: ResolveTicketInput) {
@@ -474,13 +649,9 @@ export async function resolveTicket(input: ResolveTicketInput) {
     );
   }
 
-  // 1. If full or partial refund, trigger payment autoRefund with Route split reversal.
-  // Fail LOUD when no captured payment exists: the old code left refundResult
-  // null and still closed the ticket as resolved — staff saw success, the
-  // customer never got money, and the closed ticket removed all recourse.
-  // Loop 3: a partial_refund with amount 0/omitted would fall through to a
-  // FULL gateway refund (autoRefund reverse_all without amount) — require a
-  // positive amount up front so a staff typo can't full-refund by accident.
+  // Pure input validation runs BEFORE the lease: a bad amount must not burn a
+  // claim (and manufacture a transient 409 for a legitimate concurrent
+  // resolver). Only ticket-dependent checks stay under the lease.
   if (action === "partial_refund" && !(typeof amount === "number" && amount > 0)) {
     throw serviceError(
       "TICKET_REFUND_AMOUNT_REQUIRED",
@@ -488,26 +659,52 @@ export async function resolveTicket(input: ResolveTicketInput) {
       400
     );
   }
+  if (action === "loyalty_credit") {
+    assertLoyaltyAmount(amount);
+  }
+
+  // Atomic resolution lease (race hardening): the pre-read guard above is a
+  // fast path only. The authoritative check runs in a transaction with the
+  // claim write, so two concurrent resolutions cannot BOTH pass it — the
+  // loser 409s before any side effect (refund/credit/notification).
+  const { ticket: liveTicket, claimToken } = await claimTicketResolution(
+    ticketRef,
+    actorId,
+    "TICKET_ALREADY_RESOLVED"
+  );
+
+  let resolutionCommitted = false;
+  let resolution: Record<string, any> = {};
+  try {
+    // Re-assert branch access against the transaction-fresh snapshot: every
+    // other decision moved onto it, so authorization must too.
+    assertTicketBranchAccess(input.caller, liveTicket.branchId, "resolve tickets");
+
+  // 1. If full or partial refund, trigger payment autoRefund with Route split reversal.
+  // Fail LOUD when no captured payment exists: the old code left refundResult
+  // null and still closed the ticket as resolved — staff saw success, the
+  // customer never got money, and the closed ticket removed all recourse.
   if (action === "full_refund" || action === "partial_refund") {
-    if (!ticket.orderId) {
+    if (!liveTicket.orderId) {
       throw serviceError(
         "TICKET_REFUND_NO_ORDER",
         "Cannot refund: ticket has no linked order (guest ticket — refund via Razorpay dashboard).",
         400
       );
     }
-    const orderSnap = await db.collection("orders").doc(ticket.orderId).get();
+    const orderSnap = await db.collection("orders").doc(liveTicket.orderId).get();
     if (!orderSnap.exists) {
       throw serviceError(
         "TICKET_NOT_FOUND",
-        `Cannot refund: linked order ${ticket.orderId} not found.`,
+        `Cannot refund: linked order ${liveTicket.orderId} not found.`,
         404
       );
     }
     const order = orderSnap.data()!;
     // NOTE: second-charge protection lives in autoRefund itself
     // (ALREADY_REFUNDED 409 + same-amount idempotent replay); the
-    // ticket-status guard above stops re-resolution of this ticket.
+    // resolution lease above stops two concurrent resolutions (and the
+    // status guard stops re-resolution of this ticket).
     // Captured-payment proof, both storage shapes: nested server writes AND
     // the webhook's dotted-literal merge-set form (webhookHandler writes
     // "payment.razorpayPaymentId" literally — reading only the nested shape
@@ -515,7 +712,7 @@ export async function resolveTicket(input: ResolveTicketInput) {
     const razorpayPaymentId =
       order.payment?.razorpayPaymentId ||
       order["payment.razorpayPaymentId"] ||
-      ticket.diagnostics?.razorpayPaymentId;
+      liveTicket.diagnostics?.razorpayPaymentId;
     if (!razorpayPaymentId) {
       throw serviceError(
         "TICKET_REFUND_NO_PAYMENT",
@@ -524,10 +721,10 @@ export async function resolveTicket(input: ResolveTicketInput) {
       );
     }
     refundResult = await autoRefund({
-      orderId: ticket.orderId,
+      orderId: liveTicket.orderId,
       razorpayPaymentId,
       amountRupees: action === "partial_refund" ? amount : undefined,
-      reason: `Ticket ${ticket.ticketNumber} resolution: ${notes}`,
+      reason: `Ticket ${liveTicket.ticketNumber} resolution: ${notes}`,
     });
   }
 
@@ -538,24 +735,10 @@ export async function resolveTicket(input: ResolveTicketInput) {
   // must REFUSE loudly — the old code skipped the credit yet still resolved
   // the ticket as credited.
   if (action === "loyalty_credit") {
-    if (!ticket.customerId) {
+    if (!liveTicket.customerId) {
       throw serviceError(
         "TICKET_LOYALTY_NO_CUSTOMER",
         "Cannot credit loyalty: ticket has no customer profile (guest ticket).",
-        400
-      );
-    }
-    if (!amount) {
-      throw serviceError(
-        "TICKET_LOYALTY_NO_AMOUNT",
-        "Cannot credit loyalty: no coin amount was specified.",
-        400
-      );
-    }
-    if (!Number.isInteger(amount) || amount <= 0 || amount > 5000) {
-      throw serviceError(
-        "TICKET_LOYALTY_AMOUNT_INVALID",
-        "Loyalty credit must be a whole number of points between 1 and 5000.",
         400
       );
     }
@@ -566,10 +749,10 @@ export async function resolveTicket(input: ResolveTicketInput) {
     // collection nothing reads and left no ledger trail at all.
     try {
       await creditTicketLoyaltyCoins({
-        customerId: ticket.customerId,
+        customerId: liveTicket.customerId,
         ticketId,
-        ticketNumber: ticket.ticketNumber,
-        amount,
+        ticketNumber: liveTicket.ticketNumber,
+        amount: assertLoyaltyAmount(amount),
         actorUid: actorId,
         actorName: resolvedByName,
       });
@@ -583,7 +766,7 @@ export async function resolveTicket(input: ResolveTicketInput) {
     }
   }
 
-  const resolution = {
+  resolution = {
     action,
     amount: amount || 0,
     couponCode: couponCode || null,
@@ -603,13 +786,19 @@ export async function resolveTicket(input: ResolveTicketInput) {
     timestamp: new Date().toISOString(),
   };
 
-  await ticketRef.update({
+  await commitResolvedTicket(ticketRef, claimToken, {
     status: "resolved",
     resolution,
+    // The lease is consumed by the resolution it guarded.
+    resolutionClaim: admin.firestore.FieldValue.delete(),
     timeline: admin.firestore.FieldValue.arrayUnion(event),
     lastActivityAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+  resolutionCommitted = true;
+  } finally {
+    if (!resolutionCommitted) await releaseResolutionClaim(ticketRef, claimToken);
+  }
 
   // Customers never learned their ticket closed. Best-effort push (never
   // blocks resolution). B5-S1: PII-free + honest — generic copy, ticket IDs
@@ -617,12 +806,12 @@ export async function resolveTicket(input: ResolveTicketInput) {
   try {
     const { pushToCustomer } = await import("../notifications/fcmClient");
     await pushToCustomer(
-      ticket.customerId,
+      liveTicket.customerId,
       "Support ticket resolved",
       truncatePushText(
         refundResult
-          ? `Ticket ${ticket.ticketNumber || ticketId} is resolved with a refund. Thanks for your patience!`
-          : `Ticket ${ticket.ticketNumber || ticketId} is resolved. Thanks for your patience!`
+          ? `Ticket ${liveTicket.ticketNumber || ticketId} is resolved with a refund. Thanks for your patience!`
+          : `Ticket ${liveTicket.ticketNumber || ticketId} is resolved. Thanks for your patience!`
       ),
       { type: "ticket_resolved", ticketId }
     );
@@ -706,3 +895,4 @@ export async function escalateTicket(input: EscalateTicketInput) {
 
   return { success: true, ticketId, targetTier, snapshotId };
 }
+

@@ -61,6 +61,16 @@ const hoisted = vi.hoisted(() => {
 
   const mockDb: any = {
     collection: (name: string) => colRef(name),
+    // The resolution lease (lane 04) claims ticket state transactionally; the
+    // shim runs the closure against live refs like every other fake here.
+    runTransaction: vi.fn(async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+        update: (ref: any, data: any) => ref.update(data),
+        delete: (ref: any) => ref.delete?.(),
+      })
+    ),
     batch: () => ({
       update: vi.fn((ref: any, data: any) => {
         batchOps.push({ ref, data });

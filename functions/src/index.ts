@@ -81,6 +81,7 @@ import {
   resolveTicketNote,
   escalateTicket,
 } from "./modules/tickets/tickets.service";
+import { ticketErrorResponse } from "./modules/tickets/ticketRouteErrors";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
 import { deleteUserAccount } from "./modules/auth/accountDeletion";
 import {
@@ -1056,6 +1057,12 @@ app.post("/tickets/message", requireAuth, validateBody(ticketMessageSchema), asy
   }
 });
 
+// Ticket resolve routes: surface the service's DOCUMENTED refusals (400/403/
+// 404/409 lease/already-resolved, 503 busy-retry) with their machine-readable
+// `code` — a typed "another staff member is resolving this" REFUSAL used to
+// surface as a bare 500 with no code, indistinguishable from a crash. Same
+// posture as sendDispatchError for the dispatch routes. The mapping itself is
+// unit-tested in modules/tickets/ticketRouteErrors.ts.
 app.post(
   "/tickets/resolve",
   requireAuth,
@@ -1076,7 +1083,8 @@ app.post(
       const result = await resolveTicket({ ...req.body, resolvedBy, caller });
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to resolve ticket" });
+      const { status, body } = ticketErrorResponse(err, "Failed to resolve ticket");
+      res.status(status).json(body);
     }
   }
 );
@@ -1118,11 +1126,8 @@ app.post(
       const result = await resolveTicketNote({ ...req.body, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
-      const status =
-        err.statusCode === 404 || err.statusCode === 409
-          ? err.statusCode
-          : staffErrorStatus(err, 500);
-      res.status(status).json({ error: err.message || "Failed to resolve ticket" });
+      const { status, body } = ticketErrorResponse(err, "Failed to resolve ticket");
+      res.status(status).json(body);
     }
   }
 );

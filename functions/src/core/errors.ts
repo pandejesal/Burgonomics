@@ -128,6 +128,11 @@ export const USER_SAFE_ERROR_COPY: Record<string, string> = {
   TICKET_INVALID_INPUT: "Some ticket details look invalid. Please check the form and try again.",
   TICKET_FORBIDDEN: "You do not have permission to perform this ticket action.",
   TICKET_MESSAGE_EMPTY: "Your reply is empty. Please write a message first.",
+  TICKET_ALREADY_RESOLVED: "This ticket is already resolved. Reopen it before resolving again.",
+  TICKET_NOT_PENDING: "This ticket is already resolved.",
+  TICKET_RESOLUTION_IN_PROGRESS: "Another staff member is resolving this ticket right now. Refresh in a minute.",
+  TICKET_RESOLUTION_CLAIM_LOST: "The resolution lease on this ticket moved on (it was taken over after a stall). Refresh and retry.",
+  TICKET_RESOLUTION_RETRY: "The ticket is busy under another write right now. Please retry in a moment.",
   // Notifications
   NOTIFY_BAD_TOKEN: "Push registration failed. Please reopen the app and allow notifications.",
   NOTIFY_SEND_FAILED: "Notification could not be delivered, but your request was saved.",
