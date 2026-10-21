@@ -62,7 +62,17 @@ if ($env:BURGONOMICS_QUEUE_CHILD -eq '1') {
 $ControllerDir = $PSScriptRoot
 $ControllerPath = Join-Path -Path $ControllerDir -ChildPath 'controller.cjs'
 $UserId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$UserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $ExpectedArguments = '"{0}" --once --apply' -f $ControllerPath
+
+function Get-AccountSid {
+    param([object]$Account)
+    if (-not $Account) { return $null }
+    $text = [string]$Account
+    if ($text -match '^S-1-5-') { return $text }   # already a SID
+    try { return (New-Object System.Security.Principal.NTAccount($text)).Translate([System.Security.Principal.SecurityIdentifier]).Value }
+    catch { return $null }
+}
 
 function Get-QueueTask {
     return Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -91,7 +101,9 @@ function Test-QueueTaskIsOurs {
 
     $principal = $Task.Principal
     if (-not $principal) { return $false }
-    if (([string]$principal.UserId) -ne $UserId) { return $false }
+    # Windows reports the same account as "DELL" or "NILESH\DELL" depending on the API:
+    # compare the SID, not the display name.
+    if ((Get-AccountSid $principal.UserId) -ne $UserSid) { return $false }
     if (([string]$principal.LogonType) -ne 'Interactive') { return $false }
     if (([string]$principal.RunLevel) -ne 'Limited') { return $false }
 
@@ -102,7 +114,7 @@ function Test-QueueTaskIsOurs {
     $logon = @($triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })
     $repeat = @($triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' })
     if ($logon.Count -ne 1 -or $repeat.Count -ne 1) { return $false }
-    if ($logon[0].UserId -and ([string]$logon[0].UserId) -ne $UserId) { return $false }
+    if ($logon[0].UserId -and ((Get-AccountSid $logon[0].UserId) -ne $UserSid)) { return $false }
     $interval = ConvertTo-TaskSpan $repeat[0].Repetition.Interval
     if (-not $interval -or $interval.TotalMinutes -ne 5) { return $false }
 
