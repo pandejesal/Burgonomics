@@ -466,6 +466,44 @@ service cloud.firestore {
     // transitions own every mutation via Admin SDK. Owner writes flow through
     // POST /tickets/* (functions), never through a client update that could
     // escalate/resolve its own ticket.
+    // Lane 07 (main critical path): the ticket resolution lease must be
+    // server-owned. tickets.service.ts claimTicketResolution() writes
+    // resolutionClaim = { actorUid, claimedAt } (RESOLUTION_CLAIM_TTL_MS
+    // 2.5 min), commitResolvedTicket() fences on claimedAt and success/
+    // release deletes the field; POST /tickets/* additionally owns money
+    // (the resolution MAP) and identity/tenant fields. Both the owner and
+    // branch arms must share ONE workflow mask: no field deletion
+    // (diff().removedKeys()), no server-owned keys, and typed shapes for the
+    // client-advance fields. `resolution` is a STRING on the client path —
+    // the server's resolution is a map (action/amount/refundResult/
+    // resolvedBy), so a client can never overwrite the money-audit map it
+    // did not pay for.
+    function ticketWorkflowUpdateOnly() {
+      return !request.resource.data.diff(resource.data).removedKeys().hasAny([
+          'status', 'resolution', 'assignedTo', 'timeline', 'lastActivityAt', 'updatedAt'
+        ])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'resolution', 'assignedTo', 'timeline', 'lastActivityAt', 'updatedAt'
+        ])
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+          || (request.resource.data.status is string
+              && ['open', 'in_progress', 'escalated'].hasAny([request.resource.data.status]))
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['resolution'])
+          || (resource.data.get('resolution', '') is string
+              && request.resource.data.resolution is string)
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['assignedTo'])
+          || (request.resource.data.assignedTo is map
+              && 'tier' in request.resource.data.assignedTo
+              && request.resource.data.assignedTo.keys().hasOnly(['tier'])
+              && ['branch', 'brand_support', 'developer_team'].hasAny([request.resource.data.assignedTo.tier]))
+        );
+    }
+
     match /support_tickets/{ticketId} {
       allow read: if isBrandOwner() || (
         isBranchOwner() && ownsBranch(resource.data.branchId)
@@ -495,12 +533,11 @@ service cloud.firestore {
       // Loop 7: staff update field mask — direct client writes may advance
       // workflow (status/resolution/assignedTo/timeline) but money-action and
       // identity fields resolve server-side only (POST /tickets/resolve).
-      allow update: if isBrandOwner() || (
+      // Brand authority now shares the exact same workflow as branch staff —
+      // one helper, two arms; only the mask can differ, and it cannot.
+      allow update: if (isBrandOwner() && ticketWorkflowUpdateOnly()) || (
         isBranchOwner() && ownsBranch(resource.data.branchId) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'resolution', 'assignedTo', 'timeline',
-          'lastActivityAt', 'updatedAt'
-        ])
+        ticketWorkflowUpdateOnly()
       );
       allow delete: if false;
     }
@@ -525,12 +562,10 @@ service cloud.firestore {
           'branchReminderSent', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.status == 'open';
-      allow update: if isBrandOwner() || (
+      // Same helper, legacy mirror — the masks are mechanically identical.
+      allow update: if (isBrandOwner() && ticketWorkflowUpdateOnly()) || (
         isBranchOwner() && ownsBranch(resource.data.branchId) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'resolution', 'assignedTo', 'timeline',
-          'lastActivityAt', 'updatedAt'
-        ])
+        ticketWorkflowUpdateOnly()
       );
       allow delete: if false;
     }
