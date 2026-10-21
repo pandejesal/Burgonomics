@@ -1,0 +1,36 @@
+{
+  "runId": "run-20261020b",
+  "enabled": false,
+  "rootRepo": "C:/Users/DELL/Desktop/Burgonomics",
+  "mainSessionID": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+  "limits": {
+    "perItemDeliveries": 6,
+    "totalDeliveries": 12,
+    "idleContinuationMs": 900000,
+    "minBackoffMs": 1800000,
+    "maxBackoffMs": 14400000
+  },
+  "items": [
+    {
+      "id": "ticket-rules-mask",
+      "title": "Ticket rules mask / lane 07 reconciliation",
+      "phase": "owner",
+      "ownerSessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+      "qaSessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+      "rootRepo": "C:/Users/DELL/Desktop/Burgonomics",
+      "packetContext": {
+        "runId": "run-20261020b",
+        "lane": "lane-07",
+        "brief": ".orchestration/run-20261020b/lane-07.md",
+        "contract": ".orchestration/run-20261020b/CONTRACT.md",
+        "evidenceDir": ".orchestration/run-20261020b/evidence/lane-07",
+        "committed": {
+          "root": "0cca973",
+          "customer": "9c5ecc1",
+          "partner": "8a59244"
+        },
+        "note": "The ticket-mask fix is already committed (root 0cca973, customer 9c5ecc1, partner 8a59244). First item reconciles that completion and checks the QA evidence; it must not ask for a reimplementation and must not redo all gates. The owner phase may move to QA only on an actually observed COMPLETE line, or when Main sets the phase in state.json after inspection. QA verification is not acceptance: only Main accepts."
+      }
+    }
+  ]
+}
