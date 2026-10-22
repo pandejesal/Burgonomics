@@ -400,6 +400,18 @@ export async function bookPorterRider(
   caller?: StaffCaller,
   opts?: { idempotencyKey?: string; preclaimed?: boolean }
 ) {
+  // Porter is RETIRED (contract cancelled). Direct Porter booking stays blocked
+  // so a stale Partner button can never dispatch a real paid rider from a
+  // carrier we no longer use. Historical orders remain readable/reconcilable,
+  // and the paste-in manual lane is untouched.
+  if (!config.porter.enabled) {
+    const retired: any = new Error(
+      "Porter is retired as a delivery partner. Use Borzo, Shadowfax, or assign an in-house rider instead."
+    );
+    retired.statusCode = 409;
+    retired.code = "PORTER_RETIRED";
+    throw retired;
+  }
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
     const missing: any = new Error(`Order ${orderId} not found`);
@@ -1320,6 +1332,16 @@ export async function rebookPorterRider(
   caller?: StaffCaller,
   opts?: { idempotencyKey?: string }
 ) {
+  // Porter is RETIRED — rebooking re-arms the same paid carrier call, so it is
+  // refused exactly like a fresh booking. In-house assignment is the fallback.
+  if (!config.porter.enabled) {
+    const retired: any = new Error(
+      "Porter is retired as a delivery partner. Use Borzo, Shadowfax, or assign an in-house rider instead."
+    );
+    retired.statusCode = 409;
+    retired.code = "PORTER_RETIRED";
+    throw retired;
+  }
   const orderSnap = await db.collection("orders").doc(orderId).get();
   const order = (orderSnap.exists ? orderSnap.data() : undefined) as any;
   const rebookable =

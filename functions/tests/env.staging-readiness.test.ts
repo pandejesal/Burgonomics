@@ -90,11 +90,28 @@ describe("staging readiness: per enabled integration (C11)", () => {
     );
   });
 
-  it("keeps the strict/production shape unchanged: disabled integrations are still required", async () => {
+  it("does not demand retired Porter secrets in production while Porter is disabled", async () => {
     await inFreshEnv(DISABLED_PROVIDERS, (env) => {
-      // The unconditional form (production path) is untouched by C11.
-      expect(() => env.assertWebhookSecrets()).toThrow(/PORTER_API_KEY/);
+      let message = "";
+      try {
+        env.assertWebhookSecrets();
+      } catch (error: any) {
+        message = String(error?.message || "");
+      }
+      // Retiring Porter (PORTER_ENABLED=false, blank keys) must not brick boot.
+      expect(message).not.toMatch(/PORTER_/);
+      // Petpooja is still a mandatory capability, so the strict form still throws.
+      expect(message).toMatch(/PETPOOJA_/);
     });
+  });
+
+  it("demands Porter secrets again the moment Porter is explicitly re-enabled", async () => {
+    await inFreshEnv(
+      { ...DISABLED_PROVIDERS, PORTER_ENABLED: "true" },
+      (env) => {
+        expect(() => env.assertWebhookSecrets()).toThrow(/PORTER_API_KEY/);
+      }
+    );
   });
 
   it("still requires the core payment/OTP secrets even with every optional integration off", async () => {

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// Porter is retired (opt-in). This suite exercises Porter booking, so it
+// declares the capability explicitly; hoisted so config sees it at import time.
+vi.hoisted(() => {
+  process.env.PORTER_ENABLED = "true";
+});
+
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
   const defaultOrder = () => ({

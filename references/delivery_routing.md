@@ -1,6 +1,19 @@
 # BURGONOMICS — Multi-Provider Delivery Dispatch Routing (Layer 3 Constraint)
 
-> **Reference Specification**: Cheapest-serviceable-wins routing across Borzo, Shadowfax, and Porter — parallel quote fan-out, booking failover, Porter manual-hybrid lane, and normalized provider webhooks. Extends (does not replace) [delivery_porter.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/delivery_porter.md).
+> **Reference Specification**: Cheapest-serviceable-wins routing across Borzo and Shadowfax, with the branch's own in-house rider as the restaurant-chosen path — parallel quote fan-out, booking failover, normalized provider webhooks. Extends (does not replace) [delivery_porter.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/delivery_porter.md).
+
+> **Provider status (2026-10-22, business decision):** **Porter is retired** — the
+> contract was cancelled. Live dispatch partners are **Borzo** and **Shadowfax**;
+> a branch may instead hand the order to **its own in-house rider**
+> (`POST /orders/manualDispatch` → `deliveryStatus: dispatched` with
+> `dispatchType: "manual_branch_terminal"`, the Partner app's "Assign In-House
+> Delivery Staff" modal). `manually_assigned` is NOT a value this backend writes. Porter is now
+> **opt-in** (`PORTER_ENABLED` must be exactly `"true"`); an unset value keeps it
+> out of the quote fan-out. The adapter remains for compatibility with historical
+> orders; the paste lane remains open for staff-recorded bookings and makes no
+> provider call. **There is no history-only mode:** `PORTER_ENABLED=true` re-arms
+> Porter for new quotes, paid bookings and rebookings too. While false/unset,
+> DR1's Porter tie-break and the automatic DR8 fallback are dormant.
 
 ---
 
@@ -15,11 +28,11 @@
 - **DR5 — Parallel fan-out**: all eligible providers are quoted **concurrently** (`Promise.allSettled`, per-provider timeout `DISPATCH_QUOTE_TIMEOUT_MS`, default 6000 ms). The slowest provider never serializes the checkout.
 - **DR6 — Booking failover is bounded**: `book` books the quoted winner; if its booking fails (`transient_failure` **or** a book-time `not_serviced` — the quote expired between quote and book), the router falls through to the **next-cheapest serviceable provider from the same quote**, in order, until one books or the list is exhausted. Never books a provider that had no successful quote in the session. Every failed attempt is recorded in `dispatchAttempts[]`.
 - **DR7 — Re-quote at book time (D6)**: fares live for 10 minutes (`expiresAt`). If the quote expired at booking, the router re-runs the fan-out and books the new cheapest-wins winner; a materially different fare is surfaced to staff before committing (fare delta ≥ ₹20 or ≥ 10% ⇒ confirm step in UI).
-- **DR8 — Porter manual-hybrid lane**: when Porter wins (or is the only serviceable provider) but no `PORTER_API_KEY` is configured, booking returns `manual_action_required` — staff books a rider in the Porter app and pastes `porterOrderId` + tracking URL into the KDS paste form (`POST /dispatch/porter-manual`). The lane is also the **exhaustion floor**: when every keyed API provider in the ranked walk fails, an eligible unkeyed Porter quote still ends the walk in `manual_action_required` instead of a dead `dispatch_failed`. On key grant, the same code path books via API with no UI change (lane auto-activates).
+- **DR8 — Porter manual-hybrid lane (DORMANT — Porter retired 2026-10-22)**: this lane only arms when a deployment deliberately sets `PORTER_ENABLED=true`. While armed, the behaviour below applies; while retired (the default) it is *not* the exhaustion floor — the walk ends in `dispatch_failed`, whose copy already points staff at in-house assignment. Armed behaviour: when Porter wins (or is the only serviceable provider) but no `PORTER_API_KEY` is configured, booking returns `manual_action_required` — staff books a rider in the Porter app and pastes `porterOrderId` + tracking URL into the KDS paste form (`POST /dispatch/porter-manual`). The lane is also the **exhaustion floor**: when every keyed API provider in the ranked walk fails, an eligible unkeyed Porter quote still ends the walk in `manual_action_required` instead of a dead `dispatch_failed`. On key grant, the same code path books via API with no UI change (lane auto-activates).
 - **DR9 — One normalized lifecycle**: regardless of provider, orders converge on the same lifecycle fields (`deliveryStatus`, `status`, rider identity, `needsRebook`). Provider webhooks are normalized to `DRIVER_ALLOCATED / ARRIVED_AT_PICKUP / STARTED_DELIVERY / DELIVERED / RIDER_CANCELLED / NO_RIDERS_FOUND` before touching the order — the existing Porter status semantics, rebook guard (NOT_REBOOKABLE), branch rebook alert, and polling dead-letter worker all apply unchanged.
 - **DR10 — Webhooks are fail-closed and provider-scoped**: each provider webhook verifies its **own** secret (`BORZO_WEBHOOK_SECRET` = Borzo Callback Secret Key, HMAC-SHA256 in `X-DV-Signature`; `SHADOWFAX_WEBHOOK_SECRET` = static shared value in the custom `x-shadowfax-signature` header — Shadowfax has no native HMAC, though a body HMAC also verifies; existing Porter secret). Empty secret ⇒ deny (401). A providerOrderId resolves through `dispatch_order_map` first (server binding), echoed ids are hints only; unknown/conflicting/stale events **park** — never flip order state; known-inert lifecycle noise marks processed silently; a late non-terminal event arriving after `delivered` is ignored (no rewind).
 - **DR11 — Mocks are explicit and marked**: `MOCK_BORZO_DISPATCH` / `MOCK_SHADOWFAX_DISPATCH` / existing `MOCK_PORTER_DISPATCH`, exact `"true"` only. Mock providers return clearly-marked `[TEST]` riders/fare and can never run in production (`assertProductionKeys`).
-- **DR12 — Test-window readiness gate (opt-in)**: `DISPATCH_REQUIRE_LIVE` (exact `"true"` only) makes `dispatchQuote` and `dispatchBook` refuse **before any provider traffic** unless the readiness preflight passes: no dispatch mock active, the configured courier host is the agreed **TEST** host (`borzo` ⇒ `BORZO_TEST_HOST`, `shadowfax` ⇒ `SHADOWFAX_TEST_HOST`), no unverified-contract Shadowfax eligible, no Porter eligible. Any other value (unset/false) ⇒ inert, so dev and production behaviour is unchanged. At staging boot the secret assert requires a capability's secrets **only when that integration is enabled** (`PORTER_ENABLED=false` never demands `PORTER_*`); production keeps the unconditional form and no signature check is relaxed. Operational note: **no poll fallback exists for Borzo** (only `pollActivePorterDeliveries`), so without a registered callback + `BORZO_WEBHOOK_SECRET` the Borzo **status** leg is BLOCKED — quote/book evidence only.
+- **DR12 — Test-window readiness gate (opt-in)**: `DISPATCH_REQUIRE_LIVE` (exact `"true"` only) makes `dispatchQuote` and `dispatchBook` refuse **before any provider traffic** unless the readiness preflight passes: no dispatch mock active, the configured courier host is the agreed **TEST** host (`borzo` ⇒ `BORZO_TEST_HOST`, `shadowfax` ⇒ `SHADOWFAX_TEST_HOST`), no unverified-contract Shadowfax eligible, no Porter eligible. Any other value (unset/false) ⇒ inert, so dev and production behaviour is unchanged. At staging boot the secret assert requires a capability's secrets **only when that integration is enabled** (`PORTER_ENABLED=false` never demands `PORTER_*`). Production requires the core payment/OTP secrets plus every enabled capability; because Porter is retired it is no longer in the unconditional production set — its secrets become mandatory only when `PORTER_ENABLED=true`. No signature check is relaxed. Operational note: **no poll fallback exists for Borzo** (only `pollActivePorterDeliveries`), so without a registered callback + `BORZO_WEBHOOK_SECRET` the Borzo **status** leg is BLOCKED — quote/book evidence only.
 
 ---
 
@@ -29,9 +42,9 @@
 |---|---|---|---|---|---|
 | **Borzo** | Primary | `calculate-order` | `create-order` | HMAC `x-dv-signature`, `BORZO_WEBHOOK_SECRET` | `BORZO_API_KEY` set |
 | **Shadowfax** | Secondary | serviceability quote (`PUT /api/v1/order-serviceability/`) | `POST /api/v2/orders/` | static shared secret (custom header, HMAC also accepted) `x-shadowfax-signature`, `SHADOWFAX_WEBHOOK_SECRET` | `SHADOWFAX_API_KEY` + `SHADOWFAX_CLIENT_CODE` set |
-| **Porter** | Tertiary / manual-hybrid | `POST /v1/orders/quote` | `POST /v1/orders/create` or **manual paste** | HMAC `x-porter-signature` | enabled; API path needs `PORTER_API_KEY`, manual lane needs none |
+| **Porter** | RETIRED (dormant) | `POST /v1/orders/quote` | `POST /v1/orders/create` or **manual paste** | HMAC `x-porter-signature` | **`PORTER_ENABLED=true` required** (retired 2026-10-22); API path also needs `PORTER_API_KEY`, manual paste lane needs none |
 
-A provider **not keyed** is excluded from the fan-out (not a failure, DR2) — **except Porter**, which quotes from its rate card unkeyed (quote-as-coverage, D3): an unkeyed Porter still participates in cheapest-wins and, when it wins the walk, books through the DR8 manual lane. Priority order (tie-break + failover order after price): `borzo > shadowfax > porter`.
+A provider **not keyed** is excluded from the fan-out (not a failure, DR2) — **except Porter while explicitly armed** (`PORTER_ENABLED=true`), which quotes from its rate card unkeyed (quote-as-coverage, D3): an armed, unkeyed Porter still participates in cheapest-wins and, when it wins the walk, books through the DR8 manual lane. With the retired default it never enters the fan-out. Priority order (tie-break + failover order after price) while armed: `borzo > shadowfax > porter`; while retired: `borzo > shadowfax`.
 
 ---
 
@@ -123,7 +136,7 @@ deliveryStatus: existing union (manual lane does NOT flip it — dispatchStatus 
 | `POST /dispatch/cancel` | staff (roles) | Porter → `cancelPorterBooking`; Borzo/Shadowfax → local release (`rider_cancelled` + `needsRebook`, `dispatchProviderCancel: "manual-required"` — no documented provider cancel API) |
 | `POST /dispatch/webhooks/borzo` | HMAC | Borzo lifecycle events |
 | `POST /dispatch/webhooks/shadowfax` | HMAC | Shadowfax lifecycle events |
-| `POST /porter/quote \| book \| rebook \| webhook` | unchanged | **Back-compat**: Porter-only path, untouched behavior; existing tests must keep passing |
+| `POST /porter/quote \| book \| rebook \| webhook` | optionalAuth (quote) · staff (book, rebook) · HMAC (webhook) | **Back-compat**: quote and webhook unchanged; `book`/`rebook` return **409 `PORTER_RETIRED`** unless `PORTER_ENABLED=true`. Existing Porter tests keep passing because they opt in explicitly. |
 
 ---
 
@@ -147,7 +160,9 @@ SHADOWFAX_API_KEY, SHADOWFAX_CLIENT_CODE, SHADOWFAX_BASE_URL (default https://ap
 SHADOWFAX_WEBHOOK_SECRET, SHADOWFAX_CONTRACT_VERIFIED (human-set `"true"` only after the
   native contract is confirmed — keys alone must not enable live traffic), MOCK_SHADOWFAX_DISPATCH
 DISPATCH_QUOTE_TIMEOUT_MS (default 6000), DISPATCH_FARE_CONFIRM_DELTA_INR (default 20)
-PORTER_* unchanged
+PORTER_ENABLED=false (retired 2026-10-22; `"true"` re-arms FULL dispatch including
+  new-order fan-out, paid book and rebook — NOT a history-only switch;
+  while false, PORTER_* are NOT required at boot)
 ```
 
 Fail-closed conventions unchanged (§env.ts): secrets default `""`, mocks exact `"true"`, empty webhook secret denies, production boot bans mocks. Key requests append Borzo/Shadowfax to [KEYS_REQUEST_FOR_BURGONOMICS.md](file:///c:/Users/DELL/Desktop/Burgonomics/KEYS_REQUEST_FOR_BURGONOMICS.md).

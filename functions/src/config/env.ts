@@ -69,7 +69,14 @@ export const config = {
       `https://asia-south1-${process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT_ID || "burgonomics-7faa8"}.cloudfunctions.net/api/petpooja/webhook`,
   },
   porter: {
-    enabled: process.env.PORTER_ENABLED !== "false",
+    // RETIRED as a dispatch partner. Porter is OPT-IN now: an unset or "false"
+    // value keeps it out of the quote fan-out. The previous fail-open default
+    // made an unkeyed Porter quote-eligible from the local rate card
+    // (porter.adapter.isEligible() returns config.porter.enabled), which would
+    // keep surfacing a cancelled carrier to customers. Live dispatch partners
+    // are Borzo and Shadowfax, with in-house rider assignment as the
+    // restaurant-chosen path.
+    enabled: process.env.PORTER_ENABLED === "true",
     apiKey: process.env.PORTER_API_KEY || "",
     customerId: process.env.PORTER_CUSTOMER_ID || "",
     webhookSecret: process.env.PORTER_WEBHOOK_SECRET || "",
@@ -164,9 +171,18 @@ const REQUIRED_SECRETS: Array<[envName: string, value: () => string]> = [
   ["PETPOOJA_APP_KEY", () => config.petpooja.appKey],
   ["PETPOOJA_APP_SECRET", () => config.petpooja.appSecret],
   ["PETPOOJA_ACCESS_TOKEN", () => config.petpooja.accessToken],
+  ["OTP_HMAC_SECRET", () => process.env.OTP_HMAC_SECRET || ""],
+];
+
+/**
+ * Porter is RETIRED (contract cancelled). Its secrets are required only when a
+ * deployment deliberately re-enables it — otherwise finishing the retirement
+ * (PORTER_ENABLED=false, blank keys) would make the production boot throw and
+ * take payments/orders/KDS down with it. Keep this out of REQUIRED_SECRETS.
+ */
+const RETIRED_PORTER_SECRETS: Array<[envName: string, value: () => string]> = [
   ["PORTER_API_KEY", () => config.porter.apiKey],
   ["PORTER_WEBHOOK_SECRET", () => config.porter.webhookSecret],
-  ["OTP_HMAC_SECRET", () => process.env.OTP_HMAC_SECRET || ""],
 ];
 
 /**
@@ -189,6 +205,13 @@ export function assertWebhookSecrets(
       ? integrationEnabledForSecret(name) && !read()
       : !read()
   ).map(([name]) => name);
+
+  // Retired Porter: only a deliberate re-enable makes its secrets mandatory.
+  if (config.porter.enabled) {
+    for (const [name, read] of RETIRED_PORTER_SECRETS) {
+      if (!read()) missing.push(name);
+    }
+  }
   if (missing.length > 0) {
     throw new Error(
       `FATAL: missing secrets (${missing.join(", ")}) — set them in functions/.env ` +
@@ -344,7 +367,12 @@ export function assertProductionKeys(): void {
         `fake riders and phantom KOTs are worse than refusing to boot.`
     );
   }
-  const mockLike = REQUIRED_SECRETS.filter(([, read]) =>
+  const mockLike = [
+    ...REQUIRED_SECRETS,
+    // Retired Porter is excluded from REQUIRED_SECRETS, but a deliberately
+    // re-enabled Porter must still be subject to the mock-key ban.
+    ...(config.porter.enabled ? RETIRED_PORTER_SECRETS : []),
+  ].filter(([, read]) =>
     read().toLowerCase().includes("mock")
   ).map(([name]) => name);
   if (mockLike.length > 0) {

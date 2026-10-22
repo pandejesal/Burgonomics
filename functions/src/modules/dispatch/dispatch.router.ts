@@ -450,7 +450,7 @@ export async function dispatchQuote(params: DispatchQuoteParams): Promise<any> {
 
 function noServiceableProviderError(outcomes: ProviderQuoteOutcome[]): Error {
   const err: any = new Error(
-    "No delivery provider currently services this address — delivery unavailable."
+    "No delivery provider currently services this address — delivery unavailable. Assign an in-house rider to keep this order moving."
   );
   err.statusCode = 503;
   err.code = "NO_SERVICEABLE_PROVIDER";
