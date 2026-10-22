@@ -33,8 +33,19 @@ import { dispatchFCM } from "../notifications/fcm.service";
  *   5. Order resolution via dispatch_order_map FIRST, hint only when the
  *      order's own dispatchOrderId confirms it (conflict AND an unbound order
  *      → park, never guess).
+ *      5b. Pre-mutation OWNERSHIP proof: the resolved order's CURRENT binding
+ *      (dispatchProvider + dispatchOrderId, rewritten by every book/rebook)
+ *      must match the callback — a superseded rebook binding (the stale map
+ *      entry), a foreign provider, or binding-less metadata parks HIGH before
+ *      any order/rider/status/rebook field is written.
  *   6. Late non-terminal events after a terminal delivery status
  *      (`delivered`/`cancelled` — same set dispatchBook locks) are ignored.
+ *   6b. Cancel containment: customer-cancel / returned-parcel causes are
+ *      manual-review outcomes on the existing `needs_review` dispatch state
+ *      (needsRebook=false, cause in rebookTrigger/reason; order.status is
+ *      NOT written) and the containment is STICKY — a later carrier cancel
+ *      or arrival on the same booking cannot unwed it onto the auto-rebook
+ *      flow. Ordinary carrier cancels keep rider_cancelled + needsRebook.
  *   7. Canonical field switch (duplicated from porter — deliberate: do NOT
  *      refactor porter's webhook, its tests must stay green).
  */
@@ -80,6 +91,40 @@ const DISPATCH_WEBHOOK_FUTURE_SKEW_MS = 5 * 60 * 1000;
  * otherwise a late `courier_assigned` resurrects it as `dispatched` (finding 10).
  */
 const TERMINAL_DELIVERY_STATUSES: readonly string[] = ["delivered", "cancelled"];
+
+/**
+ * Normalizes a provider order id for binding comparison. Borzo ids arrive as
+ * JSON numbers, stored bindings may be numbers or (padded/legacy) strings —
+ * `12`, `"12"` and `"0012"` are the same booking. String ids keep their exact
+ * case (Shadowfax ids are case-sensitive); only pure-digit forms normalize.
+ */
+function normalizeProviderOrderId(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const s = typeof value === "string" ? value.trim() : String(value);
+  if (!s) return null;
+  // DS final-review: strip leading padding WITHOUT Number() — digit strings
+  // beyond ~15 chars lose precision through float conversion and could make
+  // two distinct ids compare equal. A regex strip keeps big ids exact.
+  return /^\d+$/.test(s) ? s.replace(/^0+(?=\d)/, "") : s;
+}
+
+/**
+ * True once the ACTIVE booking is already parked for manual review after a
+ * customer-cancel / returned parcel (F6 containment). `needs_review` is the
+ * existing dispatch state for that outcome; the rebookTrigger cause strings
+ * (`customer_cancelled` / `returned_to_seller`) are the belt-and-suspenders
+ * half. dispatchBook resets BOTH on every successful rebook (deliveryStatus
+ * "dispatched", rebookTrigger null), so containment is per-booking and
+ * releases exactly when staff re-dispatch — a fresh carrier cancel on the
+ * new booking still auto-rebooks like before.
+ */
+function isContainedManualReview(order: Record<string, any>): boolean {
+  if (order?.deliveryStatus === "needs_review") return true;
+  return (
+    order?.rebookTrigger === "customer_cancelled" ||
+    order?.rebookTrigger === "returned_to_seller"
+  );
+}
 
 function webhookSecretFor(provider: DispatchWebhookProvider): string {
   return provider === "borzo" ? config.borzo.webhookSecret : config.shadowfax.webhookSecret;
@@ -524,10 +569,11 @@ export async function handleDispatchWebhook(
   // re-attempted on provider redelivery instead of being dropped forever
   // (finding 3). The park reason rides the dedup doc so the retry is auditable;
   // the row in `unmatched_dispatch_events` is keyed by the same deterministic
-  // `parkId`, so a redelivery never appends a second row. That idempotency is
-  // exact for BYTE-IDENTICAL redeliveries (the shape providers actually retry) —
-  // `parkId` derives from a hash of the raw body, so a reserialized body (key
-  // order/whitespace) yields a different row (audit finding 15, left open).
+  // `parkId`, so a redelivery never appends a second row. That idempotency
+  // covers RESERIALIZED redeliveries too: `parkId` hashes the canonically
+  // sorted JSON body, so key-order/whitespace changes land on the same row
+  // while genuinely different content still yields a distinct row (audit
+  // finding 15 closed).
   const markParked = async (parkReason: string) => {
     try {
       await db.collection("dispatch_webhook_events").doc(parkId).set(
@@ -636,6 +682,34 @@ export async function handleDispatchWebhook(
       const mapSnap = await db.collection("dispatch_order_map").doc(String(providerOrderId)).get();
       const mapped = mapSnap.data?.();
       if (mapped && typeof mapped.orderId === "string" && mapped.orderId) {
+        // Fail-closed provider binding (F7): the map row names a DIFFERENT
+        // provider than the callback — e.g. two couriers minted the same
+        // providerOrderId and one silently rebound the key. Another carrier's
+        // callback must never mutate this order (deliveryStatus / rider fields
+        // / the terminal DELIVERED flip), so park high BEFORE any resolution.
+        // A row without a provider field is NOT a mismatch (we cannot guess a
+        // legacy row's provider); it stays governed by the evidence-based
+        // orderId/hint binding checks below.
+        if (typeof mapped.provider === "string" && mapped.provider && mapped.provider !== provider) {
+          log(`provider mismatch parked: map says provider=${mapped.provider}, callback is ${provider}`);
+          await parkDispatchEvent(
+            provider,
+            parkId,
+            {
+              orderId: mapped.orderId,
+              providerOrderId,
+              mappedOrderId: mapped.orderId,
+              mappedProvider: mapped.provider,
+              callbackProvider: provider,
+              rawEvent: rawEvent || null,
+              reason: "order_id_conflict",
+            },
+            `${provider} webhook provider mismatch parked (map row bound to ${mapped.provider}) — no state flipped`,
+            "high"
+          );
+          await markParked("order_id_conflict");
+          return;
+        }
         mappedOrderId = mapped.orderId;
         if (orderIdHint && orderIdHint !== mappedOrderId) {
           log(
@@ -694,11 +768,52 @@ export async function handleDispatchWebhook(
     // retry only happens if we answer non-2XX, so this branch throws
     // DispatchWebhookRetryRequested after parking (see the class doc).
     const binding = hintOrder?.dispatchOrderId || hintOrder?.porterOrderId || null;
+    // DS final-review finding (low, applied): the binding comparison must use
+    // the SAME id normalization as the pre-mutation ownership proof — a
+    // padded/legacy string binding ("0012") and a numeric Borzo callback (12)
+    // name the SAME booking, and resolving the hint path through raw ===
+    // would false-park that genuinely-matching callback HIGH. Fail direction
+    // is closed either way; this only removes a false park.
+    const boundHintId = normalizeProviderOrderId(binding);
+    const callbackHintId = normalizeProviderOrderId(providerOrderId);
     // A real binding that matches is the ONLY resolution. `!binding` parks
     // (finding 8): an unbound order must not be flipped by an attacker-chosen
     // hint. This branch is ordered BEFORE the conflict branch so an unbound
     // order reports `unbound_order` rather than a conflict against `null`.
-    if (hintOrder && binding && providerOrderId && binding === providerOrderId) {
+    if (hintOrder && boundHintId && callbackHintId && boundHintId === callbackHintId) {
+      // F7 (DS review) hint-path extension: binding-equality alone proves this
+      // providerOrderId points HERE, not that this PROVIDER owns the order —
+      // on a re-dispatch the stale provider's callback can name the old
+      // providerOrderId and still resolve. A stored dispatchProvider that
+      // differs from the callback provider must park high exactly like the
+      // map-row mismatch guard; an ABSENT dispatchProvider (legacy/manual
+      // dispatch row) keeps the binding evidence path.
+      const boundProvider =
+        typeof hintOrder.dispatchProvider === "string" ? hintOrder.dispatchProvider : "";
+      if (boundProvider && boundProvider !== provider) {
+        log(
+          `hint provider mismatch parked: order ${orderIdHint} bound to provider ${boundProvider}, callback is ${provider}`
+        );
+        await parkDispatchEvent(
+          provider,
+          parkId,
+          {
+            orderId: orderIdHint,
+            providerOrderId,
+            // DS final-review (low, applied): keep mappedOrderId for OUR order
+            // ids only; the order-side provider booking id rides boundOrderId.
+            boundOrderId: boundHintId,
+            mappedProvider: boundProvider,
+            callbackProvider: provider,
+            rawEvent: rawEvent || null,
+            reason: "order_id_conflict",
+          },
+          `${provider} webhook provider mismatch parked (order binding held by ${boundProvider}) — no state flipped`,
+          "high"
+        );
+        await markParked("order_id_conflict");
+        return;
+      }
       orderRef = hintDoc.ref;
     } else if (hintOrder && !binding) {
       log(`unbound order hint parked: order ${orderIdHint} has no dispatch binding`);
@@ -723,7 +838,7 @@ export async function handleDispatchWebhook(
         );
       }
       return;
-    } else if (hintOrder && providerOrderId && binding !== providerOrderId) {
+    } else if (hintOrder && boundHintId && callbackHintId && boundHintId !== callbackHintId) {
       log(
         `hint/order conflict parked: order ${orderIdHint} bound to ${binding}, event says ${providerOrderId}`
       );
@@ -800,6 +915,84 @@ export async function handleDispatchWebhook(
     throw new Error(`Pre-write order read failed: ${err?.message || err}`);
   }
 
+  // ---- Pre-mutation ownership proof (stale-map HIGH fix). The map row and
+  // the hint prove only WHAT THE CALLBACK CLAIMS; the order's CURRENT binding
+  // proves what the order still belongs to. `dispatchBook` rewrites
+  // dispatchProvider/dispatchOrderId on every (re)book and re-binds
+  // dispatch_order_map/{newId}, but it never deletes the superseded row — so
+  // a Borzo->Shadowfax rebook leaves the old Borzo row behind and its late
+  // DELIVERED/CANCELLED callback can still resolve through the map (its
+  // provider matches the MAP row). Validating the callback against the
+  // order's own binding is the actual proof that the event belongs to the
+  // CURRENT booking: a provider mismatch, a bound-bookId mismatch, or an
+  // order with no binding metadata at all all park HIGH here, BEFORE any
+  // order/rider/status/rebook field is written and before any FCM — a stale
+  // callback must not deliver (or cancel) the live booking. Numeric/string
+  // id forms compare through normalizeProviderOrderId. Absent legacy
+  // metadata is not license to guess. NOTE (DS final-review): the read →
+  // write window is not transactional — a rebook landing between the order
+  // read and the merged write could still let a stale callback through the
+  // same read/write hazard class the containment note documents; callers
+  // rate-limit via provider retry ladders, not concurrency locks.
+  // This runs after resolution but before
+  // the terminal guard so mismatches stay visible as parked HIGH rows
+  // instead of being silently processed away.
+  const callbackBoundId = normalizeProviderOrderId(providerOrderId);
+  const orderBoundProvider =
+    typeof currentOrder.dispatchProvider === "string" && currentOrder.dispatchProvider
+      ? currentOrder.dispatchProvider
+      : "";
+  const orderBoundId = normalizeProviderOrderId(
+    currentOrder.dispatchOrderId ?? currentOrder.porterOrderId ?? null
+  );
+  const parkOrderBindingConflict = async (
+    reason: "order_id_conflict" | "order_binding_unproven",
+    severity: "high"
+  ) => {
+    log(
+      reason === "order_binding_unproven"
+        ? `order ${orderRef!.id} carries no current provider binding — parking ${rawEvent} high (no mutation)`
+        : `order ${orderRef!.id} binding (${orderBoundProvider || "?"} / ${orderBoundId || "?"}) disagrees with callback ${provider} / ${callbackBoundId || "?"} — parking ${rawEvent} high (no mutation)`
+    );
+    await parkDispatchEvent(
+      provider,
+      parkId,
+      {
+        orderId: orderRef!.id,
+        providerOrderId,
+        mappedOrderId: orderRef!.id,
+        boundProvider: orderBoundProvider || null,
+        boundOrderId: orderBoundId || null,
+        callbackProvider: provider,
+        callbackProviderOrderId: callbackBoundId,
+        rawEvent: rawEvent || null,
+        reason,
+      },
+      `${provider} webhook for ${rawEvent || "unknown"} parked: order ${orderRef!.id}'s current binding does not match the callback — no state flipped`,
+      severity
+    );
+    await markParked(reason);
+  };
+  if (orderBoundProvider && orderBoundProvider !== provider) {
+    await parkOrderBindingConflict("order_id_conflict", "high");
+    return;
+  }
+  if (orderBoundId && callbackBoundId && orderBoundId !== callbackBoundId) {
+    await parkOrderBindingConflict("order_id_conflict", "high");
+    return;
+  }
+  // DS final-review finding (low, applied): a provider bound but NO bound
+  // order id is a PARTIAL-metadata state — the stale-map class again (the id
+  // side of the callback is never validated). Not license to guess either.
+  if (orderBoundProvider && !orderBoundId && callbackBoundId) {
+    await parkOrderBindingConflict("order_binding_unproven", "high");
+    return;
+  }
+  if (!orderBoundProvider && !orderBoundId) {
+    await parkOrderBindingConflict("order_binding_unproven", "high");
+    return;
+  }
+
   // Terminal-state guard (mission §4): once the order is terminal
   // (`delivered` OR `cancelled` — the same locked set dispatchBook enforces),
   // EVERY event except the terminal DELIVERED flip itself is ignored. Provider
@@ -816,6 +1009,28 @@ export async function handleDispatchWebhook(
     event === "DELIVERED" && currentOrder.deliveryStatus === "delivered";
   if (currentTerminal && !terminalSelfConfirm) {
     log(`Late ${rawEvent} after terminal delivery status ignored (no rewind)`);
+    await markProcessed();
+    return;
+  }
+
+  // F6-sticky, centralized (DS final-review finding): once the ACTIVE booking
+  // is contained for manual review, EVERY non-DELIVERED canonical event on it
+  // is consumed — a late DISPATCHED/ALLOTTED/courier_assigned/cancel must not
+  // overwrite the needs_review marker onto rider_cancelled/in_transit/
+  // dispatched vocabulary (the auto-rebook worker stays disarmed via the
+  // surviving rebookTrigger, but the manual-review state and the customer
+  // view would lie). DELIVERED stays exempt: if the vendor actually delivered
+  // after a customer called the delivery off, that fact wins and the flow
+  // above records it. Containment RELEASES when staff re-dispatch: dispatchBook
+  // rewrites deliveryStatus/needsRebook/rebookTrigger to the fresh post-rebook
+  // state, so a carrier cancel on the new booking still auto-rebooks. This is
+  // a pre-write state predicate on a plain read/write, NOT a transaction:
+  // different-body events racing on the wire remain last-write-wins
+  // (redeliveries of the same body dedup on the deterministic park id).
+  if (event !== "DELIVERED" && isContainedManualReview(currentOrder)) {
+    log(
+      `${rawEvent} on order ${orderRef.id} ignored: booking already contained for manual review (${currentOrder.rebookTrigger || currentOrder.deliveryStatus}) — no rebook flag, no alert, no state overwrite`
+    );
     await markProcessed();
     return;
   }
@@ -849,6 +1064,15 @@ export async function handleDispatchWebhook(
     dispatchWebhookEvent: rawEvent,
     dispatchWebhookProvider: provider,
   };
+
+  // Carrier-cancel classification (F6): Shadowfax returns the CAUSE in the raw
+  // event while the canonical vocabulary collapses every cancel into
+  // RIDER_CANCELLED. The rebook machinery (production auto-rebook worker) may
+  // only act on a CARRIER or no-rider cancel — a CUSTOMER cancel or a returned
+  // parcel is a manual-review outcome (consent/safety containment: the platform
+  // must never auto-charge another courier for a delivery the customer called
+  // off, nor silently re-dispatch a returned parcel).
+  let riderCancelOutcome: "carrier" | "customer" | "returned" | null = null;
 
   switch (event) {
     case "DRIVER_ALLOCATED": {
@@ -912,6 +1136,22 @@ export async function handleDispatchWebhook(
     }
 
     case "ARRIVED_AT_PICKUP":
+      // No rewind (F2, DS-review allowlist): late/out-of-order ARRIVED events
+      // must not rewrite the mirror in any terminal or wind-down state
+      // (in_transit parcel, cancelled/returned dispatch after a rebook, manual
+      // assignment). The guard processes only fresh pre-pickup stages; the
+      // terminal guard above already freezes delivered/cancelled.
+      const currentDeliveryStatus = typeof currentOrder.deliveryStatus === "string"
+        ? currentOrder.deliveryStatus
+        : "";
+      const freshPickupStage =
+        !currentDeliveryStatus ||
+        ["pending", "dispatched", "at_pickup"].includes(currentDeliveryStatus);
+      if (!freshPickupStage) {
+        log(`Late ${rawEvent} after ${currentDeliveryStatus} ignored (no rewind)`);
+        await markProcessed();
+        return;
+      }
       updateData.riderArrivedAtStore = true;
       updateData.riderArrivedAt = admin.firestore.FieldValue.serverTimestamp();
       updateData.delivery = deliveryMirror({
@@ -947,31 +1187,72 @@ export async function handleDispatchWebhook(
       break;
 
     case "RIDER_CANCELLED": {
+      // Containment for the ACTIVE booking is handled centrally above the
+      // switch (F6-sticky): a contained booking consumes every non-DELIVERED
+      // event here before this case can classify anything.
+      // F6: branch on the CAUSE the vendor sent. CANCELLED_BY_CUSTOMER and
+      // RETURNED_TO_SELLER are manual-review outcomes — no auto-rebook, no
+      // carrier-cancel FCM. They land on the EXISTING needs_review dispatch
+      // state (the poller, NOT_REBOOKABLE rebook guard and DR9 already speak
+      // it), with the cause riding the existing rebookTrigger /
+      // riderCancellationReason fields, and needsRebook=false. The order's
+      // customer-facing status lifecycle is NOT written (no stencil of a
+      // code that would contradict the manual-review state, no terminal or
+      // kind flip) and no refund/payment field is touched — remaining staff
+      // policy. BORZO's generic "canceled" / NO_RIDERS_FOUND / FAILED stay
+      // on the carrier path below with prior behaviour.
+      riderCancelOutcome =
+        normalizeEventKey(rawEvent) === "CANCELLED_BY_CUSTOMER"
+          ? "customer"
+          : normalizeEventKey(rawEvent) === "RETURNED_TO_SELLER"
+          ? "returned"
+          : "carrier";
+      const manualReview = riderCancelOutcome !== "carrier";
       const reason =
         nonEmpty(
           payload?.reason_text,
           payload?.cancel_reason_text,
           typeof payload?.reason === "string" ? payload.reason : undefined,
           payload?.status_description
-        ) || "Driver cancelled dispatch";
-      updateData.status = {
-        code: "RIDER_CANCELLED",
-        label: "Rider cancelled — rebook required",
-        kind: "in_progress",
-        terminal: false,
-      };
-      updateData.deliveryStatus = "rider_cancelled";
-      updateData.needsRebook = true;
-      // Auto-rebook trigger (mission §3): the scheduled auto-rebook worker
-      // re-dispatches this order with the NEXT provider, never the one that
-      // cancelled. Staff-initiated cancels clear this flag, so they never
-      // auto-rebook.
-      updateData.rebookTrigger = "carrier_cancelled";
+        ) ||
+        (riderCancelOutcome === "customer"
+          ? "Delivery cancelled by customer"
+          : riderCancelOutcome === "returned"
+          ? "Parcel returned to seller"
+          : "Driver cancelled dispatch");
+      if (manualReview) {
+        // Explicit FALSE on merge (not an omitted key): a stale earlier
+        // carrier-cancel flag on this order must not let the rebook worker
+        // pick the order up once the cause is proven customer-side or the
+        // parcel is back at the seller.
+        updateData.needsRebook = false;
+        updateData.rebookTrigger =
+          riderCancelOutcome === "customer" ? "customer_cancelled" : "returned_to_seller";
+        updateData.deliveryStatus = "needs_review";
+        updateData.delivery = deliveryMirror({
+          status: "needs_review",
+          riderCancellationReason: reason,
+        });
+      } else {
+        updateData.status = {
+          code: "RIDER_CANCELLED",
+          label: "Rider cancelled — rebook required",
+          kind: "in_progress",
+          terminal: false,
+        };
+        updateData.deliveryStatus = "rider_cancelled";
+        updateData.needsRebook = true;
+        // Auto-rebook trigger (mission §3): the scheduled auto-rebook worker
+        // re-dispatches this order with the NEXT provider, never the one that
+        // cancelled. Staff-initiated cancels clear this flag, so they never
+        // auto-rebook.
+        updateData.rebookTrigger = "carrier_cancelled";
+        updateData.delivery = deliveryMirror({
+          status: "rider_cancelled",
+          riderCancellationReason: reason,
+        });
+      }
       updateData.riderCancellationReason = reason;
-      updateData.delivery = deliveryMirror({
-        status: "rider_cancelled",
-        riderCancellationReason: reason,
-      });
       break;
     }
   }
@@ -989,17 +1270,33 @@ export async function handleDispatchWebhook(
   await orderRef.set(updateData, { merge: true });
   await markProcessed();
 
-  // Branch alert so nobody has to notice a silent rebook need.
-  if (event === "RIDER_CANCELLED") {
+  // Branch alert so nobody has to notice a silent rebook need. F6: the alert
+  // TEXT follows the cause — a customer-cancelled or returned delivery asks
+  // staff for manual review and carries needsRebook:"false"; only a genuine
+  // carrier/no-rider cancel asks staff to rebook.
+  if (riderCancelOutcome) {
     try {
       const snap = await orderRef.get();
       const branchId = snap.data()?.branchId;
       if (typeof branchId === "string" && branchId) {
+        const carrierCancelled = riderCancelOutcome === "carrier";
         await dispatchFCM({
           topic: `branch_${branchId}_orders`,
-          title: "Rider cancelled — rebook needed",
-          body: `Order #${orderRef.id.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`,
-          data: { type: "rider_cancelled", orderId: orderRef.id, needsRebook: "true" },
+          title: carrierCancelled
+            ? "Rider cancelled — rebook needed"
+            : riderCancelOutcome === "customer"
+            ? "Delivery cancelled by customer — manual review"
+            : "Parcel returned — manual review",
+          body: carrierCancelled
+            ? `Order #${orderRef.id.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`
+            : riderCancelOutcome === "customer"
+            ? `Order #${orderRef.id.substring(0, 6)}: delivery cancelled by the customer. Staff must review manually — no rebook will be attempted.`
+            : `Order #${orderRef.id.substring(0, 6)}: parcel returned to the seller. Staff must review manually — no rebook will be attempted.`,
+          data: {
+            type: carrierCancelled ? "rider_cancelled" : "dispatch_manual_review",
+            orderId: orderRef.id,
+            needsRebook: carrierCancelled ? "true" : "false",
+          },
         });
       }
     } catch (err: any) {
