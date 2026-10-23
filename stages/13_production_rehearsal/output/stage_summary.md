@@ -13,7 +13,7 @@
 | **Customer App** | `npx tsc --noEmit`; `npm test`; `npm run build:mobile` | **PASSED** (763 tests / 100 files; 2875 modules built; device 1331ms) |
 | **Partner App** | `npm run typecheck`; `npm test`; `npm run build` | **PASSED** (583 tests / 86 files / 1 skipped; build 0; device 1300ms) |
 | **On-Device Physical Test** | `adb -d am start -W` on Samsung SM-S921B | **PASSED** (both QA APKs cold-start in ~1.3s and present accessible error screens without splash hang) |
-| **Hosting Validation** | `node --test scripts/validate-mobile-hosting.test.cjs` | **22 PASS** (unit suite). Assembled fixture: 22 PASS / 3 FAIL |
+| **Hosting Validation** | `node --test scripts/validate-mobile-hosting.test.cjs` | **22 PASS** (unit suite). Assembled fixture: 25 PASS / 2 expected FAIL (Apple Team ID placeholders only; partner assetlinks.json tracked & verified) |
 
 ## Operational Caveats & Non-Claims
 1. **Remote State**: Cloud secret managers, live merchant webhook configs, and remote branches are unverified locally (UNKNOWN).

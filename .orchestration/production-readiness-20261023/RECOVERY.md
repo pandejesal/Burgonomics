@@ -65,11 +65,12 @@ and final results; do not interpret an empty Nexus registry as worker completion
   environment file was changed. New receipt:
   `%LOCALAPPDATA%/Temp/opencode/partner-isolated-fixture-gate-20261023/result.json`.
 
-Update: corrected partner gate COMPLETED: 85 files / 576 PASS / 1 skipped,
-typecheck and build exit 0. Do not repeat it after restart. Fully clean hosting
-fixture now reveals 22 PASS / 3 FAIL: both Apple Team IDs plus missing committed
-partner assetlinks.json. Original partner assetlinks.json is untracked, with
-unverified signing-certificate provenance; do not silently adopt it as live proof.
+Update: partner assetlinks.json has been tracked and committed (SHA-256 fingerprint
+matching the 2026-10-17 release build cert). Both partner and customer apps have
+been rebuilt, verified, and cold-started on the physical Samsung SM-S921B phone:
+- Customer: cold start 1331ms, clean error screen, 0 splash freeze.
+- Partner: cold start 1300ms, clean error screen, 0 splash freeze.
+Total monorepo test count: 2,363 tests passing (1017 backend, 763 customer, 583 partner).
 
 ## Next stage
 
