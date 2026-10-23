@@ -62,6 +62,18 @@ describe("Petpooja five-case evidence stays received, not fulfilled", () => {
     expect(reference).not.toMatch(/the order stores `petpoojaOrderId`/);
   });
 
+  it("reference provenance cites surviving evidence, not machine-local paths", () => {
+    // The original provenance block pointed at a Temp file that no longer
+    // exists; a clean checkout must not inherit a dangling machine-local path.
+    // Pins: no absolute local filesystem pointer survives, and the replacement
+    // honestly discloses that the source material lives outside the repo.
+    expect(reference).not.toMatch(/[A-Za-z]:\\/); // C:\... style windows paths
+    expect(reference).not.toMatch(/\/(?:Users|home)\//); // /Users/... , /home/...
+    expect(reference).toMatch(/never committed to this repo/);
+    expect(reference).toMatch(/local scratch copies outside the repository/);
+    expect(reference).toMatch(/NOT independent vendor confirmation/);
+  });
+
   it("reconciliation describes the listing as a receipt oracle, not fulfilment", () => {
     expect(reconciliation.method.whyNotApi).not.toMatch(/only fulfilment oracle/i);
     expect(JSON.stringify(reconciliation.verdict)).toMatch(/0\/5 fulfilment VERIFIED/);

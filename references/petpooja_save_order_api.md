@@ -3,7 +3,14 @@
 > Extracted from the official PDFs supplied by the user (2026-10-06):
 > - `API Guide for Placing Orders on Petpooja POS.pdf` (9 pages)
 > - `Petpooja Sandbox Guide for Integration Testing.pdf` (6 pages)
-> Source text: `C:\Users\DELL\AppData\Local\Temp\opencode\petpooja_guides.txt`
+> The PDFs were never committed to this repo. The plain-text extracts used to
+> build this reference (`api_guide_placing_orders.txt`, `sandbox_guide_testing.txt`,
+> captured 2026-10-19) and the Apiary V2.1 blueprint (`petpooja_v210.apib`) are
+> local scratch copies outside the repository; a clean checkout cannot re-derive
+> them from inside the repo.
+> Authority note: the Apiary V2.1 blueprint is the vendor reference. Third-party
+> mirrors are NOT independent vendor confirmation. No sample credentials or
+> values are reproduced here.
 
 ---
 
