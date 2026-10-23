@@ -945,12 +945,32 @@ export async function handleDispatchWebhook(
   const orderBoundId = normalizeProviderOrderId(
     currentOrder.dispatchOrderId ?? currentOrder.porterOrderId ?? null
   );
+  // A teardown (staff cancel / failed rebook) retires the ACTIVE fields into
+  // `dispatchReleasedBindings` (dispatch.router.ts). A callback naming a
+  // released booking must NOT be treated as the order's owner: the branch
+  // already released it. Staff cancel is a LOCAL release only (no documented
+  // provider cancel API), so a late DELIVERED may still be a real fulfilment —
+  // park HIGH for human reconciliation instead of applying it (a terminal flip
+  // on a released order) or discarding it (a silent `markProcessed`).
+  const releasedBindings = Array.isArray(currentOrder.dispatchReleasedBindings)
+    ? currentOrder.dispatchReleasedBindings
+    : [];
+  const matchedReleasedBinding = callbackBoundId
+    ? releasedBindings.find(
+        (entry: any) =>
+          entry &&
+          entry.provider === provider &&
+          normalizeProviderOrderId(entry.providerOrderId) === callbackBoundId
+      )
+    : undefined;
   const parkOrderBindingConflict = async (
-    reason: "order_id_conflict" | "order_binding_unproven",
+    reason: "order_id_conflict" | "order_binding_unproven" | "order_binding_released",
     severity: "high"
   ) => {
     log(
-      reason === "order_binding_unproven"
+      reason === "order_binding_released"
+        ? `order ${orderRef!.id} released booking ${provider}/${callbackBoundId || "?"} — parking ${rawEvent} high (reconciliation, no mutation)`
+        : reason === "order_binding_unproven"
         ? `order ${orderRef!.id} carries no current provider binding — parking ${rawEvent} high (no mutation)`
         : `order ${orderRef!.id} binding (${orderBoundProvider || "?"} / ${orderBoundId || "?"}) disagrees with callback ${provider} / ${callbackBoundId || "?"} — parking ${rawEvent} high (no mutation)`
     );
@@ -965,31 +985,50 @@ export async function handleDispatchWebhook(
         boundOrderId: orderBoundId || null,
         callbackProvider: provider,
         callbackProviderOrderId: callbackBoundId,
+        ...(reason === "order_binding_released"
+          ? { releasedReason: matchedReleasedBinding?.reason ?? null }
+          : {}),
         rawEvent: rawEvent || null,
         reason,
       },
-      `${provider} webhook for ${rawEvent || "unknown"} parked: order ${orderRef!.id}'s current binding does not match the callback — no state flipped`,
+      reason === "order_binding_released"
+        ? `${provider} webhook for ${rawEvent || "unknown"} names a RELEASED booking on order ${orderRef!.id} — parked for reconciliation, no state flipped`
+        : `${provider} webhook for ${rawEvent || "unknown"} parked: order ${orderRef!.id}'s current binding does not match the callback — no state flipped`,
       severity
     );
     await markParked(reason);
   };
+  // A callback for a booking this order already released is reported under the
+  // released reason even when a NEW live booking now owns the order — the
+  // reconciliation story ("the old booking reported again") is the actionable
+  // one. Still park-only: nothing is mutated either way.
+  const mismatchReason = matchedReleasedBinding ? "order_binding_released" : "order_id_conflict";
   if (orderBoundProvider && orderBoundProvider !== provider) {
-    await parkOrderBindingConflict("order_id_conflict", "high");
+    await parkOrderBindingConflict(mismatchReason, "high");
     return;
   }
   if (orderBoundId && callbackBoundId && orderBoundId !== callbackBoundId) {
-    await parkOrderBindingConflict("order_id_conflict", "high");
+    await parkOrderBindingConflict(mismatchReason, "high");
     return;
   }
   // DS final-review finding (low, applied): a provider bound but NO bound
   // order id is a PARTIAL-metadata state — the stale-map class again (the id
   // side of the callback is never validated). Not license to guess either.
   if (orderBoundProvider && !orderBoundId && callbackBoundId) {
-    await parkOrderBindingConflict("order_binding_unproven", "high");
+    await parkOrderBindingConflict(
+      matchedReleasedBinding ? "order_binding_released" : "order_binding_unproven",
+      "high"
+    );
     return;
   }
   if (!orderBoundProvider && !orderBoundId) {
-    await parkOrderBindingConflict("order_binding_unproven", "high");
+    // No active owner. If the callback names a booking this order RELEASED,
+    // the fence reason is explicit (reconciliation); otherwise it is still
+    // unproven (legacy/map-row-only), never guessed.
+    await parkOrderBindingConflict(
+      matchedReleasedBinding ? "order_binding_released" : "order_binding_unproven",
+      "high"
+    );
     return;
   }
 

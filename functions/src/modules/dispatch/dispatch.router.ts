@@ -106,6 +106,82 @@ function isActiveDispatch(d: any): boolean {
   return active && hasProviderOrder;
 }
 
+/** Bounded audit history of torn-down bookings (newest last). */
+const RELEASED_BINDING_HISTORY_LIMIT = 5;
+
+type ReleasedBindingReason = "staff_cancelled" | "carrier_cancelled" | "dispatch_failed";
+
+/**
+ * Teardown cause recorded for the binding being retired. The order's own
+ * `rebookTrigger` is the only provenance the router has at teardown time, so
+ * it is preserved (never invented): carrier cancel stays carrier cancel, a
+ * staff cancel stays a staff cancel, everything else is a dispatch failure.
+ */
+function releasedReasonFor(order: any): ReleasedBindingReason {
+  if (order?.rebookTrigger === "carrier_cancelled") return "carrier_cancelled";
+  if (order?.rebookTrigger === "staff_cancelled") return "staff_cancelled";
+  return "dispatch_failed";
+}
+
+/**
+ * Retires the order's ACTIVE dispatch binding as part of a teardown write.
+ *
+ * Why a released ledger instead of just deleting the fields: a staff cancel is
+ * a LOCAL release — Borzo/Shadowfax expose no documented cancel API, so the
+ * remote booking may still be live and a later `DELIVERED` may be a real
+ * fulfilment. Reconciliation (and Porter-era history) therefore needs the
+ * binding kept, not lost. The active `dispatchProvider`/`dispatchOrderId` (and
+ * the per-provider aliases) stop presenting the dead booking as the order's
+ * owner, and the values move into `dispatchReleasedBindings` (bounded, plain
+ * values — Firestore rejects server-timestamp sentinels inside arrays, so
+ * `releasedAt` is local-clock ms like `dispatchClaimedAt`).
+ *
+ * Returns `{}` when there is nothing to release, so callers can spread it into
+ * any teardown write unconditionally.
+ */
+function buildReleasedBindingWrite(
+  order: any,
+  reason: ReleasedBindingReason,
+  actor?: string
+): Record<string, any> {
+  const provider =
+    typeof order?.dispatchProvider === "string" && order.dispatchProvider
+      ? order.dispatchProvider
+      : order?.porterOrderId
+      ? "porter"
+      : null;
+  const providerOrderId = order?.dispatchOrderId ?? order?.porterOrderId ?? null;
+  if (!provider && !providerOrderId) return {};
+  const history = Array.isArray(order?.dispatchReleasedBindings)
+    ? order.dispatchReleasedBindings
+    : [];
+  const entry = {
+    provider,
+    providerOrderId: providerOrderId != null ? String(providerOrderId) : null,
+    reason,
+    releasedBy: actor || null,
+    releasedAt: Date.now(),
+  };
+  // Re-release of the SAME booking (e.g. a retried teardown) must not consume
+  // history slots: with only three providers, duplicate entries would otherwise
+  // evict a distinct released provider and silently let the auto-rebook walk
+  // book the carrier that already cancelled.
+  const bindingKey = (e: any) =>
+    `${e?.provider ?? ""}|${e?.providerOrderId == null ? "" : String(e.providerOrderId)}`;
+  const entryKey = bindingKey(entry);
+  const retained = history.filter((e: any) => bindingKey(e) !== entryKey);
+  return {
+    dispatchReleasedBindings: [...retained, entry].slice(-RELEASED_BINDING_HISTORY_LIMIT),
+    // The dead booking must no longer own the order (the webhook ownership
+    // proof reads exactly these fields).
+    dispatchProvider: null,
+    dispatchOrderId: null,
+    porterOrderId: null,
+    borzoOrderId: null,
+    shadowfaxOrderId: null,
+  };
+}
+
 function isFreshGenericPending(d: any): boolean {
   return (
     d?.dispatchStatus === "dispatch_pending" &&
@@ -194,6 +270,13 @@ async function releaseClaimFailed(
   attempts: DispatchAttemptRecord[],
   quoteSnapshot?: any
 ): Promise<void> {
+  // Snapshot ONCE: the released-binding record and the trigger-preservation
+  // rule below must read the same pre-write state.
+  const preOrder = (orderDoc.data?.() || {}) as any;
+  // A failed booking/rebook tears down whatever binding the order still
+  // presents (the previous carrier-cancelled/staff-cancelled booking). It is
+  // released into history in the SAME write — the order must stop claiming it.
+  const releaseReason = releasedReasonFor(preOrder);
   try {
     await orderDoc.ref.set(
       {
@@ -207,15 +290,22 @@ async function releaseClaimFailed(
         // Auto-rebook trigger (mission §3): the scheduled worker retries a
         // failed dispatch up to AUTO_REBOOK_MAX_ATTEMPTS times. A carrier
         // cancel keeps its own trigger — releaseClaimFailed must not erase it.
-        ...(orderDoc.data?.()?.rebookTrigger === "carrier_cancelled"
+        ...(preOrder.rebookTrigger === "carrier_cancelled"
           ? {}
           : { rebookTrigger: "dispatch_failed" }),
+        ...buildReleasedBindingWrite(preOrder, releaseReason),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
     );
-  } catch {
-    // Best-effort: snapshot below is the durable trail.
+  } catch (err: any) {
+    // Best-effort: snapshot below is the durable trail. Log loudly because a
+    // failed release write leaves the dead binding owning the order until the
+    // next teardown — late callbacks would pass the webhook ownership proof.
+    console.warn(
+      `[Dispatch] teardown release write failed for order ${orderDoc.id}:`,
+      err?.message || err
+    );
   }
   try {
     await captureErrorSnapshot({
@@ -659,6 +749,10 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
         // with a second (automatic) booking.
         needsRebook: false,
         rebookTrigger: null,
+        // The walk landed here because the previous booking is dead; retire it
+        // in the SAME write (a rebooked order must not keep presenting the old
+        // carrier's booking as its owner while staff paste a new one).
+        ...buildReleasedBindingWrite(order, releasedReasonFor(order), staffName || "unattributed"),
         dispatchQuote: quoteSnapshot,
         dispatchAttempts: attempts,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -846,6 +940,16 @@ function excludedProvidersFor(order: any): ProviderId[] {
   if (order?.porterOrderId) excluded.add("porter");
   if (order?.borzoOrderId) excluded.add("borzo");
   if (order?.shadowfaxOrderId) excluded.add("shadowfax");
+  // Teardown retires the active fields into released history (the binding must
+  // stop owning the order), so the "never rebook the provider that cancelled"
+  // rule now reads BOTH places: the live binding above and every released one.
+  if (Array.isArray(order?.dispatchReleasedBindings)) {
+    for (const entry of order.dispatchReleasedBindings) {
+      if (typeof entry?.provider === "string" && entry.provider) {
+        excluded.add(entry.provider as ProviderId);
+      }
+    }
+  }
   return [...excluded];
 }
 
@@ -1297,6 +1401,11 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
       riderCancellationReason: `Booking cancelled by ${staffName || "Branch Staff"} — confirm the cancellation in the ${provider || "provider"} dashboard`,
       cancelledBy: staffName || "Branch Staff",
       cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      // LOCAL release only (no documented provider cancel API): retire the
+      // active binding into released history so a late provider callback
+      // parks for reconciliation instead of mutating an order the branch has
+      // already released. The history is what proves the booking was real.
+      ...buildReleasedBindingWrite(order, "staff_cancelled", staffName || "Branch Staff"),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
