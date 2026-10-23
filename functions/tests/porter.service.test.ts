@@ -183,6 +183,28 @@ describe("Porter Logistics Service", () => {
 
       expect(quote.estimatedFare).toBe(40);
     });
+
+    it("refuses a direct quote before any provider call when Porter is retired", async () => {
+      const previousEnabled = config.porter.enabled;
+      const previousFetch = globalThis.fetch;
+      const fetchSpy = vi.fn();
+      config.porter.enabled = false;
+      globalThis.fetch = fetchSpy as any;
+      try {
+        await expect(
+          getDeliveryQuote({
+            pickupLat: 23.0131,
+            pickupLng: 72.5085,
+            dropLat: 23.0338,
+            dropLng: 72.5262,
+          })
+        ).rejects.toMatchObject({ statusCode: 409, code: "PORTER_RETIRED" });
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        config.porter.enabled = previousEnabled;
+        globalThis.fetch = previousFetch;
+      }
+    });
   });
 
   describe("getDeliveryQuote - live money truth (provider guard)", () => {

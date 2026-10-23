@@ -69,6 +69,19 @@ function finiteProviderNumber(value: unknown): number | null {
  * Calculates live Porter delivery fare quote based on pickup & drop GPS with 10-minute fee lock TTL.
  */
 export async function getDeliveryQuote(params: PorterQuoteParams): Promise<PorterQuoteResult> {
+  // Porter is RETIRED (opt-in). The direct /porter/quote route bypassed the
+  // booking guard, so a retired carrier could still be quoted (and billed)
+  // while the customer-facing fan-out treated it as disabled. Fail closed
+  // before any GPS, credential, mock, or provider work.
+  if (!config.porter.enabled) {
+    const retired: any = new Error(
+      "Porter is retired as a delivery partner. Use Borzo, Shadowfax, or assign an in-house rider instead."
+    );
+    retired.statusCode = 409;
+    retired.code = "PORTER_RETIRED";
+    throw retired;
+  }
+
   // Missing/zero GPS silently produced a "live-looking" fare for a fixed
   // Ahmedabad hop — the fee charged at checkout then mismatched the address.
   // Flag it: callers must label estimates and re-quote with real GPS before
