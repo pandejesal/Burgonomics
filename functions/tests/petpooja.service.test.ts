@@ -10,8 +10,33 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
       commit: async () => {},
     }),
     collection: (colName: string) => ({
+      where: (field: string, op: string, val: any) => ({
+        limit: (n: number) => ({
+          get: async () => {
+            const matched = Object.entries(savedDocs)
+              .filter(([p]) => p.startsWith(`${colName}/`))
+              .map(([p, data]) => {
+                const id = p.slice(colName.length + 1);
+                return {
+                  id,
+                  ref: { id, path: p },
+                  data: () => data,
+                };
+              })
+              .filter((d) => d.data()[field] === val)
+              .slice(0, n);
+            return { docs: matched, empty: matched.length === 0 };
+          },
+        }),
+      }),
       doc: (docId: string) => ({
         id: docId,
+        update: vi.fn(async (data: any) => {
+          savedDocs[`${colName}/${docId}`] = {
+            ...(savedDocs[`${colName}/${docId}`] || {}),
+            ...data,
+          };
+        }),
         set: vi.fn(async (data: any) => {
           savedDocs[`${colName}/${docId}`] = {
             ...(savedDocs[`${colName}/${docId}`] || {}),
@@ -19,7 +44,9 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
           };
         }),
         get: vi.fn(async () => ({
-          exists: true,
+          exists:
+            Object.prototype.hasOwnProperty.call(savedDocs, `${colName}/${docId}`) ||
+            colName === "orders",
           data: () =>
             savedDocs[`${colName}/${docId}`] || {
               branchId: "branch_ahmedabad_1",
@@ -37,6 +64,13 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
               status: "pending",
             },
           ref: {
+            id: docId,
+            update: vi.fn(async (data: any) => {
+              savedDocs[`${colName}/${docId}`] = {
+                ...(savedDocs[`${colName}/${docId}`] || {}),
+                ...data,
+              };
+            }),
             set: vi.fn(async (data: any) => {
               savedDocs[`${colName}/${docId}`] = {
                 ...(savedDocs[`${colName}/${docId}`] || {}),
@@ -89,6 +123,7 @@ import {
   handlePetpoojaMenuWebhook,
   extractMenuRestId,
 } from "../src/modules/petpooja";
+import { computeStockQuarantineDocId } from "../src/modules/petpooja/item86ingSync";
 import { config } from "../src/config/env";
 
 describe("Petpooja POS Bridge Service", () => {
@@ -421,22 +456,26 @@ describe("Petpooja POS Bridge Service", () => {
   });
 
   describe("86ing & Menu Webhook Handlers", () => {
-    it("handles incoming 86ing out-of-stock webhook from Petpooja POS", async () => {
+    it("handles incoming 86ing out-of-stock webhook from Petpooja POS for unlinked outlet by capturing review evidence", async () => {
       await handlePetpoojaStockWebhook({
         rest_id: "branch_surat_01",
         item_id: "pp_b1",
         in_stock: 0,
       });
 
-      // rest_id is unlinked in this fixture, so stock is staged on an
-      // attributed orphan doc — never silently merged into another branch.
-      expect(savedDocs["products/prod_unlinked_pp_b1"]?.inStock).toBe(false);
-      expect(
-        savedDocs["products/prod_unlinked_pp_b1"]?.branchId
-      ).toBeUndefined();
+      // rest_id is unlinked in this fixture, so canonical products are NOT mutated and no prod_unlinked doc is created.
+      expect(savedDocs["products/prod_unlinked_pp_b1"]).toBeUndefined();
+      const productKeys = Object.keys(savedDocs).filter((k) => k.startsWith("products/"));
+      expect(productKeys).toHaveLength(0);
+
+      // Captured in unmatched_petpooja_stock as explicit review evidence.
+      const qId = computeStockQuarantineDocId("branch_surat_01", "pp_b1");
+      expect(savedDocs[`unmatched_petpooja_stock/${qId}`]).toBeDefined();
+      expect(savedDocs[`unmatched_petpooja_stock/${qId}`]?.inStock).toBe(false);
+      expect(savedDocs[`unmatched_petpooja_stock/${qId}`]?.status).toBe("needs_review");
     });
 
-    it("fails CLOSED on the stock verb for every value outside the on-whitelist", async () => {
+    it("fails CLOSED on the stock verb for every value outside the on-whitelist on linked canonical product", async () => {
       // The vendor documents the Item On/Off Webhook as carrying "the item stock
       // status (in-stock or out-of-stock)" but documents NO value encoding for it
       // - while its Push Menu payload uses "2" for all 166 items (see the
@@ -464,13 +503,21 @@ describe("Petpooja POS Bridge Service", () => {
 
       for (const [in_stock, expected] of cases) {
         for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+        savedDocs["branches/branch_surat_01"] = { petpoojaStoreId: "PP_SURAT_01" };
+        savedDocs["products/prod_branch_surat_01_pp_b1"] = {
+          id: "prod_branch_surat_01_pp_b1",
+          branchId: "branch_surat_01",
+          petpoojaItemId: "pp_b1",
+          inStock: true,
+        };
+
         await handlePetpoojaStockWebhook({
-          rest_id: "branch_surat_01",
+          rest_id: "PP_SURAT_01",
           item_id: "pp_b1",
           in_stock,
         } as any);
         expect(
-          savedDocs["products/prod_unlinked_pp_b1"]?.inStock,
+          savedDocs["products/prod_branch_surat_01_pp_b1"]?.inStock,
           `in_stock=${String(in_stock)} must resolve to inStock=${expected}`
         ).toBe(expected);
       }
@@ -620,7 +667,9 @@ describe("Petpooja POS Bridge Service", () => {
       const success = await pushOrderToPetpooja("order_test_999");
       expect(success).toBe(true);
       expect(savedDocs["orders/order_test_999"]?.petpoojaStatus).toBe("synced");
-      expect(savedDocs["orders/order_test_999"]?.kotPrinted).toBe(true);
+      // Finding 5: A mock or relay push sets kotPushedAt, but does not manufacture kotPrinted!
+      expect(savedDocs["orders/order_test_999"]?.kotPrinted).toBeUndefined();
+      expect(savedDocs["orders/order_test_999"]?.kotPushedAt).toBeDefined();
       expect(savedDocs["orders/order_test_999"]?.petpoojaMock).toBe(true);
     });
 

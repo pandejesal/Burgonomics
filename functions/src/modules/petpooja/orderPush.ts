@@ -442,6 +442,18 @@ export function formatPetpoojaOrderPayload(
   };
 }
 
+const recentBusyPushes = new Map<string, number>();
+
+export function wasPushDeferredBusy(orderId: string): boolean {
+  const ts = recentBusyPushes.get(orderId);
+  if (!ts) return false;
+  if (Date.now() - ts > 60_000) {
+    recentBusyPushes.delete(orderId);
+    return false;
+  }
+  return true;
+}
+
 export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller): Promise<boolean> {
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
@@ -459,6 +471,20 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
   // nothing was sent — refuse instead (boot assert is the first line, this is
   // the belt-and-braces check for a config flipped after boot).
   assertLivePetpoojaContext(`KOT push for order ${orderId}`);
+
+  // Manual reconciliation guard: an order flagged as ambiguous or parked for
+  // reconciliation must NEVER be blindly re-pushed by direct callers or retry
+  // loops. Operator intervention is required to verify physical POS/kitchen state first.
+  if (
+    order.petpoojaStatus === "reconciliation_required" ||
+    order.petpoojaAmbiguousProcessing === true ||
+    (order.kotSyncFailed && (order.petpoojaStatus === "failed" || order.petpoojaStatus === "reconciliation_required"))
+  ) {
+    console.warn(
+      `[Petpooja KOT Push] Order ${orderId} is parked for manual reconciliation (reconciliation marker / kotSyncFailed) — blocking blind direct push until operator resolves ambiguity`
+    );
+    return false;
+  }
 
   // Idempotency: the relayed marker is written ONLY on a successful push, so
   // its presence IS the already-pushed marker — independent of the status
@@ -490,12 +516,20 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
   // the read-based dedupe above (best effort, same as the scheduler).
   const PUSH_CLAIM_TTL_MS = 10 * 60 * 1000;
   if (db && typeof (db as any).runTransaction === "function") {
-    let claim: "claimed" | "dup" | "busy" | "gone";
+    let claim: "claimed" | "dup" | "busy" | "gone" | "blocked";
     try {
       claim = await (db as any).runTransaction(async (tx: any) => {
         const fresh = await tx.get(orderDoc.ref);
         const data = (fresh.exists ? fresh.data() : undefined) as any;
         if (!data) return "gone";
+        // Manual reconciliation guard inside claim transaction (pre-read race check)
+        if (
+          data.petpoojaStatus === "reconciliation_required" ||
+          data.petpoojaAmbiguousProcessing === true ||
+          (data.kotSyncFailed && (data.petpoojaStatus === "failed" || data.petpoojaStatus === "reconciliation_required"))
+        ) {
+          return "blocked";
+        }
         // A racing caller finished the push while we were reading — reuse
         // its outcome, never POST a second KOT. Both accepted shapes count.
         if (data.petpoojaOrderId || data.petpoojaAcceptedNoId) return "dup";
@@ -522,6 +556,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       );
       return false;
     }
+    if (claim === "blocked") {
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} is parked for manual reconciliation inside claim transaction — blocking push`
+      );
+      return false;
+    }
     if (claim === "dup") {
       console.warn(
         `[Petpooja KOT Push] Order ${orderId} already pushed by a concurrent caller — deduped, no duplicate KOT`
@@ -532,10 +572,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       // The in-flight owner either completes (KOT at the kitchen) or its
       // catch below parks pending_retry for the retry worker — either way
       // this caller must not stack a second POST on top of it.
+      // Honest failure/deferred return: busy is NOT confirmed success.
+      recentBusyPushes.set(orderId, Date.now());
       console.warn(
         `[Petpooja KOT Push] Order ${orderId} push already in flight — yielding to the owner`
       );
-      return true;
+      return false;
     }
     if (claim === "gone") {
       console.warn(`[Petpooja KOT Push] Order ${orderId} vanished before push — refusing`);
@@ -552,10 +594,11 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         petpoojaStatus: "synced",
         petpoojaSyncStatus: "synced",
         petpoojaMock: true,
-        kotPrinted: true,
-        kotPrintedAt: admin.firestore.FieldValue.serverTimestamp(),
+        // KOT Truth: network relay acceptance or mock delivery is NOT physical printer proof.
+        // kotPrinted / kotPrintedAt are never manufactured without physical printer proof.
         kotPushedAt: admin.firestore.FieldValue.serverTimestamp(),
         petpoojaPushClaimedAt: null,
+        petpoojaClaimedAt: null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -653,24 +696,18 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     const ok =
       result.success === "1" || result.success === 1 || result.success === true || result.status === "success";
 
-    // An ack WITHOUT an order id is STILL an accepted relay — proven live.
+    // An ack WITHOUT an order id confirms network relay acceptance by the POS server.
     // Petpooja's sandbox answers {"success":"1","message":"Your order is
     // saved.","restID":"31z58ciw0h","clientOrderID":"<our id>","orderID":"",
-    // "code":200} and leaves `orderID` empty, yet the order DOES register:
-    // on 2026-10-17 the customer-visible Order List for 5439 - Burgonomics
-    // DEMO [135148] showed every order this relay pushed — the five
-    // deliverable scenarios (clientOrderIDs and totals matching exactly:
-    // 598.5 / 419 / 283.5 / 252 / 312.95) plus all 34 API-placed records.
+    // "code":200} and leaves `orderID` empty. An acceptance confirms that the POS
+    // cloud server accepted the payload, NOT that a physical kitchen ticket printed.
     //
-    // Two earlier shapes for this branch, both wrong, recorded so it is not
-    // re-flipped blind:
-    //  1. Fabricate a `pp_<epoch>` id and stamp kotPrinted. The invented id is
-    //     truthy, so the dedupe above short-circuited every later attempt —
-    //     and it claimed an id the POS never issued.
-    //  2. Throw and let the catch below park pending_retry. The order WAS at
-    //     the POS, so each retry POSTed it again and rang the kitchen twice.
-    // The POS holds the order, so: record acceptance, record that the vendor
-    // omitted the id, dedupe on that acceptance, and never invent an id.
+    // Deduplication rules:
+    //  - When the response is acknowledged with an order ID, record `petpoojaOrderId`.
+    //  - When acknowledged without an order ID, record `petpoojaAcceptedNoId: true`.
+    //  - NEVER invent a fake POS id or claim `kotPrinted: true` from a relay response.
+    //  - Stamp `kotPushedAt` to record when the relay succeeded.
+    // Both shapes prevent retry loops from firing duplicate KOTs.
     const petpoojaOrderId =
       result.petpooja_order_id || result.order_id || result.orderID || result.orderId || "";
     if (ok && petpoojaOrderId) {
@@ -679,10 +716,13 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
           petpoojaOrderId,
           petpoojaStatus: "synced",
           petpoojaSyncStatus: "synced",
-          kotPrinted: true,
-          kotPrintedAt: admin.firestore.FieldValue.serverTimestamp(),
+          // KOT Truth: A relay response is network acceptance by the POS server,
+          // NOT physical-printer proof. Do NOT manufacture kotPrinted or kotPrintedAt.
+          // kotPushedAt records the successful relay timestamp; genuine historical
+          // printer evidence (if any) is preserved via merge.
           kotPushedAt: admin.firestore.FieldValue.serverTimestamp(),
           petpoojaPushClaimedAt: null,
+          petpoojaClaimedAt: null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -699,10 +739,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
           petpoojaAcceptedNoIdAck: JSON.stringify(result).slice(0, 500),
           petpoojaStatus: "synced",
           petpoojaSyncStatus: "synced",
-          kotPrinted: true,
-          kotPrintedAt: admin.firestore.FieldValue.serverTimestamp(),
+          // KOT Truth: An ID-less relay acceptance confirms the POS server accepted
+          // the payload, NOT that a physical kitchen ticket was printed.
+          // Do NOT manufacture kotPrinted or kotPrintedAt.
           kotPushedAt: admin.firestore.FieldValue.serverTimestamp(),
           petpoojaPushClaimedAt: null,
+          petpoojaClaimedAt: null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -731,7 +773,17 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         const outcome = await (db as any).runTransaction(async (tx: any) => {
           const fresh = await tx.get(orderDoc.ref);
           const data = (fresh.exists ? fresh.data() : undefined) as any;
-          if (data?.petpoojaOrderId || data?.petpoojaAcceptedNoId) return "won";
+          if (data?.petpoojaOrderId || data?.petpoojaAcceptedNoId) {
+            tx.set(
+              orderDoc.ref,
+              {
+                petpoojaClaimedAt: null,
+                petpoojaPushClaimedAt: null,
+              },
+              { merge: true }
+            );
+            return "won";
+          }
           const freshRetry = (Number(data?.petpoojaRetryCount) || 0) + 1;
           retryForSnapshot = freshRetry;
           tx.set(
@@ -742,6 +794,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
               petpoojaRetryCount: freshRetry,
               lastPetpoojaError: err.message,
               petpoojaPushClaimedAt: null,
+              petpoojaClaimedAt: null,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
             { merge: true }
@@ -773,6 +826,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
           petpoojaRetryCount: fallbackRetry,
           lastPetpoojaError: err.message,
           petpoojaPushClaimedAt: null,
+          petpoojaClaimedAt: null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }

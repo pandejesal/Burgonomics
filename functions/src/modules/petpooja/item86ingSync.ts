@@ -5,6 +5,19 @@ import { getPetpoojaConfig } from "./client";
 import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
 import { isSafeDocId } from "../../core/security";
+import { createHash } from "crypto";
+
+/**
+ * Computes a deterministic, bounded, Firestore-safe document ID for quarantined 86ing payloads.
+ * Never interpolates unsafe restId (slashes, path escapes, unbounded length) into Firestore paths.
+ */
+export function computeStockQuarantineDocId(restId: any, itemId: any): string {
+  const normRest = typeof restId === "string" ? restId.trim() : restId != null ? String(restId).trim() : "unlinked";
+  const normItem = typeof itemId === "string" ? itemId.trim() : itemId != null ? String(itemId).trim() : "";
+  const rawKey = `${normRest}:::${normItem}`;
+  const hash = createHash("sha256").update(rawKey).digest("hex").slice(0, 32);
+  return `ups_${hash}`;
+}
 
 /**
  * Normalizes Petpooja order status codes into canonical Burgonomics order statuses.
@@ -70,27 +83,256 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
     return;
   }
 
-  if (item_id) {
-    // Same branch-scoped id scheme as the menu sync — and attributed with
-    // branchId/restId so the doc never becomes an unscoped orphan.
-    const branchId = await resolveBranchIdForRestId(rest_id);
-    const productId = branchId ? `prod_${branchId}_${item_id}` : `prod_unlinked_${item_id}`;
-    await db.collection("products").doc(productId).set(
+  // Same branch-scoped id scheme as the menu sync
+  const branchId = await resolveBranchIdForRestId(rest_id);
+  if (!branchId) {
+    console.warn(`[Petpooja 86ing] rest_id ${rest_id || "(empty)"} unlinked — capturing review evidence, no canonical mutation`);
+    const qDocId = computeStockQuarantineDocId(rest_id, item_id);
+    await db.collection("unmatched_petpooja_stock").doc(qDocId).set(
       {
-        petpoojaItemId: item_id,
-        ...(branchId ? { branchId, restId: rest_id } : {}),
+        restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id != null ? String(rest_id).slice(0, 128) : null,
+        branchId: null,
+        itemId: String(item_id).slice(0, 128),
         inStock: inStockBool,
-        lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        rawInStock: in_stock !== undefined ? (typeof in_stock === "object" ? null : in_stock) : null,
+        status: "needs_review",
+        reason: `restID ${typeof rest_id === "string" ? rest_id.slice(0, 64) : "(empty)"} did not resolve to a linked branch`,
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
     );
-    if (!branchId) {
-      console.warn(`[Petpooja 86ing] rest_id ${rest_id} unlinked — stock staged on orphan doc ${productId}`);
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: `Petpooja 86ing webhook for unlinked outlet ${typeof rest_id === "string" ? rest_id.slice(0, 64) : "(empty)"} item ${item_id} parked for review — no canonical inventory mutated`,
+    });
+    return;
+  }
+
+  const productId = `prod_${branchId}_${item_id}`;
+  const productRef = db.collection("products").doc(productId);
+  const prodSnap = await productRef.get();
+  if (!prodSnap.exists) {
+    console.warn(`[Petpooja 86ing] Product ${productId} does not exist at branch ${branchId} — parked for review, no orphan created`);
+    const qDocId = computeStockQuarantineDocId(branchId, item_id);
+    await db.collection("unmatched_petpooja_stock").doc(qDocId).set(
+      {
+        restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id != null ? String(rest_id).slice(0, 128) : null,
+        branchId,
+        itemId: String(item_id).slice(0, 128),
+        inStock: inStockBool,
+        rawInStock: in_stock !== undefined ? (typeof in_stock === "object" ? null : in_stock) : null,
+        status: "needs_review",
+        reason: `product ${productId} does not exist in canonical products`,
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: `Petpooja 86ing webhook for missing product ${productId} parked for review — no orphan created`,
+      branchId,
+    });
+    return;
+  }
+
+  const prodData = prodSnap.data() || {};
+  const branchMismatch = !prodData.branchId || prodData.branchId !== branchId;
+  const itemMismatch =
+    (prodData.petpoojaItemId && String(prodData.petpoojaItemId) !== String(item_id)) ||
+    (prodData.itemId && String(prodData.itemId) !== String(item_id));
+
+  if (branchMismatch || itemMismatch) {
+    console.warn(
+      `[Petpooja 86ing] Incoming stock webhook product ownership mismatch for ${productId} (doc branch: ${prodData.branchId}, item: ${prodData.petpoojaItemId || prodData.itemId}) — parking for review, refusing to overwrite ownership`
+    );
+    const qDocId = computeStockQuarantineDocId(branchId, item_id);
+    await db.collection("unmatched_petpooja_stock").doc(qDocId).set(
+      {
+        restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id != null ? String(rest_id).slice(0, 128) : null,
+        branchId,
+        itemId: String(item_id).slice(0, 128),
+        inStock: inStockBool,
+        rawInStock: in_stock !== undefined ? (typeof in_stock === "object" ? null : in_stock) : null,
+        status: "needs_review",
+        reason: `product ${productId} ownership mismatch (branch: ${prodData.branchId} vs ${branchId}, item: ${prodData.petpoojaItemId || prodData.itemId} vs ${item_id})`,
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Petpooja 86ing webhook for product ${productId} has contradictory ownership — parked for review, no ownership overwritten`,
+      branchId,
+    });
+    return;
+  }
+
+  const initialUpdateTime = prodSnap.updateTime;
+  let committed = false;
+  let conflictReason: string | null = null;
+
+  if (db && typeof (db as any).runTransaction === "function") {
+    try {
+      const txOutcome = await (db as any).runTransaction(async (tx: any) => {
+        const freshSnap = await tx.get(productRef);
+        if (!freshSnap.exists) {
+          return "missing";
+        }
+        const freshData = freshSnap.data() || {};
+        const freshBranchMismatch = !freshData.branchId || freshData.branchId !== branchId;
+        const freshItemMismatch =
+          (freshData.petpoojaItemId && String(freshData.petpoojaItemId) !== String(item_id)) ||
+          (freshData.itemId && String(freshData.itemId) !== String(item_id));
+        if (freshBranchMismatch || freshItemMismatch) {
+          return "ownership_mismatch";
+        }
+
+        const freshUpdateTime = freshSnap.updateTime;
+        const versionMatches =
+          initialUpdateTime && freshUpdateTime
+            ? typeof initialUpdateTime.isEqual === "function"
+              ? initialUpdateTime.isEqual(freshUpdateTime)
+              : initialUpdateTime === freshUpdateTime
+            : true;
+
+        if (!versionMatches) {
+          return "stale_conflict";
+        }
+
+        const updateData = {
+          petpoojaItemId: String(item_id),
+          branchId,
+          restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id ?? null,
+          inStock: inStockBool,
+          lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        if (initialUpdateTime) {
+          try {
+            tx.update(productRef, updateData, { lastUpdateTime: initialUpdateTime });
+          } catch {
+            tx.update(productRef, updateData);
+          }
+        } else {
+          tx.update(productRef, updateData);
+        }
+        return "committed";
+      });
+
+      if (txOutcome === "committed") {
+        committed = true;
+      } else {
+        conflictReason = txOutcome;
+      }
+    } catch (txErr: any) {
+      console.warn(`[Petpooja 86ing] Transaction update failed for ${productId}:`, txErr?.message || txErr);
+      conflictReason = txErr?.message || "transaction_failed";
+    }
+  } else {
+    // Fallback path without runTransaction: check updateTime / precondition
+    try {
+      const freshSnap = await productRef.get();
+      if (!freshSnap.exists) {
+        conflictReason = "missing";
+      } else {
+        const freshData = freshSnap.data() || {};
+        const freshBranchMismatch = !freshData.branchId || freshData.branchId !== branchId;
+        const freshItemMismatch =
+          (freshData.petpoojaItemId && String(freshData.petpoojaItemId) !== String(item_id)) ||
+          (freshData.itemId && String(freshData.itemId) !== String(item_id));
+        if (freshBranchMismatch || freshItemMismatch) {
+          conflictReason = "ownership_mismatch";
+        } else {
+          const freshUpdateTime = freshSnap.updateTime;
+          const versionMatches =
+            initialUpdateTime && freshUpdateTime
+              ? typeof initialUpdateTime.isEqual === "function"
+                ? initialUpdateTime.isEqual(freshUpdateTime)
+                : initialUpdateTime === freshUpdateTime
+              : true;
+
+          if (!versionMatches) {
+            conflictReason = "stale_conflict";
+          } else {
+            const updateData = {
+              petpoojaItemId: String(item_id),
+              branchId,
+              restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id ?? null,
+              inStock: inStockBool,
+              lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+            if (initialUpdateTime) {
+              await productRef.update(updateData, { lastUpdateTime: initialUpdateTime });
+            } else {
+              await productRef.update(updateData);
+            }
+            committed = true;
+          }
+        }
+      }
+    } catch (updateErr: any) {
+      conflictReason = updateErr?.message || "update_failed";
     }
   }
 
-  console.log(`[Petpooja 86ing] Item ${item_id} at branch ${rest_id} set inStock=${inStockBool}`);
+  if (committed) {
+    console.log(`[Petpooja 86ing] Item ${item_id} at branch ${rest_id} set inStock=${inStockBool}`);
+    return;
+  }
+
+  if (
+    conflictReason === "stale_conflict" ||
+    (conflictReason && conflictReason.includes("PRECONDITION")) ||
+    (conflictReason && conflictReason.includes("conflict"))
+  ) {
+    console.warn(
+      `[Petpooja 86ing] Concurrent stock update detected for ${productId} — parking webhook for review to preserve newer local toggle`
+    );
+    const qDocId = computeStockQuarantineDocId(branchId, item_id);
+    await db.collection("unmatched_petpooja_stock").doc(qDocId).set(
+      {
+        restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id != null ? String(rest_id).slice(0, 128) : null,
+        branchId,
+        itemId: String(item_id).slice(0, 128),
+        inStock: inStockBool,
+        rawInStock: in_stock !== undefined ? (typeof in_stock === "object" ? null : in_stock) : null,
+        status: "needs_review",
+        reason: "concurrent stock update",
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: `Petpooja 86ing webhook for product ${productId} conflicted with concurrent stock update — quarantined, newer state preserved`,
+      branchId,
+    });
+    return;
+  }
+
+  if (conflictReason === "ownership_mismatch") {
+    const qDocId = computeStockQuarantineDocId(branchId, item_id);
+    await db.collection("unmatched_petpooja_stock").doc(qDocId).set(
+      {
+        restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id != null ? String(rest_id).slice(0, 128) : null,
+        branchId,
+        itemId: String(item_id).slice(0, 128),
+        inStock: inStockBool,
+        rawInStock: in_stock !== undefined ? (typeof in_stock === "object" ? null : in_stock) : null,
+        status: "needs_review",
+        reason: `product ${productId} ownership mismatch on write`,
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return;
+  }
 }
 
 /**
@@ -104,67 +346,139 @@ export async function pushItemStockToPetpooja(
   inStock: boolean,
   caller?: StaffCaller
 ): Promise<boolean> {
+  // Validate safe branch/item identifiers before vendor I/O
+  if (
+    !branchId ||
+    typeof branchId !== "string" ||
+    !isSafeDocId(branchId) ||
+    !itemId ||
+    typeof itemId !== "string" ||
+    !isSafeDocId(itemId)
+  ) {
+    console.warn(`[Petpooja Stock Push] Invalid or unsafe identifiers: branchId=${branchId}, itemId=${itemId}`);
+    return false;
+  }
+
   // Staff boundary: branch-A staff cannot 86 Branch-B's items.
   if (caller) assertBranchAccess(caller, branchId);
   // ZERO-MOCK runtime gate: a declared-production process must never "push"
   // a toggle it never sent (the mock branch below would return true).
   assertLivePetpoojaContext(`stock push for branch ${branchId} item ${itemId}`);
+
+  const prefix = `prod_${branchId}_`;
+  const rawItemId = itemId.startsWith(prefix) ? itemId.slice(prefix.length) : itemId;
+  const productId = itemId.startsWith(prefix) ? itemId : `prod_${branchId}_${itemId}`;
+
+  if (!isSafeDocId(rawItemId) || !isSafeDocId(productId)) {
+    console.warn(`[Petpooja Stock Push] Unsafe normalized identifier: raw=${rawItemId}, prod=${productId}`);
+    return false;
+  }
+
   if (config.mock.petpoojaPos) {
-    console.log(`[Mock Petpooja 86ing] Pushed branch=${branchId} item=${itemId} inStock=${inStock}`);
+    console.log(`[Mock Petpooja 86ing] Pushed branch=${branchId} item=${rawItemId} inStock=${inStock}`);
+    try {
+      const prodSnap = await db.collection("products").doc(productId).get();
+      if (prodSnap.exists) {
+        await db.collection("products").doc(productId).update({
+          inStock: inStock,
+          lastPetpoojaStockPush: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+    } catch {
+      // Best-effort in mock mode
+    }
     return true;
   }
 
   try {
-    // Loop 6: outlet binding is strict in live mode — the old fallback sent
-    // our internal branchId as rest_id, and unlike KOT pushes (rejected on
-    // unknown rest), a stock toggle against a wrong-but-valid outlet
-    // SUCCEEDS remotely and 86s someone else's item silently. Mock mode
-    // keeps the lenient path (no outlet queried).
-    let restId: string;
-    if (config.mock.petpoojaPos) {
-      try {
-        const branchSnap = await db.collection("branches").doc(branchId).get();
-        restId = (branchSnap.data() as any)?.petpoojaStoreId || branchId;
-      } catch {
-        restId = branchId;
-      }
-    } else {
-      let linked: string | null = null;
-      try {
-        const branchSnap = await db.collection("branches").doc(branchId).get();
-        linked = (branchSnap.data() as any)?.petpoojaStoreId || null;
-      } catch (err: any) {
-        console.warn(`[Petpooja Stock Push] Branch lookup failed for ${branchId}:`, err?.message || err);
-        // Fail-closed AND loud: the KDS reports this toggle as not synced,
-        // so ops needs an alert (not a log line nobody reads).
-        await captureErrorSnapshot({
-          source: "petpooja",
-          severity: "high",
-          message: `Stock push for item ${itemId} aborted — branch lookup failed for ${branchId}: ${err?.message || err}`,
-          branchId,
-        });
-        return false;
-      }
-      if (!linked) {
-        console.warn(
-          `[Petpooja Stock Push] Branch ${branchId} has no linked outlet — refusing wrong-outlet toggle (link per Runbook §5)`
-        );
-        await captureErrorSnapshot({
-          source: "petpooja",
-          severity: "high",
-          message: `Stock push for item ${itemId} refused — branch ${branchId} has no linked Petpooja outlet (link per Runbook §5)`,
-          branchId,
-        });
-        return false;
-      }
-      restId = linked;
+    let linked: string | null = null;
+    try {
+      const branchSnap = await db.collection("branches").doc(branchId).get();
+      linked = (branchSnap.data() as any)?.petpoojaStoreId || null;
+    } catch (err: any) {
+      console.warn(`[Petpooja Stock Push] Branch lookup failed for ${branchId}:`, err?.message || err);
+      // Fail-closed AND loud: the KDS reports this toggle as not synced,
+      // so ops needs an alert (not a log line nobody reads).
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `Stock push for item ${rawItemId} aborted — branch lookup failed for ${branchId}: ${err?.message || err}`,
+        branchId,
+      });
+      return false;
+    }
+    if (!linked) {
+      console.warn(
+        `[Petpooja Stock Push] Branch ${branchId} has no linked outlet — refusing wrong-outlet toggle (link per Runbook §5)`
+      );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `Stock push for item ${rawItemId} refused — branch ${branchId} has no linked Petpooja outlet (link per Runbook §5)`,
+        branchId,
+      });
+      return false;
+    }
+    const restId = linked;
+
+    // Guard branch/product ownership & missing product BEFORE vendor I/O
+    const productRef = db.collection("products").doc(productId);
+    let initialProductSnap: any;
+    try {
+      initialProductSnap = await productRef.get();
+    } catch (err: any) {
+      console.warn(`[Petpooja Stock Push] Product read failed for ${productId}:`, err?.message || err);
+      return false;
+    }
+    if (!initialProductSnap.exists) {
+      console.warn(
+        `[Petpooja Stock Push] Product ${productId} does not exist — refusing stock push (no orphan/partial doc creation)`
+      );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `Stock push for item ${rawItemId} refused — product ${productId} does not exist at branch ${branchId}`,
+        branchId,
+      });
+      return false;
+    }
+    const prodData = initialProductSnap.data() || {};
+    // Require matching branch and vendor-item ownership BEFORE wire
+    if (!prodData.branchId || prodData.branchId !== branchId) {
+      console.warn(
+        `[Petpooja Stock Push] Product ${productId} missing or mismatched branch ownership (${prodData.branchId} vs ${branchId}) — refusing`
+      );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `Stock push for item ${rawItemId} refused — product ${productId} missing or mismatched branch ownership (${prodData.branchId} vs ${branchId})`,
+        branchId,
+      });
+      return false;
+    }
+    if (
+      (prodData.petpoojaItemId && String(prodData.petpoojaItemId) !== String(rawItemId)) ||
+      (prodData.itemId && String(prodData.itemId) !== String(rawItemId))
+    ) {
+      console.warn(
+        `[Petpooja Stock Push] Product ${productId} contradictory vendor-item ownership (${prodData.petpoojaItemId || prodData.itemId} vs ${rawItemId}) — refusing`
+      );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `Stock push for item ${rawItemId} refused — product ${productId} contradictory vendor-item ownership (${prodData.petpoojaItemId || prodData.itemId} vs ${rawItemId})`,
+        branchId,
+      });
+      return false;
     }
 
+    const requestInitiatedAt = Date.now();
     const petpoojaConfig = getPetpoojaConfig();
     const response = await fetch(petpoojaConfig.stockUrl, {
-            method: "POST",
-            // Loop: hung gateway held the function until platform timeout.
-            signal: AbortSignal.timeout(15_000),
+      method: "POST",
+      // Loop: hung gateway held the function until platform timeout.
+      signal: AbortSignal.timeout(15_000),
       headers: {
         "Content-Type": "application/json",
         // Legacy headers (Content_key + Bearer) AND the documented
@@ -187,8 +501,8 @@ export async function pushItemStockToPetpooja(
         // scalar + array item id) — same values, whichever the POS reads.
         rest_id: restId,
         restID: restId,
-        item_id: itemId,
-        itemID: [itemId],
+        item_id: rawItemId,
+        itemID: [rawItemId],
         in_stock: inStock ? 1 : 0,
         inStock: inStock,
         type: "item",
@@ -212,12 +526,161 @@ export async function pushItemStockToPetpooja(
         source: "petpooja",
         severity: "high",
         message:
-          `Petpooja stock push rejected/unreachable — branch ${branchId} item ${itemId} inStock=${inStock} ` +
+          `Petpooja stock push rejected/unreachable — branch ${branchId} item ${rawItemId} inStock=${inStock} ` +
           `(HTTP ${response.status}${result?.message ? `: ${result.message}` : ""})`,
         branchId,
       });
+      return false;
     }
-    return acked;
+
+    // On acknowledged live POS success, atomically verify version/precondition and commit
+    const initialUpdateTime = initialProductSnap.updateTime;
+    let committed = false;
+    let conflictReason: string | null = null;
+
+    if (db && typeof (db as any).runTransaction === "function") {
+      try {
+        const txOutcome = await (db as any).runTransaction(async (tx: any) => {
+          const freshSnap = await tx.get(productRef);
+          if (!freshSnap.exists) {
+            return "missing";
+          }
+          const freshData = freshSnap.data() || {};
+          if (!freshData.branchId || freshData.branchId !== branchId) {
+            return "ownership_mismatch";
+          }
+          if (
+            (freshData.petpoojaItemId && String(freshData.petpoojaItemId) !== String(rawItemId)) ||
+            (freshData.itemId && String(freshData.itemId) !== String(rawItemId))
+          ) {
+            return "ownership_mismatch";
+          }
+
+          // Strict version check against immutable initial snapshot:
+          // Check updateTime if available; check inStock conflict or updatedAt
+          const freshUpdateTime = freshSnap.updateTime;
+          const versionMatches =
+            initialUpdateTime && freshUpdateTime
+              ? typeof initialUpdateTime.isEqual === "function"
+                ? initialUpdateTime.isEqual(freshUpdateTime)
+                : initialUpdateTime === freshUpdateTime
+              : true;
+
+          if (!versionMatches) {
+            return "stale_conflict";
+          }
+
+          const updateData = {
+            inStock: inStock,
+            lastPetpoojaStockPush: admin.firestore.FieldValue.serverTimestamp(),
+            lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+
+          if (initialUpdateTime) {
+            try {
+              tx.update(productRef, updateData, { lastUpdateTime: initialUpdateTime });
+            } catch {
+              tx.update(productRef, updateData);
+            }
+          } else {
+            tx.update(productRef, updateData);
+          }
+          return "committed";
+        });
+
+        if (txOutcome === "committed") {
+          committed = true;
+        } else {
+          conflictReason = txOutcome;
+        }
+      } catch (txErr: any) {
+        console.warn(`[Petpooja Stock Push] Transaction commit failed for ${productId}:`, txErr?.message || txErr);
+        conflictReason = txErr?.message || "transaction_failed";
+      }
+    } else {
+      // Fallback path without runTransaction
+      try {
+        const freshSnap = await productRef.get();
+        if (!freshSnap.exists) {
+          conflictReason = "missing";
+        } else {
+          const freshData = freshSnap.data() || {};
+          if (!freshData.branchId || freshData.branchId !== branchId) {
+            conflictReason = "ownership_mismatch";
+          } else {
+            const freshUpdateTime = freshSnap.updateTime;
+            const versionMatches =
+              initialUpdateTime && freshUpdateTime
+                ? typeof initialUpdateTime.isEqual === "function"
+                ? initialUpdateTime.isEqual(freshUpdateTime)
+                : initialUpdateTime === freshUpdateTime
+                : true;
+
+            if (!versionMatches) {
+              conflictReason = "stale_conflict";
+            } else {
+              const updateData = {
+                inStock: inStock,
+                lastPetpoojaStockPush: admin.firestore.FieldValue.serverTimestamp(),
+                lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              };
+              if (initialUpdateTime) {
+                await productRef.update(updateData, { lastUpdateTime: initialUpdateTime });
+              } else {
+                await productRef.update(updateData);
+              }
+              committed = true;
+            }
+          }
+        }
+      } catch (updateErr: any) {
+        conflictReason = updateErr?.message || "update_failed";
+      }
+    }
+
+    if (committed) {
+      return true;
+    }
+
+    if (conflictReason === "stale_conflict") {
+      console.warn(
+        `[Petpooja Stock Push] Newer stock toggle detected for ${productId} (version conflict) — skipping stale POS ack overwrite`
+      );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `Petpooja POS acknowledged stock push for item ${rawItemId} at branch ${branchId}, but local product ${productId} was updated concurrently — preserving newer local state, manual reconciliation required`,
+        branchId,
+      });
+      return false;
+    }
+
+    if (conflictReason === "missing") {
+      console.warn(`[Petpooja Stock Push] Product ${productId} vanished after POS ack — reconciliation warning`);
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `POS acknowledged stock push for item ${rawItemId} at branch ${branchId}, but local product ${productId} vanished — manual reconciliation required`,
+        branchId,
+      });
+      return false;
+    }
+
+    if (conflictReason === "ownership_mismatch") {
+      console.warn(`[Petpooja Stock Push] Product ${productId} ownership mismatch on write — refusing`);
+      return false;
+    }
+
+    console.error(`[Petpooja Stock Push] POS acknowledged but local write failed for ${productId}: ${conflictReason}`);
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Petpooja POS acknowledged stock push for item ${rawItemId} at branch ${branchId}, but local product write failed: ${conflictReason} — manual reconciliation required`,
+      branchId,
+    });
+    return false;
   } catch (err: any) {
     console.warn(`[Petpooja Stock Push Error] Failed for item ${itemId}:`, err.message);
     await captureErrorSnapshot({

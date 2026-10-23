@@ -133,7 +133,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     savedDocs["orders/kot_1"].petpoojaPushClaimedAt = Date.now();
 
     const pushed = await pushOrderToPetpooja("kot_1");
-    expect(pushed).toBe(true); // owner will complete or park — no stack-up
+    expect(pushed).toBe(false); // owner will complete or park — busy is not confirmed success
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -212,8 +212,10 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     const doc = savedDocs["orders/kot_1"];
     expect(doc.petpoojaStatus).toBe("synced");
     expect(doc.petpoojaSyncStatus).toBe("synced");
-    // The order is at the POS, so the KOT is stamped — but NOT invented an id.
-    expect(doc.kotPrinted).toBe(true);
+    // Finding 5: An ack without an order ID establishes relay acceptance (kotPushedAt),
+    // but does NOT manufacture physical printer evidence (kotPrinted).
+    expect(doc.kotPrinted).toBeUndefined();
+    expect(doc.kotPushedAt).toBeDefined();
     expect(doc.petpoojaOrderId).toBeUndefined();
     // The accepted-without-id shape is recorded explicitly, with the raw body.
     expect(doc.petpoojaAcceptedNoId).toBe(true);
@@ -237,7 +239,24 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     const doc = savedDocs["orders/kot_1"];
     expect(doc.petpoojaOrderId).toBe("PP-9911");
     expect(doc.petpoojaStatus).toBe("synced");
+    expect(doc.kotPrinted).toBeUndefined();
+    expect(doc.kotPushedAt).toBeDefined();
+  });
+
+  it("preserves genuine preexisting physical printer evidence across relay ACKs", async () => {
+    savedDocs["orders/kot_1"].kotPrinted = true;
+    savedDocs["orders/kot_1"].kotPrintedAt = 1600000000000;
+    fetchMock.mockResolvedValueOnce(posAck());
+
+    const pushed = await pushOrderToPetpooja("kot_1");
+    expect(pushed).toBe(true);
+    const doc = savedDocs["orders/kot_1"];
+    expect(doc.petpoojaOrderId).toBe("pp_ack_1");
+    expect(doc.petpoojaStatus).toBe("synced");
+    // Preexisting physical evidence must NOT be erased or clobbered
     expect(doc.kotPrinted).toBe(true);
+    expect(doc.kotPrintedAt).toBe(1600000000000);
+    expect(doc.kotPushedAt).toBeDefined();
   });
 
   it("a second push after an accepted-no-id ack DEDUPES instead of re-POSTing", async () => {
@@ -280,7 +299,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     const [a, b] = await Promise.all([first, second]);
 
     expect(await a).toBe(true);
-    expect(await b).toBe(true);
+    expect(await b).toBe(false); // second caller yielded to busy in-flight push
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(savedDocs["orders/kot_1"].petpoojaOrderId).toBe("pp_ack_1");
   });
