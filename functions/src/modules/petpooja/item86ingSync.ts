@@ -1210,47 +1210,55 @@ export async function handlePetpoojaWebhook(
     updateData.cancellationReason =
       payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS";
 
-    const payment = orderData.payment;
-    // Product decision 2026-09-23: kitchen-cancelled orders PARK a refund
-    // request for staff approval instead of auto-refunding. The old code
-    // POSTed the refund with no human and no branch check — a compromised
-    // or mistaken POS cancel moved real money silently.
-    const alreadyRefunded = orderData.refundStatus === "refunded" || payment?.refunded === true;
-    if (payment?.razorpayPaymentId && !alreadyRefunded) {
-      try {
-        const existing = await db
-          .collection("refunds")
-          .where("orderId", "==", orderId)
-          .where("status", "==", "PENDING")
-          .limit(1)
-          .get();
-        if (existing.empty) {
-          // DETERMINISTIC doc id: two concurrent replays of the same cancel
-          // used to both pass the `existing.empty` probe above (read-then-
-          // write race) and park TWO PENDING refunds for one payment. One
-          // order id can only ever name ONE POS-cancel refund request.
-          await db.collection("refunds").doc(`refund_pos_cancel_${orderId}`).set({
-            orderId,
-            branchId: orderData.branchId ?? null,
-            razorpayPaymentId: payment.razorpayPaymentId,
-            amountPaise:
-              typeof payment?.amount === "number"
-                ? payment.amount
-                : typeof orderData.pricing?.grandTotal === "number"
-                  ? Math.round(orderData.pricing.grandTotal * 100)
-                  : null,
-            reason: "POS_CANCELLED",
-            detail:
-              payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS",
-            status: "PENDING",
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          updateData["payment.refundStatus"] = "PENDING_APPROVAL";
+    // SECURITY (Audit P0): Unauthenticated (untrusted) callbacks must NEVER
+    // inject a refund into the staff approval queue.
+    if (!untrusted) {
+      const payment = orderData.payment;
+      // Product decision 2026-09-23: kitchen-cancelled orders PARK a refund
+      // request for staff approval instead of auto-refunding. The old code
+      // POSTed the refund with no human and no branch check — a compromised
+      // or mistaken POS cancel moved real money silently.
+      const alreadyRefunded = orderData.refundStatus === "refunded" || payment?.refunded === true;
+      if (payment?.razorpayPaymentId && !alreadyRefunded) {
+        try {
+          const existing = await db
+            .collection("refunds")
+            .where("orderId", "==", orderId)
+            .where("status", "==", "PENDING")
+            .limit(1)
+            .get();
+          if (existing.empty) {
+            // DETERMINISTIC doc id: two concurrent replays of the same cancel
+            // used to both pass the `existing.empty` probe above (read-then-
+            // write race) and park TWO PENDING refunds for one payment. One
+            // order id can only ever name ONE POS-cancel refund request.
+            await db.collection("refunds").doc(`refund_pos_cancel_${orderId}`).set({
+              orderId,
+              branchId: orderData.branchId ?? null,
+              razorpayPaymentId: payment.razorpayPaymentId,
+              amountPaise:
+                typeof payment?.amount === "number"
+                  ? payment.amount
+                  : typeof orderData.pricing?.grandTotal === "number"
+                    ? Math.round(orderData.pricing.grandTotal * 100)
+                    : null,
+              reason: "POS_CANCELLED",
+              detail:
+                payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS",
+              status: "PENDING",
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            updateData["payment.refundStatus"] = "PENDING_APPROVAL";
+          }
+        } catch (err) {
+          console.error(`Refund-request parking failed on Petpooja cancel for ${orderId}:`, (err as any)?.message || err);
         }
-      } catch (err) {
-        console.error(`Refund-request parking failed on Petpooja cancel for ${orderId}:`, (err as any)?.message || err);
       }
+    } else {
+      console.warn(
+        `[Petpooja Webhook] Unauthenticated cancellation for order ${orderId} — refund injection refused`
+      );
     }
   }
 

@@ -415,42 +415,56 @@ export const shadowfaxAdapter: ProviderAdapter = {
         }))
       : [{ id: "order", name: "Food order", price: orderValueInr(ctx), quantity: 1 }];
 
-    const res = await fetchProviderJson("shadowfax", `${shadowfaxBase}/api/v2/orders/`, {
-      method: "POST",
-      headers: shadowfaxHeaders(),
-      body: JSON.stringify({
-        client_code: clientCode,
-        order_details: {
-          order_value: orderValueInr(ctx),
-          paid: paidFlag(ctx),
-          ...(ctx.orderId ? { client_order_id: ctx.orderId } : {}),
-        },
-        pickup_details: {
-          // No invented locality: an empty city is "unknown", a hardcoded
-          // "Ahmedabad" geocodes a branch in another city to the wrong place
-          // (audit finding 6, the same defect the drop-side fix removed).
-          city: order.branchCity || "",
-          contact_number: pickupContactNumber,
-          name: (pickup.name || "Burgonomics Branch").slice(0, 120),
-          address: (pickupAddressBlock(order) || "Burgonomics Branch").slice(0, 350),
-          latitude: ctx.pickup.lat,
-          longitude: ctx.pickup.lng,
-        },
-        drop_details: {
-          // No invented locality: an empty city is "unknown", a hardcoded
-          // "Ahmedabad" geocodes a drop pin in another city to the wrong place
-          // (audit finding 6). Shadowfax's required-field set is UNVERIFIED
-          // (their doc URL 404s, the Postman collection is auth-gated).
-          city: dropAddr.city || "",
-          contact_number: contactDigits(drop.phone, ctx.customerPhone || ""),
-          name: (drop.name || "Customer").slice(0, 120),
-          address: (dropAddr.line || "Customer Delivery Address").slice(0, 350),
-          latitude: ctx.drop.lat,
-          longitude: ctx.drop.lng,
-        },
-        order_items: orderItems,
-      }),
-    });
+    let res: any;
+    try {
+      res = await fetchProviderJson("shadowfax", `${shadowfaxBase}/api/v2/orders/`, {
+        method: "POST",
+        headers: shadowfaxHeaders(),
+        body: JSON.stringify({
+          client_code: clientCode,
+          order_details: {
+            order_value: orderValueInr(ctx),
+            paid: paidFlag(ctx),
+            ...(ctx.orderId ? { client_order_id: ctx.orderId } : {}),
+          },
+          pickup_details: {
+            // No invented locality: an empty city is "unknown", a hardcoded
+            // "Ahmedabad" geocodes a branch in another city to the wrong place
+            // (audit finding 6, the same defect the drop-side fix removed).
+            city: order.branchCity || "",
+            contact_number: pickupContactNumber,
+            name: (pickup.name || "Burgonomics Branch").slice(0, 120),
+            address: (pickupAddressBlock(order) || "Burgonomics Branch").slice(0, 350),
+            latitude: ctx.pickup.lat,
+            longitude: ctx.pickup.lng,
+          },
+          drop_details: {
+            // No invented locality: an empty city is "unknown", a hardcoded
+            // "Ahmedabad" geocodes a drop pin in another city to the wrong place
+            // (audit finding 6). Shadowfax's required-field set is UNVERIFIED
+            // (their doc URL 404s, the Postman collection is auth-gated).
+            city: dropAddr.city || "",
+            contact_number: contactDigits(drop.phone, ctx.customerPhone || ""),
+            name: (drop.name || "Customer").slice(0, 120),
+            address: (dropAddr.line || "Customer Delivery Address").slice(0, 350),
+            latitude: ctx.drop.lat,
+            longitude: ctx.drop.lng,
+          },
+          order_items: orderItems,
+        }),
+      });
+    } catch (err: any) {
+      const message = String(err?.message || "");
+      if (/timed?\s?out|abort/i.test(message)) {
+        const ambiguous: any = new Error(
+          "Shadowfax create-order timed out with no response: the request may already have created an order - do not book another courier; reconcile by client_order_id before any rebook"
+        );
+        ambiguous.statusCode = 502;
+        ambiguous.code = "PROVIDER_BOOK_AMBIGUOUS";
+        throw ambiguous;
+      }
+      throw err;
+    }
     assertProviderOk(res, "shadowfax");
 
     const rawProviderOrderId = res.data?.sfx_order_id ?? res.data?.id ?? null;

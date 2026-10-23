@@ -98,7 +98,10 @@ service cloud.firestore {
         'deliveryOtp', 'deliveryOtpHash', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
         'refund', 'refundStatus', 'refundId', 'refundAmount',
         'pricing', 'pricingSnapshot', 'petpoojaOrderId', 'dispatchStatus',
-        'routeTransferStatus'
+        'routeTransferStatus', 'payment', 'totals', 'total', 'petpoojaAcceptedNoId',
+        'petpoojaStatus', 'petpoojaSyncStatus', 'kotPrinted', 'kotPrintedAt',
+        'dispatchProvider', 'dispatchOrderId', 'borzoOrderId', 'shadowfaxOrderId',
+        'porterOrderId'
       ];
     }
 
@@ -277,6 +280,9 @@ service cloud.firestore {
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
           'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus',
+          'petpoojaOrderId', 'petpoojaAcceptedNoId', 'petpoojaStatus', 'petpoojaSyncStatus',
+          'dispatchStatus', 'dispatchProvider', 'dispatchOrderId', 'borzoOrderId', 'shadowfaxOrderId',
+          'porterOrderId', 'refund', 'refunds',
           // Loop 7: delivery-OTP proof fields are server-owned (verifyDeliveryOtp
           // path only) — staff must not clear lockouts/attempts or rewrite the
           // hash to bypass handover proof via direct client update.
@@ -326,7 +332,8 @@ service cloud.firestore {
       allow update: if isBrandOwner() || (
         ownsBranch(branchId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'servicedRadiusKm'
+          'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'servicedRadiusKm',
+          'royaltyPercentage', 'packagingFee'
         ])
       );
       allow delete: if isBrandOwner();

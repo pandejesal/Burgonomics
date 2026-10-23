@@ -788,6 +788,33 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
         });
         continue;
       }
+      // Ambiguous booking (e.g. timeout/abort during create-order): the remote
+      // courier may already have been booked. Do NOT mark needsRebook: true
+      // or trigger auto-rebook (that would dispatch a second courier).
+      // Park under needs_reconciliation until staff or webhook confirms status.
+      if (err?.code === "PROVIDER_BOOK_AMBIGUOUS") {
+        attempts.push({
+          provider: quote.provider,
+          outcome: "error",
+          error: err.message,
+          at: Date.now(),
+        });
+        await orderDoc.ref.set(
+          {
+            dispatchStatus: "needs_reconciliation",
+            dispatchClaimedAt: null,
+            dispatchError: err.message,
+            dispatchAttempts: attempts,
+            needsRebook: false,
+            rebookTrigger: null,
+            ...(quoteSnapshot ? { dispatchQuote: quoteSnapshot } : {}),
+            ...buildReleasedBindingWrite(order, "dispatch_failed"),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        throw err;
+      }
       // Unexpected error = a bug or an order-level abort: release the claim
       // so staff can retry, then surface loudly (never half-book silently).
       await releaseClaimFailed(
