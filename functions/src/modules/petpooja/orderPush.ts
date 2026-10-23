@@ -472,20 +472,6 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
   // the belt-and-braces check for a config flipped after boot).
   assertLivePetpoojaContext(`KOT push for order ${orderId}`);
 
-  // Manual reconciliation guard: an order flagged as ambiguous or parked for
-  // reconciliation must NEVER be blindly re-pushed by direct callers or retry
-  // loops. Operator intervention is required to verify physical POS/kitchen state first.
-  if (
-    order.petpoojaStatus === "reconciliation_required" ||
-    order.petpoojaAmbiguousProcessing === true ||
-    (order.kotSyncFailed && (order.petpoojaStatus === "failed" || order.petpoojaStatus === "reconciliation_required"))
-  ) {
-    console.warn(
-      `[Petpooja KOT Push] Order ${orderId} is parked for manual reconciliation (reconciliation marker / kotSyncFailed) — blocking blind direct push until operator resolves ambiguity`
-    );
-    return false;
-  }
-
   // Idempotency: the relayed marker is written ONLY on a successful push, so
   // its presence IS the already-pushed marker — independent of the status
   // field, which later bookkeeping may have moved off "synced". Replays (a
@@ -503,6 +489,20 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       }) — deduped, no duplicate KOT`
     );
     return true;
+  }
+
+  // Manual reconciliation guard: an order flagged as ambiguous or parked for
+  // reconciliation must NEVER be blindly re-pushed by direct callers or retry
+  // loops. Operator intervention is required to verify physical POS/kitchen state first.
+  if (
+    order.petpoojaStatus === "reconciliation_required" ||
+    order.petpoojaAmbiguousProcessing === true ||
+    (order.kotSyncFailed && (order.petpoojaStatus === "failed" || order.petpoojaStatus === "reconciliation_required"))
+  ) {
+    console.warn(
+      `[Petpooja KOT Push] Order ${orderId} is parked for manual reconciliation (reconciliation marker / kotSyncFailed) — blocking blind direct push until operator resolves ambiguity`
+    );
+    return false;
   }
 
   // Transactional claim (finding: duplicate-KOT race): the read above is
@@ -573,6 +573,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       // catch below parks pending_retry for the retry worker — either way
       // this caller must not stack a second POST on top of it.
       // Honest failure/deferred return: busy is NOT confirmed success.
+      if (recentBusyPushes.size > 500) {
+        const now = Date.now();
+        for (const [k, v] of recentBusyPushes.entries()) {
+          if (now - v > 60_000) recentBusyPushes.delete(k);
+        }
+      }
       recentBusyPushes.set(orderId, Date.now());
       console.warn(
         `[Petpooja KOT Push] Order ${orderId} push already in flight — yielding to the owner`

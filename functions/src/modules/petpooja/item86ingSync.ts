@@ -331,6 +331,12 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
       },
       { merge: true }
     );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Petpooja 86ing webhook for product ${productId} rejected — ownership mismatch on write`,
+      branchId,
+    });
     return;
   }
 }
