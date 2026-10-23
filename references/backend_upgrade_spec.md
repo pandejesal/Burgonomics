@@ -1,6 +1,6 @@
 # BURGONOMICS BACKEND UPGRADE — MASTER SPECIFICATION (Layer 3 Reference)
 
-> **Architecture Target:** Firebase Cloud Functions v2 (Blaze in `asia-south1`), Cloud Firestore, Petpooja POS, Porter Delivery, Razorpay Route (Marketplace Royalty Split), Support Ticket Escalator, FCM, and Capacitor Native iOS/Android Apps.  
+> **Architecture Target:** Firebase Cloud Functions v2 (Blaze in `asia-south1`), Cloud Firestore, Petpooja POS, Multi-Provider Dispatch (Borzo / Shadowfax live; Porter **retired**, opt-in via `PORTER_ENABLED="true"`; restaurant in-house riders via `/orders/manualDispatch`), Razorpay Route (Marketplace Royalty Split), Support Ticket Escalator, FCM, and Capacitor Native iOS/Android Apps.
 > **Source of Truth:** Interpretable Context Methodology (ICM) — Authoritative Execution Plan.
 
 ---
@@ -11,14 +11,15 @@
 flowchart TD
     subgraph Clients["Native Mobile Clients (Capacitor iOS & Android)"]
         CA["Customer App (burgonomics-foundation-core)\n- Order Placement & Live Tracking\n- Ticket Raiser & Issue Reporting\n- Phone Auth & Address Management"]
-        PA["Partner POS & Admin App (burgonomics-partner)\n- Live Orders & KOT Stream\n- Dedicated 'Book Porter Rider' Screen\n- Support Ticket Resolution & Escalator\n- Dev Diagnostics Console"]
+        PA["Partner POS & Admin App (burgonomics-partner)\n- Live Orders & KOT Stream\n- Dispatch Panel (Borzo / Shadowfax / in-house rider)\n- Support Ticket Resolution & Escalator\n- Dev Diagnostics Console"]
     end
 
     subgraph FirebaseCloud["Firebase Platform (Blaze Plan - asia-south1 Mumbai)"]
         subgraph Functions["Firebase Cloud Functions v2 (TypeScript in /functions)"]
             F_RP["payments: createOrder / verifyPayment / autoRefund / razorpayRouteSplit"]
             F_PP["petpooja: syncMenu / pushOrder / petpoojaWebhook / stockWebhook"]
-            F_PR["porter: getQuote / bookRider / porterWebhook / rebookRider"]
+            F_DISP["dispatch (multi-provider): quote / book / rebook / cancel / borzo & shadowfax webhooks / manualDispatch"]
+            F_PR["porter (RETIRED, opt-in): getQuote / bookRider / porterWebhook / rebookRider — cold unless PORTER_ENABLED='true'"]
             F_TICKETS["tickets: createTicket / resolveTicket / escalateTicket / reminderCron"]
             F_FCM["notifications: dispatchFCM / audioAlarmTrigger"]
             F_AUTH["auth: setCustomClaims / verifyPhoneOtp"]
@@ -45,7 +46,8 @@ flowchart TD
     subgraph External["External Service Gateways"]
         GW_RP["Razorpay PG & Route API (Marketplace Transfers)"]
         GW_PP["Petpooja POS API (Menu V1 & Push Order V1)"]
-        GW_PR["Porter Logistics API (Quote & Dispatch)"]
+        GW_DISP["Borzo & Shadowfax Logistics APIs (Cheapest-Wins Dispatch)"]
+        GW_PR["Porter Logistics API (Quote & Dispatch) — RETIRED partner; reachable only when explicitly re-armed"]
         GW_FCM["Firebase Cloud Messaging (APNS & FCM)"]
         GW_DEV["Slack / Discord Webhooks (P0 Developer Alerts)"]
     end
@@ -54,21 +56,24 @@ flowchart TD
     CA -->|Native Razorpay SDK / Phone Auth| F_RP
     CA -->|Submit Issue / Raise Ticket| F_TICKETS
     CA -->|Live Order Tracking & Menu Stream| DB
-    PA -->|Book Porter Rider & Dispatch| F_PR
+    PA -->|Dispatch via Borzo / Shadowfax / in-house rider| F_DISP
+    PA -.->|Porter legacy / opt-in dispatch (if re-armed)| F_PR
     PA -->|Resolve / Refund / Escalate Ticket| F_TICKETS
     PA -->|Dev Diagnostics & Logs Review| DB
 
     %% Backend Flows
     F_RP <-->|Create Split Order / Verify HMAC / Route Reversal| GW_RP
     F_PP <-->|Hourly Ingestion / KOT Push / 86ing Webhooks| GW_PP
-    F_PR <-->|Fare Quotes & Driver Dispatch| GW_PR
+    F_DISP <-->|Parallel Quotes & Driver Dispatch| GW_DISP
+    F_PR <-->|Fare Quotes & Driver Dispatch (opt-in only)| GW_PR
     F_TICKETS -->|Alert Dev Team on Technical Failures| GW_DEV
     F_FCM -->|Push Triggers & Loud Audio Alerts| GW_FCM
 
     %% Database Writes
     F_RP -->|Update Payment Status & Split Ledger| COL_ORDERS
     F_PP -->|Update KOT / Kitchen Status| COL_ORDERS
-    F_PR -->|Update Porter Rider Tracking| COL_ORDERS
+    F_DISP -->|Update Dispatch Status & Rider Tracking| COL_ORDERS
+    F_PR -->|Update Porter Rider Tracking (retired provider; historical/opt-in orders)| COL_ORDERS
     F_TICKETS -->|Manage Ticket State & Audit Trail| COL_TICKETS
     CRON_PP -->|Update Menu Items & Modifiers| COL_BRANCHES
 ```
@@ -79,14 +84,14 @@ flowchart TD
 
 | Dimension | Decision | Detailed Rationale & Mechanism |
 | :--- | :--- | :--- |
-| **Backend Runtime** | **Firebase Cloud Functions v2 (Blaze, `asia-south1`)** | Native Firestore triggers, Cloud Scheduler, zero cross-cloud latency to Indian gateways (Petpooja, Porter, Razorpay). Decommissions Netlify Functions. |
+| **Backend Runtime** | **Firebase Cloud Functions v2 (Blaze, `asia-south1`)** | Native Firestore triggers, Cloud Scheduler, zero cross-cloud latency to Indian gateways (Petpooja, Borzo/Shadowfax dispatch, Razorpay). Decommissions Netlify Functions. |
 | **Client Target** | **Mobile Native Only (iOS & Android via Capacitor)** | Pure App Store & Play Store native builds with native `@capacitor/push-notifications`, `@capacitor/geolocation`, and native Razorpay SDK. |
 | **Project Structure** | **Root `/functions` Package** | Unified TypeScript backend codebase serving both Customer and Partner apps against a single Firestore database. |
 | **Franchise Royalty** | **Razorpay Route (Marketplace Split)** | Split at payment capture: Brand Royalty % (e.g. 5–10% in `branches/{id}.royaltyPercentage`) calculated on Food Subtotal retained in Brand Master Account; net branch revenue transferred to linked Branch Razorpay Account. Route auto-reverses on refunds. |
 | **Ticketing System** | **Customer Ticket Raiser + 3-Tier Escalator** | Customer raises ticket (auto-assigned to Branch Manager). Branch Manager resolves with full/partial refunds or coupons, or manually escalates to **Brand Owner**, **Support Team**, or **Developer Team**. 60-minute inactivity re-ping alert for branches. |
-| **Dev Diagnostics** | **Error Snapshots + Dev Console** | Dev Team tickets automatically capture failed API payloads, Razorpay IDs, Porter status, and Petpooja response codes with optional Slack/Discord webhook alerts for P0 bugs. |
+| **Dev Diagnostics** | **Error Snapshots + Dev Console** | Dev Team tickets automatically capture failed API payloads, Razorpay IDs, provider dispatch status, and Petpooja response codes with optional Slack/Discord webhook alerts for P0 bugs. |
 | **Petpooja POS** | **Event Push + Instant 86ing Webhook + Auto-Refund** | Pushes orders on payment confirmation with exponential backoff retries (1m, 5m, 30m). Item out-of-stock webhooks instantly disable items. Kitchen item rejection post-checkout triggers auto-refund of differential amount. |
-| **Porter Delivery** | **Real-Time Quote at Checkout + Partner 'Book Rider' Screen** | Customer pays exact live Porter quote at checkout. Branch Manager manually dispatches Porter rider from dedicated screen. Auto-alert on rider cancellation with 1-click rebook / in-house delivery fallback. Fare surge deltas absorbed by branch ledger. |
+| **Delivery Dispatch** | **Borzo / Shadowfax multi-provider router + restaurant in-house riders** | Customer pays the best live Borzo/Shadowfax quote at checkout (parallel quote fan-out, cheapest serviceable wins — see `delivery_routing.md`). Staff dispatch from the Partner dispatch panel; if no provider is serviceable or staff prefers it, the restaurant assigns its **own rider** via `POST /orders/manualDispatch` (`deliveryStatus: dispatched`, `dispatchType: "manual_branch_terminal"`) — that is a restaurant-driven delivery, never customer pickup. **Porter is retired: quotes, paid booking and rebooking only exist when the operator explicitly sets `PORTER_ENABLED="true"`; there is no history-only mode.** Rider-cancellation alerts carry a 1-click rebook / restaurant in-house delivery path; fare drift is staff-confirmed per the router. |
 | **Payments** | **Razorpay Dual Verification + COD + Auto-Refunds** | Server-created Razorpay orders, HMAC signature verification, idempotent webhooks (`order.paid`), full & partial refund support, and native COD handling. |
 | **Push Notifications** | **FCM + Firestore Notifications + Loud POS Audio** | High-priority native push notifications, in-app notification center, and looping audio alarm on Partner POS for new orders. |
 | **Auth & RBAC** | **Firebase Phone OTP (Customer) + Custom Claims (Partner)** | Secure SMS OTP for buyers; `brand_owner`, `branch_manager`, `kitchen_staff` role claims for POS & strict Firestore security rules. |
@@ -195,7 +200,8 @@ await razorpay.payments.refund(razorpayPaymentId, {
     };
     diagnostics?: {
       razorpayPaymentId?: string;
-      porterOrderId?: string;
+      porterOrderId?: string;      // kept for historical Porter tickets; provider is retired
+      // (the committed snapshot source union still lists "porter" so legacy rows parse)
       petpoojaOrderId?: string;
       errorStack?: string;
       clientAppVersion?: string;
@@ -224,7 +230,7 @@ await razorpay.payments.refund(razorpayPaymentId, {
 
 #### 4. Developer Team Diagnostics Pipeline
 - When a ticket is escalated to `developer_team`:
-  - The backend automatically attaches an `errorSnapshot` (capturing failed API payloads, Razorpay IDs, Porter status, Petpooja KOT responses, and client stack traces).
+  - The backend automatically attaches an `errorSnapshot` (capturing failed API payloads, Razorpay IDs, dispatch provider status, Petpooja KOT responses, and client stack traces; the source union still lists `"porter"` so legacy Porter rows keep parsing - the provider itself is retired).
   - Saved to `dev_error_snapshots/{id}`.
   - Dispatches an automated alert to the Developer Slack / Discord Webhook channel `#burgonomics-alerts-p0`.
   - Accessible directly in Partner App under `System Settings` → `Developer Diagnostics Console`.
@@ -256,23 +262,35 @@ await razorpay.payments.refund(razorpayPaymentId, {
 
 ---
 
-### 3.4. Porter Delivery Logistics & Partner 'Book Rider' Screen
+### 3.4. Delivery Dispatch & Partner 'Book Rider' Panel (Porter is retired)
+
+> **Retirement note (2026-10-22; code retirement in root `086b60d`, business sign-off date not recorded here).** Porter is cancelled as a dispatch
+> partner. Dispatch is **Borzo**, **Shadowfax** (multi-provider router, `delivery_routing.md`), or
+> the restaurant's **own rider** via `POST /orders/manualDispatch`
+> (`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"` — a restaurant-driven
+> delivery, never customer pickup). Porter code stays
+> dormant behind `PORTER_ENABLED=`**`"true"`** (default false; disabled bookings are refused before
+> any database/provider I/O) and re-arming is **full** re-activation (new quotes, paid booking,
+> rebooking) — there is **no history-only mode**. The Porter flow below is kept as the historical
+> record of the retired integration (the adapter, webhook HMAC, paste lane and reconciliation
+> remain real code paths).
 
 1. **Checkout Fare Quote (`getDeliveryQuote`)**:
-   - Fetches live Porter 2-Wheeler (Bike) fare from `api.porter.in/v1/orders/quote` based on branch pickup GPS to customer drop GPS.
-   - Displays exact fare at checkout.
+   - Multi-provider quote fan-out (Borzo / Shadowfax) based on branch pickup GPS to customer drop GPS; the cheapest serviceable quote is displayed at checkout.
+   - Historical Porter behaviour (retired): the live Porter 2-Wheeler (Bike) fare via `api.porter.in/v1/orders/quote`.
 
-2. **Dedicated 'Book Porter Rider' Screen in Partner POS**:
-   - When food preparation is nearly complete (`food_ready`), the Branch Manager opens the order on the **Delivery Dispatch Screen**.
+2. **Dispatch Panel in Partner POS**:
+   - When food preparation is nearly complete (`food_ready`), staff open the order on the **Delivery Dispatch Screen**.
    - Displays:
      - Delivery Address, Distance, Customer Phone
      - Food Ready Status
-     - Live Porter Fare Quote (e.g. ₹52)
-     - **[ 🛵 Book Porter Rider ]** Action Button
-     - **[ 👤 Assign In-House Rider ]** Fallback Button
+     - Best live provider quote (Borzo / Shadowfax; e.g. ₹52)
+     - **[ 🛵 Book Provider Rider ]** Action Button (Borzo / Shadowfax)
+     - **[ 👤 Assign In-House Rider ]** Action Button - the restaurant's own rider, never customer pickup
+   - Porter instructions/button appear only if the operator has explicitly re-armed Porter.
 
-3. **Porter Webhook & Driver Tracking (`porterWebhook`)**:
-   - Verifies HMAC signature with `PORTER_WEBHOOK_SECRET`.
+3. **Provider Webhook & Driver Tracking (Borzo / Shadowfax first; Porter historical)**:
+   - Each provider webhook verifies its own secret (normalized dispatch router per `delivery_routing.md`; the retired Porter webhook verified HMAC with `PORTER_WEBHOOK_SECRET`).
    - Event updates:
      - `DRIVER_ALLOCATED` → Stores driver name, phone, vehicle number, and live tracking URL.
      - `ARRIVED_AT_PICKUP` → Alerts Partner POS with audio chime ("Rider has arrived at store").
@@ -280,10 +298,10 @@ await razorpay.payments.refund(razorpayPaymentId, {
      - `DELIVERED` → Sets `status.kind = "delivered"`.
 
 4. **Rider Cancellation & No-Show Resilience**:
-   - If Porter sends `RIDER_CANCELLED` or `NO_RIDERS_FOUND`:
+   - If a provider sends `RIDER_CANCELLED` / `NO_RIDERS_FOUND` (or no provider is serviceable):
      - Sets `orders/{id}.deliveryStatus = "rider_cancelled"`.
-     - Displays high-priority banner on Partner POS with **[ 🔄 Re-book Porter ]** or **[ 🛵 Switch to In-House Delivery ]**.
-     - Any fare surge delta during re-booking is absorbed by branch ledger.
+     - Displays high-priority banner on Partner POS with **[ 🔄 Re-book Provider ]** or **[ 🛵 Assign In-House Rider ]**.
+      - Any fare delta during re-booking is staff-confirmed per the router; an in-house assignment carries no external fare.
 
 ---
 
@@ -325,8 +343,11 @@ PETPOOJA_ACCESS_TOKEN=xxxxxxxx
 PETPOOJA_MENU_URL=https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1
 PETPOOJA_ORDER_URL=https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1
 
-# Porter Logistics
-PORTER_ENABLED=true
+# Dispatch Delivery Providers (Porter is RETIRED)
+# Porter stays dormant unless an operator explicitly re-arms it with
+# PORTER_ENABLED="true"; that re-arms FULL dispatch (new quotes, paid booking,
+# rebooking) - there is no history-only mode.
+PORTER_ENABLED=false
 PORTER_API_KEY=prt_live_xxxxxxxx
 PORTER_CUSTOMER_ID=cust_xxxxxxxx
 PORTER_WEBHOOK_SECRET=prt_whsec_xxxxxxxx
@@ -352,7 +373,7 @@ MOCK_PETPOOJA_POS=false
 - [x] Implement sandbox mock engine for all external APIs so smoke tests pass without live keys.
 
 ### Stage 2: Authoritative Server Pricing, Razorpay Route & Split Settlement
-- [x] Build `pricing.engine.ts` supporting Petpooja MRP, 5% GST, loyalty points, coupons, and Porter delivery fee.
+- [x] Build `pricing.engine.ts` supporting Petpooja MRP, 5% GST, loyalty points, coupons, and the delivery fee (from the multi-provider dispatch quote; historical: Porter's rate card).
 - [x] Implement `createRazorpayOrder` and `verifyRazorpayPayment` with timing-safe HMAC validation.
 - [x] Implement **Razorpay Route** marketplace transfers splitting Brand Royalty % vs Branch net earnings.
 - [x] Implement `razorpayWebhook` idempotent receiver and auto-refund / split reversal triggers.
@@ -369,11 +390,16 @@ MOCK_PETPOOJA_POS=false
 - [x] Implement `pushOrderToPetpooja` upon payment confirmation with retry queue (1m, 5m, 30m).
 - [x] Implement `petpoojaWebhook` for real-time kitchen state transitions (`accepted`, `food_ready`, `cancelled`) and partial auto-refunds.
 
-### Stage 5: Porter Delivery Logistics & Partner 'Book Rider' Screen
-- [x] Build Porter Quote API client for live checkout delivery fare calculations.
-- [x] Implement `bookPorterRider` Cloud Function invoked by the Partner App.
-- [x] Implement `porterWebhook` tracking driver allocation, pickup, in-transit, and delivery completion.
-- [x] Add 'Book Rider' and 'Assign In-House' fallback UI states to Partner POS with rider cancellation auto-alerts.
+### Stage 5: Delivery Logistics & Partner 'Book Rider' Panel (historical record)
+
+> Historical stage record: Stage 5 was executed while Porter was the only API provider; Porter has
+> since been retired and replaced by the multi-provider router (`delivery_routing.md`) plus
+> restaurant in-house riders. The `[x]` items below are not a current requirement list.
+
+- [x] Build Porter Quote API client for live checkout delivery fare calculations (retired provider; code dormant behind `PORTER_ENABLED="true"`).
+- [x] Implement `bookPorterRider` Cloud Function invoked by the Partner App (now refuses `409 PORTER_RETIRED` unless Porter is re-armed).
+- [x] Implement `porterWebhook` tracking driver allocation, pickup, in-transit, and delivery completion (key-authenticated historical callbacks still accepted).
+- [x] Add 'Book Rider' and 'Assign In-House' UI states to Partner POS with rider cancellation auto-alerts (now targets Borzo / Shadowfax / in-house).
 
 ### Stage 6: Push Notifications & Capacitor Mobile Hardening
 - [x] Implement `dispatchFCM` Cloud Function targeting `order_{id}`, `branch_{id}`, `brand`, and `support_ticket_{id}` topics.
@@ -383,4 +409,4 @@ MOCK_PETPOOJA_POS=false
 ### Stage 7: Security Verification & Final Smoke Gate
 - [x] Run `npx tsc --noEmit` across `/functions`, `burgonomics-foundation-core`, and `burgonomics-partner`.
 - [x] Verify Firestore Security Rules against custom claims (`brand_owner`, `branch_manager`, `cashier`).
-- [x] Execute end-to-end sandbox purchase flow: Cart → Realtime Porter Quote → Razorpay Route Split Payment → Petpooja KOT Push → Partner Book Rider → Ticket Creation → Escalation to Dev Team.
+- [x] Execute end-to-end sandbox purchase flow: Cart → Realtime provider Quote → Razorpay Route Split Payment → Petpooja KOT Push → Partner Book Rider → Ticket Creation → Escalation to Dev Team (historical run while Porter was the API provider; the dispatch leg today runs through Borzo / Shadowfax / in-house).

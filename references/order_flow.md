@@ -40,8 +40,8 @@ not customer-facing state codes.
 
 1. **🛵 Delivery**:
    - Requires verified street address and GPS coordinates.
-   - Triggers a real-time courier fee quote at checkout (multi-provider dispatch: Borzo / Shadowfax / Porter, cheapest serviceable wins — see `references/delivery_routing.md`; providers without credentials are skipped, not simulated). Delivery is free above a ₹499 food total (`FREE_DELIVERY_THRESHOLD`), otherwise a flat fee applies.
-   - Partner POS features a dedicated "Book Porter Rider" screen to dispatch the courier upon reaching `ready`.
+   - Triggers a real-time courier fee quote at checkout (multi-provider dispatch: Borzo / Shadowfax, cheapest serviceable wins — see `references/delivery_routing.md`; providers without credentials are skipped, not simulated. Porter is **retired**: it only participates if an operator explicitly re-arms it with `PORTER_ENABLED="true"`, which re-arms FULL dispatch — there is no history-only mode). Delivery is free above a ₹499 food total (`FREE_DELIVERY_THRESHOLD`), otherwise a flat fee applies.
+   - Partner POS features a dispatch screen (Borzo / Shadowfax) to dispatch the courier upon reaching `ready`; the restaurant may instead assign its own in-house rider via `POST /orders/manualDispatch` (`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"`) — a restaurant-driven delivery, never customer pickup.
 2. **🛍️ Takeaway**:
    - Customer chooses pickup outlet and sees dynamic preparation ETA (e.g. 10–15 mins).
    - No pickup PIN is generated or displayed. The tracking screen shows the real order reference (`orderNumber` / `shortCode`) for counter collection. The only 4-digit secret in the system is the **delivery** handover OTP (`deliveryOtpHash`), which applies to delivery orders only.

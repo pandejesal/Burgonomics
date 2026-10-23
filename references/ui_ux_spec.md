@@ -13,7 +13,7 @@
 Burgonomics is a 100% Pure Vegetarian QSR (Quick Service Restaurant) mobile application inspired by the clean, high-conversion, food-first interface of **La Pino'z Pizza**, adapted into Burgonomics' signature **Forest Green & Vibrant Orange** visual identity.
 
 The application serves three distinct fulfillment modes:
-1. **🛵 Delivery**: Real-time address validation, nearest outlet auto-routing, dynamic delivery fee & free delivery threshold (>₹499), Porter dispatch integration, live driver status tracking.
+1. **🛵 Delivery**: Real-time address validation, nearest outlet auto-routing, dynamic delivery fee & free delivery threshold (>₹499), multi-provider dispatch router (Borzo / Shadowfax live; restaurant in-house riders via `POST /orders/manualDispatch` [`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"`, not customer pickup]; Porter retired, dormant behind `PORTER_ENABLED="true"`), live driver status tracking.
 2. **🛍️ Takeaway**: Store pickup with dynamic counter ETA, outlet directions, 4-digit pickup security PIN, and ready-for-pickup notifications.
 3. **🍽️ Dine-In**: Frictionless in-store ordering with zero table selection complexity, routing orders directly to the store POS/KOT with an in-store order token.
 
@@ -274,7 +274,7 @@ Clean, structured, single-page accordion/card checkout flow:
   - Step 1: `Order Placed & Confirmed` (POS Acknowledged)
   - Step 2: `Grilling in Kitchen` (Animated burger flame illustration)
   - Step 3:
-    - *For Delivery*: `Out for Delivery with Porter` (Driver name, phone icon, vehicle number)
+    - *For Delivery*: `Out for Delivery` (Rider name, phone icon, vehicle number — Borzo / Shadowfax / in-house rider; historical Porter wording)
     - *For Takeaway*: `Ready for Pickup at Counter` (Prominent 4-Digit Pickup PIN: `7 4 1 9`)
     - *For Dine-In*: `Order Ready at Counter / Dine-In Table`
   - Step 4: `Delivered / Order Enjoyed`
