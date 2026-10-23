@@ -74,11 +74,34 @@ export async function sendFcmMessage(message: admin.messaging.Message, opts: { c
   }
 }
 
+/** Profile arrays are a fan-out index, not proof that a token still belongs to a UID. */
+async function tokensOwnedByRecipient(tokens: string[], recipientUid: string): Promise<string[]> {
+  if (!recipientUid) return [];
+  try {
+    const refs = tokens.map(token => db.collection("device_tokens").doc(token));
+    const snapshots = await withTimeout(db.getAll(...refs));
+    const owned = new Set(
+      snapshots
+        .filter(snapshot => snapshot.exists && snapshot.data()?.userId === recipientUid)
+        .map(snapshot => snapshot.id),
+    );
+    return tokens.filter(token => owned.has(token));
+  } catch {
+    // No token, UID, or raw Firestore error in logs. Unverified destinations are
+    // withheld; this is not permission to prune a newly rebound user's token.
+    console.warn("[FCM] Recipient token ownership lookup failed; destinations withheld");
+    return [];
+  }
+}
+
 /**
  * Sends a multicast FCM message to a list of device tokens, and automatically
  * prunes unregistered or invalid tokens from the user's document in Firestore.
  * Fail-closed for critical notifications: throws on total failure so callers
- * can handle retry/alerting.
+ * can handle retry/alerting. Recipient-bound sends verify the current ownership
+ * ledger immediately before each chunk. This read and the external send are not
+ * atomic; it is not a guarantee against rebinds after that read. Omitted UID is
+ * the existing trusted-server generic multicast contract, not a recipient send.
  */
 export async function sendMulticastFcm(
   tokens: string[],
@@ -113,10 +136,15 @@ export async function sendMulticastFcm(
   try {
     if (messaging && typeof messaging.sendEachForMulticast === "function") {
       for (const chunk of chunks) {
+        const destinations = userId === undefined
+          ? chunk
+          : await tokensOwnedByRecipient(chunk, userId);
+        failureCount += chunk.length - destinations.length;
+        if (destinations.length === 0) continue;
         const response: any = await withTimeout(
           messaging.sendEachForMulticast({
             ...payload,
-            tokens: chunk,
+            tokens: destinations,
           })
         );
         successCount += response.successCount;
@@ -130,7 +158,7 @@ export async function sendMulticastFcm(
               errorCode === "messaging/invalid-registration-token" ||
               errorCode === "messaging/invalid-argument"
             ) {
-              prunedTokens.push(chunk[idx]);
+              prunedTokens.push(destinations[idx]);
             }
           }
         });

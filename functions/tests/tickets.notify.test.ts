@@ -61,6 +61,16 @@ const hoisted = vi.hoisted(() => {
 
   const mockDb: any = {
     collection: (name: string) => colRef(name),
+    // Recipient-bound multicast verifies the user's tokens against the current
+    // device_tokens ledger with one bounded batch get; model that real API
+    // surface here (a fake without it would withhold every destination).
+    getAll: vi.fn(async (...refs: any[]) =>
+      refs.map((ref: any) => ({
+        id: ref.id,
+        exists: ref.path in store,
+        data: () => store[ref.path] || {},
+      }))
+    ),
     // The resolution lease (lane 04) claims ticket state transactionally; the
     // shim runs the closure against live refs like every other fake here.
     runTransaction: vi.fn(async (fn: any) =>
@@ -251,6 +261,8 @@ describe("ticket create -> escalate -> push flow (honest + PII-free)", () => {
 
   it("creates, escalates, resolves with a PII-free customer push", async () => {
     store["users/cust_flow"] = { fcmTokens: ["tok_flow"] };
+    // Registration writes the ownership ledger; without it the send is withheld.
+    store["device_tokens/tok_flow"] = { userId: "cust_flow" };
     const created: any = await createTicket({
       customerId: "cust_flow",
       customerName: "Asha Patel",
@@ -461,6 +473,7 @@ describe("badge set/clear (H18)", () => {
 
   it("markNotificationsRead flips inbox + pushes silent badge-0", async () => {
     store["users/u3"] = { fcmTokens: ["tok_u3"] };
+    store["device_tokens/tok_u3"] = { userId: "u3" };
     store["users/u3/notifications/a"] = { read: false };
     store["users/u3/notifications/b"] = { read: false };
     const n = await markNotificationsRead("u3");
@@ -474,6 +487,7 @@ describe("badge set/clear (H18)", () => {
 
   it("pushToCustomer truncates long bodies and carries parity payloads", async () => {
     store["users/u4"] = { fcmTokens: ["tok_u4"] };
+    store["device_tokens/tok_u4"] = { userId: "u4" };
     await pushToCustomer("u4", "T", `prefix ${"x".repeat(500)}`, { type: "t", ticketId: "k" });
     const last = multicastCalls[multicastCalls.length - 1];
     expect(last.notification.body.length).toBeLessThanOrEqual(120);
@@ -488,5 +502,33 @@ describe("user-safe error copy (H36)", () => {
     expect(toUserSafeMessage(raw)).toBe(USER_SAFE_ERROR_COPY.INTERNAL);
     expect(toUserSafeMessage(raw)).not.toContain("rk_live");
     expect(toUserSafeMessage(raw)).not.toContain("pay_12345");
+  });
+});
+
+describe("recipient ownership at send time (device_tokens ledger)", () => {
+  it("withholds a profile token with no ledger entry and keeps the message in the owner's inbox", async () => {
+    store["users/u_unledgered"] = { fcmTokens: ["tok_unledgered"] };
+    await pushToCustomer("u_unledgered", "T", "Body", { type: "t" });
+
+    // Unverifiable destination: never handed to the transport, never pruned.
+    expect(multicastCalls).toHaveLength(0);
+    expect(store["users/u_unledgered"].fcmTokens).toEqual(["tok_unledgered"]);
+    const inbox = Object.keys(store).filter((k) => k.startsWith("users/u_unledgered/notifications/"));
+    expect(inbox).toHaveLength(1);
+  });
+
+  it("withholds a token whose ledger owner is another account without mutating either profile", async () => {
+    store["users/u_victim"] = { fcmTokens: ["tok_rebound"] };
+    store["users/u_new_owner"] = { fcmTokens: ["tok_rebound"] };
+    store["device_tokens/tok_rebound"] = { userId: "u_new_owner" };
+
+    await pushToCustomer("u_victim", "T", "Body", { type: "t" });
+
+    expect(multicastCalls).toHaveLength(0);
+    expect(store["users/u_victim"].fcmTokens).toEqual(["tok_rebound"]);
+    expect(store["users/u_new_owner"].fcmTokens).toEqual(["tok_rebound"]);
+    expect(store["device_tokens/tok_rebound"].userId).toBe("u_new_owner");
+    const inbox = Object.keys(store).filter((k) => k.startsWith("users/u_victim/notifications/"));
+    expect(inbox).toHaveLength(1);
   });
 });
