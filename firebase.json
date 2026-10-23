@@ -23,10 +23,16 @@
     {
       "target": "burgonomics-app",
       "public": "burgonomics-foundation-core/dist/mobile",
+      "//ignore": "Explicit ignorelist, never a dotfile blanket. The previous \"**/.*\" excluded every dot path and .well-known is a dot DIRECTORY, so apple-app-site-association + assetlinks.json were one deploy path away from being dropped (App/Universal links then verify against nothing). No \"!\" negation either: firebase-tools forwards hosting.ignore straight to glob's ignore option, where \"!\" does not re-include. Verify with: node scripts/validate-mobile-hosting.cjs",
       "ignore": [
         "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
+        "**/node_modules/**",
+        "**/.firebase/**",
+        "**/.DS_Store",
+        "**/Thumbs.db",
+        "**/desktop.ini",
+        "**/*.log",
+        "**/*.local"
       ],
       "rewrites": [
         {
@@ -56,6 +62,21 @@
             { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
             { "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=(self)" },
             { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://checkout.razorpay.com https://*.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.razorpay.com https://*.razorpay.com https://*.googleapis.com https://*.gstatic.com https://*.firebaseio.com wss://*.firebaseio.com https://*.cloudfunctions.net; frame-src https://checkout.razorpay.com https://*.razorpay.com https://api.razorpay.com; frame-ancestors 'self'; object-src 'none'; base-uri 'self'" }
+          ]
+        },
+        {
+          "//": "JSON MIME for the association files. apple-app-site-association has no extension, so without this the catch-all X-Content-Type-Options: nosniff above applies to a non-JSON response type and iOS rejects it. Placed after the \"**\" rule so it deterministically wins for these two paths. Mirrors public/_headers + netlify.toml.",
+          "source": "/.well-known/apple-app-site-association",
+          "headers": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "Cache-Control", "value": "public, max-age=300" }
+          ]
+        },
+        {
+          "source": "/.well-known/assetlinks.json",
+          "headers": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "Cache-Control", "value": "public, max-age=300" }
           ]
         }
       ]
@@ -63,10 +84,16 @@
     {
       "target": "burgonomics-partner",
       "public": "burgonomics-partner/dist",
+      "//ignore": "Same explicit ignorelist rationale as the burgonomics-app target: no dotfile blanket, no negation. The partner app also serves .well-known.",
       "ignore": [
         "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
+        "**/node_modules/**",
+        "**/.firebase/**",
+        "**/.DS_Store",
+        "**/Thumbs.db",
+        "**/desktop.ini",
+        "**/*.log",
+        "**/*.local"
       ],
       "rewrites": [
         {
@@ -96,6 +123,21 @@
             { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
             { "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=(self)" },
             { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://checkout.razorpay.com https://*.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.razorpay.com https://*.razorpay.com https://*.googleapis.com https://*.gstatic.com https://*.firebaseio.com wss://*.firebaseio.com https://*.cloudfunctions.net; frame-src https://checkout.razorpay.com https://*.razorpay.com https://api.razorpay.com; frame-ancestors 'self'; object-src 'none'; base-uri 'self'" }
+          ]
+        },
+        {
+          "//": "JSON MIME for the association files. apple-app-site-association has no extension, so without this the catch-all X-Content-Type-Options: nosniff above applies to a non-JSON response type and iOS rejects it. Placed after the \"**\" rule so it deterministically wins for these two paths. Mirrors public/_headers + netlify.toml.",
+          "source": "/.well-known/apple-app-site-association",
+          "headers": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "Cache-Control", "value": "public, max-age=300" }
+          ]
+        },
+        {
+          "source": "/.well-known/assetlinks.json",
+          "headers": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "Cache-Control", "value": "public, max-age=300" }
           ]
         }
       ]
