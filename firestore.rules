@@ -662,6 +662,21 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Refund request identity receipts (razorpay.service.ts autoRefund) —
+    // server-only. Denied explicitly rather than left to the default-deny
+    // fallback: the document id is a hash of order/payment/request ids and
+    // carries money state, so no client lane may read or write it.
+    match /payment_refund_requests/{docId} {
+      allow read, write: if false;
+    }
+
+    // Dispatch pending-bind correlation tokens (dispatch.router.ts claim tx)
+    // — server-only. A client that could read these could forge the provider
+    // callback correlation proof, so deny every client access explicitly.
+    match /dispatch_correlation_map/{docId} {
+      allow read, write: if false;
+    }
+
     match /dev_error_snapshots/{snapshotId} {
       allow read: if isBrandOwner();
       allow create, update, delete: if false;
