@@ -666,13 +666,14 @@ service cloud.firestore {
     // server-only. Denied explicitly rather than left to the default-deny
     // fallback: the document id is a hash of order/payment/request ids and
     // carries money state, so no client lane may read or write it.
+    // Allows are additive: review any future overlapping wildcard rules too.
     match /payment_refund_requests/{docId} {
       allow read, write: if false;
     }
 
     // Dispatch pending-bind correlation tokens (dispatch.router.ts claim tx)
-    // — server-only. A client that could read these could forge the provider
-    // callback correlation proof, so deny every client access explicitly.
+    // — server-only. Keep correlation metadata out of client reads/writes;
+    // callbacks must still pass the provider authentication and binding checks.
     match /dispatch_correlation_map/{docId} {
       allow read, write: if false;
     }
