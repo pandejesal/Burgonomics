@@ -2,7 +2,7 @@ import * as crypto from "crypto";
 import { db } from "../../core/firebase";
 import { config, assertLiveDispatchContext } from "../../config/env";
 import { extractRiderGps } from "../dispatch/dispatch.webhooks";
-import { ACTIVE_DELIVERY_STATUSES } from "../dispatch/types";
+import { ACTIVE_DELIVERY_STATUSES, hasOwnedLiveBooking } from "../dispatch/types";
 import {
   timingSafeEqual,
   verifyPorterWebhookSignature,
@@ -288,6 +288,7 @@ function isManualBranchAssignmentActive(order: any): boolean {
  * stay assignable in-house.
  */
 function hasActiveProviderBinding(order: any): boolean {
+  if (hasOwnedLiveBooking(order)) return true;
   const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(
     order?.deliveryStatus || ""
   );
@@ -486,7 +487,12 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
     // on top of a live manual assignment is two riders for one order.
     if (active && isManualBranchAssignmentActive(d)) return "in_house";
     // Another provider owns an active dispatch (porterOrderId absent = not ours).
-    if (active && d?.dispatchOrderId && !d?.porterOrderId) return "conflict";
+    // An owned live booking counts even when the deliveryStatus sidecar was not
+    // rewound (promoted correlated callback), so a stale "cancelled" sidecar
+    // can never let a second paid rider be booked on top.
+    if ((active || hasOwnedLiveBooking(d)) && d?.dispatchOrderId && !d?.porterOrderId) {
+      return "conflict";
+    }
     // The router holds a fresh generic claim — same 202 retry contract.
     if (isFreshGenericDispatchClaim(d)) {
       return "busy";

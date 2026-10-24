@@ -193,7 +193,9 @@ const limiter = rateLimit({
   skip: (req) => WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES.some((p) => req.path === p),
 });
 
-const app = express();
+// Exported for behavioural route tests (they drive the real middleware chain
+// with stubbed services instead of pinning handler source text).
+export const app = express();
 
 // Fail-closed production-key guard (see enforceProductionKeysOnce above): the
 // first request through this process boots the assert, so a misconfigured

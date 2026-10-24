@@ -93,7 +93,7 @@ vi.mock("../src/core/errors", async (importOriginal) => {
   };
 });
 
-import { dispatchBook } from "../src/modules/dispatch/dispatch.router";
+import { dispatchBook, dispatchCancel, dispatchRebook, savePorterManualBooking } from "../src/modules/dispatch/dispatch.router";
 import { handleDispatchWebhook } from "../src/modules/dispatch/dispatch.webhooks";
 import { computeHmacSha256 } from "../src/core/security";
 import { config } from "../src/config/env";
@@ -777,6 +777,118 @@ describe("F1 & F2: dispatch reconciliation & recovery stress tests", () => {
     expect(savedDocs["dispatch_order_map/BZ-ARRIVED-LATE-1"]).toMatchObject({
       orderId: "ord_corr_arrived",
       provider: "borzo",
+    });
+  });
+});
+
+describe("Promoted correlated booking owns the order despite the rider_cancelled sidecar", () => {
+  const ORDER = "ord_owned_binding";
+
+  async function promoteOwnedBooking() {
+    const token = "cr_owned_tok_1";
+    seedOrder(ORDER, {
+      dispatchStatus: "needs_reconciliation",
+      dispatchError: "Borzo create-order timed out after 20000ms",
+      deliveryStatus: "rider_cancelled",
+      needsRebook: false,
+      rebookTrigger: null,
+      branchId: "branch_ahmedabad_1",
+      dispatchGeneration: 1,
+      dispatchPendingCorrelation: {
+        token,
+        provider: "borzo",
+        generation: 1,
+        branchId: "branch_ahmedabad_1",
+        orderId: ORDER,
+      },
+    });
+    savedDocs[`dispatch_correlation_map/${token}`] = {
+      orderId: ORDER,
+      generation: 1,
+      provider: "borzo",
+      branchId: "branch_ahmedabad_1",
+    };
+
+    const payload = {
+      event: "ARRIVED_AT_PICKUP",
+      order_id: "BZ-OWNED-1",
+      client_order_id: token,
+      timestamp: Date.now(),
+    };
+    const raw = JSON.stringify(payload);
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const doc = docOf(ORDER);
+    expect(doc.dispatchStatus).toBe("dispatched");
+    expect(doc.dispatchProvider).toBe("borzo");
+    expect(doc.dispatchOrderId).toBe("BZ-OWNED-1");
+    // Protected delivery sidecar is deliberately not rewound.
+    expect(doc.deliveryStatus).toBe("rider_cancelled");
+    fetchCalls = [];
+  }
+
+  it("refuses a second claim and a rebook without any provider POST", async () => {
+    await promoteOwnedBooking();
+
+    const book = await dispatchBook({ orderId: ORDER });
+    expect(book).toMatchObject({
+      reused: true,
+      provider: "borzo",
+      providerOrderId: "BZ-OWNED-1",
+    });
+
+    const rebook = await dispatchRebook({ orderId: ORDER });
+    expect(rebook).toMatchObject({ reused: true, providerOrderId: "BZ-OWNED-1" });
+
+    expect(fetchCalls).toHaveLength(0);
+    const doc = docOf(ORDER);
+    expect(doc.dispatchStatus).toBe("dispatched");
+    expect(doc.dispatchOrderId).toBe("BZ-OWNED-1");
+    expect(doc.dispatchGeneration).toBe(1);
+    expect(doc.dispatchPendingCorrelation).toBeNull();
+  });
+
+  it("refuses a Porter paste over the live booking", async () => {
+    await promoteOwnedBooking();
+
+    await expect(
+      savePorterManualBooking({
+        orderId: ORDER,
+        porterOrderId: "PRTR-OTHER-77",
+        staffName: "Staff A",
+      })
+    ).rejects.toMatchObject({ statusCode: 409, code: "DISPATCH_EXISTS" });
+
+    const doc = docOf(ORDER);
+    expect(doc.dispatchProvider).toBe("borzo");
+    expect(doc.dispatchOrderId).toBe("BZ-OWNED-1");
+    expect(doc.porterOrderId).toBeUndefined();
+    expect(savedDocs["dispatch_order_map/PRTR-OTHER-77"]).toBeUndefined();
+  });
+
+  it("lets staff cancel the live booking and releases the binding", async () => {
+    await promoteOwnedBooking();
+
+    const res = await dispatchCancel({ orderId: ORDER, staffName: "Staff A" });
+    expect(res).toMatchObject({ success: true, provider: "borzo" });
+
+    const doc = docOf(ORDER);
+    expect(doc.dispatchStatus).toBe("cancelled_by_store");
+    expect(doc.dispatchProvider).toBeNull();
+    expect(doc.dispatchOrderId).toBeNull();
+    expect(doc.deliveryStatus).toBe("rider_cancelled");
+    expect(doc.dispatchReleasedBindings).toEqual([
+      expect.objectContaining({
+        provider: "borzo",
+        providerOrderId: "BZ-OWNED-1",
+        reason: "staff_cancelled",
+      }),
+    ]);
+
+    // Released for real: a second cancel has nothing left to release.
+    await expect(dispatchCancel({ orderId: ORDER, staffName: "Staff A" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "NOTHING_TO_CANCEL",
     });
   });
 });

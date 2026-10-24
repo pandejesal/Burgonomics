@@ -18,6 +18,7 @@ import {
 } from "../../core/geo";
 import {
   ACTIVE_DELIVERY_STATUSES,
+  hasOwnedLiveBooking,
   PROVIDER_PRIORITY,
   ProviderDispatchError,
   isProviderDispatchError,
@@ -130,6 +131,7 @@ function definedFields(o: Record<string, any>): Record<string, any> {
 }
 
 function isActiveDispatch(d: any): boolean {
+  if (hasOwnedLiveBooking(d)) return true;
   const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(d?.deliveryStatus);
   const hasProviderOrder = !!(d?.dispatchOrderId || d?.porterOrderId);
   return active && hasProviderOrder;
@@ -1485,7 +1487,7 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
       // An in-house rider owns this order: pasting a provider booking over a
       // live manual assignment would present two riders for one delivery.
       if (isInHouseAssignmentActive(d)) return { inHouse: true as const };
-      const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(d.deliveryStatus || "");
+      const active = isActiveDispatch(d);
       const holder = d.dispatchOrderId || d.porterOrderId;
       // Replay: already dispatched WITH this porter id → idempotent success.
       if (active && holder === pid) return { reuse: d };
@@ -1513,7 +1515,7 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
     // snapshot (the pre-read), no weaker guarantee than before.
     assertDispatchNotLocked(order);
     if (isInHouseAssignmentActive(order)) throw inHouseAssignmentError();
-    const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(order.deliveryStatus || "");
+    const active = isActiveDispatch(order);
     const holder = order.dispatchOrderId || order.porterOrderId;
     if (active && holder === pid) return storedDispatchSummary(order);
     if (active && holder && order.dispatchProvider !== "porter") {
@@ -1591,9 +1593,7 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
   const preTerminal = terminalDeliveryStatus(order);
   if (preTerminal) throw terminalError(preTerminal);
 
-  const deliveryStatus = order.deliveryStatus as string | undefined;
-  const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(deliveryStatus || "");
-  if (!active) {
+  if (!isActiveDispatch(order)) {
     const err: any = new Error("No active dispatch to cancel for this order.");
     err.statusCode = 409;
     err.code = "NOTHING_TO_CANCEL";
@@ -1636,9 +1636,7 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
       const terminal = terminalDeliveryStatus(d);
       if (terminal) return { terminal };
 
-      const curStatus = d.deliveryStatus as string | undefined;
-      const curActive = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(curStatus || "");
-      if (!curActive) return { notActive: true as const };
+      if (!isActiveDispatch(d)) return { notActive: true as const };
 
       const provider: ProviderId | null =
         (d.dispatchProvider as ProviderId) || (d.porterOrderId ? "porter" : null);

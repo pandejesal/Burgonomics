@@ -247,6 +247,9 @@ describe("autoRebookDispatchWorker (starvation/livelock fixes)", () => {
       needsRebook: true,
       rebookTrigger: "carrier_cancelled",
       deliveryStatus: "rider_cancelled",
+      // A real carrier cancel leaves the live booking's status/binding in
+      // place; the rebook flag is what marks it replaceable.
+      dispatchStatus: "dispatched",
       dispatchProvider: "borzo",
       borzoOrderId: "BZ-CANCELLED-1",
       dispatchOrderId: "BZ-CANCELLED-1",

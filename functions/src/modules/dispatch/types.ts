@@ -140,3 +140,28 @@ export type DispatchStatus =
   | "cancelled_by_store";
 
 export const ACTIVE_DELIVERY_STATUSES = ["dispatched", "in_transit", "driver_allocated"] as const;
+
+/**
+ * True while the order presents an un-released provider binding under a live
+ * `dispatchStatus`. Teardown paths null every binding field and settle
+ * `dispatchStatus` (`cancelled_by_store`/`dispatch_failed`), so a present
+ * provider/id here is an owned booking a provider can still resolve — whatever
+ * the `deliveryStatus` sidecar currently reads (a promoted correlated callback
+ * deliberately does not rewind it).
+ *
+ * A `needsRebook`-flagged order is the opposite: its carrier cancelled and the
+ * module is waiting to replace the booking, so the lingering binding must not
+ * block that replacement.
+ */
+export function hasOwnedLiveBooking(order: any): boolean {
+  const status = order?.dispatchStatus;
+  if (status !== "dispatched" && status !== "at_pickup") return false;
+  if (order?.needsRebook === true) return false;
+  return Boolean(
+    order?.dispatchOrderId ||
+      order?.dispatchProvider ||
+      order?.porterOrderId ||
+      order?.borzoOrderId ||
+      order?.shadowfaxOrderId
+  );
+}

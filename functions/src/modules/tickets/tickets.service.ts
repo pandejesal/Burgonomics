@@ -729,11 +729,15 @@ export async function resolveTicket(input: ResolveTicketInput) {
       .digest("hex")
       .slice(0, 32);
     const deterministicRequestId = `tkt_${ticketDigest}`;
+    // Identity payload: the operator's free-text notes are NOT part of it (they
+    // land on the resolution record below). A retry after a failed gateway call
+    // with edited notes must replay the SAME request instead of a 409 conflict.
+    const refundReason = `Ticket ${liveTicket.ticketNumber || ticketId} resolution: ${action}`;
     refundResult = await autoRefund({
       orderId: liveTicket.orderId,
       razorpayPaymentId,
       amountRupees: action === "partial_refund" ? amount : undefined,
-      reason: `Ticket ${liveTicket.ticketNumber || ticketId} resolution: ${notes}`,
+      reason: refundReason,
       refundRequestId: deterministicRequestId,
     });
   }
