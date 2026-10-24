@@ -1003,13 +1003,14 @@ export async function handlePetpoojaWebhook(
     orderDoc.id || orderDoc.ref?.id || String(orderId ?? posOrderId);
   orderId = resolvedOrderId;
 
+  const claimedBranch = scopedBranchId;
+
   // An unauthenticated caller (a callback admitted by SHAPE) must not steer
   // another outlet's order. The POS-id path already scopes by branch; this
   // covers the doc-id path, where the caller supplied our internal order id
   // directly: require a restID that resolves to a linked branch AND an order
   // that belongs to it.
   if (untrusted) {
-    const claimedBranch = restIdRaw ? await resolveBranchIdForRestId(restIdRaw) : null;
     const orderBranch = String(((orderDoc.data() || {}) as Record<string, any>).branchId ?? "");
     if (!claimedBranch || !orderBranch || orderBranch !== claimedBranch) {
       console.warn(
@@ -1047,7 +1048,11 @@ export async function handlePetpoojaWebhook(
 
   const rawStatus = payload.status || payload.order_status;
   const canonicalStatus = normalizePetpoojaStatus(rawStatus);
-  const orderData = (orderDoc.data() || {}) as Record<string, any>;
+  const docTarget = db.collection("orders").doc(resolvedOrderId);
+  const orderRef =
+    orderDoc.ref && typeof orderDoc.ref.get === "function"
+      ? orderDoc.ref
+      : docTarget;
 
   // ---- Replay defense (finding: duplicate POS redeliveries) ----
   // When the POS supplies an event id, an id already processed on this order
@@ -1062,134 +1067,6 @@ export async function handlePetpoojaWebhook(
         ? payload.event_id
         : null;
   const EVENT_FRESHNESS_MS = 15 * 60 * 1000;
-  if (eventId) {
-    const lastId = orderData.petpoojaWebhookEventId;
-    const lastRaw = orderData.petpoojaWebhookReceivedAtMs;
-    const lastMs =
-      typeof lastRaw === "number" && Number.isFinite(lastRaw)
-        ? lastRaw
-        : lastRaw && typeof lastRaw.toMillis === "function"
-          ? lastRaw.toMillis()
-          : 0;
-    if (lastId === eventId && lastMs > 0 && Date.now() - lastMs < EVENT_FRESHNESS_MS) {
-      console.warn(
-        `[Petpooja Webhook] Replay of event ${eventId} for order ${orderId} inside freshness window — ignored`
-      );
-      return;
-    }
-  }
-
-  // ---- Terminal-state guard (mirrors dispatch.webhooks delivery guard) ----
-  // POS retries replay stale kitchen updates OUT OF ORDER: a late "accepted"
-  // would resurrect a DELIVERED order as CONFIRMED, and a late CANCELLED
-  // would cancel a handed-over order AND park a refund — moving money on a
-  // replay. A terminal order (DELIVERED or CANCELLED) is never moved by any
-  // later event. Legacy bare-string statuses are honored too.
-  const currentStatus = orderData.status;
-  const currentCode =
-    typeof currentStatus === "string" ? currentStatus : (currentStatus?.code as string | undefined);
-  const currentKind =
-    typeof currentStatus === "object" && currentStatus ? (currentStatus.kind as string | undefined) : undefined;
-  const terminalNow =
-    (typeof currentStatus === "object" && currentStatus?.terminal === true) ||
-    currentKind === "completed" ||
-    currentKind === "cancelled" ||
-    (typeof currentCode === "string" &&
-      ["DELIVERED", "CANCELLED"].includes(currentCode.toUpperCase())) ||
-    orderData.deliveryStatus === "delivered";
-  if (terminalNow) {
-    console.warn(
-      `[Petpooja Webhook] Ignoring kitchen status "${String(rawStatus)}" for TERMINAL order ${orderId} ` +
-        `(current: ${currentCode || currentKind || "unknown"}) — no rewind, no refund side effects`
-    );
-    return;
-  }
-
-  const updateData: Record<string, any> = {
-    petpoojaKitchenStatus: rawStatus,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
-  // A callback is the only place a POS-assigned id can arrive when save_order
-  // echoed an empty one, so record what we learn here and promote the order out
-  // of `pending_retry` — otherwise the retry worker would keep re-pushing an
-  // order the POS has demonstrably already accepted.
-  //
-  // Gated on a CREDENTIALED callback and on an accepting status:
-  // - untrusted (shape-admitted) callers must not write `petpoojaOrderId` /
-  //   `synced`, because the retry worker and the outbound dedupe both key off
-  //   those — a forged value would silently drop a genuinely un-pushed order
-  //   from the retry queue. What they claim is recorded under a separate field.
-  // - a `Reject`/unknown status must not be promoted to a plain `synced` state
-  //   with no signal that the KOT was refused.
-  //
-  // PROVENANCE: only a POS-DERIVED id may become `petpoojaOrderId`. When the
-  // callback only carried our client reference (`orderID` per the documented
-  // contract), the order is known to the POS but we still hold no POS-issued id:
-  // record the existing accepted-no-id marker (truthful, keeps dedupe/retry from
-  // re-pushing) and NEVER stamp the client reference as a POS id.
-  const accepting = canonicalStatus !== "cancelled" && canonicalStatus !== "unknown";
-  // Only an id the lookup PROVED may be stamped. An explicit field is a claim:
-  // it is accepted only when it already equals this order's stored POS id.
-  const posDerivedId =
-    resolvedBy === "pos"
-      ? posOrderId
-      : explicitPosOrderId && orderData.petpoojaOrderId === explicitPosOrderId
-        ? explicitPosOrderId
-        : "";
-  if (
-    !untrusted &&
-    posDerivedId &&
-    orderData.petpoojaOrderId !== posDerivedId &&
-    accepting
-  ) {
-    updateData.petpoojaOrderId = posDerivedId;
-    updateData.petpoojaStatus = "synced";
-    updateData.petpoojaSyncStatus = "synced";
-  } else if (
-    !untrusted &&
-    accepting &&
-    !orderData.petpoojaOrderId &&
-    (resolvedBy === "client-callback" ||
-      (resolvedBy === "client-legacy" && callbackOrderId))
-  ) {
-    updateData.petpoojaAcceptedNoId = true;
-    updateData.petpoojaAcceptedNoIdAt = admin.firestore.FieldValue.serverTimestamp();
-    // Do NOT overwrite `petpoojaAcceptedNoIdAck`: that field holds the raw
-    // save_order response recorded at push time (kot-race pins it). A callback
-    // payload is a different audit fact.
-    updateData.petpoojaCallbackAck = JSON.stringify(payload).slice(0, 500);
-    updateData.petpoojaAcceptedNoIdSource =
-      resolvedBy === "client-callback" ? "callback_client_ref" : "callback_unproven_id";
-    updateData.petpoojaStatus = "synced";
-    updateData.petpoojaSyncStatus = "synced";
-    // Visibility only: an id the callback claimed but we could not prove is
-    // POS-issued. It never becomes `petpoojaOrderId` and never drives dedupe.
-    if (resolvedBy === "client-callback") {
-      updateData.petpoojaCallbackClientRef = callbackOrderId;
-      // Visibility only for an explicit POS-id claim: it never becomes
-      // petpoojaOrderId unless the order already held that proven id.
-      if (explicitPosOrderId) {
-        updateData.petpoojaCallbackOrderId = explicitPosOrderId;
-      }
-    } else if (callbackOrderId) {
-      updateData.petpoojaCallbackOrderId = callbackOrderId;
-    }
-  } else if (untrusted) {
-    const claimedId =
-      posDerivedId ||
-      (callbackOrderId && resolvedBy !== "client-callback" ? callbackOrderId : "");
-    if (claimedId && orderData.petpoojaOrderId !== claimedId) {
-      updateData.petpoojaCallbackOrderId = claimedId;
-    } else if (resolvedBy === "client-callback" && callbackOrderId) {
-      updateData.petpoojaCallbackClientRef = callbackOrderId;
-    }
-  }
-  if (eventId) {
-    // Replay marker rides on the order doc so a redelivery of the SAME event
-    // id short-circuits above (only while fresh).
-    updateData.petpoojaWebhookEventId = eventId;
-    updateData.petpoojaWebhookReceivedAtMs = Date.now();
-  }
 
   // Canonical object form (both apps + triggers accept it; bare strings with
   // lowercase codes break Delivery tracking).
@@ -1201,66 +1078,525 @@ export async function handlePetpoojaWebhook(
     cancelled: { code: "CANCELLED", label: "Cancelled", kind: "cancelled", terminal: true },
   };
 
-  if (canonicalStatus !== "unknown" && statusMeta[canonicalStatus]) {
-    updateData.status = statusMeta[canonicalStatus];
+  interface PlanStatusUpdateParams {
+    freshOrderData: Record<string, any>;
+    payload: any;
+    canonicalStatus: string;
+    rawStatus: any;
+    eventId: string | null;
+    eventFreshnessMs: number;
+    resolvedOrderId: string;
+    resolvedBy: "client-callback" | "client-legacy" | "pos" | null;
+    posOrderId: string;
+    explicitPosOrderId: string;
+    callbackOrderId: string;
+    claimedBranch: string | null;
+    untrusted: boolean;
+    hasExistingPendingRefund: boolean;
+    statusMeta: Record<string, { code: string; label: string; kind: string; terminal: boolean }>;
   }
 
-  if (canonicalStatus === "cancelled") {
-    updateData.cancelledAt = admin.firestore.FieldValue.serverTimestamp();
-    updateData.cancellationReason =
-      payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS";
+  type StatusPlanResult =
+    | { action: "untrusted_branch_mismatch"; claimedBranch: string | null; orderBranch: string }
+    | { action: "pos_binding_mismatch"; posOrderId: string; currentPosOrderId: string }
+    | { action: "replay_ignored"; eventId: string }
+    | { action: "terminal_ignored"; currentCode?: string; currentKind?: string }
+    | {
+        action: "apply";
+        updateData: Record<string, any>;
+        refundData: Record<string, any> | null;
+        untrustedCancellation: boolean;
+      };
 
-    // SECURITY (Audit P0): Unauthenticated (untrusted) callbacks must NEVER
-    // inject a refund into the staff approval queue.
-    if (!untrusted) {
-      const payment = orderData.payment;
-      // Product decision 2026-09-23: kitchen-cancelled orders PARK a refund
-      // request for staff approval instead of auto-refunding. The old code
-      // POSTed the refund with no human and no branch check — a compromised
-      // or mistaken POS cancel moved real money silently.
-      const alreadyRefunded = orderData.refundStatus === "refunded" || payment?.refunded === true;
-      if (payment?.razorpayPaymentId && !alreadyRefunded) {
-        try {
-          const existing = await db
-            .collection("refunds")
-            .where("orderId", "==", orderId)
-            .where("status", "==", "PENDING")
-            .limit(1)
-            .get();
-          if (existing.empty) {
-            // DETERMINISTIC doc id: two concurrent replays of the same cancel
-            // used to both pass the `existing.empty` probe above (read-then-
-            // write race) and park TWO PENDING refunds for one payment. One
-            // order id can only ever name ONE POS-cancel refund request.
-            await db.collection("refunds").doc(`refund_pos_cancel_${orderId}`).set({
-              orderId,
-              branchId: orderData.branchId ?? null,
-              razorpayPaymentId: payment.razorpayPaymentId,
-              amountPaise:
-                typeof payment?.amount === "number"
-                  ? payment.amount
-                  : typeof orderData.pricing?.grandTotal === "number"
-                    ? Math.round(orderData.pricing.grandTotal * 100)
-                    : null,
-              reason: "POS_CANCELLED",
-              detail:
-                payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS",
-              status: "PENDING",
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            updateData["payment.refundStatus"] = "PENDING_APPROVAL";
-          }
-        } catch (err) {
-          console.error(`Refund-request parking failed on Petpooja cancel for ${orderId}:`, (err as any)?.message || err);
+  const planStatusUpdate = (params: PlanStatusUpdateParams): StatusPlanResult => {
+    const {
+      freshOrderData,
+      payload,
+      canonicalStatus,
+      rawStatus,
+      eventId,
+      eventFreshnessMs,
+      resolvedOrderId,
+      resolvedBy,
+      posOrderId,
+      explicitPosOrderId,
+      callbackOrderId,
+      claimedBranch,
+      untrusted,
+      hasExistingPendingRefund,
+      statusMeta,
+    } = params;
+
+    // 1. Untrusted branch re-check on fresh snapshot:
+    // An unauthenticated callback must not steer an order re-linked concurrently to another branch
+    if (untrusted) {
+      const freshOrderBranch = String(freshOrderData.branchId ?? "");
+      if (!claimedBranch || !freshOrderBranch || freshOrderBranch !== claimedBranch) {
+        return {
+          action: "untrusted_branch_mismatch",
+          claimedBranch,
+          orderBranch: freshOrderBranch,
+        };
+      }
+    }
+
+    // 2. POS binding re-check on fresh snapshot:
+    // An order resolved purely by POS id must still be bound to that exact POS id
+    if (resolvedBy === "pos") {
+      const freshPosId = String(freshOrderData.petpoojaOrderId ?? "");
+      if (freshPosId !== posOrderId) {
+        return {
+          action: "pos_binding_mismatch",
+          posOrderId,
+          currentPosOrderId: freshPosId,
+        };
+      }
+    }
+
+    // 3. Replay defense on fresh snapshot
+    if (eventId) {
+      const lastId = freshOrderData.petpoojaWebhookEventId;
+      const lastRaw = freshOrderData.petpoojaWebhookReceivedAtMs;
+      const lastMs =
+        typeof lastRaw === "number" && Number.isFinite(lastRaw)
+          ? lastRaw
+          : lastRaw && typeof lastRaw.toMillis === "function"
+            ? lastRaw.toMillis()
+            : 0;
+      if (lastId === eventId && lastMs > 0 && Date.now() - lastMs < eventFreshnessMs) {
+        return { action: "replay_ignored", eventId };
+      }
+    }
+
+    // 4. Terminal-state guard on fresh snapshot
+    const currentStatus = freshOrderData.status;
+    const currentCode =
+      typeof currentStatus === "string" ? currentStatus : (currentStatus?.code as string | undefined);
+    const currentKind =
+      typeof currentStatus === "object" && currentStatus ? (currentStatus.kind as string | undefined) : undefined;
+    const terminalNow =
+      (typeof currentStatus === "object" && currentStatus?.terminal === true) ||
+      currentKind === "completed" ||
+      currentKind === "cancelled" ||
+      (typeof currentCode === "string" &&
+        ["DELIVERED", "CANCELLED"].includes(currentCode.toUpperCase())) ||
+      freshOrderData.deliveryStatus === "delivered";
+
+    if (terminalNow) {
+      return { action: "terminal_ignored", currentCode, currentKind };
+    }
+
+    // 5. Mutation & refund planning on fresh snapshot
+    const updateData: Record<string, any> = {
+      petpoojaKitchenStatus: rawStatus,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const accepting = canonicalStatus !== "cancelled" && canonicalStatus !== "unknown";
+    const posDerivedId =
+      resolvedBy === "pos"
+        ? (freshOrderData.petpoojaOrderId === posOrderId ? posOrderId : "")
+        : explicitPosOrderId && freshOrderData.petpoojaOrderId === explicitPosOrderId
+          ? explicitPosOrderId
+          : "";
+
+    if (
+      !untrusted &&
+      posDerivedId &&
+      freshOrderData.petpoojaOrderId !== posDerivedId &&
+      accepting
+    ) {
+      updateData.petpoojaOrderId = posDerivedId;
+      updateData.petpoojaStatus = "synced";
+      updateData.petpoojaSyncStatus = "synced";
+    } else if (
+      !untrusted &&
+      accepting &&
+      !freshOrderData.petpoojaOrderId &&
+      (resolvedBy === "client-callback" ||
+        (resolvedBy === "client-legacy" && callbackOrderId))
+    ) {
+      updateData.petpoojaAcceptedNoId = true;
+      updateData.petpoojaAcceptedNoIdAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.petpoojaCallbackAck = JSON.stringify(payload).slice(0, 500);
+      updateData.petpoojaAcceptedNoIdSource =
+        resolvedBy === "client-callback" ? "callback_client_ref" : "callback_unproven_id";
+      updateData.petpoojaStatus = "synced";
+      updateData.petpoojaSyncStatus = "synced";
+      if (resolvedBy === "client-callback") {
+        updateData.petpoojaCallbackClientRef = callbackOrderId;
+        if (explicitPosOrderId) {
+          updateData.petpoojaCallbackOrderId = explicitPosOrderId;
+        }
+      } else if (callbackOrderId) {
+        updateData.petpoojaCallbackOrderId = callbackOrderId;
+      }
+    } else if (untrusted) {
+      const claimedId =
+        posDerivedId ||
+        (callbackOrderId && resolvedBy !== "client-callback" ? callbackOrderId : "");
+      if (claimedId && freshOrderData.petpoojaOrderId !== claimedId) {
+        updateData.petpoojaCallbackOrderId = claimedId;
+      } else if (resolvedBy === "client-callback" && callbackOrderId) {
+        updateData.petpoojaCallbackClientRef = callbackOrderId;
+      }
+    }
+
+    if (eventId) {
+      updateData.petpoojaWebhookEventId = eventId;
+      updateData.petpoojaWebhookReceivedAtMs = Date.now();
+    }
+
+    if (canonicalStatus !== "unknown" && statusMeta[canonicalStatus]) {
+      updateData.status = statusMeta[canonicalStatus];
+    }
+
+    let refundData: Record<string, any> | null = null;
+    if (canonicalStatus === "cancelled") {
+      updateData.cancelledAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.cancellationReason =
+        payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS";
+
+      if (!untrusted) {
+        const payment = freshOrderData.payment;
+        const alreadyRefunded = freshOrderData.refundStatus === "refunded" || payment?.refunded === true;
+        if (payment?.razorpayPaymentId && !alreadyRefunded && !hasExistingPendingRefund) {
+          refundData = {
+            orderId: resolvedOrderId,
+            branchId: freshOrderData.branchId ?? null,
+            razorpayPaymentId: payment.razorpayPaymentId,
+            amountPaise:
+              typeof payment?.amount === "number"
+                ? payment.amount
+                : typeof freshOrderData.pricing?.grandTotal === "number"
+                  ? Math.round(freshOrderData.pricing.grandTotal * 100)
+                  : null,
+            reason: "POS_CANCELLED",
+            detail:
+              payload.cancel_reason || payload.reason || "Cancelled by kitchen operator in Petpooja POS",
+            status: "PENDING",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+          updateData["payment.refundStatus"] = "PENDING_APPROVAL";
         }
       }
-    } else {
-      console.warn(
-        `[Petpooja Webhook] Unauthenticated cancellation for order ${orderId} — refund injection refused`
-      );
     }
-  }
 
-  await orderDoc.ref.set(updateData, { merge: true });
+    return {
+      action: "apply",
+      updateData,
+      refundData,
+      untrustedCancellation: untrusted && canonicalStatus === "cancelled",
+    };
+  };
+
+  if (db && typeof (db as any).runTransaction === "function") {
+    const txOutcome = await (db as any).runTransaction(async (tx: any) => {
+      // 1. ALL READS FIRST: Fresh snapshot of the order document
+      const freshSnap = await tx.get(orderRef);
+      if (!freshSnap.exists) {
+        return { action: "not_found" as const };
+      }
+      const freshOrderData = (freshSnap.data() || {}) as Record<string, any>;
+
+      // Read existing pending refunds if cancellation (all reads before writes)
+      let hasExistingPendingRefund = false;
+      const refundDocRef = db.collection("refunds").doc(`refund_pos_cancel_${resolvedOrderId}`);
+
+      if (canonicalStatus === "cancelled" && !untrusted) {
+        const payment = freshOrderData.payment;
+        const alreadyRefunded = freshOrderData.refundStatus === "refunded" || payment?.refunded === true;
+        if (payment?.razorpayPaymentId && !alreadyRefunded) {
+          const existingRefundSnap = await tx.get(refundDocRef);
+          hasExistingPendingRefund = existingRefundSnap.exists;
+          if (!hasExistingPendingRefund) {
+            // NO try-catch: if index missing or datastore down, error propagates to abort tx (fail closed)
+            const pendingQuery = db
+              .collection("refunds")
+              .where("orderId", "==", resolvedOrderId)
+              .where("status", "==", "PENDING")
+              .limit(1);
+            const querySnap = await tx.get(pendingQuery);
+            if (querySnap && !querySnap.empty) {
+              hasExistingPendingRefund = true;
+            }
+          }
+        }
+      }
+
+      // 2. Evaluate plan on fresh snapshot
+      const plan = planStatusUpdate({
+        freshOrderData,
+        payload,
+        canonicalStatus,
+        rawStatus,
+        eventId,
+        eventFreshnessMs: EVENT_FRESHNESS_MS,
+        resolvedOrderId,
+        resolvedBy,
+        posOrderId,
+        explicitPosOrderId,
+        callbackOrderId,
+        claimedBranch,
+        untrusted,
+        hasExistingPendingRefund,
+        statusMeta,
+      });
+
+      if (plan.action !== "apply") {
+        return plan;
+      }
+
+      // 3. ALL WRITES AFTER ALL READS
+      if (plan.refundData) {
+        tx.set(refundDocRef, plan.refundData);
+      }
+      tx.set(orderRef, plan.updateData, { merge: true });
+
+      return plan;
+    });
+
+    // Logging & side-effects outside retryable transaction
+    if (txOutcome.action === "not_found") {
+      return;
+    }
+    if (txOutcome.action === "untrusted_branch_mismatch") {
+      console.warn(
+        `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} refused: restID ${restIdRaw || "absent"} resolves to ${
+          txOutcome.claimedBranch || "UNLINKED"
+        }, order belongs to ${txOutcome.orderBranch || "none"}`
+      );
+      try {
+        await db
+          .collection("unmatched_petpooja_orders")
+          .doc(`upo_${resolvedOrderId}`)
+          .set(
+            {
+              orderId: resolvedOrderId,
+              posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+              callbackOrderId: callbackOrderId || null,
+              rawStatus: payload.status || payload.order_status || null,
+              restId: restIdRaw || null,
+              status: "needs_review",
+              reason: `order belongs to branch ${txOutcome.orderBranch || "none"}, outside callback outlet ${txOutcome.claimedBranch || "UNLINKED"}`,
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+      } catch (err) {
+        console.warn(
+          `[Petpooja Webhook] Failed to park refused untrusted order ${resolvedOrderId}:`,
+          (err as any)?.message || err
+        );
+      }
+      return;
+    }
+    if (txOutcome.action === "pos_binding_mismatch") {
+      console.warn(
+        `[Petpooja Webhook] POS id ${txOutcome.posOrderId} no longer bound to order ${resolvedOrderId} (current: ${
+          txOutcome.currentPosOrderId || "none"
+        }) — ignored`
+      );
+      try {
+        await db
+          .collection("unmatched_petpooja_orders")
+          .doc(`upo_${txOutcome.posOrderId || resolvedOrderId}`)
+          .set(
+            {
+              orderId: resolvedOrderId,
+              posOrderId: txOutcome.posOrderId || null,
+              callbackOrderId: callbackOrderId || null,
+              rawStatus: payload.status || payload.order_status || null,
+              restId: restIdRaw || null,
+              status: "needs_review",
+              reason: `POS id ${txOutcome.posOrderId} binding mismatch in transaction (current: ${txOutcome.currentPosOrderId || "none"})`,
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+      } catch (err) {
+        console.warn(
+          `[Petpooja Webhook] Failed to park POS binding mismatch order ${resolvedOrderId}:`,
+          (err as any)?.message || err
+        );
+      }
+      return;
+    }
+    if (txOutcome.action === "replay_ignored") {
+      console.warn(
+        `[Petpooja Webhook] Replay of event ${txOutcome.eventId} for order ${resolvedOrderId} inside freshness window — ignored`
+      );
+      return;
+    }
+    if (txOutcome.action === "terminal_ignored") {
+      console.warn(
+        `[Petpooja Webhook] Ignoring kitchen status "${String(rawStatus)}" for TERMINAL order ${resolvedOrderId} ` +
+          `(current: ${txOutcome.currentCode || txOutcome.currentKind || "unknown"}) — no rewind, no refund side effects`
+      );
+      return;
+    }
+    if (txOutcome.action === "apply") {
+      if (txOutcome.untrustedCancellation) {
+        console.warn(
+          `[Petpooja Webhook] Unauthenticated cancellation for order ${resolvedOrderId} — refund injection refused`
+        );
+      }
+      return;
+    }
+
+    // CRITICAL: UNCONDITIONAL RETURN — NEVER FALL THROUGH TO PLAIN WRITE
+    return;
+  } else {
+    // Shim/no-tx fallback ONLY for datastores without runTransaction
+    const freshSnap =
+      orderRef && typeof orderRef.get === "function"
+        ? await orderRef.get()
+        : typeof docTarget.get === "function"
+          ? await docTarget.get()
+          : orderDoc;
+
+    if (!freshSnap?.exists) {
+      return;
+    }
+    const freshOrderData = (freshSnap.data() || {}) as Record<string, any>;
+
+    let hasExistingPendingRefund = false;
+    const refundDocRef = db.collection("refunds").doc(`refund_pos_cancel_${resolvedOrderId}`);
+
+    if (canonicalStatus === "cancelled" && !untrusted) {
+      const payment = freshOrderData.payment;
+      const alreadyRefunded = freshOrderData.refundStatus === "refunded" || payment?.refunded === true;
+      if (payment?.razorpayPaymentId && !alreadyRefunded) {
+        try {
+          const existingRefundSnap = await refundDocRef.get();
+          hasExistingPendingRefund = existingRefundSnap.exists;
+          if (!hasExistingPendingRefund) {
+            const pendingQuery = db
+              .collection("refunds")
+              .where("orderId", "==", resolvedOrderId)
+              .where("status", "==", "PENDING")
+              .limit(1);
+            const querySnap = await pendingQuery.get();
+            if (querySnap && !querySnap.empty) {
+              hasExistingPendingRefund = true;
+            }
+          }
+        } catch (err) {
+          console.error(
+            `Refund-request lookup failed on Petpooja cancel for ${resolvedOrderId}:`,
+            (err as any)?.message || err
+          );
+        }
+      }
+    }
+
+    const plan = planStatusUpdate({
+      freshOrderData,
+      payload,
+      canonicalStatus,
+      rawStatus,
+      eventId,
+      eventFreshnessMs: EVENT_FRESHNESS_MS,
+      resolvedOrderId,
+      resolvedBy,
+      posOrderId,
+      explicitPosOrderId,
+      callbackOrderId,
+      claimedBranch,
+      untrusted,
+      hasExistingPendingRefund,
+      statusMeta,
+    });
+
+    if (plan.action === "apply") {
+      if (plan.refundData) {
+        await refundDocRef.set(plan.refundData);
+      }
+      if (orderDoc.ref && typeof orderDoc.ref.set === "function") {
+        await orderDoc.ref.set(plan.updateData, { merge: true });
+      } else {
+        await docTarget.set(plan.updateData, { merge: true });
+      }
+      if (plan.untrustedCancellation) {
+        console.warn(
+          `[Petpooja Webhook] Unauthenticated cancellation for order ${resolvedOrderId} — refund injection refused`
+        );
+      }
+      return;
+    } else if (plan.action === "untrusted_branch_mismatch") {
+      console.warn(
+        `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} refused: restID ${restIdRaw || "absent"} resolves to ${
+          plan.claimedBranch || "UNLINKED"
+        }, order belongs to ${plan.orderBranch || "none"}`
+      );
+      try {
+        await db
+          .collection("unmatched_petpooja_orders")
+          .doc(`upo_${resolvedOrderId}`)
+          .set(
+            {
+              orderId: resolvedOrderId,
+              posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+              callbackOrderId: callbackOrderId || null,
+              rawStatus: payload.status || payload.order_status || null,
+              restId: restIdRaw || null,
+              status: "needs_review",
+              reason: `order belongs to branch ${plan.orderBranch || "none"}, outside callback outlet ${plan.claimedBranch || "UNLINKED"}`,
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+      } catch (err) {
+        console.warn(
+          `[Petpooja Webhook] Failed to park refused untrusted order ${resolvedOrderId}:`,
+          (err as any)?.message || err
+        );
+      }
+      return;
+    } else if (plan.action === "pos_binding_mismatch") {
+      console.warn(
+        `[Petpooja Webhook] POS id ${plan.posOrderId} no longer bound to order ${resolvedOrderId} (current: ${
+          plan.currentPosOrderId || "none"
+        }) — ignored`
+      );
+      try {
+        await db
+          .collection("unmatched_petpooja_orders")
+          .doc(`upo_${plan.posOrderId || resolvedOrderId}`)
+          .set(
+            {
+              orderId: resolvedOrderId,
+              posOrderId: plan.posOrderId || null,
+              callbackOrderId: callbackOrderId || null,
+              rawStatus: payload.status || payload.order_status || null,
+              restId: restIdRaw || null,
+              status: "needs_review",
+              reason: `POS id ${plan.posOrderId} binding mismatch in fallback (current: ${plan.currentPosOrderId || "none"})`,
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+      } catch (err) {
+        console.warn(
+          `[Petpooja Webhook] Failed to park POS binding mismatch order ${resolvedOrderId}:`,
+          (err as any)?.message || err
+        );
+      }
+      return;
+    } else if (plan.action === "replay_ignored") {
+      console.warn(
+        `[Petpooja Webhook] Replay of event ${plan.eventId} for order ${resolvedOrderId} inside freshness window — ignored`
+      );
+      return;
+    } else if (plan.action === "terminal_ignored") {
+      console.warn(
+        `[Petpooja Webhook] Ignoring kitchen status "${String(rawStatus)}" for TERMINAL order ${resolvedOrderId} ` +
+          `(current: ${plan.currentCode || plan.currentKind || "unknown"}) — no rewind, no refund side effects`
+      );
+      return;
+    }
+
+    return;
+  }
 }
