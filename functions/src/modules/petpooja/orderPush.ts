@@ -774,6 +774,17 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     let parked = false;
     const fallbackRetry = (order.petpoojaRetryCount || 0) + 1;
     let retryForSnapshot = fallbackRetry;
+    // TRANSPORT-AMBIGUITY (stress sweep 2026-10-24, K1): a POST whose fetch
+    // TIMED OUT / was Aborted after the request was written has an unknown
+    // KOT state — the POS cloud may already have registered the ticket.
+    // Parking it `pending_retry` re-POSTs the same paid order (a duplicate
+    // kitchen ticket). The crash lane (petpooja.scheduler) already parks
+    // this shape `reconciliation_required` with NO new POST; the in-process
+    // path now agrees. HTTP 5xx stays retryable on purpose — the origin
+    // provably did not process it cleanly (pinned by the retry-lifecycle
+    // suite).
+    const kotTransportAmbiguous =
+      err?.name === "TimeoutError" || err?.name === "AbortError";
     if (db && typeof (db as any).runTransaction === "function") {
       try {
         const outcome = await (db as any).runTransaction(async (tx: any) => {
@@ -789,6 +800,26 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
               { merge: true }
             );
             return "won";
+          }
+          // K1 stress sweep: transport-ambiguous POST (timeout/abort after
+          // request written) — the POS may already hold this KOT. Park for
+          // manual reconciliation, NO retry, NO retry-count burn.
+          if (kotTransportAmbiguous) {
+            tx.set(
+              orderDoc.ref,
+              {
+                petpoojaStatus: "reconciliation_required",
+                petpoojaSyncStatus: "reconciliation_required",
+                kotSyncFailed: true,
+                petpoojaAmbiguousProcessing: true,
+                lastPetpoojaError: err.message,
+                petpoojaPushClaimedAt: null,
+                petpoojaClaimedAt: null,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+            return "parked_ambiguous";
           }
           const freshRetry = (Number(data?.petpoojaRetryCount) || 0) + 1;
           retryForSnapshot = freshRetry;
@@ -808,7 +839,11 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
           return "parked";
         });
         if (outcome === "won") pushedByRacer = true;
-        if (outcome === "parked") parked = true;
+        // K1 reviewer fix: parked_ambiguous ALSO parked the doc (the
+        // transaction already committed reconciliation_required). Leaving
+        // `parked === false` let the plain fallback write below clobber a
+        // concurrent racer's successful push that landed after the tx.
+        if (outcome === "parked" || outcome === "parked_ambiguous") parked = true;
       } catch (txErr: any) {
         // Transactional write failed — fall back to the legacy write below.
         console.warn(
@@ -826,15 +861,26 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
 
     if (!parked) {
       await orderDoc.ref.set(
-        {
-          petpoojaStatus: "pending_retry",
-          petpoojaSyncStatus: "pending_retry",
-          petpoojaRetryCount: fallbackRetry,
-          lastPetpoojaError: err.message,
-          petpoojaPushClaimedAt: null,
-          petpoojaClaimedAt: null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
+        kotTransportAmbiguous
+          ? {
+              petpoojaStatus: "reconciliation_required",
+              petpoojaSyncStatus: "reconciliation_required",
+              kotSyncFailed: true,
+              petpoojaAmbiguousProcessing: true,
+              lastPetpoojaError: err.message,
+              petpoojaPushClaimedAt: null,
+              petpoojaClaimedAt: null,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }
+          : {
+              petpoojaStatus: "pending_retry",
+              petpoojaSyncStatus: "pending_retry",
+              petpoojaRetryCount: fallbackRetry,
+              lastPetpoojaError: err.message,
+              petpoojaPushClaimedAt: null,
+              petpoojaClaimedAt: null,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
         { merge: true }
       );
     }

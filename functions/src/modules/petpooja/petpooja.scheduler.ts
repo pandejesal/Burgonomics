@@ -434,17 +434,63 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
     try {
       const { captureErrorSnapshot } = await import("../../core/errors");
       for (const doc of exhaustedDocs) {
-        // kotSyncFailed is the visible flag: partner KDS reads Firestore (not
-        // the POS), so the kitchen still sees the order — what failed is the
-        // POS/billing sync, and the branch must enter the KOT manually.
-        await doc.ref.set(
-          {
-            petpoojaStatus: "failed",
-            kotSyncFailed: true,
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
+        // K2 stress sweep: re-read INSIDE a transaction before the dead-letter
+        // write. The scan snapshot is minutes old — a direct push or an
+        // in-flight worker may have synced this order meanwhile, and a plain
+        // `failed` merge over `synced` (plus its "enter manually" branch
+        // alert) would mint a duplicate kitchen ticket.
+        let deadLetterOutcome: "wrote" | "skipped" = "skipped";
+        if (db && typeof (db as any).runTransaction === "function") {
+          try {
+            deadLetterOutcome = await (db as any).runTransaction(async (tx: any) => {
+              const fresh = await tx.get(doc.ref);
+              const freshData = (fresh.exists ? fresh.data() : undefined) as any;
+              if (
+                freshData?.petpoojaOrderId ||
+                freshData?.petpoojaAcceptedNoId ||
+                freshData?.petpoojaStatus === "synced"
+              ) {
+                return "skipped" as const;
+              }
+              // kotSyncFailed is the visible flag: partner KDS reads Firestore (not
+              // the POS), so the kitchen still sees the order — what failed is the
+              // POS/billing sync, and the branch must enter the KOT manually.
+              tx.set(
+                doc.ref,
+                {
+                  petpoojaStatus: "failed",
+                  kotSyncFailed: true,
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                },
+                { merge: true }
+              );
+              return "wrote" as const;
+            });
+          } catch (txErr: any) {
+            logger.warn(
+              "[Petpooja Retry Worker] dead-letter recheck failed:",
+              txErr?.message || txErr
+            );
+            continue;
+          }
+        } else {
+          // R2 reviewer fix: with no transaction-capable db, the old default
+          // ("wrote") never actually wrote — the order stayed pending_retry
+          // forever while ops was already told "manual KOT entry required".
+          // Best-effort plain merge flip so KDS sees kotSyncFailed; racers
+          // could theoretically clobber a win here, but without runTransaction
+          // there is no safe alternative, and fail-closed beats silent-skip.
+          await doc.ref.set(
+            {
+              petpoojaStatus: "failed",
+              kotSyncFailed: true,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          deadLetterOutcome = "wrote";
+        }
+        if (deadLetterOutcome === "skipped") continue;
         await captureErrorSnapshot({
           source: "petpooja",
           severity: "high",
