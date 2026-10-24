@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
  * recovery attempt and bypasses the freshness reject.
  *
  * HONESTY LIMIT: in-process document store; mock gateway + mock Petpooja,
- * no network, no secret. Mirrors the harness of payments.webhook-stale-claim.
+ * no network, no secret. Harness mirrors webhook.replay.test.
  */
 const { mockDb, docs, writeLog, control } = vi.hoisted(() => {
   process.env.OTP_HMAC_SECRET = "test_otp_razorpay_stale_recovery";
