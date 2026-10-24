@@ -23,7 +23,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
  *
  * HONESTY LIMIT: in-process document store with optimistic-concurrency
  * transactions; live-gateway mode through a stubbed Razorpay client; no
- * network, no secret. Mirrors the harness of routeTransfers.lease-race.test.
+ * network, no secret. Harness mirrors payment-confirmation-concurrency.test.
  */
 const { mockDb, docs, writeLog, control } = vi.hoisted(() => {
   process.env.OTP_HMAC_SECRET = "test_otp_route_transfer_pair";
