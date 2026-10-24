@@ -59,3 +59,79 @@ export async function markOrderReconciliation(
     );
   }
 }
+
+export interface TerminalCaptureParkParams {
+  orderId: string;
+  razorpayPaymentId: string;
+  razorpayOrderId?: string | null;
+  amountPaise?: number | null;
+  reason: "capture_on_cancelled_order" | "capture_on_refunded_order" | string;
+  orderStatus?: string | null;
+  source?: string;
+  metadata?: Record<string, any>;
+}
+
+export function getTerminalCaptureParkDocId(razorpayPaymentId: string): string {
+  return `ump_term_${razorpayPaymentId}`;
+}
+
+export function buildTerminalCaptureParkPayload(
+  params: TerminalCaptureParkParams
+): Record<string, any> {
+  const {
+    orderId,
+    razorpayPaymentId,
+    razorpayOrderId,
+    amountPaise,
+    reason,
+    orderStatus,
+    source = "route_transfers_retry",
+    metadata,
+  } = params;
+
+  return {
+    eventId: `${source}_${razorpayPaymentId}`,
+    event: source,
+    razorpayPaymentId,
+    razorpayOrderId: razorpayOrderId || null,
+    orderId,
+    amount: typeof amountPaise === "number" ? amountPaise / 100 : null,
+    currency: "INR",
+    claimedOrderId: orderId,
+    receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+    status: "needs_review",
+    reason,
+    orderStatus: orderStatus || null,
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+export function buildOrderReconciliationPayload(
+  info: OrderReconciliationInfo
+): Record<string, any> {
+  return {
+    reconciliation: {
+      state: info.state,
+      reason: info.reason,
+      razorpayPaymentId: info.razorpayPaymentId || null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+  };
+}
+
+/**
+ * Deterministically parks a captured payment for a terminal order (cancelled or refunded)
+ * into `unmatched_payments` under a single stable document ID (`ump_term_${razorpayPaymentId}`).
+ * Non-tx utility: propagates errors so non-durable writes are not silently treated as successful.
+ */
+export async function parkTerminalPaymentCapture(
+  db: any,
+  params: TerminalCaptureParkParams
+): Promise<void> {
+  if (!params.razorpayPaymentId) return;
+  const docId = getTerminalCaptureParkDocId(params.razorpayPaymentId);
+  const payload = buildTerminalCaptureParkPayload(params);
+  await db.collection("unmatched_payments").doc(docId).set(payload, { merge: true });
+}
+
+
