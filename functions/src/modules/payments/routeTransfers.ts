@@ -92,7 +92,16 @@ export async function findExistingTransferForPayment(
   paymentId: string,
   want: { splitPaise: number; orderId: string }
 ): Promise<any | null> {
-  if (!razorpay?.payments?.fetchTransfer) return null; // SDK without the endpoint — skip reconcile
+  // Fail-closed (stress sweep 2026-10-24, R3): a client WITHOUT the
+  // fetchTransfer endpoint cannot prove "no transfer exists". Returning null
+  // ("nothing there") made reconcile-before-POST fail OPEN and blind-POST the
+  // non-idempotent transfer — so an unusable lookup now throws and callers
+  // treat the outcome as UNKNOWN (park, never blind-retry).
+  if (!razorpay?.payments?.fetchTransfer) {
+    throw new Error(
+      "Razorpay client lacks payments.fetchTransfer — transfer reconciliation unavailable; refusing to risk a duplicate payout"
+    );
+  }
   const res = await withTimeout(
     Promise.resolve(razorpay.payments.fetchTransfer(paymentId)),
     TRANSFER_RECONCILE_TIMEOUT_MS,
@@ -278,7 +287,21 @@ export async function attemptRouteTransfer(
       };
     }
 
-    const razorpay = getRazorpayClient();
+    // Client-factory fault (stress sweep 2026-10-24, R5): missing/mock keys
+    // make getRazorpayClient() throw fail-closed. A retry can never fix
+    // credentials, so classify as configError — the worker parks the order
+    // for manual settlement instead of burning its retry budget (and
+    // terminally failing with no manual flag).
+    let razorpay: any;
+    try {
+      razorpay = getRazorpayClient();
+    } catch (err: any) {
+      return {
+        ok: false,
+        configError: true,
+        error: `Razorpay client unavailable (${err?.message || err}) — no retry can fix credentials; parked for manual settlement`,
+      };
+    }
 
     // Reconcile BEFORE (re)POSTing: if an equivalent transfer already exists
     // (a hung-but-landed POST, a stale-lease takeover racing a completed
@@ -614,6 +637,13 @@ export async function retryPendingRouteTransfersWorker() {
             routeTransferRetryCount: admin.firestore.FieldValue.increment(1),
             routeTransferError: attempt.error,
             routeTransferRetryAt: admin.firestore.FieldValue.serverTimestamp(),
+            // Lease RELEASE (stress sweep 2026-10-24, R1): the gateway already
+            // answered with a definite rejection — nothing moved. Keeping
+            // `transferring` + a live claim stamp idles the order out the full
+            // 10-min TTL instead of letting the pending_retry lane reclaim it
+            // on the next tick (contract shared with razorpay.service.ts).
+            routeTransferStatus: "pending_retry",
+            routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
             ...(exhausted
               ? {
                   routeTransferStatus: "failed",
