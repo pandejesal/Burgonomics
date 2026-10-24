@@ -2271,10 +2271,8 @@ export async function autoRefund(
         ? recordedCapturePaise
         : capturedPaise;
 
-    // Server-only top-level payment_refund_requests doc (with fallback to order doc map for shims/compat)
-    const existingReq =
-      (reqSnap && reqSnap.exists ? (reqSnap.data() as any) : null) ||
-      (refundRequestId && data.refundRequests ? (data.refundRequests as any)[refundRequestId] : null);
+    // Server-only top-level payment_refund_requests doc.
+    const existingReq = reqSnap && reqSnap.exists ? (reqSnap.data() as any) : null;
 
     // Known pending identity recovery check:
     let isMatchingPendingRecovery = false;
@@ -2430,11 +2428,6 @@ export async function autoRefund(
       if (data.refundKeyedReceipts && typeof data.refundKeyedReceipts === "object") {
         for (const rid of Object.keys(data.refundKeyedReceipts)) keyedRefundIds.add(rid);
       }
-      if (data.refundRequests && typeof data.refundRequests === "object") {
-        for (const req of Object.values(data.refundRequests as Record<string, any>)) {
-          if (req?.refundId) keyedRefundIds.add(req.refundId);
-        }
-      }
       const matchingUnkeyedLegacy = Object.entries(
         (data.refundLedger || {}) as Record<string, number>
       ).find(([rid, p]) => !keyedRefundIds.has(rid) && Math.round(Number(p) || 0) === requestedPaise);
@@ -2537,6 +2530,18 @@ export async function autoRefund(
         gatewayKey: gatewayKeyToUse,
         reason: reason ?? null,
       },
+      ...(scalarReceiptUnrepresented
+        ? {
+            refundLedger: {
+              ...(data.refundLedger &&
+              typeof data.refundLedger === "object" &&
+              !Array.isArray(data.refundLedger)
+                ? (data.refundLedger as Record<string, number>)
+                : {}),
+              [scalarRefundId as string]: scalarRefundAmountPaise as number,
+            },
+          }
+        : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -2654,12 +2659,6 @@ export async function autoRefund(
     if (refundId && (Number(refundResult.amount) || 0) > 0 && freshLedger[refundId] === undefined) {
       freshLedger[refundId] = Number(refundResult.amount);
     }
-    const ledgerTotal = Object.values(freshLedger).reduce((sum, v) => sum + (Number(v) || 0), 0);
-    const freshTotal = Number(fresh.refundedTotalPaise) || 0;
-    // A pre-ledger scalar receipt is real money already returned. Carry it into
-    // the monotonic total unless its own gateway id is in the ledger (then the
-    // ledger already counts it). Without this, the first keyed refund after a
-    // legacy partial understates the total and later cap checks under-refund.
     const freshScalarId = typeof fresh.refundId === "string" ? fresh.refundId : null;
     const freshScalarPaise =
       freshScalarId &&
@@ -2669,12 +2668,12 @@ export async function autoRefund(
       Number.isFinite(fresh.refundAmount)
         ? Math.round(fresh.refundAmount * 100)
         : 0;
-    // Monotonic merge: never below the fresh basis, never double-carrying an
-    // already-ledgered id. The claim tx also snapshotted this refund with it,
-    // so a NEW id typically grows the ledger sum by exactly its paise. An
-    // unrepresented legacy scalar is ADDED to the ledger money (not maxed
-    // against it): both are real payouts and the cap must see their sum.
-    const nextTotal = Math.max(freshTotal, ledgerTotal + freshScalarPaise);
+    if (freshScalarId && freshScalarPaise > 0) {
+      freshLedger[freshScalarId] = freshScalarPaise;
+    }
+    const ledgerTotal = Object.values(freshLedger).reduce((sum, v) => sum + (Number(v) || 0), 0);
+    const freshTotal = Number(fresh.refundedTotalPaise) || 0;
+    const nextTotal = Math.max(freshTotal, ledgerTotal);
     // State honesty (mirrors refund.processed): the terminal "refunded" stamp
     // means the order is genuinely done, not merely "a refund happened".
     // - A FULL request (amountRupees unset) refunds the whole capture by

@@ -892,6 +892,20 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           if (isNewRefund) {
             ledger[refundId] = amountPaise;
           }
+          const scalarRefundId =
+            typeof data.refundId === "string" && data.refundId.trim() ? data.refundId.trim() : null;
+          const scalarRefundPaise =
+            typeof data.refundAmount === "number" && Number.isFinite(data.refundAmount)
+              ? Math.round(data.refundAmount * 100)
+              : 0;
+          if (
+            scalarRefundId &&
+            scalarRefundId !== refundId &&
+            scalarRefundPaise > 0 &&
+            !(scalarRefundId in ledger)
+          ) {
+            ledger[scalarRefundId] = scalarRefundPaise;
+          }
           const ledgerTotal = Object.values(ledger).reduce(
             (sum, v) => sum + (Number(v) || 0),
             0

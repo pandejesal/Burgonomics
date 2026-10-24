@@ -584,6 +584,30 @@ function computeWebhookEventPatch(
   return { updateData, riderCancelOutcome, ignoredAfter: null };
 }
 
+function riderCancelBranchAlert(
+  orderId: string,
+  riderCancelOutcome: "carrier" | "customer" | "returned"
+): { title: string; body: string; data: Record<string, string> } {
+  const carrierCancelled = riderCancelOutcome === "carrier";
+  return {
+    title: carrierCancelled
+      ? "Rider cancelled — rebook needed"
+      : riderCancelOutcome === "customer"
+      ? "Delivery cancelled by customer — manual review"
+      : "Parcel returned — manual review",
+    body: carrierCancelled
+      ? `Order #${orderId.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`
+      : riderCancelOutcome === "customer"
+      ? `Order #${orderId.substring(0, 6)}: delivery cancelled by the customer. Staff must review manually — no rebook will be attempted.`
+      : `Order #${orderId.substring(0, 6)}: parcel returned to the seller. Staff must review manually — no rebook will be attempted.`,
+    data: {
+      type: carrierCancelled ? "rider_cancelled" : "dispatch_manual_review",
+      orderId,
+      needsRebook: carrierCancelled ? "true" : "false",
+    },
+  };
+}
+
 function eventDocId(
   provider: string,
   rawEvent: string,
@@ -1367,13 +1391,7 @@ export async function handleDispatchWebhook(
                 if (typeof branchId === "string" && branchId) {
                   await dispatchFCM({
                     topic: `branch_${branchId}_orders`,
-                    title: "Rider cancelled — rebook needed",
-                    body: `Order #${targetOrderId.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`,
-                    data: {
-                      type: "rider_cancelled",
-                      orderId: targetOrderId,
-                      needsRebook: "true",
-                    },
+                    ...riderCancelBranchAlert(targetOrderId, outcome.riderCancelOutcome),
                   });
                 }
               } catch {
@@ -1657,24 +1675,9 @@ export async function handleDispatchWebhook(
       const snap = await orderRef.get();
       const branchId = snap.data()?.branchId;
       if (typeof branchId === "string" && branchId) {
-        const carrierCancelled = riderCancelOutcome === "carrier";
         await dispatchFCM({
           topic: `branch_${branchId}_orders`,
-          title: carrierCancelled
-            ? "Rider cancelled — rebook needed"
-            : riderCancelOutcome === "customer"
-            ? "Delivery cancelled by customer — manual review"
-            : "Parcel returned — manual review",
-          body: carrierCancelled
-            ? `Order #${orderRef.id.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`
-            : riderCancelOutcome === "customer"
-            ? `Order #${orderRef.id.substring(0, 6)}: delivery cancelled by the customer. Staff must review manually — no rebook will be attempted.`
-            : `Order #${orderRef.id.substring(0, 6)}: parcel returned to the seller. Staff must review manually — no rebook will be attempted.`,
-          data: {
-            type: carrierCancelled ? "rider_cancelled" : "dispatch_manual_review",
-            orderId: orderRef.id,
-            needsRebook: carrierCancelled ? "true" : "false",
-          },
+          ...riderCancelBranchAlert(orderRef.id, riderCancelOutcome),
         });
       }
     } catch (err: any) {

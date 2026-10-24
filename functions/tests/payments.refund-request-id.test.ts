@@ -360,6 +360,59 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
     expect(savedDocs["orders/ord_legacy_scalar_1"].refundedTotalPaise).toBe(25000);
   });
 
+  it("7c. a legacy scalar receipt folded into the ledger keeps every later refund counted", async () => {
+    savedDocs["orders/ord_legacy_scalar_chain"] = {
+      payment: {
+        razorpayPaymentId: "pay_legacy_scalar_chain",
+        capturedAmountPaise: 10000,
+      },
+      pricing: { grandTotal: 100 },
+      refundStatus: "partially_refunded",
+      refundId: "rfnd_legacy",
+      refundAmount: 50, // ₹50 = 5000pa already returned, no ledger entry
+    };
+
+    const a: any = await autoRefund({
+      orderId: "ord_legacy_scalar_chain",
+      razorpayPaymentId: "pay_legacy_scalar_chain",
+      amountRupees: 30, // 3000pa
+      refundRequestId: "req_chain_a",
+    });
+    expect(a.status).toBe("processed");
+    const afterA = savedDocs["orders/ord_legacy_scalar_chain"];
+    expect(afterA.refundedTotalPaise).toBe(8000);
+    expect(afterA.refundLedger).toMatchObject({ rfnd_legacy: 5000, [a.id]: 3000 });
+
+    const b: any = await autoRefund({
+      orderId: "ord_legacy_scalar_chain",
+      razorpayPaymentId: "pay_legacy_scalar_chain",
+      amountRupees: 20, // 2000pa — the exact remainder
+      refundRequestId: "req_chain_b",
+    });
+    expect(b.status).toBe("processed");
+    const afterB = savedDocs["orders/ord_legacy_scalar_chain"];
+    expect(afterB.refundedTotalPaise).toBe(10000);
+    expect(afterB.refundStatus).toBe("refunded");
+    expect(afterB.refundLedger).toMatchObject({
+      rfnd_legacy: 5000,
+      [a.id]: 3000,
+      [b.id]: 2000,
+    });
+    expect(Object.keys(afterB.refundLedger)).toHaveLength(3);
+
+    // A phantom remainder must not be paid: the capture is fully returned.
+    await expect(
+      autoRefund({
+        orderId: "ord_legacy_scalar_chain",
+        razorpayPaymentId: "pay_legacy_scalar_chain",
+        amountRupees: 20,
+        refundRequestId: "req_chain_c",
+      })
+    ).rejects.toMatchObject({ statusCode: 409, code: "ALREADY_REFUNDED" });
+
+    expect(savedDocs["orders/ord_legacy_scalar_chain"].refundedTotalPaise).toBe(10000);
+  });
+
   it("8. live autoRefund rejects missing refundRequestId (fail-closed, no POST)", async () => {
     savedDocs["orders/ord_live_1"] = {
       payment: { razorpayPaymentId: "pay_live_1" },

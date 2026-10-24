@@ -93,8 +93,13 @@ vi.mock("../src/core/errors", async (importOriginal) => {
   };
 });
 
+vi.mock("../src/modules/notifications/fcm.service", () => ({
+  dispatchFCM: vi.fn(async () => undefined),
+}));
+
 import { dispatchBook, dispatchCancel, dispatchRebook, savePorterManualBooking } from "../src/modules/dispatch/dispatch.router";
 import { handleDispatchWebhook } from "../src/modules/dispatch/dispatch.webhooks";
+import { dispatchFCM } from "../src/modules/notifications/fcm.service";
 import { computeHmacSha256 } from "../src/core/security";
 import { config } from "../src/config/env";
 
@@ -889,6 +894,88 @@ describe("Promoted correlated booking owns the order despite the rider_cancelled
     await expect(dispatchCancel({ orderId: ORDER, staffName: "Staff A" })).rejects.toMatchObject({
       statusCode: 409,
       code: "NOTHING_TO_CANCEL",
+    });
+  });
+});
+
+describe("Promoted correlated cancel pushes the outcome-aware alert", () => {
+  const ORDER = "ord_corr_cancel_push";
+  const token = "cr_cancel_tok_1";
+  const fcmSpy = vi.mocked(dispatchFCM);
+
+  function seedParked() {
+    seedOrder(ORDER, {
+      dispatchStatus: "needs_reconciliation",
+      branchId: "branch_ahmedabad_1",
+      dispatchGeneration: 1,
+      dispatchPendingCorrelation: {
+        token,
+        provider: "borzo",
+        generation: 1,
+        branchId: "branch_ahmedabad_1",
+        orderId: ORDER,
+      },
+    });
+    savedDocs[`dispatch_correlation_map/${token}`] = {
+      orderId: ORDER,
+      generation: 1,
+      provider: "borzo",
+      branchId: "branch_ahmedabad_1",
+    };
+  }
+
+  async function cancelViaPromotion(rawEvent: string, providerOrderId: string) {
+    const payload = {
+      event: rawEvent,
+      order_id: providerOrderId,
+      client_order_id: token,
+      timestamp: Date.now(),
+    };
+    const raw = JSON.stringify(payload);
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+  }
+
+  it("sends the manual-review alert (no rebook) for CANCELLED_BY_CUSTOMER", async () => {
+    seedParked();
+    await cancelViaPromotion("CANCELLED_BY_CUSTOMER", "BZ-CORR-CANCEL-1");
+
+    expect(savedDocs["dispatch_order_map/BZ-CORR-CANCEL-1"]).toMatchObject({ orderId: ORDER });
+    const doc = docOf(ORDER);
+    expect(doc.dispatchStatus).toBe("dispatched");
+    expect(doc.deliveryStatus).toBe("needs_review");
+    expect(doc.needsRebook).toBe(false);
+    expect(doc.rebookTrigger).toBe("customer_cancelled");
+
+    const manual = fcmSpy.mock.calls.filter(
+      (c: any[]) => c[0]?.data?.type === "dispatch_manual_review"
+    );
+    expect(manual).toHaveLength(1);
+    expect(manual[0][0]).toMatchObject({
+      topic: "branch_branch_ahmedabad_1_orders",
+      title: "Delivery cancelled by customer — manual review",
+      data: { type: "dispatch_manual_review", orderId: ORDER, needsRebook: "false" },
+    });
+    expect(
+      fcmSpy.mock.calls.filter((c: any[]) => c[0]?.data?.type === "rider_cancelled")
+    ).toHaveLength(0);
+  });
+
+  it("keeps the rebook alert for a carrier cancel", async () => {
+    seedParked();
+    await cancelViaPromotion("NO_RIDERS_FOUND", "BZ-CORR-CANCEL-2");
+
+    const doc = docOf(ORDER);
+    expect(doc.deliveryStatus).toBe("rider_cancelled");
+    expect(doc.needsRebook).toBe(true);
+
+    const rebook = fcmSpy.mock.calls.filter(
+      (c: any[]) => c[0]?.data?.type === "rider_cancelled"
+    );
+    expect(rebook).toHaveLength(1);
+    expect(rebook[0][0]).toMatchObject({
+      topic: "branch_branch_ahmedabad_1_orders",
+      title: "Rider cancelled — rebook needed",
+      data: { type: "rider_cancelled", orderId: ORDER, needsRebook: "true" },
     });
   });
 });
