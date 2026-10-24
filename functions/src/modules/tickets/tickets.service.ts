@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import { db } from "../../core/firebase";
 import { captureErrorSnapshot, serviceError } from "../../core/errors";
 import { truncatePushText } from "../notifications/templates";
@@ -701,10 +702,12 @@ export async function resolveTicket(input: ResolveTicketInput) {
       );
     }
     const order = orderSnap.data()!;
-    // NOTE: second-charge protection lives in autoRefund itself
-    // (ALREADY_REFUNDED 409 + same-amount idempotent replay); the
-    // resolution lease above stops two concurrent resolutions (and the
-    // status guard stops re-resolution of this ticket).
+    // NOTE: second-charge protection lives in autoRefund itself. Its identity is
+    // the durable refund request id derived below (ticket + action): a retry of
+    // THIS ticket replays the stored receipt, while a different ticket is a
+    // distinct intent that must still satisfy the cumulative captured cap and the
+    // ALREADY_REFUNDED guard. The resolution lease above stops two concurrent
+    // resolutions (and the status guard stops re-resolution of this ticket).
     // Captured-payment proof, both storage shapes: nested server writes AND
     // the webhook's dotted-literal merge-set form (webhookHandler writes
     // "payment.razorpayPaymentId" literally — reading only the nested shape
@@ -720,11 +723,18 @@ export async function resolveTicket(input: ResolveTicketInput) {
         400
       );
     }
+    const ticketDigest = crypto
+      .createHash("sha256")
+      .update(JSON.stringify([ticketId, action]))
+      .digest("hex")
+      .slice(0, 32);
+    const deterministicRequestId = `tkt_${ticketDigest}`;
     refundResult = await autoRefund({
       orderId: liveTicket.orderId,
       razorpayPaymentId,
       amountRupees: action === "partial_refund" ? amount : undefined,
-      reason: `Ticket ${liveTicket.ticketNumber} resolution: ${notes}`,
+      reason: `Ticket ${liveTicket.ticketNumber || ticketId} resolution: ${notes}`,
+      refundRequestId: deterministicRequestId,
     });
   }
 

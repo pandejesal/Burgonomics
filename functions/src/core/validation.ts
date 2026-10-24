@@ -104,11 +104,21 @@ export const verifyPaymentSchema = z
     })
   );
 
+export const refundRequestIdSchema = z
+  .string()
+  .min(8)
+  .max(128)
+  .regex(
+    /^[A-Za-z0-9_-]+$/,
+    "refundRequestId must contain only alphanumeric characters, underscores, and hyphens (8-128 chars)"
+  );
+
 export const refundSchema = z.object({
   orderId: nonEmptyString,
   razorpayPaymentId: nonEmptyString,
   amountRupees: z.number().finite().positive().max(100000).optional(),
   reason: z.string().max(2000).optional(),
+  refundRequestId: refundRequestIdSchema.optional(),
 });
 
 // Loop 7/120: refund-request disposition (reject path). Reason is REQUIRED —

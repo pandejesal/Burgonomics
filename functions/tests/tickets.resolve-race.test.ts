@@ -350,4 +350,48 @@ describe("resolveTicket concurrency", () => {
       (gate.parked as null | (() => void))?.();
     }
   });
+
+  it("5. deterministic ticket refund identity prevents collisions across punctuation or long prefixes", async () => {
+    savedDocs["orders/ord_punc_1"] = { payment: { razorpayPaymentId: "pay_1" } };
+    savedDocs["orders/ord_punc_2"] = { payment: { razorpayPaymentId: "pay_2" } };
+
+    savedDocs["support_tickets/tkt_sample:item/1"] = {
+      ticketNumber: "TKT-P1",
+      status: "open",
+      branchId: "branch_1",
+      orderId: "ord_punc_1",
+    };
+    savedDocs["support_tickets/tkt_sample_item_1"] = {
+      ticketNumber: "TKT-P2",
+      status: "open",
+      branchId: "branch_1",
+      orderId: "ord_punc_2",
+    };
+
+    await resolveTicket({
+      ticketId: "tkt_sample:item/1",
+      resolvedBy: "staff_a",
+      resolvedByName: "Staff A",
+      action: "full_refund",
+      notes: "punc 1",
+      caller: staffA,
+    } as any);
+
+    await resolveTicket({
+      ticketId: "tkt_sample_item_1",
+      resolvedBy: "staff_a",
+      resolvedByName: "Staff A",
+      action: "full_refund",
+      notes: "punc 2",
+      caller: staffA,
+    } as any);
+
+    const calls = vi.mocked(autoRefund).mock.calls;
+    const key1 = (calls[calls.length - 2][0] as any).refundRequestId;
+    const key2 = (calls[calls.length - 1][0] as any).refundRequestId;
+
+    expect(key1).toBeDefined();
+    expect(key2).toBeDefined();
+    expect(key1).not.toBe(key2);
+  });
 });

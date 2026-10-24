@@ -110,4 +110,38 @@ describe("route request validation", () => {
       refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", amountRupees: -5 }).success
     ).toBe(false);
   });
+
+  it("validates refundRequestId bounded safe string on refundSchema", () => {
+    // Valid bounded safe IDs
+    expect(
+      refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", refundRequestId: "valid_id" }).success
+    ).toBe(true);
+    expect(
+      refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", refundRequestId: "a".repeat(128) }).success
+    ).toBe(true);
+
+    // Reject < 8 chars
+    expect(
+      refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", refundRequestId: "short" }).success
+    ).toBe(false);
+
+    // Reject > 128 chars
+    expect(
+      refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", refundRequestId: "a".repeat(129) }).success
+    ).toBe(false);
+
+    // Reject unsafe characters (spaces, special characters, punct)
+    expect(
+      refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", refundRequestId: "has space" }).success
+    ).toBe(false);
+    expect(
+      refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", refundRequestId: "req;drop_tables" }).success
+    ).toBe(false);
+    expect(
+      refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", refundRequestId: "req/../escape" }).success
+    ).toBe(false);
+    expect(
+      refundSchema.safeParse({ orderId: "o", razorpayPaymentId: "p", refundRequestId: "req@domain.com" }).success
+    ).toBe(false);
+  });
 });

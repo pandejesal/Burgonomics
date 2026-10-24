@@ -236,7 +236,7 @@ describe("resolveTicket (real money paths)", () => {
     expect(auditsAfterSecond).toBe(1);
   });
 
-  it("replays idempotently across tickets on the same order, refuses a different amount", async () => {
+  it("treats two tickets on one order as two refund intents — equal amounts are not a replay", async () => {
     savedDocs["support_tickets/tk_rfnd_a"] = {
       ticketNumber: "TICK-2026-0006",
       orderId: "order_rfnd_1",
@@ -248,7 +248,7 @@ describe("resolveTicket (real money paths)", () => {
       customerId: "cust_3",
     };
     savedDocs["orders/order_rfnd_1"] = {
-      payment: { razorpayPaymentId: "pay_live_3" },
+      payment: { razorpayPaymentId: "pay_live_3", capturedAmountPaise: 50000 },
     };
     const first = await resolveTicket({
       ...BASE,
@@ -261,20 +261,27 @@ describe("resolveTicket (real money paths)", () => {
       k.startsWith("payment_audits/")
     ).length;
     expect(auditsAfterFirst).toBe(1);
-    // Same order + same amount on a second ticket: stored receipt replayed,
-    // no second charge, no new audit.
-    const replay = await resolveTicket({
+    // F10: refund identity is the durable request id (ticket + action), not
+    // (order, amount). A different ticket is a different intent, so the same
+    // ₹50 is a NEW refund that must still respect the cumulative captured cap —
+    // it is neither replayed as the first receipt nor silently collapsed.
+    const second = await resolveTicket({
       ...BASE,
       ticketId: "tk_rfnd_b",
       action: "partial_refund",
       amount: 50,
     });
-    expect(replay.success).toBe(true);
-    expect(replay.resolution.refundResult.reused).toBe(true);
-    const auditsAfterReplay = Object.keys(savedDocs).filter((k) =>
+    expect(second.success).toBe(true);
+    expect(second.resolution.refundResult.reused).not.toBe(true);
+    expect(second.resolution.refundResult.id).not.toBe(first.resolution.refundResult.id);
+    const auditsAfterSecond = Object.keys(savedDocs).filter((k) =>
       k.startsWith("payment_audits/")
     ).length;
-    expect(auditsAfterReplay).toBe(1);
+    expect(auditsAfterSecond).toBe(2);
+    const order = savedDocs["orders/order_rfnd_1"];
+    expect(order.refundedTotalPaise).toBe(10000);
+    expect(Object.keys(order.refundLedger)).toHaveLength(2);
+    expect(order.refundStatus).toBe("partially_refunded");
   });
 
   it("refuses a different-amount refund on an already-refunded order (ALREADY_REFUNDED)", async () => {
