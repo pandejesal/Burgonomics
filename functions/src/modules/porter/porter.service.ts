@@ -1818,6 +1818,15 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
     if (d.porterDispatchStatus === "needs_reconciliation") {
       return { needsReconciliation: true as const };
     }
+    // STRESS SWEEP 2026-10-24: the BORZO/SHADOWFAX ambiguous-book path parks
+    // the SAME reconciliation state on `dispatchStatus` with all provider ids
+    // released (dispatch.router.ts buildReleasedBindingWrite) — a remote
+    // courier may already be booked even though every id has been nulled.
+    // Refusing only the Porter spelling let an in-house rider be layered over
+    // that booking (two riders, one order).
+    if (d.dispatchStatus === "needs_reconciliation") {
+      return { needsReconciliation: true as const };
+    }
 
     tx.set(orderDoc.ref, manualWrite, { merge: true });
     return { ok: true as const };
