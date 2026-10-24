@@ -2218,6 +2218,27 @@ export async function autoRefund(
 
     const existingTotal = Number(data.refundedTotalPaise) || 0;
 
+    // Legacy scalar receipt (pre-ledger shape): a gateway refund recorded only
+    // as refundId/refundAmount. It is NOT an adoptable identity (no request id,
+    // no per-refund ledger entry), but it IS money already returned and must
+    // both consume the cumulative cap and refuse same-amount re-payouts.
+    const scalarRefundId =
+      typeof data.refundId === "string" && data.refundId.trim() ? data.refundId.trim() : null;
+    const scalarRefundAmountPaise =
+      typeof data.refundAmount === "number" && Number.isFinite(data.refundAmount)
+        ? Math.round(data.refundAmount * 100)
+        : null;
+    const ledgerHasScalarReceipt =
+      !!scalarRefundId &&
+      !!data.refundLedger &&
+      typeof data.refundLedger === "object" &&
+      !Array.isArray(data.refundLedger) &&
+      Object.prototype.hasOwnProperty.call(data.refundLedger, scalarRefundId);
+    // Only fold when the ledger does not already account for this receipt,
+    // otherwise max(total, ledger, scalar) would double-count the same money.
+    const scalarReceiptUnrepresented =
+      !!scalarRefundId && scalarRefundAmountPaise !== null && !ledgerHasScalarReceipt;
+
     // Refund-claim guard's FULLNESS is decided by the recorded LEDGER against
     // the known capture — never by the bare status string. The webhook +
     // autoRefund post-gateway writes stamp "partially_refunded" while the
@@ -2231,7 +2252,10 @@ export async function autoRefund(
             0
           )
         : 0;
-    const recordedRefundedPaise = Math.max(existingTotal, ledgerSum);
+    const recordedRefundedPaise = Math.max(
+      existingTotal,
+      ledgerSum + (scalarReceiptUnrepresented ? (scalarRefundAmountPaise as number) : 0)
+    );
     // Capture AUTHORITY (B1): the live gateway capture truth
     // (payment.capturedAmountPaise, both storage shapes) outranks the priced
     // total — a points-discounted payable captures LESS than grandTotal, and
@@ -2415,7 +2439,16 @@ export async function autoRefund(
         (data.refundLedger || {}) as Record<string, number>
       ).find(([rid, p]) => !keyedRefundIds.has(rid) && Math.round(Number(p) || 0) === requestedPaise);
 
-      if (matchingUnkeyedLegacy) {
+      // Same rule for the pre-ledger scalar shape: the amount may already have
+      // been returned by the receipt, and nothing proves this key is a new
+      // intent. Never adopt it as this request's identity, and never pay the
+      // same amount twice. A bare "refunded" status is deliberately left to
+      // the fullness check below: the webhook's positive-amount partial stamp
+      // must still allow the designed remainder refund.
+      const scalarMatchesRequest =
+        scalarReceiptUnrepresented && scalarRefundAmountPaise === requestedPaise;
+
+      if (matchingUnkeyedLegacy || scalarMatchesRequest) {
         const unrec: any = new Error(
           "Cannot process refund: an unkeyed completed legacy refund of matching amount exists on this order. Reconciliation is required before issuing new refunds."
         );
@@ -2623,10 +2656,25 @@ export async function autoRefund(
     }
     const ledgerTotal = Object.values(freshLedger).reduce((sum, v) => sum + (Number(v) || 0), 0);
     const freshTotal = Number(fresh.refundedTotalPaise) || 0;
+    // A pre-ledger scalar receipt is real money already returned. Carry it into
+    // the monotonic total unless its own gateway id is in the ledger (then the
+    // ledger already counts it). Without this, the first keyed refund after a
+    // legacy partial understates the total and later cap checks under-refund.
+    const freshScalarId = typeof fresh.refundId === "string" ? fresh.refundId : null;
+    const freshScalarPaise =
+      freshScalarId &&
+      freshScalarId !== refundResult.id &&
+      freshLedger[freshScalarId] === undefined &&
+      typeof fresh.refundAmount === "number" &&
+      Number.isFinite(fresh.refundAmount)
+        ? Math.round(fresh.refundAmount * 100)
+        : 0;
     // Monotonic merge: never below the fresh basis, never double-carrying an
     // already-ledgered id. The claim tx also snapshotted this refund with it,
-    // so a NEW id typically grows the ledger sum by exactly its paise.
-    const nextTotal = Math.max(freshTotal, ledgerTotal);
+    // so a NEW id typically grows the ledger sum by exactly its paise. An
+    // unrepresented legacy scalar is ADDED to the ledger money (not maxed
+    // against it): both are real payouts and the cap must see their sum.
+    const nextTotal = Math.max(freshTotal, ledgerTotal + freshScalarPaise);
     // State honesty (mirrors refund.processed): the terminal "refunded" stamp
     // means the order is genuinely done, not merely "a refund happened".
     // - A FULL request (amountRupees unset) refunds the whole capture by

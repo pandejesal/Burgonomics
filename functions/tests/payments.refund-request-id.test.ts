@@ -317,6 +317,49 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
     expect(savedDocs["orders/ord_keyed_two"].refundedTotalPaise).toBe(10000);
   });
 
+  it("7b. legacy scalar receipt without a ledger entry is never adopted or double-paid", async () => {
+    savedDocs["orders/ord_legacy_scalar_1"] = {
+      payment: { razorpayPaymentId: "pay_legacy_scalar_1", capturedAmountPaise: 25000 },
+      pricing: { grandTotal: 250 },
+      refundStatus: "partially_refunded",
+      refundId: "rfnd_legacy_50",
+      refundAmount: 50,
+    };
+
+    // A fresh key for the same amount cannot prove the legacy receipt is a
+    // different payout, so it must reconcile instead of POSTing again.
+    await expect(
+      autoRefund({
+        orderId: "ord_legacy_scalar_1",
+        razorpayPaymentId: "pay_legacy_scalar_1",
+        amountRupees: 50,
+        refundRequestId: "req_fresh_legacy_50",
+      })
+    ).rejects.toMatchObject({ statusCode: 409, code: "REFUND_RECONCILIATION_REQUIRED" });
+    expect(savedDocs["orders/ord_legacy_scalar_1"].refundLedger).toBeUndefined();
+    expect(savedDocs["orders/ord_legacy_scalar_1"].refundClaimedAt).toBeUndefined();
+
+    // The scalar receipt still consumes the cumulative cap.
+    await expect(
+      autoRefund({
+        orderId: "ord_legacy_scalar_1",
+        razorpayPaymentId: "pay_legacy_scalar_1",
+        amountRupees: 250,
+        refundRequestId: "req_fresh_legacy_250",
+      })
+    ).rejects.toMatchObject({ statusCode: 400, code: "REFUND_EXCEEDS_REMAINING" });
+
+    // A remainder inside the reduced cap still proceeds.
+    const remainder: any = await autoRefund({
+      orderId: "ord_legacy_scalar_1",
+      razorpayPaymentId: "pay_legacy_scalar_1",
+      amountRupees: 200,
+      refundRequestId: "req_fresh_legacy_200",
+    });
+    expect(remainder.status).toBe("processed");
+    expect(savedDocs["orders/ord_legacy_scalar_1"].refundedTotalPaise).toBe(25000);
+  });
+
   it("8. live autoRefund rejects missing refundRequestId (fail-closed, no POST)", async () => {
     savedDocs["orders/ord_live_1"] = {
       payment: { razorpayPaymentId: "pay_live_1" },
