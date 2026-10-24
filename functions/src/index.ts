@@ -1524,6 +1524,10 @@ export const retryPetpoojaOrders = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (M2): the 100-doc window × 15s abort budget can
+    // overrun the 60s v2 default and die mid-claim. 9 minutes bounds it
+    // comfortably (worst case ~375s) so a claimed batch always finishes.
+    timeoutSeconds: 540,
   },
   async () => {
     const { ran, result } = await withSchedulerLock(
@@ -1544,6 +1548,10 @@ export const retryRouteTransfers = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (M2): 40 claimed docs × up-to-45s gateway
+    // budget overruns the 60s v2 default and dies mid-claim. 9 minutes
+    // bounds it comfortably (worst case ~450s).
+    timeoutSeconds: 540,
   },
   async () => {
     const { ran, result } = await withSchedulerLock(

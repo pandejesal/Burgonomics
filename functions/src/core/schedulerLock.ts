@@ -20,28 +20,44 @@ export async function withSchedulerLock<T>(
   fn: () => Promise<T>
 ): Promise<{ ran: boolean; result?: T }> {
   const ref = db.collection("scheduler_locks").doc(name);
+  // CAS acquire (stress sweep 2026-10-24, M1): the old read-then-set let two
+  // Cloud Run instances both observe an absent lock inside the same instant
+  // and both run the tick. The freshness check and the lease write now
+  // commit ATOMICALLY: the loser observes the winner's stamp and skips.
+  // NUMERIC local-clock stamps stay (serverTimestamp sentinels are unreadable
+  // on fast re-read and cause instant false takeovers); the lease remains the
+  // release (a crashed run must not leave a permanent lock).
+  const nowMs = Date.now();
+  let acquired = false;
   try {
-    const snap = await ref.get();
-    const data = (snap.exists ? snap.data() : undefined) as any;
-    const claimedAt =
-      typeof data?.claimedAtMs === "number" && Number.isFinite(data.claimedAtMs)
-        ? data.claimedAtMs
-        : 0;
-    if (claimedAt > 0 && Date.now() - claimedAt < ttlMs) {
-      return { ran: false };
-    }
+    await (db as any).runTransaction(async (tx: any) => {
+      const snap = await tx.get(ref);
+      const data = (snap.exists ? snap.data() : undefined) as any;
+      const claimedAt =
+        typeof data?.claimedAtMs === "number" && Number.isFinite(data.claimedAtMs)
+          ? data.claimedAtMs
+          : 0;
+      if (claimedAt > 0 && nowMs - claimedAt < ttlMs) {
+        acquired = false;
+        return;
+      }
+      // Absent or stale (crashed run) — claim atomically inside the same
+      // transaction that proved staleness.
+      tx.set(
+        ref,
+        { claimedAtMs: nowMs, lockedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      acquired = true;
+    });
   } catch {
-    // Lease unreadable — fail OPEN for schedulers (a stuck lock must never
-    // silently kill reminders/syncs forever); per-doc leases still protect
-    // the money paths inside the run.
+    // Lease/transaction unavailable — fail OPEN for schedulers (same policy
+    // as before: a stuck lock must never silently kill reminders/syncs
+    // forever); per-doc leases remain the backstop for the money paths.
+    acquired = true;
   }
-  try {
-    await ref.set(
-      { claimedAtMs: Date.now(), lockedAt: new Date().toISOString() },
-      { merge: true }
-    );
-  } catch {
-    // Lock write failed — proceed; per-doc leases remain the backstop.
+  if (!acquired) {
+    return { ran: false };
   }
   const result = await fn();
   return { ran: true, result };
