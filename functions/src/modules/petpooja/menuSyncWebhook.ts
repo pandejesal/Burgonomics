@@ -32,6 +32,48 @@ export interface PetpoojaMenuItem {
   variation?: unknown[];
 }
 
+export type DocIdAnomalyReason =
+  | "empty_or_missing_id"
+  | "contains_slash"
+  | "reserved_name"
+  | "exceeds_1500_bytes"
+  | "invalid_composed_id";
+
+/**
+ * Validates a document ID according to Firestore constraints:
+ * - non-empty
+ * - no forward slash ('/')
+ * - not reserved ('.' or '..' or matching /^__.*__$/)
+ * - UTF-8 byte length <= 1500
+ */
+export function classifyDocIdAnomaly(id: unknown): DocIdAnomalyReason | null {
+  if (id === undefined || id === null) {
+    return "empty_or_missing_id";
+  }
+  if (typeof id !== "string" && typeof id !== "number") {
+    return "empty_or_missing_id";
+  }
+  const str = String(id);
+  // Emptiness detection: use trim only to detect empty or whitespace-only IDs
+  if (str.trim().length === 0) {
+    return "empty_or_missing_id";
+  }
+  if (str.includes("/")) {
+    return "contains_slash";
+  }
+  if (str === "." || str === ".." || /^__.*__$/.test(str)) {
+    return "reserved_name";
+  }
+  if (Buffer.byteLength(str, "utf8") > 1500) {
+    return "exceeds_1500_bytes";
+  }
+  return null;
+}
+
+export function isValidFirestoreDocId(id: unknown): id is string {
+  return typeof id === "string" && classifyDocIdAnomaly(id) === null;
+}
+
 /**
  * Builds `categoryid -> categoryname` from the payload's top-level `categories`
  * array — the join the push's item-level `item_categoryid` needs to resolve a
@@ -337,6 +379,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // UNRESOLVED — that is exactly why the raw values are counted: the next real
   // push answers it without a code change.
   const rawInStockValues: Record<string, number> = {};
+  const anomalyCensus: Record<string, number> = {};
+  let malformedItemCount = 0;
+  let validItemsCount = 0;
+  const validItemIds: string[] = [];
   let inStockTrueCount = 0;
   let unpricedSkuCount = 0;
   let unpricedInStockCount = 0;
@@ -344,13 +390,6 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   let unpricedInStockVariationMissingCount = 0;
 
   for (const item of items) {
-    // Doc id is branch-scoped: the same Petpooja itemid exists in every
-    // outlet, and a global prod_{itemid} lets the second synced branch
-    // overwrite (and steal) the first branch's doc.
-    const productId = `prod_${branchId}_${item.itemid}`;
-    const productRef = db.collection("products").doc(productId);
-    const inStock = item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
-
     // Census bucket. Normalised ONLY for grouping (`String(value)`), so "2"
     // stays "2" and the numeric 1 / "1" / true collapse to one key. An absent or
     // null flag is its own bucket ("(absent)") rather than being folded into the
@@ -361,6 +400,38 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     const rawInStockKey =
       rawInStock === undefined || rawInStock === null ? "(absent)" : String(rawInStock);
     rawInStockValues[rawInStockKey] = (rawInStockValues[rawInStockKey] || 0) + 1;
+
+    if (!item || typeof item !== "object") {
+      malformedItemCount++;
+      anomalyCensus["empty_or_missing_id"] = (anomalyCensus["empty_or_missing_id"] || 0) + 1;
+      continue;
+    }
+
+    const rawAnomaly = classifyDocIdAnomaly(item.itemid);
+    if (rawAnomaly) {
+      malformedItemCount++;
+      anomalyCensus[rawAnomaly] = (anomalyCensus[rawAnomaly] || 0) + 1;
+      continue;
+    }
+
+    const rawItemId = String(item.itemid);
+    // Doc id is branch-scoped: the same Petpooja itemid exists in every
+    // outlet, and a global prod_{itemid} lets the second synced branch
+    // overwrite (and steal) the first branch's doc.
+    const productId = `prod_${branchId}_${rawItemId}`;
+
+    const composedAnomaly = classifyDocIdAnomaly(productId);
+    if (composedAnomaly) {
+      malformedItemCount++;
+      const reasonKey = composedAnomaly === "empty_or_missing_id" ? "invalid_composed_id" : composedAnomaly;
+      anomalyCensus[reasonKey] = (anomalyCensus[reasonKey] || 0) + 1;
+      continue;
+    }
+
+    validItemsCount++;
+    validItemIds.push(rawItemId);
+    const productRef = db.collection("products").doc(productId);
+    const inStock = item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
     if (inStock) inStockTrueCount++;
 
     // Record-only: keep the existing price mapping and stock whitelist intact.
@@ -410,7 +481,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
 
     const productPayload = {
       id: productId,
-      petpoojaItemId: item.itemid,
+      petpoojaItemId: rawItemId,
       name: item.itemname,
       description: item.itemdescription || item.item_description || "",
       price: Number(item.price) || 0,
@@ -442,8 +513,8 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // drift apart. An EMPTY feed is deliberately not an all-dark catalogue (an API
   // glitch must not look like a 100% 86-ing), and a partially dark catalogue is
   // normal 86-ing — only "items ingested AND none available" qualifies.
-  const allDark = items.length > 0 && inStockTrueCount === 0;
-  const catalogueReady = items.length > 0 && inStockTrueCount > 0;
+  const allDark = validItemsCount > 0 && inStockTrueCount === 0;
+  const catalogueReady = validItemsCount > 0 && inStockTrueCount > 0;
   const availabilityWarning = allDark ? "NO_ITEMS_IN_STOCK" : null;
 
   // The warning that would have caught the 166-item Sold-Out incident. A warn
@@ -473,9 +544,9 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // bad feed is recoverable. Local-only docs (combos / no petpoojaItemId) are
   // never touched. Skipped entirely on an empty feed (API glitch must not
   // retire the whole catalog).
-  if (!config.mock.petpoojaPos && items.length > 0) {
+  if (!config.mock.petpoojaPos && validItemIds.length > 0) {
     try {
-      const feedIds = new Set(items.map((i) => String((i as PetpoojaMenuItem).itemid)));
+      const feedIds = new Set(validItemIds);
       // Paginated by doc id: the old single limit(1000) pass left SKUs past
       // the window live/orderable forever on catalogs bigger than the page.
       const TOMBSTONE_PAGE = 500;
@@ -531,7 +602,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   await db.collection("branches").doc(branchId).set(
     {
       lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
-      petpoojaItemCount: items.length,
+      petpoojaItemCount: validItemsCount,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
@@ -563,7 +634,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       finishedAt: new Date().toISOString(),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       duration: "live",
-      created: items.length,
+      created: validItemsCount,
       updated: 0,
       // TRUTHFUL READINESS: `status` reports that the INGEST completed, which
       // stayed true for a 100%-dark catalogue — exactly how a fully Sold-Out
@@ -583,6 +654,8 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       unpricedInStockCount,
       unpricedVariationFlaggedCount,
       unpricedInStockVariationMissingCount,
+      malformedItemCount,
+      anomalyCensus,
       error: unexplainedVendorMessage,
       simulated: config.mock.petpoojaPos,
       source: "menuSyncWebhook",
@@ -592,7 +665,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   }
 
   return {
-    itemCount: items.length,
+    itemCount: validItemsCount,
     categoriesCount: categories.length,
   };
 }

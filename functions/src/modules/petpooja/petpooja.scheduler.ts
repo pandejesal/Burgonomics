@@ -448,7 +448,10 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
               if (
                 freshData?.petpoojaOrderId ||
                 freshData?.petpoojaAcceptedNoId ||
-                freshData?.petpoojaStatus === "synced"
+                freshData?.petpoojaStatus === "synced" ||
+                freshData?.petpoojaStatus === "reconciliation_required" ||
+                freshData?.petpoojaSyncStatus === "reconciliation_required" ||
+                freshData?.petpoojaAmbiguousProcessing === true
               ) {
                 return "skipped" as const;
               }

@@ -38,7 +38,8 @@ const { mockDb, savedDocs, control, messagingSendSpy, originalRunTransaction } =
     deadLetterRacePath: string | null;
     raceApplied: boolean;
     postCommitRacerPath: string | null;
-  } = { deadLetterRacePath: null, raceApplied: false, postCommitRacerPath: null };
+    deadLetterAmbiguousRacePath: string | null;
+  } = { deadLetterRacePath: null, raceApplied: false, postCommitRacerPath: null, deadLetterAmbiguousRacePath: null };
 
   const docRef = (col: string, id: string) => {
     const path = `${col}/${id}`;
@@ -86,6 +87,19 @@ const { mockDb, savedDocs, control, messagingSendSpy, originalRunTransaction } =
             petpoojaOrderId: "pp_kot_live",
             petpoojaStatus: "synced",
             petpoojaSyncStatus: "synced",
+          };
+          savedDocs[ref.path] = { ...(savedDocs[ref.path] || {}), ...racer };
+        }
+        if (
+          !control.raceApplied &&
+          control.deadLetterAmbiguousRacePath &&
+          ref.path === control.deadLetterAmbiguousRacePath
+        ) {
+          control.raceApplied = true;
+          const racer = {
+            petpoojaStatus: "reconciliation_required",
+            petpoojaSyncStatus: "reconciliation_required",
+            petpoojaAmbiguousProcessing: true,
           };
           savedDocs[ref.path] = { ...(savedDocs[ref.path] || {}), ...racer };
         }
@@ -231,6 +245,7 @@ describe("KOT push transport-ambiguity + dead-letter race (stress sweep)", () =>
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     control.deadLetterRacePath = null;
+    control.deadLetterAmbiguousRacePath = null;
     control.raceApplied = false;
     control.postCommitRacerPath = null;
     messagingSendSpy.mockClear();
@@ -329,5 +344,25 @@ describe("KOT push transport-ambiguity + dead-letter race (stress sweep)", () =>
     // The racer cleared the push-claim lease (as it does in production).
     expect(doc.petpoojaClaimedAt).toBeNull();
     expect(doc.petpoojaPushClaimedAt).toBeNull();
+  });
+
+  it("F11 race: dead-letter transaction never overwrites a fresh ambiguous park and never alerts", async () => {
+    seedPending("ord_ambiguous_race", 4);
+    control.deadLetterAmbiguousRacePath = "orders/ord_ambiguous_race";
+
+    const tick = await retryPendingPetpoojaOrdersWorker();
+    expect(tick.failedCount).toBe(0);
+
+    const doc = savedDocs["orders/ord_ambiguous_race"];
+    expect(doc.petpoojaStatus).toBe("reconciliation_required");
+    expect(doc.petpoojaSyncStatus).toBe("reconciliation_required");
+    expect(doc.petpoojaAmbiguousProcessing).toBe(true);
+    expect(doc.kotSyncFailed).toBeFalsy();
+
+    const snapshots = Object.entries(savedDocs).filter(([p]) =>
+      p.startsWith("dev_error_snapshots/")
+    );
+    expect(snapshots).toHaveLength(0);
+    expect(messagingSendSpy).not.toHaveBeenCalled();
   });
 });
