@@ -836,21 +836,22 @@ export async function retryPendingRouteTransfersWorker() {
     if (termCheck.isTerminal) {
       // Execute terminal refusal under a CAS transaction:
       // Verify we still own the lease and order wasn't transferred in the interim!
+      let refusalCommitted = false;
       if (db && typeof (db as any).runTransaction === "function") {
         try {
-          await (db as any).runTransaction(async (tx: any) => {
+          refusalCommitted = await (db as any).runTransaction(async (tx: any) => {
             const currentSnap = await tx.get(doc.ref);
-            if (!currentSnap || !currentSnap.exists) return;
+            if (!currentSnap || !currentSnap.exists) return false;
             const current = currentSnap.data() || {};
 
             // If a concurrent writer completed transfer, leave untouched!
             if (current.routeTransferStatus === "transferred" || current?.payment?.routeTransfer) {
-              return;
+              return false;
             }
 
             // If another owner took over the lease, leave untouched!
             if (ourClaimStamp && current.routeTransferClaimedAt !== ourClaimStamp) {
-              return;
+              return false;
             }
 
             recordTerminalRefusalInTx(tx, db, {
@@ -870,6 +871,7 @@ export async function retryPendingRouteTransfersWorker() {
               orderStatus: termCheck.orderStatus || "TERMINAL",
               source: "route_transfers_retry_process",
             });
+            return true;
           });
         } catch (casErr: any) {
           console.warn(
@@ -904,6 +906,11 @@ export async function retryPendingRouteTransfersWorker() {
           },
           { merge: true }
         );
+        refusalCommitted = true;
+      }
+
+      if (!refusalCommitted) {
+        return false;
       }
 
       await captureErrorSnapshot({

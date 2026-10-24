@@ -314,7 +314,6 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
         dispatchStatus: "dispatch_pending",
         dispatchClaimedAt: Date.now(),
         dispatchGeneration: currentGen,
-        dispatchCorrelationToken: correlationToken,
         dispatchPendingCorrelation: {
           token: correlationToken,
           generation: currentGen,
@@ -363,7 +362,6 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
     dispatchStatus: "dispatch_pending",
     dispatchClaimedAt: Date.now(),
     dispatchGeneration: currentGen,
-    dispatchCorrelationToken: correlationToken,
     dispatchPendingCorrelation: {
       token: correlationToken,
       generation: currentGen,
@@ -907,7 +905,6 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
             dispatchError: err.message,
             dispatchAttempts: attempts,
             dispatchGeneration: currentGen,
-            dispatchCorrelationToken: correlationToken,
             dispatchPendingCorrelation: pendingCorrelation,
             needsRebook: false,
             rebookTrigger: null,
@@ -994,7 +991,6 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
     dispatchClaimedAt: null,
     dispatchError: null,
     dispatchGeneration: currentGen,
-    dispatchCorrelationToken: correlationToken,
     dispatchPendingCorrelation: null,
     riderName: booked.riderName,
     riderPhone: booked.riderPhone,

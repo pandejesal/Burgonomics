@@ -377,7 +377,11 @@ function computeWebhookEventPatch(
   driver: any,
   composedDriverName?: string,
   riderGps?: { lat: number; lng: number } | null
-): { updateData: Record<string, any>; riderCancelOutcome: "carrier" | "customer" | "returned" | null } {
+): {
+  updateData: Record<string, any>;
+  riderCancelOutcome: "carrier" | "customer" | "returned" | null;
+  ignoredAfter: string | null;
+} {
   const deliveryMirror = (patch: Record<string, any>): Record<string, any> =>
     definedFields({
       ...(currentOrder.delivery && typeof currentOrder.delivery === "object"
@@ -403,9 +407,17 @@ function computeWebhookEventPatch(
   };
 
   let riderCancelOutcome: "carrier" | "customer" | "returned" | null = null;
+  let ignoredAfter: string | null = null;
 
   switch (event) {
     case "DRIVER_ALLOCATED": {
+      // No rewind: a late/duplicate courier_assigned must not drag an order that
+      // is already on the road back to "dispatched". (DELIVERED/CANCELLED are
+      // handled by the terminal guard above.)
+      if (currentOrder.deliveryStatus === "in_transit") {
+        ignoredAfter = "in_transit";
+        break;
+      }
       const riderName = nonEmpty(
         composedDriverName,
         driver?.name,
@@ -438,6 +450,8 @@ function computeWebhookEventPatch(
 
       const hasRiderIdentity = !!(riderName || riderPhone);
       updateData.deliveryStatus = "dispatched";
+      // courier_assigned: order status itself stays PREPARING/READY — only
+      // rider details attach (mission §3).
       updateData.delivery = deliveryMirror({
         status: hasRiderIdentity ? "rider_assigned" : "pending",
         riderName,
@@ -451,6 +465,21 @@ function computeWebhookEventPatch(
       break;
     }
     case "ARRIVED_AT_PICKUP": {
+      // No rewind (F2, DS-review allowlist): late/out-of-order ARRIVED events
+      // must not rewrite the mirror in any terminal or wind-down state
+      // (in_transit parcel, cancelled/returned dispatch after a rebook, manual
+      // assignment). The guard processes only fresh pre-pickup stages; the
+      // terminal guard above already freezes delivered/cancelled.
+      const currentDeliveryStatus = typeof currentOrder.deliveryStatus === "string"
+        ? currentOrder.deliveryStatus
+        : "";
+      const freshPickupStage =
+        !currentDeliveryStatus ||
+        ["pending", "dispatched", "at_pickup"].includes(currentDeliveryStatus);
+      if (!freshPickupStage) {
+        ignoredAfter = currentDeliveryStatus;
+        break;
+      }
       updateData.riderArrivedAtStore = true;
       updateData.riderArrivedAt = admin.firestore.FieldValue.serverTimestamp();
       updateData.delivery = deliveryMirror({
@@ -534,6 +563,10 @@ function computeWebhookEventPatch(
     }
   }
 
+  if (ignoredAfter) {
+    return { updateData: {}, riderCancelOutcome: null, ignoredAfter };
+  }
+
   if (riderGps) {
     updateData.delivery = {
       ...(updateData.delivery || deliveryMirror({})),
@@ -542,7 +575,7 @@ function computeWebhookEventPatch(
     };
   }
 
-  return { updateData, riderCancelOutcome };
+  return { updateData, riderCancelOutcome, ignoredAfter: null };
 }
 
 function eventDocId(
@@ -1050,11 +1083,27 @@ export async function handleDispatchWebhook(
     } else if (hintOrder && !binding) {
       if (correlationInfo) {
         // Explicit correlation token matched in dispatch_correlation_map!
+        if (providerOrderId == null) {
+          log(
+            `correlated callback for order ${correlationInfo.orderId} carries no provider order id — parking (no binding)`
+          );
+          await parkDispatchEvent(
+            provider,
+            parkId,
+            {
+              orderId: correlationInfo.orderId,
+              rawEvent: rawEvent || null,
+              reason: "no_matching_order",
+            },
+            `${provider} webhook correlation for order ${correlationInfo.orderId} has no provider order id — parked, no state flipped`,
+            "medium"
+          );
+          await markParked("no_matching_order");
+          return;
+        }
         const targetOrderId = correlationInfo.orderId;
         const targetOrderRef = db.collection("orders").doc(targetOrderId);
-        const mapDocRef = providerOrderId
-          ? db.collection("dispatch_order_map").doc(String(providerOrderId))
-          : null;
+        const mapDocRef = db.collection("dispatch_order_map").doc(String(providerOrderId));
 
         if (db && typeof (db as any).runTransaction === "function") {
           const outcome: any = await (db as any).runTransaction(async (tx: any) => {
@@ -1062,11 +1111,8 @@ export async function handleDispatchWebhook(
             const freshOrder = freshOrderSnap.exists ? freshOrderSnap.data() : undefined;
             if (!freshOrder) return { missing: true as const };
 
-            let freshMapData: any = null;
-            if (mapDocRef) {
-              const freshMapSnap = await tx.get(mapDocRef);
-              freshMapData = freshMapSnap.exists ? freshMapSnap.data() : undefined;
-            }
+            const freshMapSnap = await tx.get(mapDocRef);
+            const freshMapData = freshMapSnap.exists ? freshMapSnap.data() : undefined;
 
             // Map collision check on fresh snapshot:
             if (freshMapData && freshMapData.orderId && freshMapData.orderId !== targetOrderId) {
@@ -1122,22 +1168,23 @@ export async function handleDispatchWebhook(
               composedDriverName,
               riderGps
             );
+            if (eventPatch.ignoredAfter) {
+              return { ignoredAfter: eventPatch.ignoredAfter };
+            }
 
             // Write map + order TOGETHER in transaction:
-            if (mapDocRef) {
-              tx.set(
-                mapDocRef,
-                {
-                  orderId: targetOrderId,
-                  provider,
-                  generation: pending.generation,
-                  status: "dispatched",
-                  boundAt: admin.firestore.FieldValue.serverTimestamp(),
-                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                },
-                { merge: true }
-              );
-            }
+            tx.set(
+              mapDocRef,
+              {
+                orderId: targetOrderId,
+                provider,
+                generation: pending.generation,
+                status: "dispatched",
+                boundAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
 
             tx.set(
               targetOrderRef,
@@ -1146,7 +1193,10 @@ export async function handleDispatchWebhook(
                 dispatchOrderId: providerOrderId,
                 deliveryStatus: "dispatched",
                 dispatchStatus: "dispatched",
+                dispatchError: null,
                 dispatchPendingCorrelation: null,
+                dispatchedBy: "provider_callback",
+                dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
                 ...(provider === "borzo" ? { borzoOrderId: providerOrderId } : {}),
                 ...(provider === "shadowfax" ? { shadowfaxOrderId: providerOrderId } : {}),
                 ...eventPatch.updateData,
@@ -1163,6 +1213,12 @@ export async function handleDispatchWebhook(
           });
 
           // OUTSIDE TRANSACTION: handle outcomes
+          if (outcome?.ignoredAfter) {
+            log(`Late ${rawEvent} after ${outcome.ignoredAfter} ignored (no rewind)`);
+            await markProcessed();
+            return;
+          }
+
           if (outcome?.mapConflict) {
             log(`providerOrderId ${providerOrderId} already mapped to order ${outcome.mapConflict.orderId}`);
             await parkDispatchEvent(
@@ -1387,9 +1443,6 @@ export async function handleDispatchWebhook(
     return;
   }
 
-  const nonEmpty = (...candidates: any[]): string | undefined =>
-    candidates.find((c) => typeof c === "string" && c.trim()) as string | undefined;
-
   // ONE pre-write order read — it feeds the terminal guard AND the
   // `order.delivery` mirror merge base below.
   let currentOrder: Record<string, any> = {};
@@ -1565,233 +1618,24 @@ export async function handleDispatchWebhook(
     return;
   }
 
-  // `order.delivery` sub-object mirror (customer tracking reads exactly this
-  // path). Always built from the PRE-WRITE snapshot + this event's fields, so
-  // the write is a complete snapshot — deterministic under Firestore's deep
-  // merge AND under the shallow-merge test shims (never drops a field the
-  // previous event wrote).
-  const deliveryMirror = (patch: Record<string, any>): Record<string, any> =>
-    definedFields({
-      ...(currentOrder.delivery && typeof currentOrder.delivery === "object"
-        ? currentOrder.delivery
-        : {}),
-      provider: currentOrder.dispatchProvider || provider,
-      providerOrderId:
-        currentOrder.dispatchOrderId != null
-          ? String(currentOrder.dispatchOrderId)
-          : providerOrderId != null
-          ? String(providerOrderId)
-          : undefined,
-      ...patch,
-    });
-
-  const updateData: Record<string, any> = {
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    dispatchWebhookEvent: rawEvent,
-    dispatchWebhookProvider: provider,
-  };
-
-  // Carrier-cancel classification (F6): Shadowfax returns the CAUSE in the raw
-  // event while the canonical vocabulary collapses every cancel into
-  // RIDER_CANCELLED. The rebook machinery (production auto-rebook worker) may
-  // only act on a CARRIER or no-rider cancel — a CUSTOMER cancel or a returned
-  // parcel is a manual-review outcome (consent/safety containment: the platform
-  // must never auto-charge another courier for a delivery the customer called
-  // off, nor silently re-dispatch a returned parcel).
-  let riderCancelOutcome: "carrier" | "customer" | "returned" | null = null;
-
-  switch (event) {
-    case "DRIVER_ALLOCATED": {
-      // No rewind: a late/duplicate courier_assigned must not drag an order that
-      // is already on the road back to "dispatched". (DELIVERED/CANCELLED are
-      // handled by the terminal guard above.)
-      if (currentOrder.deliveryStatus === "in_transit") {
-        log(`Late ${rawEvent} after in_transit ignored (no rewind)`);
-        await markProcessed();
-        return;
-      }
-      // Rider identity fields are written only when actually present — an
-      // `undefined` Firestore value would reject the whole batch write.
-      const riderName = nonEmpty(
-        composedDriverName,
-        driver?.name,
-        payload?.driver_name,
-        payload?.rider_name
-      );
-      const riderPhone = nonEmpty(
-        driver?.phone,
-        payload?.driver_phone,
-        payload?.rider_phone,
-        payload?.rider_contact,
-        payload?.driver_contact
-      );
-      const riderVehicle = nonEmpty(
-        driver?.vehicle_number,
-        payload?.driver_vehicle_number,
-        payload?.rider_vehicle_number
-      );
-      const trackingUrl = nonEmpty(
-        payload?.tracking_url,
-        payload?.tracking_link,
-        payload?.track_url,
-        payload?.track,
-        payload?.delivery?.tracking_url
-      );
-      if (riderName) updateData.riderName = riderName;
-      if (riderPhone) updateData.riderPhone = riderPhone;
-      if (riderVehicle) updateData.riderVehicleNumber = riderVehicle;
-      if (trackingUrl) updateData.riderTrackingUrl = trackingUrl;
-      // Truthful status: only claim a rider when one is actually present. A
-      // courier_assigned callback carrying no courier must leave the customer
-      // view at `pending`, never a fabricated "rider assigned".
-      const hasRiderIdentity = !!(riderName || riderPhone);
-      updateData.deliveryStatus = "dispatched";
-      // courier_assigned: order status itself stays PREPARING/READY — only
-      // rider details attach (mission §3).
-      updateData.delivery = deliveryMirror({
-        status: hasRiderIdentity ? "rider_assigned" : "pending",
-        riderName,
-        riderPhone,
-        riderVehicleNumber: riderVehicle,
-        trackingUrl,
-        ...(hasRiderIdentity
-          ? { assignedAt: admin.firestore.FieldValue.serverTimestamp() }
-          : {}),
-      });
-      break;
-    }
-
-    case "ARRIVED_AT_PICKUP":
-      // No rewind (F2, DS-review allowlist): late/out-of-order ARRIVED events
-      // must not rewrite the mirror in any terminal or wind-down state
-      // (in_transit parcel, cancelled/returned dispatch after a rebook, manual
-      // assignment). The guard processes only fresh pre-pickup stages; the
-      // terminal guard above already freezes delivered/cancelled.
-      const currentDeliveryStatus = typeof currentOrder.deliveryStatus === "string"
-        ? currentOrder.deliveryStatus
-        : "";
-      const freshPickupStage =
-        !currentDeliveryStatus ||
-        ["pending", "dispatched", "at_pickup"].includes(currentDeliveryStatus);
-      if (!freshPickupStage) {
-        log(`Late ${rawEvent} after ${currentDeliveryStatus} ignored (no rewind)`);
-        await markProcessed();
-        return;
-      }
-      updateData.riderArrivedAtStore = true;
-      updateData.riderArrivedAt = admin.firestore.FieldValue.serverTimestamp();
-      updateData.delivery = deliveryMirror({
-        status: "at_pickup",
-        riderArrivedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      break;
-
-    case "STARTED_DELIVERY":
-      updateData.status = {
-        code: "OUT_FOR_DELIVERY",
-        label: "Out for delivery",
-        kind: "in_progress",
-        terminal: false,
-      };
-      updateData.deliveryStatus = "in_transit";
-      updateData.delivery = deliveryMirror({ status: "in_transit" });
-      break;
-
-    case "DELIVERED":
-      updateData.status = {
-        code: "DELIVERED",
-        label: "Delivered",
-        kind: "completed",
-        terminal: true,
-      };
-      updateData.deliveryStatus = "delivered";
-      updateData.deliveredAt = admin.firestore.FieldValue.serverTimestamp();
-      updateData.delivery = deliveryMirror({
-        status: "delivered",
-        deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      break;
-
-    case "RIDER_CANCELLED": {
-      // Containment for the ACTIVE booking is handled centrally above the
-      // switch (F6-sticky): a contained booking consumes every non-DELIVERED
-      // event here before this case can classify anything.
-      // F6: branch on the CAUSE the vendor sent. CANCELLED_BY_CUSTOMER and
-      // RETURNED_TO_SELLER are manual-review outcomes — no auto-rebook, no
-      // carrier-cancel FCM. They land on the EXISTING needs_review dispatch
-      // state (the poller, NOT_REBOOKABLE rebook guard and DR9 already speak
-      // it), with the cause riding the existing rebookTrigger /
-      // riderCancellationReason fields, and needsRebook=false. The order's
-      // customer-facing status lifecycle is NOT written (no stencil of a
-      // code that would contradict the manual-review state, no terminal or
-      // kind flip) and no refund/payment field is touched — remaining staff
-      // policy. BORZO's generic "canceled" / NO_RIDERS_FOUND / FAILED stay
-      // on the carrier path below with prior behaviour.
-      riderCancelOutcome =
-        normalizeEventKey(rawEvent) === "CANCELLED_BY_CUSTOMER"
-          ? "customer"
-          : normalizeEventKey(rawEvent) === "RETURNED_TO_SELLER"
-          ? "returned"
-          : "carrier";
-      const manualReview = riderCancelOutcome !== "carrier";
-      const reason =
-        nonEmpty(
-          payload?.reason_text,
-          payload?.cancel_reason_text,
-          typeof payload?.reason === "string" ? payload.reason : undefined,
-          payload?.status_description
-        ) ||
-        (riderCancelOutcome === "customer"
-          ? "Delivery cancelled by customer"
-          : riderCancelOutcome === "returned"
-          ? "Parcel returned to seller"
-          : "Driver cancelled dispatch");
-      if (manualReview) {
-        // Explicit FALSE on merge (not an omitted key): a stale earlier
-        // carrier-cancel flag on this order must not let the rebook worker
-        // pick the order up once the cause is proven customer-side or the
-        // parcel is back at the seller.
-        updateData.needsRebook = false;
-        updateData.rebookTrigger =
-          riderCancelOutcome === "customer" ? "customer_cancelled" : "returned_to_seller";
-        updateData.deliveryStatus = "needs_review";
-        updateData.delivery = deliveryMirror({
-          status: "needs_review",
-          riderCancellationReason: reason,
-        });
-      } else {
-        updateData.status = {
-          code: "RIDER_CANCELLED",
-          label: "Rider cancelled — rebook required",
-          kind: "in_progress",
-          terminal: false,
-        };
-        updateData.deliveryStatus = "rider_cancelled";
-        updateData.needsRebook = true;
-        // Auto-rebook trigger (mission §3): the scheduled auto-rebook worker
-        // re-dispatches this order with the NEXT provider, never the one that
-        // cancelled. Staff-initiated cancels clear this flag, so they never
-        // auto-rebook.
-        updateData.rebookTrigger = "carrier_cancelled";
-        updateData.delivery = deliveryMirror({
-          status: "rider_cancelled",
-          riderCancellationReason: reason,
-        });
-      }
-      updateData.riderCancellationReason = reason;
-      break;
-    }
+  const eventPatch = computeWebhookEventPatch(
+    currentOrder,
+    event,
+    rawEvent,
+    provider,
+    providerOrderId,
+    payload,
+    driver,
+    composedDriverName,
+    riderGps
+  );
+  if (eventPatch.ignoredAfter) {
+    log(`Late ${rawEvent} after ${eventPatch.ignoredAfter} ignored (no rewind)`);
+    await markProcessed();
+    return;
   }
-
-  // Live rider coordinates ride every callback that actually carries them
-  // (mission §3: live GPS). Real numbers only — see extractRiderGps.
-  if (riderGps) {
-    updateData.delivery = {
-      ...(updateData.delivery || deliveryMirror({})),
-      riderLocation: riderGps,
-      riderLocationAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-  }
+  const updateData = eventPatch.updateData;
+  const riderCancelOutcome = eventPatch.riderCancelOutcome;
 
   await orderRef.set(updateData, { merge: true });
   await markProcessed();

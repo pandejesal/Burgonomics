@@ -494,6 +494,60 @@ describe("Route transfer retry worker terminal order guard (F5 stress)", () => {
     expect(order.routeTransferStatus).not.toBe("failed");
   });
 
+  it("RED: processDoc raises no HIGH alert when the refusal CAS commits nothing", async () => {
+    seedOrder("order_no_false_alert", {
+      status: "accepted",
+    });
+
+    const transfer = vi.fn(async () => ({ id: "trf_should_not_run", status: "processed" }));
+    const fetchTransfer = vi.fn(async () => ({ items: [] }));
+    __setRazorpayClientForTests({ payments: { transfer, fetchTransfer } });
+    config.mock.paymentGateway = false;
+
+    let orderReads = 0;
+    control.setGetHook((path: string) => {
+      if (path !== "orders/order_no_false_alert") return;
+      orderReads += 1;
+      if (orderReads === 2) {
+        // Cancellation lands after the claim, before processDoc's fresh read.
+        control.seed("orders/order_no_false_alert", { status: "cancelled" }, true);
+      }
+      if (orderReads === 3) {
+        // A concurrent worker completes the payout before the refusal CAS read.
+        control.seed(
+          "orders/order_no_false_alert",
+          {
+            routeTransferStatus: "transferred",
+            "payment.routeTransfer": { id: "trf_concurrent_refusal_winner" },
+          },
+          true
+        );
+      }
+    });
+
+    await retryPendingRouteTransfersWorker();
+
+    expect(transfer).not.toHaveBeenCalled();
+    const order = getDocData("orders/order_no_false_alert");
+    // The concurrent winner is preserved and no false refusal park was written.
+    expect(order.routeTransferStatus).toBe("transferred");
+    expect(order["payment.routeTransfer"]?.id).toBe("trf_concurrent_refusal_winner");
+    expect(
+      getDocData("unmatched_payments/ump_term_pay_order_no_false_alert")
+    ).toBeUndefined();
+
+    const alerts = writeLog.filter(
+      (w) =>
+        w.path.startsWith("dev_error_snapshots/") &&
+        typeof w.data?.message === "string" &&
+        w.data.message.includes("order_no_false_alert")
+    );
+    expect(alerts).toHaveLength(0);
+    // Guard against a vacuous pass: the fresh read, the refusal CAS read and the
+    // claim read all had to happen for this scenario to exercise the CAS.
+    expect(orderReads).toBeGreaterThanOrEqual(3);
+  });
+
   it("RED: processDoc CAS refusal does not clobber concurrent transferred winner", async () => {
     seedOrder("order_cas_winner", {
       status: "accepted",

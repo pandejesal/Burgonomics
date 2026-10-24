@@ -583,4 +583,173 @@ describe("F1 & F2: dispatch reconciliation & recovery stress tests", () => {
     expect(doc.dispatchOrderId).toBeUndefined();
     expect(savedDocs["dispatch_order_map/BZ-UNPROVEN-1"]).toBeUndefined();
   });
+
+  it("F1: correlated promotion clears the parked dispatchError and stamps the dispatch byline", async () => {
+    const token = "cr_clear_err_tok_1";
+    seedOrder("ord_ambig_err", {
+      dispatchStatus: "needs_reconciliation",
+      dispatchError: "Borzo create-order timed out after 20000ms",
+      branchId: "branch_ahmedabad_1",
+      dispatchGeneration: 1,
+      dispatchPendingCorrelation: {
+        token,
+        provider: "borzo",
+        generation: 1,
+        branchId: "branch_ahmedabad_1",
+        orderId: "ord_ambig_err",
+      },
+    });
+
+    savedDocs[`dispatch_correlation_map/${token}`] = {
+      orderId: "ord_ambig_err",
+      generation: 1,
+      provider: "borzo",
+      branchId: "branch_ahmedabad_1",
+    };
+
+    const payload = {
+      event: "COURIER_ASSIGNED",
+      order_id: "BZ-ERR-CLEAR-1",
+      client_order_id: token,
+      timestamp: Date.now(),
+      courier: { name: "Rider Cleared", phone: "+91 90000 11111" },
+    };
+    const raw = JSON.stringify(payload);
+
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const doc = docOf("ord_ambig_err");
+    expect(doc.dispatchStatus).toBe("dispatched");
+    expect(doc.deliveryStatus).toBe("dispatched");
+    expect(doc.dispatchError).toBeNull();
+    expect(doc.dispatchedBy).toBe("provider_callback");
+    expect(doc.dispatchedAt).toBe("MOCK_TIMESTAMP");
+  });
+
+  it("F2: correlated callback without a provider order id parks instead of binding a null booking", async () => {
+    const token = "cr_no_provider_id_1";
+    seedOrder("ord_no_provider_id", {
+      dispatchStatus: "needs_reconciliation",
+      dispatchError: "Borzo create-order timed out",
+      branchId: "branch_ahmedabad_1",
+      dispatchGeneration: 1,
+      dispatchPendingCorrelation: {
+        token,
+        provider: "borzo",
+        generation: 1,
+        branchId: "branch_ahmedabad_1",
+        orderId: "ord_no_provider_id",
+      },
+    });
+
+    savedDocs[`dispatch_correlation_map/${token}`] = {
+      orderId: "ord_no_provider_id",
+      generation: 1,
+      provider: "borzo",
+      branchId: "branch_ahmedabad_1",
+    };
+
+    const payload = {
+      event: "COURIER_ASSIGNED",
+      client_order_id: token,
+      timestamp: Date.now(),
+      courier: { name: "Rider Idless", phone: "+91 90000 22222" },
+    };
+    const raw = JSON.stringify(payload);
+
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const doc = docOf("ord_no_provider_id");
+    expect(doc.dispatchStatus).toBe("needs_reconciliation");
+    expect(doc.dispatchOrderId).toBeUndefined();
+    expect(doc.dispatchProvider).toBeUndefined();
+    expect(doc.riderName).toBeUndefined();
+    expect(doc.dispatchPendingCorrelation).toMatchObject({ token });
+
+    const parks = keysWithPrefix("unmatched_dispatch_events/");
+    expect(parks.length).toBeGreaterThanOrEqual(1);
+    expect(keysWithPrefix("dispatch_order_map/")).toHaveLength(0);
+  });
+
+  it("F3: correlated promotion applies the bound path's no-rewind guards", async () => {
+    const token = "cr_no_rewind_tok_1";
+    seedOrder("ord_corr_in_transit", {
+      dispatchStatus: "needs_reconciliation",
+      deliveryStatus: "in_transit",
+      branchId: "branch_ahmedabad_1",
+      dispatchGeneration: 1,
+      riderName: "Live Rider",
+      dispatchPendingCorrelation: {
+        token,
+        provider: "borzo",
+        generation: 1,
+        branchId: "branch_ahmedabad_1",
+        orderId: "ord_corr_in_transit",
+      },
+    });
+
+    savedDocs[`dispatch_correlation_map/${token}`] = {
+      orderId: "ord_corr_in_transit",
+      generation: 1,
+      provider: "borzo",
+      branchId: "branch_ahmedabad_1",
+    };
+
+    const payload = {
+      event: "COURIER_ASSIGNED",
+      order_id: "BZ-NO-REWIND-1",
+      client_order_id: token,
+      timestamp: Date.now(),
+      courier: { name: "Late Rider", phone: "+91 90000 33333" },
+    };
+    const raw = JSON.stringify(payload);
+
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const doc = docOf("ord_corr_in_transit");
+    expect(doc.deliveryStatus).toBe("in_transit");
+    expect(doc.riderName).toBe("Live Rider");
+    expect(doc.dispatchStatus).toBe("needs_reconciliation");
+    expect(savedDocs["dispatch_order_map/BZ-NO-REWIND-1"]).toBeUndefined();
+  });
+
+  it("F3: correlated ARRIVED_AT_PICKUP does not rewind a non-pickup stage", async () => {
+    const token = "cr_arrived_tok_1";
+    seedOrder("ord_corr_arrived", {
+      dispatchStatus: "needs_reconciliation",
+      deliveryStatus: "needs_review",
+      branchId: "branch_ahmedabad_1",
+      dispatchGeneration: 1,
+      dispatchPendingCorrelation: {
+        token,
+        provider: "borzo",
+        generation: 1,
+        branchId: "branch_ahmedabad_1",
+        orderId: "ord_corr_arrived",
+      },
+    });
+
+    savedDocs[`dispatch_correlation_map/${token}`] = {
+      orderId: "ord_corr_arrived",
+      generation: 1,
+      provider: "borzo",
+      branchId: "branch_ahmedabad_1",
+    };
+
+    const payload = {
+      event: "ARRIVED_AT_PICKUP",
+      order_id: "BZ-ARRIVED-LATE-1",
+      client_order_id: token,
+      timestamp: Date.now(),
+    };
+    const raw = JSON.stringify(payload);
+
+    await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
+
+    const doc = docOf("ord_corr_arrived");
+    expect(doc.deliveryStatus).toBe("needs_review");
+    expect(doc.riderArrivedAtStore).toBeUndefined();
+    expect(doc.dispatchStatus).toBe("needs_reconciliation");
+    expect(savedDocs["dispatch_order_map/BZ-ARRIVED-LATE-1"]).toBeUndefined();
+  });
 });
