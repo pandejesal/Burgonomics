@@ -1479,6 +1479,20 @@ export async function executeRouteSplit(args: {
           };
         }
 
+        // Another worker may already have a payout POST in flight. Preserve
+        // its live lease even if cancellation arrived meanwhile; recording a
+        // refusal here would falsely imply that no payout was sent.
+        if (freshData.routeTransferStatus === "transferring") {
+          const claimedAt = freshData.routeTransferClaimedAt;
+          const claimedMs =
+            typeof claimedAt === "number" && Number.isFinite(claimedAt)
+              ? claimedAt
+              : claimedAt && typeof claimedAt.toMillis === "function"
+                ? claimedAt.toMillis()
+                : 0;
+          if (Date.now() - claimedMs < TRANSFER_CLAIM_TTL_MS) return { kind: "busy" };
+        }
+
         // 2. TERMINAL / CANCELLED REFUND SPLIT GUARD (Finding 2)
         const termCheck = isOrderTerminalForRouteTransfer(freshData);
         if (termCheck.isTerminal) {
@@ -1511,19 +1525,7 @@ export async function executeRouteSplit(args: {
           };
         }
 
-        // 3. Stale-lease takeover / active lease check:
-        if (freshData.routeTransferStatus === "transferring") {
-          const claimedAt = freshData.routeTransferClaimedAt;
-          const claimedMs =
-            typeof claimedAt === "number" && Number.isFinite(claimedAt)
-              ? claimedAt
-              : claimedAt && typeof claimedAt.toMillis === "function"
-                ? claimedAt.toMillis()
-                : 0;
-          if (Date.now() - claimedMs < TRANSFER_CLAIM_TTL_MS) return { kind: "busy" };
-        }
-
-        // 4. Claim lease
+        // Claim a new or expired lease only after the fresh guards.
         tx.set(
           orderRef as any,
           {
@@ -1845,7 +1847,13 @@ async function finishVerifiedPayment(args: {
   ]);
   const txOutcome: any = await (db as any).runTransaction(async (tx: any) => {
     const snap = await tx.get(orderRef);
-    const fresh: any = (snap && snap.exists ? snap.data() : orderData) || {};
+    if (!snap || !snap.exists) {
+      const missing: any = new Error(`Cannot confirm payment: order ${orderId} no longer exists.`);
+      missing.code = "ORDER_NOT_FOUND";
+      missing.statusCode = 404;
+      throw missing;
+    }
+    const fresh: any = snap.data() || {};
 
     // FRESH SNAPSHOT BINDING CHECK (Finding 1 transactional backstop)
     const provenCaptured =

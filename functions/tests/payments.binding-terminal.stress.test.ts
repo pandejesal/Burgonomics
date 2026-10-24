@@ -394,6 +394,30 @@ describe("Finding 1: FOREIGN BINDING FRESH-TX RACE", () => {
     expect(order.deliveryOtpHash).toBeUndefined();
   });
 
+  it("does not recreate an order deleted before the confirmation transaction", async () => {
+    const orderId = "order_deleted_before_finish";
+    const paymentId = "pay_deleted_before_finish";
+    control.seed(`orders/${orderId}`, {
+      id: orderId,
+      branchId: "branch_stress_1",
+      orderType: "delivery",
+      customerId: "cust_stress_1",
+      pricing: { grandTotal: 250 }, // no split; confirmation must still re-read
+      paymentStatus: "pending",
+      status: { code: "PENDING", terminal: false },
+    });
+    __setPaymentsFetchForTests(capturedFetch(paymentId, 25000));
+    control.injectAfterPreRead(() => { docs.delete(`orders/${orderId}`); });
+
+    await expect(verifyPayment(verifyParams(orderId, paymentId))).rejects.toMatchObject({
+      code: "ORDER_NOT_FOUND",
+      statusCode: 404,
+    });
+    expect(docs.has(`orders/${orderId}`)).toBe(false);
+    expect(confirmAudits()).toHaveLength(0);
+    expect(transferSpy).not.toHaveBeenCalled();
+  });
+
   it("1.3: idempotent repeat of pay_A still succeeds and backfills missing OTP exactly once", async () => {
     const orderId = "order_same_capture_idempotent";
     control.seed(`orders/${orderId}`, {
@@ -632,4 +656,38 @@ describe("Finding 2: TERMINAL / CANCELLED REFUND SPLIT GUARD", () => {
     expect(outcome.state).toBe("busy");
     expect(transferSpy).not.toHaveBeenCalled();
   });
+
+  it.each(["CANCELLED", "REFUNDED"])(
+    "preserves a foreign live transfer lease when the order becomes %s",
+    async (statusCode) => {
+      const orderId = `order_busy_${statusCode.toLowerCase()}`;
+      const paymentId = `pay_busy_${statusCode.toLowerCase()}`;
+      const claimedAt = Date.now() - 1000;
+      const orderData = {
+        id: orderId,
+        branchId: "branch_stress_1",
+        pricing: { grandTotal: 250, split: { branchTransferPaise: 20000 } },
+        routeTransferStatus: "transferring",
+        routeTransferClaimedAt: claimedAt,
+        status: { code: statusCode, terminal: true },
+        payment: { razorpayPaymentId: paymentId, capturedAmountPaise: 25000 },
+      };
+      control.seed(`orders/${orderId}`, orderData);
+      const writesBefore = writeLog.length;
+
+      const outcome = await executeRouteSplit({
+        orderRef: mockDb.collection("orders").doc(orderId),
+        orderId,
+        orderData,
+        razorpayPaymentId: paymentId,
+        capturedAmountPaise: 25000,
+      });
+
+      expect(outcome).toEqual({ state: "busy" });
+      expect(docs.get(`orders/${orderId}`)!.data).toEqual(orderData);
+      expect(writeLog).toHaveLength(writesBefore);
+      expect(unmatchedParks()).toHaveLength(0);
+      expect(transferSpy).not.toHaveBeenCalled();
+    }
+  );
 });
