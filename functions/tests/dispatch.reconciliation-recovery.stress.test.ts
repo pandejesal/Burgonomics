@@ -671,7 +671,7 @@ describe("F1 & F2: dispatch reconciliation & recovery stress tests", () => {
     expect(keysWithPrefix("dispatch_order_map/")).toHaveLength(0);
   });
 
-  it("F3: correlated promotion applies the bound path's no-rewind guards", async () => {
+  it("F3: correlated promotion binds without rewinding a live ride", async () => {
     const token = "cr_no_rewind_tok_1";
     seedOrder("ord_corr_in_transit", {
       dispatchStatus: "needs_reconciliation",
@@ -709,15 +709,29 @@ describe("F1 & F2: dispatch reconciliation & recovery stress tests", () => {
     const doc = docOf("ord_corr_in_transit");
     expect(doc.deliveryStatus).toBe("in_transit");
     expect(doc.riderName).toBe("Live Rider");
-    expect(doc.dispatchStatus).toBe("needs_reconciliation");
-    expect(savedDocs["dispatch_order_map/BZ-NO-REWIND-1"]).toBeUndefined();
+    expect(doc.dispatchStatus).toBe("dispatched");
+    expect(doc.dispatchOrderId).toBe("BZ-NO-REWIND-1");
+    expect(doc.dispatchPendingCorrelation).toBeNull();
+    expect(doc.dispatchedBy).toBe("provider_callback");
+    expect(doc.dispatchedAt).toBe("MOCK_TIMESTAMP");
+    expect(doc.delivery).toMatchObject({
+      provider: "borzo",
+      providerOrderId: "BZ-NO-REWIND-1",
+    });
+    expect(savedDocs["dispatch_order_map/BZ-NO-REWIND-1"]).toMatchObject({
+      orderId: "ord_corr_in_transit",
+      provider: "borzo",
+    });
   });
 
-  it("F3: correlated ARRIVED_AT_PICKUP does not rewind a non-pickup stage", async () => {
+  it("F3: correlated ARRIVED_AT_PICKUP binds and clears pending without rewinding the protected delivery status", async () => {
     const token = "cr_arrived_tok_1";
     seedOrder("ord_corr_arrived", {
       dispatchStatus: "needs_reconciliation",
-      deliveryStatus: "needs_review",
+      dispatchError: "Borzo create-order timed out after 20000ms",
+      deliveryStatus: "rider_cancelled",
+      needsRebook: false,
+      rebookTrigger: null,
       branchId: "branch_ahmedabad_1",
       dispatchGeneration: 1,
       dispatchPendingCorrelation: {
@@ -747,9 +761,22 @@ describe("F1 & F2: dispatch reconciliation & recovery stress tests", () => {
     await handleDispatchWebhook("borzo", raw, borzoSig(raw), payload);
 
     const doc = docOf("ord_corr_arrived");
-    expect(doc.deliveryStatus).toBe("needs_review");
+    expect(doc.deliveryStatus).toBe("rider_cancelled");
     expect(doc.riderArrivedAtStore).toBeUndefined();
-    expect(doc.dispatchStatus).toBe("needs_reconciliation");
-    expect(savedDocs["dispatch_order_map/BZ-ARRIVED-LATE-1"]).toBeUndefined();
+    expect(doc.dispatchStatus).toBe("dispatched");
+    expect(doc.dispatchProvider).toBe("borzo");
+    expect(doc.dispatchOrderId).toBe("BZ-ARRIVED-LATE-1");
+    expect(doc.dispatchPendingCorrelation).toBeNull();
+    expect(doc.dispatchError).toBeNull();
+    expect(doc.dispatchedBy).toBe("provider_callback");
+    expect(doc.dispatchedAt).toBe("MOCK_TIMESTAMP");
+    expect(doc.delivery).toMatchObject({
+      provider: "borzo",
+      providerOrderId: "BZ-ARRIVED-LATE-1",
+    });
+    expect(savedDocs["dispatch_order_map/BZ-ARRIVED-LATE-1"]).toMatchObject({
+      orderId: "ord_corr_arrived",
+      provider: "borzo",
+    });
   });
 });

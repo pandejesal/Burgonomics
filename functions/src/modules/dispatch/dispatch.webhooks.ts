@@ -381,6 +381,7 @@ function computeWebhookEventPatch(
   updateData: Record<string, any>;
   riderCancelOutcome: "carrier" | "customer" | "returned" | null;
   ignoredAfter: string | null;
+  ignoredDeliveryMirror?: Record<string, any>;
 } {
   const deliveryMirror = (patch: Record<string, any>): Record<string, any> =>
     definedFields({
@@ -564,7 +565,12 @@ function computeWebhookEventPatch(
   }
 
   if (ignoredAfter) {
-    return { updateData: {}, riderCancelOutcome: null, ignoredAfter };
+    return {
+      updateData: {},
+      riderCancelOutcome: null,
+      ignoredAfter,
+      ignoredDeliveryMirror: deliveryMirror({}),
+    };
   }
 
   if (riderGps) {
@@ -1168,9 +1174,7 @@ export async function handleDispatchWebhook(
               composedDriverName,
               riderGps
             );
-            if (eventPatch.ignoredAfter) {
-              return { ignoredAfter: eventPatch.ignoredAfter };
-            }
+            const ignoredAfter = eventPatch.ignoredAfter;
 
             // Write map + order TOGETHER in transaction:
             tx.set(
@@ -1191,7 +1195,6 @@ export async function handleDispatchWebhook(
               {
                 dispatchProvider: provider,
                 dispatchOrderId: providerOrderId,
-                deliveryStatus: "dispatched",
                 dispatchStatus: "dispatched",
                 dispatchError: null,
                 dispatchPendingCorrelation: null,
@@ -1199,7 +1202,9 @@ export async function handleDispatchWebhook(
                 dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
                 ...(provider === "borzo" ? { borzoOrderId: providerOrderId } : {}),
                 ...(provider === "shadowfax" ? { shadowfaxOrderId: providerOrderId } : {}),
-                ...eventPatch.updateData,
+                ...(ignoredAfter
+                  ? { delivery: eventPatch.ignoredDeliveryMirror }
+                  : { deliveryStatus: "dispatched", ...eventPatch.updateData }),
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
               },
               { merge: true }
@@ -1209,12 +1214,15 @@ export async function handleDispatchWebhook(
               ok: true as const,
               freshOrder,
               riderCancelOutcome: eventPatch.riderCancelOutcome,
+              ignoredAfter,
             };
           });
 
           // OUTSIDE TRANSACTION: handle outcomes
           if (outcome?.ignoredAfter) {
-            log(`Late ${rawEvent} after ${outcome.ignoredAfter} ignored (no rewind)`);
+            log(
+              `Late ${rawEvent} after ${outcome.ignoredAfter}: status patch skipped (no rewind), correlation bound`
+            );
             await markProcessed();
             return;
           }
