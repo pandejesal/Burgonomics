@@ -92,6 +92,13 @@ const DISPATCH_WEBHOOK_FUTURE_SKEW_MS = 5 * 60 * 1000;
  */
 const TERMINAL_DELIVERY_STATUSES: readonly string[] = ["delivered", "cancelled"];
 
+function terminalDeliveryStatus(d: any): string | null {
+  const ds = d?.deliveryStatus;
+  if (ds === "delivered" || ds === "cancelled") return ds;
+  if (d?.status?.terminal === true || d?.status?.kind === "completed") return "completed";
+  return null;
+}
+
 /**
  * Normalizes a provider order id for binding comparison. Borzo ids arrive as
  * JSON numbers, stored bindings may be numbers or (padded/legacy) strings —
@@ -360,6 +367,184 @@ function definedFields(o: Record<string, any>): Record<string, any> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 }
 
+function computeWebhookEventPatch(
+  currentOrder: Record<string, any>,
+  event: string | null,
+  rawEvent: string,
+  provider: DispatchWebhookProvider,
+  providerOrderId: string | number | null,
+  payload: any,
+  driver: any,
+  composedDriverName?: string,
+  riderGps?: { lat: number; lng: number } | null
+): { updateData: Record<string, any>; riderCancelOutcome: "carrier" | "customer" | "returned" | null } {
+  const deliveryMirror = (patch: Record<string, any>): Record<string, any> =>
+    definedFields({
+      ...(currentOrder.delivery && typeof currentOrder.delivery === "object"
+        ? currentOrder.delivery
+        : {}),
+      provider: currentOrder.dispatchProvider || provider,
+      providerOrderId:
+        currentOrder.dispatchOrderId != null
+          ? String(currentOrder.dispatchOrderId)
+          : providerOrderId != null
+          ? String(providerOrderId)
+          : undefined,
+      ...patch,
+    });
+
+  const nonEmpty = (...candidates: any[]): string | undefined =>
+    candidates.find((c) => typeof c === "string" && c.trim()) as string | undefined;
+
+  const updateData: Record<string, any> = {
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    dispatchWebhookEvent: rawEvent,
+    dispatchWebhookProvider: provider,
+  };
+
+  let riderCancelOutcome: "carrier" | "customer" | "returned" | null = null;
+
+  switch (event) {
+    case "DRIVER_ALLOCATED": {
+      const riderName = nonEmpty(
+        composedDriverName,
+        driver?.name,
+        payload?.driver_name,
+        payload?.rider_name
+      );
+      const riderPhone = nonEmpty(
+        driver?.phone,
+        payload?.driver_phone,
+        payload?.rider_phone,
+        payload?.rider_contact,
+        payload?.driver_contact
+      );
+      const riderVehicle = nonEmpty(
+        driver?.vehicle_number,
+        payload?.driver_vehicle_number,
+        payload?.rider_vehicle_number
+      );
+      const trackingUrl = nonEmpty(
+        payload?.tracking_url,
+        payload?.tracking_link,
+        payload?.track_url,
+        payload?.track,
+        payload?.delivery?.tracking_url
+      );
+      if (riderName) updateData.riderName = riderName;
+      if (riderPhone) updateData.riderPhone = riderPhone;
+      if (riderVehicle) updateData.riderVehicleNumber = riderVehicle;
+      if (trackingUrl) updateData.riderTrackingUrl = trackingUrl;
+
+      const hasRiderIdentity = !!(riderName || riderPhone);
+      updateData.deliveryStatus = "dispatched";
+      updateData.delivery = deliveryMirror({
+        status: hasRiderIdentity ? "rider_assigned" : "pending",
+        riderName,
+        riderPhone,
+        riderVehicleNumber: riderVehicle,
+        trackingUrl,
+        ...(hasRiderIdentity
+          ? { assignedAt: admin.firestore.FieldValue.serverTimestamp() }
+          : {}),
+      });
+      break;
+    }
+    case "ARRIVED_AT_PICKUP": {
+      updateData.riderArrivedAtStore = true;
+      updateData.riderArrivedAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.delivery = deliveryMirror({
+        status: "at_pickup",
+        riderArrivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      break;
+    }
+    case "STARTED_DELIVERY": {
+      updateData.status = {
+        code: "OUT_FOR_DELIVERY",
+        label: "Out for delivery",
+        kind: "in_progress",
+        terminal: false,
+      };
+      updateData.deliveryStatus = "in_transit";
+      updateData.delivery = deliveryMirror({ status: "in_transit" });
+      break;
+    }
+    case "DELIVERED": {
+      updateData.status = {
+        code: "DELIVERED",
+        label: "Delivered",
+        kind: "completed",
+        terminal: true,
+      };
+      updateData.deliveryStatus = "delivered";
+      updateData.deliveredAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.delivery = deliveryMirror({
+        status: "delivered",
+        deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      break;
+    }
+    case "RIDER_CANCELLED": {
+      riderCancelOutcome =
+        normalizeEventKey(rawEvent) === "CANCELLED_BY_CUSTOMER"
+          ? "customer"
+          : normalizeEventKey(rawEvent) === "RETURNED_TO_SELLER"
+          ? "returned"
+          : "carrier";
+      const manualReview = riderCancelOutcome !== "carrier";
+      const reason =
+        nonEmpty(
+          payload?.reason_text,
+          payload?.cancel_reason_text,
+          typeof payload?.reason === "string" ? payload.reason : undefined,
+          payload?.status_description
+        ) ||
+        (riderCancelOutcome === "customer"
+          ? "Delivery cancelled by customer"
+          : riderCancelOutcome === "returned"
+          ? "Parcel returned to seller"
+          : "Driver cancelled dispatch");
+      if (manualReview) {
+        updateData.needsRebook = false;
+        updateData.rebookTrigger =
+          riderCancelOutcome === "customer" ? "customer_cancelled" : "returned_to_seller";
+        updateData.deliveryStatus = "needs_review";
+        updateData.delivery = deliveryMirror({
+          status: "needs_review",
+          riderCancellationReason: reason,
+        });
+      } else {
+        updateData.status = {
+          code: "RIDER_CANCELLED",
+          label: "Rider cancelled — rebook required",
+          kind: "in_progress",
+          terminal: false,
+        };
+        updateData.deliveryStatus = "rider_cancelled";
+        updateData.needsRebook = true;
+        updateData.rebookTrigger = "carrier_cancelled";
+        updateData.delivery = deliveryMirror({
+          status: "rider_cancelled",
+          riderCancellationReason: reason,
+        });
+      }
+      updateData.riderCancellationReason = reason;
+      break;
+    }
+  }
+
+  if (riderGps) {
+    updateData.delivery = {
+      ...(updateData.delivery || deliveryMirror({})),
+      riderLocation: riderGps,
+      riderLocationAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+  }
+
+  return { updateData, riderCancelOutcome };
+}
+
 function eventDocId(
   provider: string,
   rawEvent: string,
@@ -493,9 +678,11 @@ export async function handleDispatchWebhook(
     hintRaw =
       delivery?.client_order_id ??
       order?.client_order_id ??
+      payload?.client_order_id ??
       payload?.request_id ??
       payload?.merchant_order_id ??
       payload?.order_ref ??
+      payload?.correlation_id ??
       null;
   } else {
     // shadowfax: `{order_status, sfx_order_id, client_order_id, rider_*}` —
@@ -523,7 +710,52 @@ export async function handleDispatchWebhook(
   }
 
   const event = normalizeDispatchEvent(rawEvent, scope);
-  const orderIdHint = typeof hintRaw === "string" ? hintRaw.replace(/^REQ-/, "") : null;
+
+  let correlationInfo: {
+    orderId: string;
+    generation: number;
+    provider?: string;
+    branchId?: string;
+  } | null = null;
+
+  const rawToken = typeof hintRaw === "string" ? hintRaw.trim() : null;
+  if (rawToken && isSafeDocId(rawToken)) {
+    try {
+      const corrSnap = await db.collection("dispatch_correlation_map").doc(rawToken).get();
+      if (corrSnap.exists) {
+        const cd = corrSnap.data();
+        if (cd && typeof cd.orderId === "string" && cd.orderId) {
+          correlationInfo = {
+            orderId: cd.orderId,
+            generation: typeof cd.generation === "number" ? cd.generation : 1,
+            provider: cd.provider,
+            branchId: cd.branchId,
+          };
+        }
+      }
+    } catch {
+      // Non-blocking lookup
+    }
+  }
+
+  const orderIdHint = correlationInfo?.orderId ?? (typeof hintRaw === "string" ? hintRaw.replace(/^REQ-/, "") : null);
+
+  const driver =
+    payload?.driver_details ||
+    payload?.rider_details ||
+    payload?.driver ||
+    payload?.rider ||
+    payload?.delivery?.courier ||
+    payload?.order?.courier ||
+    payload?.courier ||
+    {};
+
+  const composedDriverName =
+    typeof driver?.surname === "string" && driver.surname && typeof driver?.name === "string"
+      ? `${driver.surname} ${driver.name}`
+      : undefined;
+
+  const riderGps = extractRiderGps(payload);
 
   // Borzo order_id is a JSON integer — coerce before the doc-id sanitizer.
   const parkId = eventDocId(
@@ -816,6 +1048,279 @@ export async function handleDispatchWebhook(
       }
       orderRef = hintDoc.ref;
     } else if (hintOrder && !binding) {
+      if (correlationInfo) {
+        // Explicit correlation token matched in dispatch_correlation_map!
+        const targetOrderId = correlationInfo.orderId;
+        const targetOrderRef = db.collection("orders").doc(targetOrderId);
+        const mapDocRef = providerOrderId
+          ? db.collection("dispatch_order_map").doc(String(providerOrderId))
+          : null;
+
+        if (db && typeof (db as any).runTransaction === "function") {
+          const outcome: any = await (db as any).runTransaction(async (tx: any) => {
+            const freshOrderSnap = await tx.get(targetOrderRef);
+            const freshOrder = freshOrderSnap.exists ? freshOrderSnap.data() : undefined;
+            if (!freshOrder) return { missing: true as const };
+
+            let freshMapData: any = null;
+            if (mapDocRef) {
+              const freshMapSnap = await tx.get(mapDocRef);
+              freshMapData = freshMapSnap.exists ? freshMapSnap.data() : undefined;
+            }
+
+            // Map collision check on fresh snapshot:
+            if (freshMapData && freshMapData.orderId && freshMapData.orderId !== targetOrderId) {
+              return { mapConflict: freshMapData };
+            }
+
+            // Terminal state check on fresh snapshot (prevents regressing concurrent DELIVERED):
+            const terminal = terminalDeliveryStatus(freshOrder);
+            if (terminal) return { terminal };
+
+            // Duplicate convergence on fresh snapshot:
+            const curProviderId = freshOrder.dispatchOrderId ?? freshOrder.porterOrderId ?? null;
+            if (
+              freshOrder.deliveryStatus === "dispatched" &&
+              curProviderId &&
+              normalizeProviderOrderId(curProviderId) === normalizeProviderOrderId(providerOrderId)
+            ) {
+              return { alreadyBound: true as const, freshOrder };
+            }
+
+            // Validate pending correlation on fresh order snapshot:
+            const pending = freshOrder.dispatchPendingCorrelation;
+            if (freshOrder.dispatchStatus !== "needs_reconciliation" || !pending) {
+              return { notPending: true as const, freshOrder };
+            }
+
+            // Validate token, provider, branch, generation
+            if (pending.token && rawToken && pending.token !== rawToken) {
+              return { tokenMismatch: true as const };
+            }
+            if (pending.provider && pending.provider !== provider) {
+              return { foreignProvider: pending.provider };
+            }
+            if (pending.branchId && freshOrder.branchId && pending.branchId !== freshOrder.branchId) {
+              return { branchMismatch: true as const };
+            }
+            if (typeof pending.generation === "number" && correlationInfo!.generation < pending.generation) {
+              return { staleGeneration: { pendingGen: pending.generation, callbackGen: correlationInfo!.generation } };
+            }
+            if (typeof pending.generation === "number" && correlationInfo!.generation > pending.generation) {
+              return { futureGeneration: true as const };
+            }
+
+            // Compute the delivery mirror and status/rider patch for this event
+            const eventPatch = computeWebhookEventPatch(
+              freshOrder,
+              event,
+              rawEvent,
+              provider,
+              providerOrderId,
+              payload,
+              driver,
+              composedDriverName,
+              riderGps
+            );
+
+            // Write map + order TOGETHER in transaction:
+            if (mapDocRef) {
+              tx.set(
+                mapDocRef,
+                {
+                  orderId: targetOrderId,
+                  provider,
+                  generation: pending.generation,
+                  status: "dispatched",
+                  boundAt: admin.firestore.FieldValue.serverTimestamp(),
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                },
+                { merge: true }
+              );
+            }
+
+            tx.set(
+              targetOrderRef,
+              {
+                dispatchProvider: provider,
+                dispatchOrderId: providerOrderId,
+                deliveryStatus: "dispatched",
+                dispatchStatus: "dispatched",
+                dispatchPendingCorrelation: null,
+                ...(provider === "borzo" ? { borzoOrderId: providerOrderId } : {}),
+                ...(provider === "shadowfax" ? { shadowfaxOrderId: providerOrderId } : {}),
+                ...eventPatch.updateData,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+
+            return {
+              ok: true as const,
+              freshOrder,
+              riderCancelOutcome: eventPatch.riderCancelOutcome,
+            };
+          });
+
+          // OUTSIDE TRANSACTION: handle outcomes
+          if (outcome?.mapConflict) {
+            log(`providerOrderId ${providerOrderId} already mapped to order ${outcome.mapConflict.orderId}`);
+            await parkDispatchEvent(
+              provider,
+              parkId,
+              {
+                orderId: targetOrderId,
+                providerOrderId,
+                mappedOrderId: outcome.mapConflict.orderId,
+                rawEvent: rawEvent || null,
+                reason: "order_id_conflict",
+              },
+              `${provider} webhook providerOrderId already mapped to another order — no state flipped`,
+              "high"
+            );
+            await markParked("order_id_conflict");
+            return;
+          }
+
+          if (outcome?.terminal) {
+            log(`correlated callback for already terminal order ${targetOrderId} ignored (no regression)`);
+            await markProcessed();
+            return;
+          }
+
+          if (outcome?.foreignProvider) {
+            log(`foreign provider takeover rejected: pending is ${outcome.foreignProvider}, callback is ${provider}`);
+            await parkDispatchEvent(
+              provider,
+              parkId,
+              {
+                orderId: targetOrderId,
+                providerOrderId,
+                boundProvider: outcome.foreignProvider,
+                callbackProvider: provider,
+                rawEvent: rawEvent || null,
+                reason: "order_id_conflict",
+              },
+              `${provider} webhook foreign provider takeover rejected — no state flipped`,
+              "high"
+            );
+            await markParked("order_id_conflict");
+            return;
+          }
+
+          if (outcome?.branchMismatch) {
+            log(`foreign branch takeover rejected for order ${targetOrderId}`);
+            await parkDispatchEvent(
+              provider,
+              parkId,
+              {
+                orderId: targetOrderId,
+                providerOrderId,
+                rawEvent: rawEvent || null,
+                reason: "order_id_conflict",
+              },
+              `${provider} webhook foreign branch takeover rejected — no state flipped`,
+              "high"
+            );
+            await markParked("order_id_conflict");
+            return;
+          }
+
+          if (outcome?.staleGeneration || outcome?.tokenMismatch) {
+            log(
+              `stale generation or token mismatch callback rejected for order ${targetOrderId}`
+            );
+            await parkDispatchEvent(
+              provider,
+              parkId,
+              {
+                orderId: targetOrderId,
+                providerOrderId,
+                callbackGeneration: outcome.staleGeneration?.callbackGen ?? correlationInfo?.generation ?? null,
+                pendingGeneration: outcome.staleGeneration?.pendingGen ?? null,
+                rawEvent: rawEvent || null,
+                reason: "order_id_conflict",
+              },
+              `${provider} webhook stale generation or token mismatch rejected for order ${targetOrderId} — no state flipped`,
+              "high"
+            );
+            await markParked("order_id_conflict");
+            return;
+          }
+
+          if (outcome?.futureGeneration) {
+            log(`future generation callback rejected for order ${targetOrderId}`);
+            await parkDispatchEvent(
+              provider,
+              parkId,
+              {
+                orderId: targetOrderId,
+                providerOrderId,
+                rawEvent: rawEvent || null,
+                reason: "order_id_conflict",
+              },
+              `${provider} webhook future generation callback rejected — no state flipped`,
+              "high"
+            );
+            await markParked("order_id_conflict");
+            return;
+          }
+
+          if (outcome?.alreadyBound) {
+            log(`order ${targetOrderId} already bound to ${providerOrderId} (duplicate converged)`);
+            await markProcessed();
+            return;
+          }
+
+          if (outcome?.notPending) {
+            log(`unproven correlation parked for order ${targetOrderId}`);
+            await parkDispatchEvent(
+              provider,
+              parkId,
+              {
+                orderId: targetOrderId,
+                providerOrderId,
+                rawEvent: rawEvent || null,
+                reason: "unbound_order",
+              },
+              `${provider} webhook unproven correlation for order ${targetOrderId} — parked`,
+              "medium"
+            );
+            await markParked("unbound_order");
+            if (providerOrderId) {
+              throw new DispatchWebhookRetryRequested(
+                `${provider} webhook parked (unproven correlation) for ${String(providerOrderId).slice(0, 64)} - retry requested`
+              );
+            }
+            return;
+          }
+
+          if (outcome?.ok) {
+            await markProcessed();
+            if (outcome.riderCancelOutcome) {
+              try {
+                const branchId = outcome.freshOrder?.branchId;
+                if (typeof branchId === "string" && branchId) {
+                  await dispatchFCM({
+                    topic: `branch_${branchId}_orders`,
+                    title: "Rider cancelled — rebook needed",
+                    body: `Order #${targetOrderId.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`,
+                    data: {
+                      type: "rider_cancelled",
+                      orderId: targetOrderId,
+                      needsRebook: "true",
+                    },
+                  });
+                }
+              } catch {
+                // Best effort
+              }
+            }
+            return;
+          }
+        }
+      }
+
       log(`unbound order hint parked: order ${orderIdHint} has no dispatch binding`);
       await parkDispatchEvent(
         provider,
@@ -884,20 +1389,6 @@ export async function handleDispatchWebhook(
 
   const nonEmpty = (...candidates: any[]): string | undefined =>
     candidates.find((c) => typeof c === "string" && c.trim()) as string | undefined;
-
-  const driver =
-    payload?.driver_details ||
-    payload?.rider_details ||
-    payload?.driver ||
-    payload?.rider ||
-    payload?.delivery?.courier || // Borzo delivery callback nests courier
-    payload?.order?.courier ||
-    {};
-
-  const composedDriverName =
-    typeof driver?.surname === "string" && driver.surname && typeof driver?.name === "string"
-      ? `${driver.surname} ${driver.name}`
-      : undefined;
 
   // ONE pre-write order read — it feeds the terminal guard AND the
   // `order.delivery` mirror merge base below.
@@ -1093,10 +1584,6 @@ export async function handleDispatchWebhook(
           : undefined,
       ...patch,
     });
-
-  // Real rider GPS only — null when the callback carries no genuine courier
-  // position (the mirror then keeps whatever real value it already had).
-  const riderGps = extractRiderGps(payload);
 
   const updateData: Record<string, any> = {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),

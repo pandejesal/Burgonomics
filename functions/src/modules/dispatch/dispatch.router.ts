@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { config } from "../../config/env";
@@ -100,6 +101,27 @@ function terminalError(deliveryStatus: string): Error {
   err.statusCode = 409;
   err.code = "DISPATCH_LOCKED";
   return err;
+}
+
+function dispatchReconciliationRequiredError(): Error {
+  const err: any = new Error(
+    "This order has a provider booking awaiting reconciliation — a remote rider may already be on the way. Reconcile the booking before booking another carrier."
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_RECONCILIATION_REQUIRED";
+  return err;
+}
+
+function isNeedsReconciliation(d: any): boolean {
+  return (
+    d?.dispatchStatus === "needs_reconciliation" ||
+    d?.porterDispatchStatus === "needs_reconciliation"
+  );
+}
+
+export function mintDispatchCorrelationToken(orderId: string, generation: number): string {
+  const hash = crypto.createHash("sha256").update(`${orderId}:${generation}`).digest("hex").slice(0, 16);
+  return `cr_${hash}_${generation}`;
 }
 
 /** Drops undefined values — Firestore rejects them inside any write payload. */
@@ -266,10 +288,6 @@ function storedDispatchSummary(d: any): any {
  * when available; read-check + direct claim on test shims without it.
  */
 async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
-  const claimWrite = {
-    dispatchStatus: "dispatch_pending",
-    dispatchClaimedAt: Date.now(),
-  };
   const busyCheck = (d: any) => isFreshGenericPending(d) || isFreshPorterPending(d);
 
   if (db && typeof (db as any).runTransaction === "function") {
@@ -285,16 +303,49 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
       if (terminal) return { terminal };
       if (isInHouseAssignmentActive(d)) return { inHouse: true as const };
       if (isActiveDispatch(d)) return { reuse: true, data: d };
+      if (isNeedsReconciliation(d)) return { needsReconciliation: true as const };
       if (busyCheck(d)) return { busy: true };
+
+      // Allocate generation and mint durable correlation token on fresh snapshot BEFORE POST
+      const currentGen = (typeof d.dispatchGeneration === "number" ? d.dispatchGeneration : 0) + 1;
+      const correlationToken = mintDispatchCorrelationToken(orderDoc.id, currentGen);
+
+      const claimWrite = {
+        dispatchStatus: "dispatch_pending",
+        dispatchClaimedAt: Date.now(),
+        dispatchGeneration: currentGen,
+        dispatchCorrelationToken: correlationToken,
+        dispatchPendingCorrelation: {
+          token: correlationToken,
+          generation: currentGen,
+          orderId: orderDoc.id,
+          branchId: d.branchId || null,
+          claimedAt: Date.now(),
+          provider: null,
+        },
+      };
+
       tx.set(orderDoc.ref, claimWrite, { merge: true });
-      return { claimed: true };
+      tx.set(
+        db.collection("dispatch_correlation_map").doc(correlationToken),
+        {
+          orderId: orderDoc.id,
+          generation: currentGen,
+          branchId: d.branchId || null,
+          claimedAt: Date.now(),
+          status: "pending",
+        },
+        { merge: true }
+      );
+      return { claimed: true, generation: currentGen, correlationToken };
     });
     if (outcome?.missing) throw orderMissingError(orderDoc.id);
     if (outcome?.terminal) throw terminalError(outcome.terminal);
     if (outcome?.inHouse) throw inHouseAssignmentError();
     if (outcome?.reuse) return storedDispatchSummary(outcome.data);
+    if (outcome?.needsReconciliation) throw dispatchReconciliationRequiredError();
     if (outcome?.busy) throw dispatchInProgressError();
-    return null;
+    return outcome;
   }
 
   // Fallback for Firestore shims without transactions (tests): same rules.
@@ -302,9 +353,38 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
   if (terminal) throw terminalError(terminal);
   if (isInHouseAssignmentActive(order)) throw inHouseAssignmentError();
   if (isActiveDispatch(order)) return storedDispatchSummary(order);
+  if (isNeedsReconciliation(order)) throw dispatchReconciliationRequiredError();
   if (busyCheck(order)) throw dispatchInProgressError();
+
+  const currentGen = (typeof order.dispatchGeneration === "number" ? order.dispatchGeneration : 0) + 1;
+  const correlationToken = mintDispatchCorrelationToken(orderDoc.id, currentGen);
+
+  const claimWrite = {
+    dispatchStatus: "dispatch_pending",
+    dispatchClaimedAt: Date.now(),
+    dispatchGeneration: currentGen,
+    dispatchCorrelationToken: correlationToken,
+    dispatchPendingCorrelation: {
+      token: correlationToken,
+      generation: currentGen,
+      orderId: orderDoc.id,
+      branchId: order.branchId || null,
+      claimedAt: Date.now(),
+      provider: null,
+    },
+  };
   await orderDoc.ref.set(claimWrite, { merge: true });
-  return null;
+  await db.collection("dispatch_correlation_map").doc(correlationToken).set(
+    {
+      orderId: orderDoc.id,
+      generation: currentGen,
+      branchId: order.branchId || null,
+      claimedAt: Date.now(),
+      status: "pending",
+    },
+    { merge: true }
+  );
+  return { claimed: true, generation: currentGen, correlationToken };
 }
 
 async function releaseClaimIdle(orderDoc: any, extra: Record<string, any> = {}): Promise<void> {
@@ -667,7 +747,11 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
 
   // Per-order idempotency gate before any provider call (double-book guard).
   const reuse = await claimDispatch(orderDoc, order);
-  if (reuse) return reuse;
+  if (reuse && reuse.reused) return reuse;
+
+  const currentGen = reuse?.generation ?? 1;
+  const correlationToken =
+    reuse?.correlationToken ?? mintDispatchCorrelationToken(orderId, currentGen);
 
   const { ctx, geoSource } = buildQuoteContext(order, params, pickup);
 
@@ -767,7 +851,16 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   for (const quote of walk) {
     const adapter = ADAPTERS.find((a) => a.provider === quote.provider)!;
     try {
-      const result = await adapter.book({ ...ctx, orderId, quote });
+      // Porter adapter looks up Firestore orders/{orderId}, so keep internal orderId for Porter.
+      // For Borzo and Shadowfax, pass the bounded opaque correlationToken (<= 24 chars, never truncated).
+      const outboundOrderId = quote.provider === "porter" ? orderId : correlationToken;
+
+      await db.collection("dispatch_correlation_map").doc(correlationToken).set(
+        { provider: quote.provider, attemptedAt: Date.now() },
+        { merge: true }
+      );
+
+      const result = await adapter.book({ ...ctx, orderId: outboundOrderId, quote });
       if (result.kind === "booked") {
         booked = { ...result, quote };
         attempts.push({ provider: quote.provider, outcome: "booked", at: Date.now() });
@@ -799,16 +892,35 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
           error: err.message,
           at: Date.now(),
         });
+        const pendingCorrelation = {
+          token: correlationToken,
+          provider: quote.provider,
+          generation: currentGen,
+          branchId: order.branchId || null,
+          orderId,
+          createdAt: Date.now(),
+        };
         await orderDoc.ref.set(
           {
             dispatchStatus: "needs_reconciliation",
             dispatchClaimedAt: null,
             dispatchError: err.message,
             dispatchAttempts: attempts,
+            dispatchGeneration: currentGen,
+            dispatchCorrelationToken: correlationToken,
+            dispatchPendingCorrelation: pendingCorrelation,
             needsRebook: false,
             rebookTrigger: null,
             ...(quoteSnapshot ? { dispatchQuote: quoteSnapshot } : {}),
             ...buildReleasedBindingWrite(order, "dispatch_failed"),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        await db.collection("dispatch_correlation_map").doc(correlationToken).set(
+          {
+            provider: quote.provider,
+            status: "needs_reconciliation",
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
@@ -881,6 +993,9 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
     dispatchStatus: "dispatched",
     dispatchClaimedAt: null,
     dispatchError: null,
+    dispatchGeneration: currentGen,
+    dispatchCorrelationToken: correlationToken,
+    dispatchPendingCorrelation: null,
     riderName: booked.riderName,
     riderPhone: booked.riderPhone,
     riderVehicleNumber: booked.riderVehicleNumber,
@@ -943,6 +1058,17 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
             provider: booked.provider,
             branchId: order.branchId || null,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      await db
+        .collection("dispatch_correlation_map")
+        .doc(correlationToken)
+        .set(
+          {
+            status: "dispatched",
+            providerOrderId: booked.providerOrderId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
         );
@@ -1465,6 +1591,10 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
   const order = orderDoc.data()!;
   if (caller) await assertOrderBranchAccess(caller, order);
 
+  // Fast pre-check: terminal statuses must refuse upfront (finding F3)
+  const preTerminal = terminalDeliveryStatus(order);
+  if (preTerminal) throw terminalError(preTerminal);
+
   const deliveryStatus = order.deliveryStatus as string | undefined;
   const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(deliveryStatus || "");
   if (!active) {
@@ -1474,36 +1604,80 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     throw err;
   }
 
+  const buildCancelPayload = (d: any, p: ProviderId | null) => ({
+    deliveryStatus: "rider_cancelled",
+    dispatchStatus: "cancelled_by_store",
+    dispatchProviderCancel: "manual-required",
+    needsRebook: true,
+    // Staff-initiated cancel: the auto-rebook worker must NEVER re-dispatch
+    // this one (only carrier_cancelled / dispatch_failed triggers auto-rebook).
+    rebookTrigger: "staff_cancelled",
+    riderCancellationReason: `Booking cancelled by ${staffName || "Branch Staff"} — confirm the cancellation in the ${p || "provider"} dashboard`,
+    cancelledBy: staffName || "Branch Staff",
+    cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+    // LOCAL release only (no documented provider cancel API): retire the
+    // active binding into released history so a late provider callback
+    // parks for reconciliation instead of mutating an order the branch has
+    // already released. The history is what proves the booking was real.
+    ...buildReleasedBindingWrite(d, "staff_cancelled", staffName || "Branch Staff"),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...(p === "porter"
+      ? {
+          porterDispatchStatus: "cancelled_by_store",
+          porterProviderCancel: "manual-required",
+        }
+      : {}),
+  });
+
+  if (db && typeof (db as any).runTransaction === "function") {
+    const outcome: any = await (db as any).runTransaction(async (tx: any) => {
+      const fresh = await tx.get(orderDoc.ref);
+      const d = (fresh.exists ? fresh.data() : undefined) as any;
+      if (!d) return { missing: true as const };
+      if (caller) await assertOrderBranchAccess(caller, d);
+
+      // Re-checked on fresh snapshot: concurrent DELIVERED must lock cancel
+      const terminal = terminalDeliveryStatus(d);
+      if (terminal) return { terminal };
+
+      const curStatus = d.deliveryStatus as string | undefined;
+      const curActive = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(curStatus || "");
+      if (!curActive) return { notActive: true as const };
+
+      const provider: ProviderId | null =
+        (d.dispatchProvider as ProviderId) || (d.porterOrderId ? "porter" : null);
+
+      tx.set(orderDoc.ref, buildCancelPayload(d, provider), { merge: true });
+      return { ok: true as const, provider };
+    });
+
+    if (outcome?.missing) throw orderMissingError(orderId);
+    if (outcome?.terminal) throw terminalError(outcome.terminal);
+    if (outcome?.notActive) {
+      const err: any = new Error("No active dispatch to cancel for this order.");
+      err.statusCode = 409;
+      err.code = "NOTHING_TO_CANCEL";
+      throw err;
+    }
+    if (!outcome?.ok) throw new Error("dispatchCancel: unrecognised transaction outcome");
+
+    return {
+      success: true,
+      orderId,
+      provider: outcome.provider,
+      providerCancel: "manual-required",
+      message:
+        outcome.provider === "porter"
+          ? "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented."
+          : "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented.",
+    };
+  }
+
+  // Fallback for Firestore shims without transactions (tests)
   const provider: ProviderId | null =
     (order.dispatchProvider as ProviderId) || (order.porterOrderId ? "porter" : null);
 
-  if (provider === "porter") {
-    const { cancelPorterBooking } = await import("../porter/porter.service");
-    const result = await cancelPorterBooking(orderId, staffName, caller);
-    return { ...result, provider: "porter" };
-  }
-
-  await orderDoc.ref.set(
-    {
-      deliveryStatus: "rider_cancelled",
-      dispatchStatus: "cancelled_by_store",
-      dispatchProviderCancel: "manual-required",
-      needsRebook: true,
-      // Staff-initiated cancel: the auto-rebook worker must NEVER re-dispatch
-      // this one (only carrier_cancelled / dispatch_failed triggers auto-rebook).
-      rebookTrigger: "staff_cancelled",
-      riderCancellationReason: `Booking cancelled by ${staffName || "Branch Staff"} — confirm the cancellation in the ${provider || "provider"} dashboard`,
-      cancelledBy: staffName || "Branch Staff",
-      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
-      // LOCAL release only (no documented provider cancel API): retire the
-      // active binding into released history so a late provider callback
-      // parks for reconciliation instead of mutating an order the branch has
-      // already released. The history is what proves the booking was real.
-      ...buildReleasedBindingWrite(order, "staff_cancelled", staffName || "Branch Staff"),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
+  await orderDoc.ref.set(buildCancelPayload(order, provider), { merge: true });
 
   return {
     success: true,
@@ -1511,7 +1685,9 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     provider,
     providerCancel: "manual-required",
     message:
-      "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented.",
+      provider === "porter"
+        ? "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented."
+        : "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented.",
   };
 }
 
