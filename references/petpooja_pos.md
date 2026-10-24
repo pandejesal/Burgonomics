@@ -51,3 +51,28 @@ Each branch stores credentials under `branches/{branchId}.petpooja`:
 - **Stock Webhook (`petpoojaStockWebhook`)**: Authenticated per-branch via the calling branch's stored `appKey`/`accessToken`, attributed by `restID`, and unknown `restID`s rejected (P4).
 - When Petpooja marks an ingredient or item out-of-stock, the Cloud Function updates the **branch-scoped** product (`products/branches/{branchId}/items/{itemid}`) `.available = false` instantly (P4) — never a shared/global product, so one branch's 86 cannot affect another branch.
 - **Post-Checkout Auto-Refund**: If an item is 86ed during cooking, the branch manager can adjust the order, automatically triggering a partial refund via Razorpay.
+
+## 5. Callback Trust Boundary and Remaining Exposure
+
+The documented order callback does not provide an inbound HMAC contract. The
+compatibility allowance in `functions/src/core/middleware.ts` applies only to
+`/petpooja/webhook`; payload shape is not authentication. Stock and menu endpoints
+must not inherit this allowance.
+
+An uncredentialed callback must resolve its `restID` to a linked branch and match
+the order's current branch. It must not set the POS acceptance markers that stop
+outbound retries, enqueue a refund, or rewind a terminal order. Scope, replay,
+terminal and refund decisions must use the same fresh transactional snapshot.
+The regression owner is `functions/tests/petpooja.status-callback-race.stress.test.ts`.
+
+Remaining exposure: a caller who knows a linked restaurant ID and an internal
+order ID may still forge a permitted non-terminal kitchen status or create a
+review row. These identifiers are not secrets and do not prove origin. Keeping
+money-moving effects blocked does not eliminate status spoofing or review-queue
+noise; operators must not treat an uncredentialed review row as provider proof.
+
+Before live rollout, the integrations and infrastructure owners must resolve
+provider authentication with Petpooja: an agreed signed callback contract or a
+verified source restriction appropriate to the provider. This limitation is
+recorded for that decision, not as approval to weaken authentication on other
+routes. The stress sweep changes no deployed credentials or infrastructure.
