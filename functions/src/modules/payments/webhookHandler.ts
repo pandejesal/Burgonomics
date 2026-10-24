@@ -76,19 +76,15 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   // Deliveries older than the window are stale replays — reject. Payloads
   // without the stamp predate this check and stay accepted (the idempotency
   // claim below still dedups them).
-  const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
-  const createdAtSec = typeof payload.created_at === "number" ? payload.created_at : null;
-  if (createdAtSec !== null && Date.now() - createdAtSec * 1000 > FRESHNESS_WINDOW_MS) {
-    console.warn("[Razorpay Webhook] stale event delivery — rejecting", { eventId, event });
-    res.status(401).json({ error: "Stale webhook event" });
-    return;
-  }
-
-  // Idempotency CLAIM (not check-then-act): the old code wrote the audit doc
-  // only AFTER the slow FCM + KOT push, so a Razorpay retry landing mid-push
-  // re-passed this check and double-pushed the KOT. create() fails when the
-  // doc exists, serializing concurrent deliveries; a stale claim (previous
-  // attempt died >10 min ago without completing) is taken over.
+  //
+  // ORDERING (stress sweep 2026-10-24): the freshness check runs AFTER the
+  // idempotency claim so a CRASHED delivery can be recovered by gateway
+  // redelivery. Razorpay's retry cadence jumps past the 10–15 min takeover
+  // band; a redelivery of a dead claim is by definition a recovery attempt,
+  // and the claim doc — not the payload timestamp — is the replay defense.
+  // Only a genuinely-NEW claim (no prior attempt) is subject to the
+  // freshness reject, and the claim doc is released so a plain rejection
+  // leaves no phantom lease behind.
   const auditDocRef = db.collection("payment_audits").doc(`aud_evt_${eventId}`);
   const CLAIM_TTL_MS = 10 * 60 * 1000;
   // Tri-state lease: "new" (we claimed it — process), "done" (a prior
@@ -96,7 +92,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   // recently but never completed: crash or still working — 500 so Razorpay
   // retries. The old code 200-acked inflight claims, and a crash between
   // claim and completion silently dropped real money forever).
-  const acquireClaim = async (): Promise<"new" | "done" | "inflight"> => {
+  const acquireClaim = async (): Promise<"new" | "takeover" | "done" | "inflight"> => {
     try {
       await auditDocRef.create({
         eventId,
@@ -118,10 +114,12 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               ? data.claimedAt
               : 0;
         // Stale claim (previous attempt died >10 min ago): take over by
-        // re-stamping a fresh numeric lease, then process.
+        // re-stamping a fresh numeric lease, then process. A takeover is a
+        // RECOVERY attempt — it is exempt from the payload freshness reject
+        // (the caller distinguishes "takeover" from "new").
         if (Date.now() - claimedMs >= CLAIM_TTL_MS) {
           await auditDocRef.set({ claimedAt: Date.now() }, { merge: true });
-          return "new";
+          return "takeover";
         }
         return "inflight";
       } catch (leaseErr) {
@@ -137,7 +135,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       }
     }
   };
-  let claim: "new" | "done" | "inflight";
+  let claim: "new" | "takeover" | "done" | "inflight";
   try {
     claim = await acquireClaim();
   } catch (leaseErr: any) {
@@ -154,6 +152,30 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   }
   if (claim === "inflight") {
     res.status(500).json({ error: "Event is being processed — retry shortly" });
+    return;
+  }
+
+  // Freshness window (relocated: claim-first so dead claims stay recoverable —
+  // see the ordering note above). Applies ONLY to genuinely-new claims: a
+  // takeover already owns a dead lease, and rejecting it would strand real
+  // money forever (audit doc carries the evidence, claim released on reject).
+  const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
+  const createdAtSec = typeof payload.created_at === "number" ? payload.created_at : null;
+  if (
+    claim === "new" &&
+    createdAtSec !== null &&
+    Date.now() - createdAtSec * 1000 > FRESHNESS_WINDOW_MS
+  ) {
+    console.warn("[Razorpay Webhook] stale event delivery — rejecting", { eventId, event });
+    try {
+      // Release the just-created claim: a plain rejection must not shadow
+      // the event with a phantom lease (no order writes happened).
+      await auditDocRef.delete();
+    } catch (e) {
+      // Best effort — the claim will age out via CLAIM_TTL_MS either way.
+      console.warn("[Razorpay Webhook] claim release after stale reject failed:", e);
+    }
+    res.status(401).json({ error: "Stale webhook event" });
     return;
   }
 
@@ -697,33 +719,41 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         await parkFailed("unsafe_order_id");
       } else if (orderId) {
         const orderRef = db.collection("orders").doc(orderId);
-        const orderSnap = await orderRef.get();
-        const orderData = (orderSnap.exists ? orderSnap.data() : undefined) as any;
-        if (!orderSnap.exists || !orderData) {
-          // Never resurrect a ghost order doc with a merged "failed" write
-          // (the mirror image of the confirm-path ghost guard).
-          await parkFailed("failed_unknown_order");
-        } else {
-          const alreadyPaid =
-            orderData.paymentStatus === "completed" ||
-            orderData?.payment?.status === "completed";
-          const recordedPaymentId =
-            orderData.payment?.razorpayPaymentId ??
-            orderData["payment.razorpayPaymentId"] ??
-            null;
-          // Monotonic status guard: a PAID order is never flipped back to
-          // failed by a late or replayed failure, and attempt A's failure
-          // never fails an order that already carries captured payment B
-          // (the pay-fail-retry-pay flow lands in exactly that ordering).
-          const foreignAttempt =
-            !!recordedPaymentId && !!failedPaymentId && recordedPaymentId !== failedPaymentId;
-          if (alreadyPaid || foreignAttempt) {
-            console.warn(
-              `[Razorpay Webhook] ignored payment.failed for order ${orderId} — ` +
-                `${alreadyPaid ? "order is already paid" : "failure belongs to a different payment attempt"}`
-            );
-          } else {
-            await orderRef.set(
+        // Transaction (stress sweep 2026-10-24): the confirm path reads and
+        // writes money status in ONE transaction, but the failed path read
+        // preT-then-wrote plain — a capture landing in the read→write window
+        // was silently overwritten by a stale `failed`. The guards below now
+        // evaluate against the TRANSACTIONAL snapshot, mirroring the confirm
+        // path ("must not regress a later/terminal status").
+        const txnOutcome = await (async () => {
+          const snap = await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(orderRef);
+            const orderData = (fresh.exists ? fresh.data() : undefined) as any;
+            if (!fresh.exists || !orderData) {
+              return { outcome: "unknown" as const, orderData: undefined as any };
+            }
+            const alreadyPaid =
+              orderData.paymentStatus === "completed" ||
+              orderData?.payment?.status === "completed";
+            const recordedPaymentId =
+              orderData.payment?.razorpayPaymentId ??
+              orderData["payment.razorpayPaymentId"] ??
+              null;
+            // Monotonic status guard: a PAID order is never flipped back to
+            // failed by a late or replayed failure, and attempt A's failure
+            // never fails an order that already carries captured payment B
+            // (the pay-fail-retry-pay flow lands in exactly that ordering).
+            const foreignAttempt =
+              !!recordedPaymentId && !!failedPaymentId && recordedPaymentId !== failedPaymentId;
+            if (alreadyPaid || foreignAttempt) {
+              console.warn(
+                `[Razorpay Webhook] ignored payment.failed for order ${orderId} — ` +
+                  `${alreadyPaid ? "order is already paid" : "failure belongs to a different payment attempt"}`
+              );
+              return { outcome: "ignored" as const, orderData };
+            }
+            tx.set(
+              orderRef,
               {
                 paymentStatus: "failed",
                 "payment.status": "failed",
@@ -731,32 +761,42 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               },
               { merge: true }
             );
-            // B5 interaction: if this order still carries a reconciliation
-            // marker, an earlier capture was parked and its money may genuinely
-            // have moved. The gateway's word about THIS attempt stands (the
-            // order flips to failed) and the marker is NOT silently cleared —
-            // but a human must see the contradiction instead of one signal
-            // quietly outranking the other.
-            if (orderData?.reconciliation?.state === "payment_review") {
-              await captureErrorSnapshot({
-                source: "payments",
-                severity: "high",
-                message: `Order ${orderId} flipped to failed while a reconciliation marker is still present — an earlier capture on this order may have moved money; review both signals`,
-              }).catch(() => undefined);
-            }
-            // The customer otherwise stares at a spinner: tell them plainly.
-            // (Status code is untouched, so no status trigger fires — push here.)
-            try {
-              const { pushToCustomer } = await import("../notifications/fcmClient");
-              await pushToCustomer(
-                orderData?.customerId || orderData?.userId,
-                "⚠️ Payment failed",
-                `Payment for order #${orderId.substring(0, 6)} did not go through. No money was charged — please try again.`,
-                { type: "payment_failed", orderId }
-              );
-            } catch {
-              // Non-blocking (see pushToCustomer).
-            }
+            return { outcome: "failed" as const, orderData };
+          });
+          return snap;
+        })();
+
+        if (txnOutcome.outcome === "unknown") {
+          // Never resurrect a ghost order doc with a merged "failed" write
+          // (the mirror image of the confirm-path ghost guard).
+          await parkFailed("failed_unknown_order");
+        } else if (txnOutcome.outcome === "failed") {
+          const orderData = txnOutcome.orderData;
+          // B5 interaction: if this order still carries a reconciliation
+          // marker, an earlier capture was parked and its money may genuinely
+          // have moved. The gateway's word about THIS attempt stands (the
+          // order flips to failed) and the marker is NOT silently cleared —
+          // but a human must see the contradiction instead of one signal
+          // quietly outranking the other.
+          if (orderData?.reconciliation?.state === "payment_review") {
+            await captureErrorSnapshot({
+              source: "payments",
+              severity: "high",
+              message: `Order ${orderId} flipped to failed while a reconciliation marker is still present — an earlier capture on this order may have moved money; review both signals`,
+            }).catch(() => undefined);
+          }
+          // The customer otherwise stares at a spinner: tell them plainly.
+          // (Status code is untouched, so no status trigger fires — push here.)
+          try {
+            const { pushToCustomer } = await import("../notifications/fcmClient");
+            await pushToCustomer(
+              orderData?.customerId || orderData?.userId,
+              "⚠️ Payment failed",
+              `Payment for order #${orderId.substring(0, 6)} did not go through. No money was charged — please try again.`,
+              { type: "payment_failed", orderId }
+            );
+          } catch {
+            // Non-blocking (see pushToCustomer).
           }
         }
       }
