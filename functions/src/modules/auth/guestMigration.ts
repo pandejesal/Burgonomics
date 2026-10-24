@@ -358,15 +358,105 @@ export async function migrateGuestAccount(
     value: string
   ): Promise<admin.firestore.DocumentReference[]> {
     const refs: admin.firestore.DocumentReference[] = [];
-    // Chunked reads: never pull an unbounded session history into one batch.
-    const snap = await db.collection(collection).where(field, "==", value).limit(MIGRATION_CHUNK_LIMIT).get();
-    for (const d of snap.docs as any[]) {
-      if (!refs.some((r) => r.path === (d.ref as any).path)) {
-        // eslint-disable-next-line no-await-in-loop
-        if (await isRelinkable(d)) refs.push(d.ref);
-        else skippedProtectedCount++;
+    const seenPaths = new Set<string>();
+
+    const docIdField =
+      typeof admin.firestore?.FieldPath?.documentId === "function"
+        ? admin.firestore.FieldPath.documentId()
+        : "__name__";
+
+    let lastDoc: any = undefined;
+    let prevLastId: string | undefined = undefined;
+
+    while (true) {
+      let query: any = db.collection(collection).where(field, "==", value);
+
+      // Inspect capabilities before .limit because legacy fakes may narrow the object returned by .limit()
+      const hasOrderBy = typeof query.orderBy === "function";
+      const hasStartAfter = typeof query.startAfter === "function";
+
+      if (hasOrderBy) {
+        query = query.orderBy(docIdField);
       }
+
+      if (lastDoc) {
+        if (typeof query.startAfter !== "function") {
+          const e = new Error(
+            `Migration failed: datastore query for ${collection} lacks startAfter capability required to drain beyond page 1.`
+          ) as Error & { code?: string; statusCode?: number };
+          e.code = "MIGRATION_PAGINATION_FAILED";
+          e.statusCode = 500;
+          throw e;
+        }
+        query = query.startAfter(lastDoc);
+      }
+
+      const canPage = typeof query.startAfter === "function" || hasStartAfter;
+
+      query = query.limit(MIGRATION_CHUNK_LIMIT);
+
+      // eslint-disable-next-line no-await-in-loop
+      const snap = await query.get();
+      const docs: any[] = snap?.docs || [];
+
+      if (docs.length === 0) {
+        break;
+      }
+
+      for (const d of docs) {
+        const refPath = d.ref?.path || `${collection}/${d.id || d.ref?.id}`;
+        if (!seenPaths.has(refPath)) {
+          seenPaths.add(refPath);
+          // eslint-disable-next-line no-await-in-loop
+          if (await isRelinkable(d)) {
+            refs.push(d.ref);
+          } else {
+            skippedProtectedCount++;
+          }
+        }
+      }
+
+      // If page had fewer than MIGRATION_CHUNK_LIMIT docs, collection is fully drained.
+      // Small finite shim datasets (<400) exit cleanly here.
+      if (docs.length < MIGRATION_CHUNK_LIMIT) {
+        break;
+      }
+
+      // A full page (docs.length === MIGRATION_CHUNK_LIMIT) requires valid cursor progression
+      const currentLastDoc = docs[docs.length - 1];
+      const currentLastId = currentLastDoc?.id || currentLastDoc?.ref?.id;
+
+      if (!currentLastDoc || !currentLastId) {
+        const e = new Error(
+          `Migration failed: last document in ${collection} page is malformed; cannot paginate safely.`
+        ) as Error & { code?: string; statusCode?: number };
+        e.code = "MIGRATION_PAGINATION_FAILED";
+        e.statusCode = 500;
+        throw e;
+      }
+
+      if (currentLastId === prevLastId) {
+        const e = new Error(
+          `Migration failed: repeated cursor detected at doc ${currentLastId} in ${collection}; pagination non-advancing.`
+        ) as Error & { code?: string; statusCode?: number };
+        e.code = "MIGRATION_PAGINATION_FAILED";
+        e.statusCode = 500;
+        throw e;
+      }
+
+      if (!canPage) {
+        const e = new Error(
+          `Migration failed: full page reached in ${collection} but datastore lacks pagination cursor support.`
+        ) as Error & { code?: string; statusCode?: number };
+        e.code = "MIGRATION_PAGINATION_FAILED";
+        e.statusCode = 500;
+        throw e;
+      }
+
+      lastDoc = currentLastDoc;
+      prevLastId = currentLastId;
     }
+
     return refs;
   }
 
