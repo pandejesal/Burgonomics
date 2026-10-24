@@ -151,7 +151,14 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     if (!live.exists) {
       throw serviceError("ORDER_NOT_FOUND", `Order ${orderId} not found`, 404);
     }
-    const current = ((live.data() || {}) as any).status || {};
+    const freshOrder = (live.data() || {}) as any;
+    // Re-AUTHORIZE against the transactional snapshot (stress sweep
+    // 2026-10-24, S2): the pre-read above may be stale — an order re-linked
+    // to another branch or a claim revoked between read and commit must not
+    // let the caller write order state they no longer own. Mirrors the
+    // fresh-snapshot authorization in manualBranchDispatch.
+    if (caller) await assertOrderBranchAccess(caller, freshOrder);
+    const current = freshOrder.status || {};
     // A terminal order (delivered/cancelled/completed/picked up) is frozen:
     // stale taps must never regress it, and a delivered order is not
     // cancellable from a KDS screen.
