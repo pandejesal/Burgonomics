@@ -1,4 +1,4 @@
-import { assertLiveDispatchContext, config } from "../../../config/env";
+import { assertLiveDispatchContext, config, isDeclaredProduction } from "../../../config/env";
 import type {
   DispatchBookContext,
   DispatchQuoteContext,
@@ -254,7 +254,12 @@ export const shadowfaxAdapter: ProviderAdapter = {
       config.shadowfax.enabled &&
       ((!!config.shadowfax.apiKey &&
         !!config.shadowfax.clientCode &&
-        config.shadowfax.contractVerified) ||
+        config.shadowfax.contractVerified &&
+        // F2 runtime half (Borzo parity): a declared-production process must
+        // not book through a keyed Shadowfax whose callback secret is empty —
+        // the booked rider's status could never be verified or the order
+        // closed. Boot fails closed; this covers post-boot config mutation.
+        (!isDeclaredProduction() || !!(config.shadowfax.webhookSecret || "").trim())) ||
         config.mock.shadowfaxDispatch)
     );
     // A garbage SHADOWFAX_BASE_URL is DELIBERATELY not an exclusion here: the

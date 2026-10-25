@@ -48,9 +48,39 @@ export function normalizePetpoojaStatus(rawStatus: any): string {
 }
 
 /**
+ * Outcome of an inbound 86ing webhook.
+ *
+ * `retryable` is the ONLY signal the route uses to answer non-2XX: a
+ * version-conflict (or an unclassified local write failure) means the toggle
+ * was NOT applied and nothing in-process will ever drain the park document, so
+ * Petpooja must redeliver. Answering 200 for that shape is a silent 86ing loss
+ * — the item stays orderable on the customer app while the kitchen believes it
+ * is out.
+ */
+export interface PetpoojaStockWebhookResult {
+  outcome: "applied" | "ignored" | "retry";
+  retryable: boolean;
+  reason?: string;
+}
+
+const stockIgnored = (reason?: string): PetpoojaStockWebhookResult => ({
+  outcome: "ignored",
+  retryable: false,
+  ...(reason ? { reason } : {}),
+});
+
+const stockRetry = (reason: string): PetpoojaStockWebhookResult => ({
+  outcome: "retry",
+  retryable: true,
+  reason,
+});
+
+/**
  * Instant stock-out (86ing) webhook handler from Petpooja physical POS.
  */
-export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
+export async function handlePetpoojaStockWebhook(
+  payload: any
+): Promise<PetpoojaStockWebhookResult> {
   // Field-name tolerance: the published callback samples and our own route
   // contract disagree on `rest_id`/`restID` and `in_stock`/`inStock`. Read
   // both so a rename on Petpooja's side can never silently drop an 86ing
@@ -68,7 +98,7 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
       severity: "medium",
       message: "Petpooja 86ing webhook arrived without item_id — stock toggle dropped, manual review required",
     });
-    return;
+    return stockIgnored("missing item_id");
   }
   const inStockBool = in_stock === 1 || in_stock === "1" || in_stock === true;
 
@@ -80,7 +110,7 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
       severity: "medium",
       message: "Petpooja 86ing webhook arrived with an unsafe item_id — stock toggle dropped, manual review required",
     });
-    return;
+    return stockIgnored("unsafe item_id");
   }
 
   // Same branch-scoped id scheme as the menu sync
@@ -106,7 +136,7 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
       severity: "medium",
       message: `Petpooja 86ing webhook for unlinked outlet ${typeof rest_id === "string" ? rest_id.slice(0, 64) : "(empty)"} item ${item_id} parked for review — no canonical inventory mutated`,
     });
-    return;
+    return stockIgnored("unlinked outlet");
   }
 
   const productId = `prod_${branchId}_${item_id}`;
@@ -134,7 +164,7 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
       message: `Petpooja 86ing webhook for missing product ${productId} parked for review — no orphan created`,
       branchId,
     });
-    return;
+    return stockIgnored("product does not exist");
   }
 
   const prodData = prodSnap.data() || {};
@@ -167,7 +197,7 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
       message: `Petpooja 86ing webhook for product ${productId} has contradictory ownership — parked for review, no ownership overwritten`,
       branchId,
     });
-    return;
+    return stockIgnored("ownership mismatch");
   }
 
   const initialUpdateTime = prodSnap.updateTime;
@@ -211,12 +241,13 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
 
+        // F6: the version precondition is the whole point of this commit. The
+        // old code caught a rejected precondition and re-issued an UNCONDITIONAL
+        // tx.update, which silently overwrote the fresher local toggle the check
+        // had just refused to clobber. A rejected precondition must surface as a
+        // conflict (→ retryable), never be retried without it.
         if (initialUpdateTime) {
-          try {
-            tx.update(productRef, updateData, { lastUpdateTime: initialUpdateTime });
-          } catch {
-            tx.update(productRef, updateData);
-          }
+          tx.update(productRef, updateData, { lastUpdateTime: initialUpdateTime });
         } else {
           tx.update(productRef, updateData);
         }
@@ -282,7 +313,7 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
 
   if (committed) {
     console.log(`[Petpooja 86ing] Item ${item_id} at branch ${rest_id} set inStock=${inStockBool}`);
-    return;
+    return { outcome: "applied", retryable: false };
   }
 
   if (
@@ -291,7 +322,7 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
     (conflictReason && conflictReason.includes("conflict"))
   ) {
     console.warn(
-      `[Petpooja 86ing] Concurrent stock update detected for ${productId} — parking webhook for review to preserve newer local toggle`
+      `[Petpooja 86ing] Concurrent stock update detected for ${productId} — parking webhook for review AND asking Petpooja to redeliver (a 200 here would silently drop the 86ing)`
     );
     const qDocId = computeStockQuarantineDocId(branchId, item_id);
     await db.collection("unmatched_petpooja_stock").doc(qDocId).set(
@@ -309,11 +340,14 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
     );
     await captureErrorSnapshot({
       source: "petpooja",
-      severity: "medium",
-      message: `Petpooja 86ing webhook for product ${productId} conflicted with concurrent stock update — quarantined, newer state preserved`,
+      // The toggle did NOT land. The park doc is evidence for an operator; the
+      // vendor redelivery is what actually repairs it, so this is not a silent
+      // success and not a silent drop.
+      severity: "high",
+      message: `Petpooja 86ing webhook for product ${productId} conflicted with concurrent stock update — not applied, quarantined and answered retryable for redelivery`,
       branchId,
     });
-    return;
+    return stockRetry("concurrent stock update — redeliver");
   }
 
   if (conflictReason === "ownership_mismatch") {
@@ -337,8 +371,26 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
       message: `Petpooja 86ing webhook for product ${productId} rejected — ownership mismatch on write`,
       branchId,
     });
-    return;
+    // Redelivery cannot fix contradictory ownership; an operator has to.
+    return stockIgnored("ownership mismatch on write");
   }
+
+  // F6 (previously a SILENT DROP): `missing` (the doc vanished between the two
+  // reads) and any unclassified transaction/update failure reached here and fell
+  // off the end of the function — no write, no park, no retry, and the route
+  // still answered 200. Ask for a redelivery: the next attempt re-reads the
+  // product (a genuinely deleted SKU then parks as "does not exist") and a
+  // transient datastore error simply clears.
+  console.warn(
+    `[Petpooja 86ing] Could not apply stock toggle for ${productId} (${conflictReason || "unknown"}) — asking Petpooja to redeliver`
+  );
+  await captureErrorSnapshot({
+    source: "petpooja",
+    severity: "high",
+    message: `Petpooja 86ing webhook for product ${productId} was NOT applied (${conflictReason || "unknown failure"}) — answered retryable for redelivery`,
+    branchId,
+  });
+  return stockRetry(conflictReason || "stock toggle not applied");
 }
 
 /**
@@ -584,11 +636,10 @@ export async function pushItemStockToPetpooja(
           };
 
           if (initialUpdateTime) {
-            try {
-              tx.update(productRef, updateData, { lastUpdateTime: initialUpdateTime });
-            } catch {
-              tx.update(productRef, updateData);
-            }
+            // F6: never re-issue this update without the precondition — that old
+            // fallback let a stale POS ack overwrite the fresher local toggle the
+            // version check had just refused to clobber.
+            tx.update(productRef, updateData, { lastUpdateTime: initialUpdateTime });
           } else {
             tx.update(productRef, updateData);
           }
@@ -1098,6 +1149,11 @@ export async function handlePetpoojaWebhook(
 
   type StatusPlanResult =
     | { action: "untrusted_branch_mismatch"; claimedBranch: string | null; orderBranch: string }
+    | {
+        action: "untrusted_terminal_refused";
+        canonicalStatus: string;
+        claimedBranch: string | null;
+      }
     | { action: "pos_binding_mismatch"; posOrderId: string; currentPosOrderId: string }
     | { action: "replay_ignored"; eventId: string }
     | { action: "terminal_ignored"; currentCode?: string; currentKind?: string }
@@ -1140,7 +1196,20 @@ export async function handlePetpoojaWebhook(
       }
     }
 
-    // 2. POS binding re-check on fresh snapshot:
+    // 2. F8 (terminal-flip integrity): an unauthenticated caller — admitted only
+    // by callback SHAPE (the vendor's documented callbacks carry no credential
+    // header) — could still mark an order DELIVERED or CANCELLED. A terminal flip
+    // is irreversible here (the terminal guard refuses every later callback, and
+    // a cancel additionally parks a refund), so a shape-only caller must not be
+    // able to end a live order. Non-terminal kitchen claims (accepted / ready /
+    // out_for_delivery) stay allowed: they are bounded, non-destructive, and
+    // carry no money movement. Wire the credential header to apply a terminal
+    // status.
+    if (untrusted && statusMeta[canonicalStatus]?.terminal === true) {
+      return { action: "untrusted_terminal_refused", canonicalStatus, claimedBranch };
+    }
+
+    // 3. POS binding re-check on fresh snapshot:
     // An order resolved purely by POS id must still be bound to that exact POS id
     if (resolvedBy === "pos") {
       const freshPosId = String(freshOrderData.petpoojaOrderId ?? "");
@@ -1291,6 +1360,46 @@ export async function handlePetpoojaWebhook(
     };
   };
 
+  /**
+   * F8: park + alert a terminal status we refused because the caller presented
+   * no credential. Kept out of the transaction (a refusal must never write to
+   * the order) and best-effort so a park failure cannot turn a refusal into a 5xx.
+   */
+  const parkUntrustedTerminal = async (refusedStatus: string): Promise<void> => {
+    console.warn(
+      `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} refused: terminal status "${refusedStatus}" requires an authenticated caller — no status change applied`
+    );
+    try {
+      await db
+        .collection("unmatched_petpooja_orders")
+        .doc(`upo_${resolvedOrderId}`)
+        .set(
+          {
+            orderId: resolvedOrderId,
+            posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+            callbackOrderId: callbackOrderId || null,
+            rawStatus: payload.status || payload.order_status || null,
+            restId: restIdRaw || null,
+            status: "needs_review",
+            reason: `unauthenticated terminal status "${refusedStatus}" refused — a credential is required to complete or cancel an order`,
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+    } catch (err) {
+      console.warn(
+        `[Petpooja Webhook] Failed to park refused unauthenticated terminal status for ${resolvedOrderId}:`,
+        (err as any)?.message || err
+      );
+    }
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Unauthenticated Petpooja callback attempted a terminal status "${refusedStatus}" for order ${resolvedOrderId} — refused and parked for review`,
+      orderId: resolvedOrderId,
+    });
+  };
+
   if (db && typeof (db as any).runTransaction === "function") {
     const txOutcome = await (db as any).runTransaction(async (tx: any) => {
       // 1. ALL READS FIRST: Fresh snapshot of the order document
@@ -1359,6 +1468,10 @@ export async function handlePetpoojaWebhook(
 
     // Logging & side-effects outside retryable transaction
     if (txOutcome.action === "not_found") {
+      return;
+    }
+    if (txOutcome.action === "untrusted_terminal_refused") {
+      await parkUntrustedTerminal(txOutcome.canonicalStatus);
       return;
     }
     if (txOutcome.action === "untrusted_branch_mismatch") {
@@ -1523,6 +1636,9 @@ export async function handlePetpoojaWebhook(
           `[Petpooja Webhook] Unauthenticated cancellation for order ${resolvedOrderId} — refund injection refused`
         );
       }
+      return;
+    } else if (plan.action === "untrusted_terminal_refused") {
+      await parkUntrustedTerminal(plan.canonicalStatus);
       return;
     } else if (plan.action === "untrusted_branch_mismatch") {
       console.warn(

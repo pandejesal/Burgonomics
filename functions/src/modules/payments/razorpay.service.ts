@@ -299,8 +299,15 @@ async function resolveBranchId(params: CreateOrderParams): Promise<string> {
  * order is minted. 404 for an unknown id, 409 for paid/foreign orders, 503
  * when the check itself is unavailable (fail closed — a checkout that cannot
  * prove ownership never opens).
+ *
+ * Returns the persisted doc: the caller binds the payable basket to what is
+ * STORED on this order (see bindBasketToStoredOrder), because the KOT builder
+ * fulfills `orders/{orderId}.items` — not the request body.
  */
-async function assertPayableOrderDoc(orderId: string, customerId: string): Promise<void> {
+async function assertPayableOrderDoc(
+  orderId: string,
+  customerId: string
+): Promise<Record<string, any>> {
   if (!db || typeof db.collection !== "function") {
     const err: any = new Error("Order verification is temporarily unavailable — please retry checkout.");
     err.statusCode = 503;
@@ -345,6 +352,7 @@ async function assertPayableOrderDoc(orderId: string, customerId: string): Promi
     err.code = "ORDER_NOT_OWNED";
     throw err;
   }
+  return data;
 }
 
 /**
@@ -633,6 +641,133 @@ async function resolveLostClaim(args: {
 }
 
 /**
+ * P1 basket binding: the request body is NOT the order of record.
+ *
+ * `createPaymentOrder` used to price the request-body `items`/`branchId`/
+ * `orderType` and stamp only `pricing` onto the existing orders/{orderId} doc.
+ * The customer paid for THAT basket while the KOT builder
+ * (`pushOrderPetpooja` → `order.items`, `order.fulfillmentType || order.orderType`)
+ * fulfilled the STORED one — a different basket, at a different branch, for a
+ * different fulfillment type, charged to the same customer.
+ *
+ * The persisted doc is therefore the single source of truth whenever it
+ * carries a usable basket:
+ *   • items        — priced AS STORED (the exact lines the kitchen will cook);
+ *   • branchId     — priced AS STORED (royalty/packaging belong to that branch);
+ *   • orderType    — canonicalized from orderType/fulfillmentType/fulfillment;
+ * and any request that disagrees is refused BEFORE pricing, before the intent
+ * lease, and before any gateway order is minted. `BASKET_MISMATCH` is a
+ * non-retryable 409: retrying the same body can never converge.
+ *
+ * A legacy order doc with no `items` array has no basket to bind, so the
+ * historical request-priced behaviour is preserved (nothing else could be
+ * priced, and refusing would strand every pre-`items` checkout).
+ */
+const STORED_ORDER_TYPE_ALIASES: Record<string, "delivery" | "takeaway" | "dinein"> = {
+  delivery: "delivery",
+  takeaway: "takeaway",
+  pickup: "takeaway",
+  dinein: "dinein",
+  "dine-in": "dinein",
+};
+
+/** Canonical fulfillment literal for a persisted order doc, or null when absent/unknown. */
+function readStoredOrderType(
+  doc: any
+): "delivery" | "takeaway" | "dinein" | null {
+  const candidates = [doc?.orderType, doc?.fulfillmentType, doc?.fulfillment];
+  for (const raw of candidates) {
+    if (typeof raw !== "string") continue;
+    const canonical = STORED_ORDER_TYPE_ALIASES[raw.trim().toLowerCase()];
+    if (canonical) return canonical;
+  }
+  return null;
+}
+
+/**
+ * Price-agnostic identity of ONE basket line: product, quantity, and the
+ * addon deltas the customer chose. Item *prices* are deliberately excluded —
+ * the catalog (not the client) is the price authority, so a stale cart price
+ * is repriced rather than treated as a different basket. Addon deltas ARE
+ * included: they are client-supplied money the pricing engine trusts, so a
+ * (cheap garnish → expensive garnish) swap is a different basket.
+ */
+function basketLineKey(item: any): string {
+  const productId = String(item?.productId || item?.id || "").trim();
+  const quantity = Math.floor(Number(item?.quantity) || 0);
+  const addons = [
+    ...(Array.isArray(item?.customizations) ? item.customizations : []).map(
+      (c: any) => `c:${String(c?.id ?? c?.name ?? "")}:${Number(c?.price) || 0}`
+    ),
+    ...(Array.isArray(item?.modifiers) ? item.modifiers : []).map(
+      (m: any) => `m:${String(m?.id ?? m?.name ?? "")}:${Number(m?.priceDelta) || 0}`
+    ),
+  ].sort();
+  return `${productId}|${quantity}|${addons.join(",")}`;
+}
+
+/** Order-independent fingerprint of a basket's line identities. */
+function basketFingerprint(items: any): string {
+  const lines = Array.isArray(items) ? items : [];
+  return lines.map(basketLineKey).sort().join("||");
+}
+
+function basketMismatchError(): Error {
+  const err: any = new Error(
+    "Your cart no longer matches the order on file — nothing was charged. Please review your basket and start a new order."
+  );
+  err.statusCode = 409;
+  err.code = "BASKET_MISMATCH";
+  return err;
+}
+
+/**
+ * Binds the payable basket to the persisted order. Throws BASKET_MISMATCH when
+ * the request describes a different basket/branch/fulfillment than the one
+ * stored on orders/{orderId}; returns the STORED basket to price otherwise.
+ */
+function bindBasketToStoredOrder(args: {
+  storedOrder: Record<string, any> | null;
+  requestItems: any[];
+  requestBranchId: string;
+  requestOrderType: "delivery" | "takeaway" | "dinein";
+}): { items: any[]; branchId: string; orderType: "delivery" | "takeaway" | "dinein" } {
+  const { storedOrder, requestItems, requestBranchId, requestOrderType } = args;
+
+  const storedItems =
+    storedOrder && Array.isArray(storedOrder.items) && storedOrder.items.length > 0
+      ? storedOrder.items
+      : null;
+  if (!storedItems) {
+    // No persisted basket to bind (legacy doc): keep request pricing.
+    return { items: requestItems, branchId: requestBranchId, orderType: requestOrderType };
+  }
+
+  if (basketFingerprint(storedItems) !== basketFingerprint(requestItems)) {
+    throw basketMismatchError();
+  }
+
+  const storedBranchId =
+    typeof storedOrder?.branchId === "string" && storedOrder.branchId
+      ? storedOrder.branchId
+      : "";
+  if (storedBranchId && storedBranchId !== requestBranchId) {
+    throw basketMismatchError();
+  }
+
+  const storedOrderType = readStoredOrderType(storedOrder);
+  if (storedOrderType && storedOrderType !== requestOrderType) {
+    throw basketMismatchError();
+  }
+
+  return {
+    items: storedItems,
+    branchId: storedBranchId || requestBranchId,
+    orderType: storedOrderType || requestOrderType,
+  };
+}
+
+/**
  * Creates a Razorpay server order with authoritative price calculation and route notes.
  */
 export async function createPaymentOrder(params: CreateOrderParams) {
@@ -640,14 +775,16 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // `order_mock_*` payable id, no matter how the config object got flipped.
   assertLivePaymentsContext("createPaymentOrder");
 
-  const branchId = await resolveBranchId(params);
+  const requestBranchId = await resolveBranchId(params);
 
   // PAYMENTS_CONTRACT_SPEC §1: the internal order doc must exist, be unpaid,
   // and belong to the caller BEFORE anything else (fail fast ahead of balance
   // lookups, idempotent reuse, and — critically — the gateway order mint).
-  if (params.orderId) {
-    await assertPayableOrderDoc(params.orderId, params.customerId);
-  }
+  // The persisted doc is returned so the payable basket can be bound to it
+  // (the kitchen fulfills orders/{orderId}.items, never the request body).
+  const storedOrder = params.orderId
+    ? await assertPayableOrderDoc(params.orderId, params.customerId)
+    : null;
 
   // Server-verified redemption: the pricing engine only ever sees coins the
   // customer actually holds (guests hold none).
@@ -735,10 +872,25 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     }
   }
 
+  // P1 basket binding: price the PERSISTED basket (items/branch/fulfillment)
+  // — the exact lines the KOT builder will send to the kitchen — or refuse a
+  // request that describes a different basket. Runs after the idempotent
+  // reuse fast-path (a live intent already carries the server-priced total
+  // for this order) and BEFORE pricing, the intent lease, and the mint, so a
+  // mismatch can never open a gateway order.
+  const boundBasket = bindBasketToStoredOrder({
+    storedOrder,
+    requestItems: params.items,
+    requestBranchId,
+    requestOrderType: params.orderType,
+  });
+  const branchId = boundBasket.branchId;
+  const orderType = boundBasket.orderType;
+
   const pricing = await calculateOrderPricing({
-    items: params.items,
+    items: boundBasket.items,
     branchId,
-    orderType: params.orderType,
+    orderType,
     deliveryFee: params.deliveryFee,
     packagingFee: params.packagingFee,
     couponCode: params.couponCode,
@@ -799,7 +951,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           orderId: params.orderId || "",
           branchId,
           customerId: params.customerId,
-          orderType: params.orderType,
+          orderType,
           brandRoyaltyPaise: pricing.split.brandRoyaltyPaise,
           branchTransferPaise: pricing.split.branchTransferPaise,
         },
@@ -831,7 +983,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       // doc (legacy client verifying before creating it) can rebuild the doc
       // from SERVER-owned data only (spec §2 ghost-order guard).
       branchId,
-      orderType: params.orderType,
+      orderType,
       customerId: params.customerId,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAtMs: nowMs,
@@ -1902,14 +2054,34 @@ async function finishVerifiedPayment(args: {
     // hash is never overwritten.
     if (performedConfirm) {
       const mintedOtp = mintDeliveryOtp(fresh);
+      const capturedPaiseStamp =
+        typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
+          ? capturedAmountPaise
+          : undefined;
       const updatePayload: Record<string, any> = {
         paymentStatus: "completed",
+        // CANONICAL nested payment map (the queryable shape). The refund.processed
+        // webhook looks orders up by `where("payment.razorpayPaymentId", …)`,
+        // i.e. the NESTED path — the dotted literal written here used to be a
+        // top-level field named "payment.razorpayPaymentId", invisible to that
+        // query, so every refund for an app-verified order parked unmatched.
+        payment: {
+          status: "completed",
+          razorpayPaymentId,
+          razorpayOrderId,
+          verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...(capturedPaiseStamp !== undefined
+            ? { capturedAmountPaise: capturedPaiseStamp }
+            : {}),
+        },
+        // Legacy dotted aliases kept during migration: both-shape readers in
+        // the apps and older functions read the literal form directly.
         "payment.status": "completed",
         "payment.razorpayPaymentId": razorpayPaymentId,
         "payment.razorpayOrderId": razorpayOrderId,
         "payment.verifiedAt": admin.firestore.FieldValue.serverTimestamp(),
-        ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
-          ? { "payment.capturedAmountPaise": capturedAmountPaise }
+        ...(capturedPaiseStamp !== undefined
+          ? { "payment.capturedAmountPaise": capturedPaiseStamp }
           : {}),
         status: {
           code: "CONFIRMED",

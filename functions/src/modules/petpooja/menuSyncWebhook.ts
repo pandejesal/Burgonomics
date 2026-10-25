@@ -136,12 +136,19 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // both tolerate the throw; unlinked branches sync nothing until ops links
   // them.
   let restId: string;
+  // Previous sync's reported catalogue size (branches/{id}.petpoojaItemCount)
+  // and the size observed by this run's tombstone scan. F7 uses both to decide
+  // whether a feed is a genuine removal or a TRUNCATED payload.
+  let previousItemCount = 0;
+  let observedItemCount = 0;
   if (config.mock.petpoojaPos) {
     // Mock mode serves canned menu data (no outlet queried) — the strict
     // outlet binding below applies to live mode only.
     try {
       const branchSnap = await db.collection("branches").doc(branchId).get();
-      restId = (branchSnap.data() as any)?.petpoojaStoreId || branchId;
+      const mockBranch = branchSnap.data() as any;
+      restId = mockBranch?.petpoojaStoreId || branchId;
+      previousItemCount = Number(mockBranch?.petpoojaItemCount) || 0;
     } catch {
       restId = branchId;
     }
@@ -155,6 +162,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       );
     }
     restId = b.petpoojaStoreId;
+    previousItemCount = Number(b.petpoojaItemCount) || 0;
   } catch (err: any) {
     if (err?.message?.includes("no linked Petpooja outlet")) throw err;
     throw new Error(
@@ -544,6 +552,21 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // bad feed is recoverable. Local-only docs (combos / no petpoojaItemId) are
   // never touched. Skipped entirely on an empty feed (API glitch must not
   // retire the whole catalog).
+  //
+  // F7 (tombstone-guard integrity): the ONLY guard used to be "the feed is not
+  // empty". A TRUNCATED feed — the menu API returning a partial page, a push
+  // carrying half the catalogue — then retired every SKU it happened to omit,
+  // taking the branch's menu dark on the customer app. Two proportional guards
+  // now decide BEFORE any write:
+  //   (a) the feed must cover at least half of the branch's known catalogue;
+  //   (b) a single run may not retire more than half of it.
+  // Both compare against the LARGER of the last sync's reported item count and
+  // this run's own scan, and both raise a HIGH snapshot and skip the pass
+  // (nothing is written, so there is nothing to reverse). A catalogue that
+  // legitimately shrinks by more than half therefore needs an operator to
+  // reconcile it deliberately — the alternative is silently taking a live menu
+  // dark on a partial feed, which is strictly worse.
+  let tombstoneRefused = false;
   if (!config.mock.petpoojaPos && validItemIds.length > 0) {
     try {
       const feedIds = new Set(validItemIds);
@@ -551,7 +574,14 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       // the window live/orderable forever on catalogs bigger than the page.
       const TOMBSTONE_PAGE = 500;
       let lastDoc: any = null;
-      let retired = 0;
+      // Two-phase on purpose: collect first, so a refused pass writes nothing.
+      const retireCandidates: any[] = [];
+      // F7 (SKU re-appearance): a SKU that comes BACK in the feed must stop
+      // being a tombstone. Cleared here (not in the product payload) so a live
+      // SKU that was never retired does not carry a misleading
+      // `ghostRetired: false` field of its own.
+      const restoreCandidates: any[] = [];
+      let knownActiveItems = 0;
       for (;;) {
         let pageQuery: any = db
           .collection("products")
@@ -568,31 +598,99 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
           if (dd.isCombo) continue;
           const pid = dd.petpoojaItemId ? String(dd.petpoojaItemId) : null;
           if (!pid) continue;
-          if (!feedIds.has(pid) && dd.inStock !== false) {
-            await d.ref.set(
-              {
-                inStock: false,
-                ghostRetired: true,
-                ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true }
-            );
-            retired++;
+          if (feedIds.has(pid)) {
+            // Back in the feed → drop the tombstone. A live SKU carrying
+            // `ghostRetired: true` misleads operators/reports that read the flag.
+            if (dd.ghostRetired === true) restoreCandidates.push(d.ref);
+            // A feed-present SKU is part of the live catalogue: it must count
+            // toward the denominator, or the feed-share guard compares a feed
+            // against only the SKUs it omits.
+            knownActiveItems++;
+            continue;
+          }
+          // A tombstone that stays absent is already off the menu; counting it
+          // would inflate the denominator until the guard refused every pass.
+          if (dd.ghostRetired === true) continue;
+          knownActiveItems++;
+          if (dd.inStock !== false) {
+            retireCandidates.push(d.ref);
           }
         }
         if (docs.length < TOMBSTONE_PAGE) break;
         lastDoc = docs[docs.length - 1];
         if (!lastDoc || typeof pageQuery.startAfter !== "function") break;
       }
-      if (retired > 0) {
-        const { captureErrorSnapshot } = await import("../../core/errors");
+      observedItemCount = knownActiveItems;
+
+      // Restores are never dangerous (they only clear a tombstone), so they run
+      // even when the retirement pass below is refused.
+      if (restoreCandidates.length > 0) {
+        for (const ref of restoreCandidates) {
+          await ref.set(
+            {
+              ghostRetired: false,
+              ghostRetiredAt: null,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+        console.log(
+          `[Petpooja Menu Sync] restored ${restoreCandidates.length} returned SKU(s) for branch ${branchId} (cleared ghostRetired)`
+        );
+      }
+
+      const knownItems = Math.max(previousItemCount, knownActiveItems);
+      const MIN_FEED_SHARE = 0.5;
+      const MAX_RETIRE_SHARE = 0.5;
+      const truncatedFeed =
+        knownItems > 0 && feedIds.size < knownItems * MIN_FEED_SHARE;
+      const massRetirement =
+        retireCandidates.length > 0 &&
+        knownItems > 0 &&
+        retireCandidates.length > knownItems * MAX_RETIRE_SHARE;
+
+      if (truncatedFeed || massRetirement) {
+        tombstoneRefused = true;
+        console.warn(
+          `[Petpooja Menu Sync] REFUSING the ghost-SKU tombstone pass for branch ${branchId}: ${
+            truncatedFeed
+              ? `feed carries ${feedIds.size} SKU(s) against ${knownItems} known item(s)`
+              : `this run would retire ${retireCandidates.length} of ${knownItems} known item(s)`
+          } — a truncated feed must not take the catalogue dark`
+        );
         await captureErrorSnapshot({
           source: "petpooja",
-          severity: "medium",
-          message: `Menu sync retired ${retired} ghost SKU(s) for branch ${branchId} (absent from POS feed, flipped out-of-stock — not deleted)`,
+          severity: "high",
+          message: `Menu sync REFUSED to retire ghost SKUs for branch ${branchId}: ${
+            truncatedFeed
+              ? `feed has ${feedIds.size} SKU(s) vs ${knownItems} known item(s) (suspected truncated feed)`
+              : `would retire ${retireCandidates.length} of ${knownItems} known item(s) in one run`
+          }. No product was retired; re-run once the feed is complete.`,
           branchId,
         });
+      } else {
+        let retired = 0;
+        for (const ref of retireCandidates) {
+          await ref.set(
+            {
+              inStock: false,
+              ghostRetired: true,
+              ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          retired++;
+        }
+        if (retired > 0) {
+          await captureErrorSnapshot({
+            source: "petpooja",
+            severity: "medium",
+            message: `Menu sync retired ${retired} ghost SKU(s) for branch ${branchId} (absent from POS feed, flipped out-of-stock — not deleted)`,
+            branchId,
+          });
+        }
       }
     } catch (err: any) {
       console.warn(`[Petpooja Menu Sync] Ghost-SKU tombstone pass failed for ${branchId}:`, err?.message || err);
@@ -602,7 +700,12 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   await db.collection("branches").doc(branchId).set(
     {
       lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
-      petpoojaItemCount: validItemsCount,
+      // A refused tombstone run must NOT lower the recorded catalogue size:
+      // that field is the guard's own memory of how many SKUs this branch has,
+      // and lowering it on a truncated feed would disarm the guard next tick.
+      petpoojaItemCount: tombstoneRefused
+        ? Math.max(previousItemCount, observedItemCount, validItemsCount)
+        : validItemsCount,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }

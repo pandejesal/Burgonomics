@@ -66,6 +66,7 @@ import {
   dispatchCancel,
   savePorterManualBooking,
   autoRebookDispatchWorker,
+  sweepStaleDispatchClaims,
   handleDispatchWebhook,
 } from "./modules/dispatch";
 import {
@@ -534,13 +535,25 @@ app.post(
 app.post("/petpooja/stockWebhook", verifyPetpoojaAuth, async (req, res) => {
   const p = req.body || {};
   try {
-    await handlePetpoojaStockWebhook(p);
+    // F6: a stock toggle that was NOT applied must be answered non-2XX. Two
+    // shapes used to answer 200 while nothing happened — a version conflict (the
+    // park document has no drainer) and an unclassified local write failure (the
+    // handler fell off the end). Both are silent 86ing losses: the item stays
+    // orderable for customers while the kitchen believes it is out. 503 tells
+    // Petpooja to redeliver, and the redelivery re-reads the product.
+    const result = await handlePetpoojaStockWebhook(p);
+    const retryable = result?.retryable === true;
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/stockWebhook",
-      outcome: "ok",
+      outcome: retryable ? "error" : "ok",
       restId: p.rest_id ?? p.restID ?? p.restId ?? null,
       itemId: p.item_id ?? p.itemID ?? p.itemId ?? null,
+      detail: retryable ? `not applied (${result.reason || "retry"}) — answered 503 for redelivery` : undefined,
     });
+    if (retryable) {
+      res.status(503).json({ status: "retry", reason: "stock toggle not applied — redeliver" });
+      return;
+    }
     res.status(200).json({ status: "success" });
   } catch (err: any) {
     await auditPetpoojaWebhook({
@@ -1620,6 +1633,10 @@ export const autoRebookCancelledDispatches = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (F11): up to AUTO_REBOOK_QUERY_LIMIT orders, each
+    // with a fresh quote fan-out + book call (60–90s+ worst case) overruns the
+    // 60s v2 default and would die mid-walk. Matches its sibling workers.
+    timeoutSeconds: 540,
   },
   async () => {
     const { ran, result } = await withSchedulerLock(
@@ -1633,6 +1650,36 @@ export const autoRebookCancelledDispatches = onSchedule(
     }
     console.log(
       `[Auto Rebook Worker] scanned ${result!.scanned} — rebooked ${result!.rebooked}, failed ${result!.failed}, busy ${result!.busy}, skipped ${result!.skipped}, exhausted ${result!.exhausted}`
+    );
+  }
+);
+
+// Stale-claim sweep (F10 crash lane): an order whose dispatch process died
+// between the provider's create-order POST and our success write keeps only a
+// `dispatch_pending` lease. Once that lease expires, a retry would book a
+// SECOND rider. This sweep parks such orders `needs_reconciliation` (never
+// rebooks) so staff reconcile the possible remote booking.
+export const sweepStaleDispatchClaimsJob = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+    // 25 per tick, each with a transaction re-read + park write: minutes, not
+    // seconds, on a hot collection — never the 60s v2 default.
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "sweep-stale-dispatch-claims",
+      4 * 60 * 1000,
+      () => sweepStaleDispatchClaims()
+    );
+    if (!ran) {
+      console.log("[Stale Claim Sweep] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Stale Claim Sweep] scanned ${result!.scanned} — parked ${result!.parked}`
     );
   }
 );

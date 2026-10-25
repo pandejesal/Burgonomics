@@ -267,6 +267,60 @@ function isFreshPorterPending(d: any): boolean {
   );
 }
 
+/**
+ * F10 (crash-lane guard, stress sweep 2026-10-24). An EXPIRED
+ * `dispatchStatus: "dispatch_pending"` lease is NOT proof the provider POST
+ * never happened: the process can die after the provider accepted the booking
+ * and before the success write persists the rider, leaving only the claim and
+ * its age. Re-claiming that order after the lease expires books a SECOND rider
+ * for one delivery.
+ *
+ * The correlation row is the evidence: the router stamps
+ * `dispatch_correlation_map/{token}.provider` immediately BEFORE every
+ * provider `book()` POST. A provider stamped there means at least one
+ * create-order may exist remotely, so the claim must be parked for
+ * reconciliation instead of retried. No provider stamp = the crash happened
+ * before any POST, and the ordinary expired-lease re-claim stays safe.
+ */
+async function staleClaimMayHoldRemoteBooking(
+  d: any,
+  read: (ref: any) => Promise<any>
+): Promise<boolean> {
+  if (d?.dispatchStatus !== "dispatch_pending") return false;
+  const pending = d?.dispatchPendingCorrelation;
+  if (pending && typeof pending.provider === "string" && pending.provider) return true;
+  const token = pending?.token;
+  if (typeof token !== "string" || !isSafeDocId(token)) return false;
+  try {
+    const snap = await read(db.collection("dispatch_correlation_map").doc(token));
+    // A shim that cannot prove the row exists must not manufacture evidence.
+    if (snap?.exists === false) return false;
+    const data = snap?.data?.();
+    return !!(data && typeof data.provider === "string" && data.provider);
+  } catch {
+    // Fail closed toward reconciliation: if the evidence row cannot be read we
+    // cannot prove the POST never happened, and booking again may double-book.
+    return true;
+  }
+}
+
+const STALE_CLAIM_EXPLANATION =
+  "A dispatch attempt for this order started but never completed (the process stopped before the provider result was saved). A remote rider may already be booked — reconcile the provider booking before booking another carrier.";
+
+function staleClaimParkWrite(): Record<string, any> {
+  return {
+    dispatchStatus: "needs_reconciliation",
+    dispatchClaimedAt: null,
+    dispatchError: STALE_CLAIM_EXPLANATION,
+    // An ambiguous remote booking is never auto-rebooked: the scheduled worker
+    // only acts on needsRebook + carrier_cancelled/dispatch_failed, and staff
+    // reconciliation is the only safe exit.
+    needsRebook: false,
+    rebookTrigger: null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
 function storedDispatchSummary(d: any): any {
   return {
     provider: (d?.dispatchProvider as ProviderId) || (d?.porterOrderId ? "porter" : null),
@@ -307,6 +361,12 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
       if (isActiveDispatch(d)) return { reuse: true, data: d };
       if (isNeedsReconciliation(d)) return { needsReconciliation: true as const };
       if (busyCheck(d)) return { busy: true };
+      // F10: only an EXPIRED pending lease reaches here. If a provider POST was
+      // already started, park instead of re-claiming (double-rider guard).
+      if (await staleClaimMayHoldRemoteBooking(d, (ref) => tx.get(ref))) {
+        tx.set(orderDoc.ref, staleClaimParkWrite(), { merge: true });
+        return { staleAmbiguous: true as const };
+      }
 
       // Allocate generation and mint durable correlation token on fresh snapshot BEFORE POST
       const currentGen = (typeof d.dispatchGeneration === "number" ? d.dispatchGeneration : 0) + 1;
@@ -346,6 +406,7 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
     if (outcome?.reuse) return storedDispatchSummary(outcome.data);
     if (outcome?.needsReconciliation) throw dispatchReconciliationRequiredError();
     if (outcome?.busy) throw dispatchInProgressError();
+    if (outcome?.staleAmbiguous) throw dispatchReconciliationRequiredError();
     return outcome;
   }
 
@@ -356,6 +417,11 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
   if (isActiveDispatch(order)) return storedDispatchSummary(order);
   if (isNeedsReconciliation(order)) throw dispatchReconciliationRequiredError();
   if (busyCheck(order)) throw dispatchInProgressError();
+  // F10 parity for the no-transaction shim: same expired-lease evidence rule.
+  if (await staleClaimMayHoldRemoteBooking(order, (ref) => ref.get())) {
+    await orderDoc.ref.set(staleClaimParkWrite(), { merge: true });
+    throw dispatchReconciliationRequiredError();
+  }
 
   const currentGen = (typeof order.dispatchGeneration === "number" ? order.dispatchGeneration : 0) + 1;
   const correlationToken = mintDispatchCorrelationToken(orderDoc.id, currentGen);
@@ -1059,18 +1125,45 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
           },
           { merge: true }
         );
-      await db
-        .collection("dispatch_correlation_map")
-        .doc(correlationToken)
-        .set(
-          {
-            status: "dispatched",
-            providerOrderId: booked.providerOrderId,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
+    } else {
+      // F15 (stress sweep 2026-10-24): a provider id that is not a legal
+      // Firestore doc id (slashes, control chars, >128 chars) used to skip the
+      // map write SILENTLY — the booking succeeded, but every status callback
+      // for it would park as unmatched with no trace of why. The booking is
+      // real, so keep it and alert: reconciliation needs this id.
+      const message =
+        `[Dispatch] booking succeeded with an UNSAFE provider order id - ` +
+        `dispatch_order_map was NOT written, callbacks for this booking will not resolve ` +
+        `(order ${orderId}, provider ${booked.provider}, id ${JSON.stringify(
+          String(booked.providerOrderId)
+        ).slice(0, 160)})`;
+      console.error(message);
+      try {
+        await captureErrorSnapshot({
+          source: "dispatch",
+          severity: "high",
+          message,
+          orderId,
+          branchId: order.branchId,
+        });
+      } catch {
+        // Alert best-effort: the correlation row below still carries the id.
+      }
     }
+    // Written for BOTH cases: the correlation row is the reconciliation trail
+    // (it is keyed by our own safe token), so a booking whose provider id could
+    // not be mapped still leaves staff the id to reconcile against.
+    await db
+      .collection("dispatch_correlation_map")
+      .doc(correlationToken)
+      .set(
+        {
+          status: "dispatched",
+          providerOrderId: booked.providerOrderId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
   } catch (mapErr: any) {
     console.warn("[Dispatch] order-map write failed (non-blocking):", mapErr?.message || mapErr);
   }
@@ -1329,6 +1422,101 @@ export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult
 }
 
 // ---------------------------------------------------------------------------
+// Stale-claim sweep (F10 crash lane): an expired `dispatch_pending` lease whose
+// correlation row proves a provider POST was started is parked for
+// reconciliation instead of being retried into a second rider.
+// ---------------------------------------------------------------------------
+
+export const STALE_CLAIM_SWEEP_LIMIT = 25;
+
+export interface StaleClaimSweepResult {
+  scanned: number;
+  parked: number;
+}
+
+/**
+ * Scheduled (5-min) crash-lane sweep. `claimDispatch` already refuses an
+ * expired lease that shows provider evidence, but an order nobody taps again
+ * would sit in `dispatch_pending` forever — invisible to staff and to the
+ * `needsRebook` worker. This sweep surfaces it: parks `needs_reconciliation`
+ * (never rebooks) so a human reconciles the possible remote booking.
+ *
+ * Only evidence-backed leases are parked. An expired lease with NO provider
+ * stamp means the crash happened before the POST — the ordinary retry path is
+ * safe there and the row is left untouched.
+ */
+export async function sweepStaleDispatchClaims(): Promise<StaleClaimSweepResult> {
+  const result: StaleClaimSweepResult = { scanned: 0, parked: 0 };
+
+  let snap: any;
+  try {
+    snap = await db
+      .collection("orders")
+      .where("dispatchStatus", "==", "dispatch_pending")
+      .limit(STALE_CLAIM_SWEEP_LIMIT)
+      .get();
+  } catch (err: any) {
+    // Fail closed: a sweep that cannot read must not write anything.
+    console.error("[Stale Claim Sweep] query failed:", err?.message || err);
+    return result;
+  }
+
+  for (const doc of snap?.docs || []) {
+    const order = doc.data ? doc.data() : undefined;
+    if (!order) continue;
+    result.scanned++;
+    if (order.dispatchStatus !== "dispatch_pending") continue;
+    // A live lease belongs to an in-flight book — never touch it.
+    if (Date.now() - claimFreshMs(order.dispatchClaimedAt) < DISPATCH_CLAIM_TTL_MS) continue;
+
+    try {
+      const parked = await (async (): Promise<boolean> => {
+        // Re-check on a fresh snapshot where the runtime supports it: a book
+        // that completed since the query must win.
+        if (db && typeof (db as any).runTransaction === "function") {
+          return await (db as any).runTransaction(async (tx: any) => {
+            const fresh = await tx.get(doc.ref);
+            const d = fresh.exists ? (fresh.data() as any) : undefined;
+            if (!d || d.dispatchStatus !== "dispatch_pending") return false;
+            if (Date.now() - claimFreshMs(d.dispatchClaimedAt) < DISPATCH_CLAIM_TTL_MS) return false;
+            if (!(await staleClaimMayHoldRemoteBooking(d, (ref) => tx.get(ref)))) return false;
+            tx.set(doc.ref, staleClaimParkWrite(), { merge: true });
+            return true;
+          });
+        }
+        if (!(await staleClaimMayHoldRemoteBooking(order, (ref) => ref.get()))) return false;
+        await doc.ref.set(staleClaimParkWrite(), { merge: true });
+        return true;
+      })();
+
+      if (!parked) continue;
+      result.parked++;
+      console.warn(
+        `[Stale Claim Sweep] order ${doc.id} parked needs_reconciliation (expired claim with provider evidence)`
+      );
+      try {
+        await captureErrorSnapshot({
+          source: "dispatch",
+          severity: "high",
+          message: `Stale dispatch claim parked for reconciliation on order ${doc.id}: provider booking may exist (no rebook attempted)`,
+          orderId: doc.id,
+          branchId: order.branchId,
+        });
+      } catch {
+        // Alert best-effort — the order write is the durable state.
+      }
+    } catch (err: any) {
+      console.error(
+        `[Stale Claim Sweep] order ${doc.id} park failed:`,
+        err?.message || err
+      );
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Porter manual-hybrid lane (DR8)
 // ---------------------------------------------------------------------------
 
@@ -1571,11 +1759,16 @@ export interface DispatchCancelParams {
 }
 
 /**
- * POST /dispatch/cancel: Porter bookings delegate to cancelPorterBooking
- * (honesty contract — no provider cancel API is documented). Borzo/Shadowfax
- * release locally (rider_cancelled + needsRebook) with
- * dispatchProviderCancel:"manual-required" so staff cancel in the provider
- * dashboard. 409 when nothing is active.
+ * POST /dispatch/cancel: LOCAL release only. No provider cancel API is
+ * documented (Porter included — the previous "delegates to
+ * cancelPorterBooking" wording was false for every provider), so this never
+ * cancels the remote booking. It settles the order locally
+ * (rider_cancelled + needsRebook, rebookTrigger "staff_cancelled"),
+ * retires the active binding into `dispatchReleasedBindings` and sets
+ * `dispatchProviderCancel:"manual-required"` — staff must confirm the
+ * cancellation in the provider dashboard (and a late provider callback for the
+ * released booking parks for reconciliation instead of mutating the order).
+ * 409 when nothing is active.
  */
 export async function dispatchCancel(params: DispatchCancelParams): Promise<any> {
   const { orderId, staffName, caller } = params;

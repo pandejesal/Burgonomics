@@ -45,7 +45,11 @@ import { dispatchFCM } from "../notifications/fcm.service";
  *      (needsRebook=false, cause in rebookTrigger/reason; order.status is
  *      NOT written) and the containment is STICKY — a later carrier cancel
  *      or arrival on the same booking cannot unwed it onto the auto-rebook
- *      flow. Ordinary carrier cancels keep rider_cancelled + needsRebook.
+ *      flow. The cause comes from the canonical event name AND the vendor's
+ *      free-text cancellation reason (Borzo `reason_text` /
+ *      `status_description`): an unclassifiable reason is ALSO manual review
+ *      (`rebookTrigger: "cancellation_unverified"`), never an automatic
+ *      rebook. Ordinary carrier cancels keep rider_cancelled + needsRebook.
  *   7. Canonical field switch (duplicated from porter — deliberate: do NOT
  *      refactor porter's webhook, its tests must stay green).
  */
@@ -117,24 +121,86 @@ function normalizeProviderOrderId(value: unknown): string | null {
 
 /**
  * True once the ACTIVE booking is already parked for manual review after a
- * customer-cancel / returned parcel (F6 containment). `needs_review` is the
- * existing dispatch state for that outcome; the rebookTrigger cause strings
- * (`customer_cancelled` / `returned_to_seller`) are the belt-and-suspenders
- * half. dispatchBook resets BOTH on every successful rebook (deliveryStatus
- * "dispatched", rebookTrigger null), so containment is per-booking and
- * releases exactly when staff re-dispatch — a fresh carrier cancel on the
- * new booking still auto-rebooks like before.
+ * customer-cancel / returned parcel / unverifiable cancel cause (F6/F12
+ * containment). `needs_review` is the existing dispatch state for that outcome;
+ * the rebookTrigger cause strings are the belt-and-suspenders half. dispatchBook
+ * resets BOTH on every successful rebook (deliveryStatus "dispatched",
+ * rebookTrigger null), so containment is per-booking and releases exactly when
+ * staff re-dispatch — a fresh carrier cancel on the new booking still
+ * auto-rebooks like before.
  */
 function isContainedManualReview(order: Record<string, any>): boolean {
   if (order?.deliveryStatus === "needs_review") return true;
   return (
     order?.rebookTrigger === "customer_cancelled" ||
-    order?.rebookTrigger === "returned_to_seller"
+    order?.rebookTrigger === "returned_to_seller" ||
+    order?.rebookTrigger === "cancellation_unverified"
   );
 }
 
 function webhookSecretFor(provider: DispatchWebhookProvider): string {
   return provider === "borzo" ? config.borzo.webhookSecret : config.shadowfax.webhookSecret;
+}
+
+/**
+ * F12 (stress sweep 2026-10-24): the vendor's cancellation CAUSE.
+ *
+ * Borzo/Delivery carries a documented free-text `reason_text` (and
+ * `status_description`) describing why the delivery was cancelled; the umbrella
+ * `delivery.status: "canceled"` alone says nothing about WHO cancelled. Before
+ * this classifier every generic cancel became `carrier_cancelled` with
+ * `needsRebook: true`, so the scheduled worker bought a fresh rider for
+ * deliveries the customer had already called off.
+ *
+ * Customer/client cancellations and returned parcels are manual-review
+ * outcomes (needsRebook=false) exactly like their canonical event names. A
+ * reason we cannot classify is ALSO not safe to auto-rebook — the worker only
+ * buys a rider on an explicit carrier-side cause; anything else asks staff to
+ * look first.
+ */
+type CancelCause = "carrier" | "customer" | "returned" | "unverified";
+
+/** Case/space-insensitive cancellation text from either callback envelope. */
+function cancelReasonText(payload: any): string {
+  const candidates: any[] = [
+    payload?.reason_text,
+    payload?.cancel_reason_text,
+    payload?.delivery?.reason_text,
+    payload?.delivery?.cancel_reason_text,
+    payload?.delivery?.status_description,
+    payload?.order?.reason_text,
+    payload?.order?.status_description,
+    typeof payload?.reason === "string" ? payload.reason : undefined,
+    payload?.status_description,
+  ];
+  const found = candidates.find((c) => typeof c === "string" && c.trim());
+  return found ? String(found).trim().slice(0, 300) : "";
+}
+
+/** Reason-text signals. Order matters: customer/returned win over carrier. */
+const CUSTOMER_CANCEL_TEXT = /\b(customer|client|buyer|consumer)\b/i;
+const RETURNED_TEXT = /\b(return(ed|ing)?|rts)\b/i;
+const SELLER_TEXT = /\b(seller|store|merchant|restaurant|vendor|branch)\b/i;
+const CARRIER_CANCEL_TEXT =
+  /\b(no riders?|no couriers?|no drivers?|no captains?|no partners?)\b|\b(rider|courier|driver|captain|partner|delivery)\b.{0,40}\b(too busy|busy|unavailable|not available|cancell?ed|cancel|rejected|dropped|did not|didn'?t|refused|no show|no-show|absent)\b|\bunfulfillable\b|\bunable to (deliver|fulfil|fulfill)\b|\bdelivery (failed|unavailable|not possible)\b|\bout of (coverage|range)\b|\bnot serviceable\b|\b(rejected|refused)\b/i;
+
+export function classifyCancelCause(rawEvent: string, reasonText: string): CancelCause {
+  const key = normalizeEventKey(rawEvent);
+  if (key === "CANCELLED_BY_CUSTOMER") return "customer";
+  if (key === "RETURNED_TO_SELLER") return "returned";
+  // Shadowfax's documented no-riders status is explicitly a carrier fault.
+  if (key === "NO_RIDERS_FOUND") return "carrier";
+  if (reasonText) {
+    const text = reasonText.replace(/[\s_-]+/g, " ");
+    const mentionsCancel = /cancel|refus|rts|return/i.test(text);
+    if (CUSTOMER_CANCEL_TEXT.test(text) && (mentionsCancel || /no.?show/i.test(text))) {
+      return "customer";
+    }
+    if (RETURNED_TEXT.test(text) && SELLER_TEXT.test(text)) return "returned";
+    if (RETURNED_TEXT.test(text) && mentionsCancel) return "returned";
+    if (CARRIER_CANCEL_TEXT.test(text)) return "carrier";
+  }
+  return "unverified";
 }
 
 /**
@@ -379,7 +445,7 @@ function computeWebhookEventPatch(
   riderGps?: { lat: number; lng: number } | null
 ): {
   updateData: Record<string, any>;
-  riderCancelOutcome: "carrier" | "customer" | "returned" | null;
+  riderCancelOutcome: "carrier" | "customer" | "returned" | "unverified" | null;
   ignoredAfter: string | null;
   ignoredDeliveryMirror?: Record<string, any>;
 } {
@@ -407,7 +473,7 @@ function computeWebhookEventPatch(
     dispatchWebhookProvider: provider,
   };
 
-  let riderCancelOutcome: "carrier" | "customer" | "returned" | null = null;
+  let riderCancelOutcome: "carrier" | "customer" | "returned" | "unverified" | null = null;
   let ignoredAfter: string | null = null;
 
   switch (event) {
@@ -516,29 +582,31 @@ function computeWebhookEventPatch(
       break;
     }
     case "RIDER_CANCELLED": {
-      riderCancelOutcome =
-        normalizeEventKey(rawEvent) === "CANCELLED_BY_CUSTOMER"
-          ? "customer"
-          : normalizeEventKey(rawEvent) === "RETURNED_TO_SELLER"
-          ? "returned"
-          : "carrier";
+      // F12: the umbrella status is not the cause. Classify the vendor's own
+      // reason text so a customer call-off / returned parcel (or an
+      // unrecognised reason) is manual review, not an automatic rebook.
+      const reasonText = cancelReasonText(payload);
+      riderCancelOutcome = classifyCancelCause(rawEvent, reasonText);
       const manualReview = riderCancelOutcome !== "carrier";
       const reason =
-        nonEmpty(
-          payload?.reason_text,
-          payload?.cancel_reason_text,
-          typeof payload?.reason === "string" ? payload.reason : undefined,
-          payload?.status_description
-        ) ||
+        reasonText ||
         (riderCancelOutcome === "customer"
           ? "Delivery cancelled by customer"
           : riderCancelOutcome === "returned"
           ? "Parcel returned to seller"
+          : riderCancelOutcome === "unverified"
+          ? "Cancellation reason not provided by the provider — manual review required"
           : "Driver cancelled dispatch");
       if (manualReview) {
         updateData.needsRebook = false;
         updateData.rebookTrigger =
-          riderCancelOutcome === "customer" ? "customer_cancelled" : "returned_to_seller";
+          riderCancelOutcome === "customer"
+            ? "customer_cancelled"
+            : riderCancelOutcome === "returned"
+            ? "returned_to_seller"
+            : // Not one of the auto-rebook triggers: the scheduled worker
+              // ignores it, so an unverifiable cancel can never buy a rider.
+              "cancellation_unverified";
         updateData.deliveryStatus = "needs_review";
         updateData.delivery = deliveryMirror({
           status: "needs_review",
@@ -586,7 +654,7 @@ function computeWebhookEventPatch(
 
 function riderCancelBranchAlert(
   orderId: string,
-  riderCancelOutcome: "carrier" | "customer" | "returned"
+  riderCancelOutcome: "carrier" | "customer" | "returned" | "unverified"
 ): { title: string; body: string; data: Record<string, string> } {
   const carrierCancelled = riderCancelOutcome === "carrier";
   return {
@@ -594,12 +662,16 @@ function riderCancelBranchAlert(
       ? "Rider cancelled — rebook needed"
       : riderCancelOutcome === "customer"
       ? "Delivery cancelled by customer — manual review"
-      : "Parcel returned — manual review",
+      : riderCancelOutcome === "returned"
+      ? "Parcel returned — manual review"
+      : "Delivery cancelled — manual review",
     body: carrierCancelled
       ? `Order #${orderId.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`
       : riderCancelOutcome === "customer"
       ? `Order #${orderId.substring(0, 6)}: delivery cancelled by the customer. Staff must review manually — no rebook will be attempted.`
-      : `Order #${orderId.substring(0, 6)}: parcel returned to the seller. Staff must review manually — no rebook will be attempted.`,
+      : riderCancelOutcome === "returned"
+      ? `Order #${orderId.substring(0, 6)}: parcel returned to the seller. Staff must review manually — no rebook will be attempted.`
+      : `Order #${orderId.substring(0, 6)}: the provider cancelled without a recognisable cause. Check the provider dashboard before rebooking — no automatic rebook will be attempted.`,
     data: {
       type: carrierCancelled ? "rider_cancelled" : "dispatch_manual_review",
       orderId,

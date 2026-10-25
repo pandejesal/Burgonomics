@@ -273,7 +273,7 @@ describe("Petpooja status webhook — atomic terminal/replay transaction race de
     expect(savedDocs["orders/ord_concurrent_1"]["payment.refundStatus"]).toBe("PENDING_APPROVAL");
   });
 
-  it("Untrusted callbacks admitted by shape can update kitchen status but CANNOT park refunds or write sync state", async () => {
+  it("Untrusted callbacks admitted by shape can update a NON-terminal kitchen status but CANNOT terminal-flip (cancel), park refunds, or write sync state", async () => {
     seedInProgress("ord_untrusted_1");
 
     await handlePetpoojaWebhook(
@@ -286,13 +286,40 @@ describe("Petpooja status webhook — atomic terminal/replay transaction race de
       { authenticated: false }
     );
 
-    // Untrusted status can mark CANCELLED
+    // F8: a shape-only (no credential header) callback must never complete or
+    // cancel a live order — a terminal flip is irreversible here and a cancel
+    // parks money movement. The status stays exactly as it was.
     expect(savedDocs["orders/ord_untrusted_1"].status).toMatchObject({
+      code: "CONFIRMED",
+      terminal: false,
+    });
+    expect(savedDocs["orders/ord_untrusted_1"].status).not.toMatchObject({
       code: "CANCELLED",
     });
     // SECURITY: Untrusted callback must NEVER inject refund request into staff queue
     expect(refundDocs()).toEqual([]);
     expect(savedDocs["orders/ord_untrusted_1"]["payment.refundStatus"]).toBeUndefined();
+    // ... and the refusal is parked for review rather than silently dropped.
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_untrusted_1"].reason).toMatch(
+      /unauthenticated terminal status/i
+    );
+  });
+
+  it("the SAME cancellation through an authenticated caller still applies (credential is the gate, not the payload)", async () => {
+    seedInProgress("ord_auth_1");
+
+    await handlePetpoojaWebhook(
+      {
+        order_id: "ord_auth_1",
+        restID: "store_race_1",
+        status: -1,
+        cancel_reason: "Kitchen cancelled in POS",
+      },
+      { authenticated: true }
+    );
+
+    expect(savedDocs["orders/ord_auth_1"].status).toMatchObject({ code: "CANCELLED" });
+    expect(refundDocs()).toEqual(["refunds/refund_pos_cancel_ord_auth_1"]);
   });
 
   it("Injected pending-query failure propagates and fails closed (no order cancel, no refund parked, no partial writes)", async () => {

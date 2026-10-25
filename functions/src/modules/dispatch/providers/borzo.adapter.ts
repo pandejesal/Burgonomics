@@ -1,4 +1,4 @@
-import { assertLiveDispatchContext, config } from "../../../config/env";
+import { assertLiveDispatchContext, config, isDeclaredProduction } from "../../../config/env";
 import type {
   DispatchBookContext,
   DispatchFailureKind,
@@ -275,7 +275,19 @@ export const borzoAdapter: ProviderAdapter = {
   provider: "borzo",
 
   isEligible(): boolean {
-    return config.borzo.enabled && (!!config.borzo.apiKey || config.mock.borzoDispatch);
+    if (!config.borzo.enabled) return false;
+    // Mock mode mints a local [TEST] rider and receives no vendor callbacks.
+    if (config.mock.borzoDispatch) return true;
+    if (!config.borzo.apiKey) return false;
+    // F2 runtime half: in a declared-production process a keyed Borzo with no
+    // callback secret can book a real rider whose status callbacks the (empty
+    // secret) verifier must deny — an order that can never be tracked or
+    // closed. Boot already fails closed (assertWebhookSecrets); this also
+    // covers a runtime flag/key mutation after a clean boot. Scoped to
+    // production so dev/test fan-outs that intentionally key a fake token
+    // without a callback secret keep working.
+    if (isDeclaredProduction() && !(config.borzo.webhookSecret || "").trim()) return false;
+    return true;
   },
 
   async quote(ctx: DispatchQuoteContext): Promise<ProviderQuoteOk> {

@@ -10,8 +10,8 @@ import { describe, it, expect, vi } from "vitest";
  *
  * These tests pin the server contract: an explicit `inStock: false` blocks the
  * line, a missing availability field (combo/import docs) is sellable, and a
- * line priced from client input after a transient read error is reported as
- * degraded instead of looking like a clean catalog price.
+ * line whose catalog read threw refuses the basket with a retryable 503
+ * instead of being priced from client input.
  */
 
 const CATALOG: Record<string, { price: number; inStock?: boolean }> = {
@@ -114,8 +114,10 @@ describe("money-time product eligibility (server, authoritative)", () => {
     expect(reprice.pricingDegraded).toBe(false);
   });
 
-  it("a product doc read failure does not hard-refuse as unverified (uses fallback with warning flag or retryable error)", async () => {
-    // 1. Partial read failure in multi-line order: uses validated client price fallback with warning flag
+  it("a product doc read failure refuses the basket with a retryable 503 (never a client-priced line)", async () => {
+    // 1. Partial read failure in a multi-line order: the readable line must
+    // not buy a "degraded" subtotal for the failed line — the whole basket is
+    // refused with the same retryable outage a catalog-layer failure returns.
     const multiBasket = {
       items: [
         { id: "l1", productId: "prod_ok", name: "Ok Item", price: 100, quantity: 1 },
@@ -126,17 +128,15 @@ describe("money-time product eligibility (server, authoritative)", () => {
       deliveryFee: 0,
       packagingFee: 15,
     };
-    const r = await calculateOrderPricing(multiBasket);
-    expect(r.pricingDegraded).toBe(true);
-    expect(r.foodSubtotal).toBe(220);
+    await expect(calculateOrderPricing(multiBasket)).rejects.toMatchObject({
+      statusCode: 503,
+      message: "Menu pricing is temporarily unavailable — please retry checkout.",
+    });
 
-    // 2. Total read failure: returns retryable 503 instead of non-retryable 409 ITEM_PRICE_UNVERIFIED
-    try {
-      await calculateOrderPricing(basket("prod_read_fail", 120));
-    } catch (err: any) {
-      expect(err.statusCode).toBe(503);
-      expect(err.code).not.toBe("ITEM_PRICE_UNVERIFIED");
-    }
+    // 2. Single failing line: same retryable 503, never 409 ITEM_PRICE_UNVERIFIED.
+    await expect(calculateOrderPricing(basket("prod_read_fail", 120))).rejects.toMatchObject({
+      statusCode: 503,
+    });
   });
 
   it("REFUSES a line whose product cannot be looked up, instead of charging the client price", async () => {

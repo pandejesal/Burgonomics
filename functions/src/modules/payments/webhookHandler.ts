@@ -8,6 +8,92 @@ import { markOrderReconciliation } from "./reconciliation";
 import { pushOrderToPetpooja } from "../petpooja";
 
 /**
+ * Reads a legacy DOT-LITERAL field path — `"payment.razorpayPaymentId"` as a
+ * field NAME, which is what merge-set writers produced before the canonical
+ * nested `payment` map existed. Firestore parses a plain dotted string in
+ * `where()` as a NESTED path, so the literal field can only be queried through
+ * a single-segment `FieldPath`. Returns null when the datastore exposes no
+ * FieldPath constructor (test shims): the canonical query still runs.
+ */
+function legacyDottedFieldPath(field: string): any | null {
+  const FieldPathCtor: any = (admin as any)?.firestore?.FieldPath;
+  if (typeof FieldPathCtor !== "function") return null;
+  try {
+    return new FieldPathCtor(field);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves the orders bound to a captured Razorpay payment id across BOTH
+ * storage shapes:
+ *   • canonical nested `payment.razorpayPaymentId` — what every confirm writer
+ *     emits now (and the only shape a `where("payment.razorpayPaymentId")`
+ *     query can match);
+ *   • legacy top-level literal `"payment.razorpayPaymentId"` — pre-fix docs,
+ *     queried through the single-segment FieldPath above.
+ * Results are de-duplicated by document path, so a doc carrying BOTH shapes
+ * (dual-written during migration) is counted exactly ONCE and never looks
+ * ambiguous. Errors fail CLOSED: an unreadable canonical lookup, or an
+ * unreadable legacy lookup with no canonical match, throws (→ 500 → gateway
+ * retry) instead of parking a real refund as unmatched.
+ */
+async function findOrdersByCapturedPaymentId(paymentId: string): Promise<any[]> {
+  const found = new Map<string, any>();
+  const collect = (snap: any) => {
+    const docs: any[] = Array.isArray(snap?.docs) ? snap.docs : [];
+    for (const d of docs) {
+      const key =
+        (typeof d?.ref?.path === "string" && d.ref.path) ||
+        (typeof d?.id === "string" && d.id) ||
+        `idx_${found.size}`;
+      if (!found.has(key)) found.set(key, d);
+    }
+  };
+
+  collect(
+    await db
+      .collection("orders")
+      .where("payment.razorpayPaymentId", "==", paymentId)
+      .limit(2)
+      .get()
+  );
+
+  const legacyPath = legacyDottedFieldPath("payment.razorpayPaymentId");
+  if (legacyPath) {
+    try {
+      collect(
+        await db
+          .collection("orders")
+          .where(legacyPath, "==", paymentId)
+          .limit(2)
+          .get()
+      );
+    } catch (err: any) {
+      // The migration fallback must not become a refund outage. With a
+      // canonical match in hand the refund can proceed (the legacy shape can
+      // only add an ambiguity, it can never invalidate the canonical doc);
+      // with NO match yet we cannot prove the refund is unmatched, and parking
+      // it would strand real money — fail closed so the gateway retries.
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message:
+          `Legacy dotted payment-id lookup failed for ${paymentId} — ` +
+          (found.size > 0
+            ? "canonical shape matched, continuing"
+            : "refusing to park an unmatched refund (retry required)"),
+        errorStack: err?.stack,
+      }).catch(() => undefined);
+      if (found.size === 0) throw err;
+    }
+  }
+
+  return [...found.values()].slice(0, 2);
+}
+
+/**
  * Handles incoming webhooks from Razorpay with signature verification & idempotent execution.
  */
 export async function handleRazorpayWebhook(req: Request, res: Response): Promise<void> {
@@ -505,6 +591,18 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         const { mintDeliveryOtp } = await import("./razorpay.service");
          const basePayload = {
           paymentStatus: "completed",
+          // CANONICAL nested payment map — the shape the refund.processed
+          // branch can QUERY (`payment.razorpayPaymentId`). The dotted literals
+          // below are top-level fields whose names merely contain dots; a
+          // `where("payment.razorpayPaymentId", …)` never sees them, which is
+          // why webhook-confirmed orders also parked their refunds unmatched.
+          payment: {
+            status: "completed",
+            ...(razorpayPaymentId ? { razorpayPaymentId } : {}),
+            ...(typeof capturedPaise === "number"
+              ? { capturedAmountPaise: capturedPaise }
+              : {}),
+          },
           "payment.status": "completed",
           // order.paid carries no payment id — never write undefined.
           ...(razorpayPaymentId ? { "payment.razorpayPaymentId": razorpayPaymentId } : {}),
@@ -833,20 +931,42 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       const refundId = refundEntity?.id;
       const amount = refundEntity?.amount ? refundEntity.amount / 100 : 0;
 
-      // Find order by paymentId. More than one match (reused payment
-      // intent) is ambiguous — park for review instead of picking an
-      // arbitrary doc and stamping the wrong order refunded.
-      const ordersSnap = await db
-        .collection("orders")
-        .where("payment.razorpayPaymentId", "==", paymentId)
-        .limit(2)
-        .get();
+      // Find order by paymentId across BOTH stored shapes (see
+      // findOrdersByCapturedPaymentId — nested canonical plus the legacy
+      // dotted-literal field). A missing payment id cannot bind anything and
+      // would make a Firestore `where` throw (undefined value) into an endless
+      // gateway retry loop, so it is parked visibly instead. More than one
+      // match (reused payment intent) is ambiguous — park for review instead
+      // of picking an arbitrary doc and stamping the wrong order refunded.
+      const missingPaymentId = typeof paymentId !== "string" || !paymentId;
+      const matchedOrders = missingPaymentId
+        ? []
+        : await findOrdersByCapturedPaymentId(paymentId);
 
-      if (ordersSnap.size > 1) {
+      if (missingPaymentId) {
         await captureErrorSnapshot({
           source: "payments",
           severity: "high",
-          message: `Ambiguous processed refund ${refundId} (payment ${paymentId}, amount ${amount}) — ${ordersSnap.size} orders share this payment id; manual review required`,
+          message: `Processed refund ${refundId} carries no payment_id — cannot bind it to an order; manual review required`,
+        });
+        await db.collection("unmatched_payments").doc(`ump_refund_${eventId}`).set(
+          {
+            eventId,
+            event,
+            refundId: refundId || null,
+            amount,
+            currency: refundEntity?.currency || "INR",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+            reason: "refund_missing_payment_id",
+          },
+          { merge: true }
+        );
+      } else if (matchedOrders.length > 1) {
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Ambiguous processed refund ${refundId} (payment ${paymentId}, amount ${amount}) — ${matchedOrders.length} orders share this payment id; manual review required`,
         });
         await db.collection("unmatched_payments").doc(`ump_refund_${eventId}`).set(
           {
@@ -862,8 +982,8 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           },
           { merge: true }
         );
-      } else if (!ordersSnap.empty) {
-        const orderDoc = ordersSnap.docs[0];
+      } else if (matchedOrders.length === 1) {
+        const orderDoc = matchedOrders[0];
         // Per-refund ledger + monotonic total, computed inside one
         // transaction (compare-and-set). Each gateway refund id is counted
         // EXACTLY ONCE:
@@ -878,7 +998,11 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         //    same rupees twice.
         const amountPaise = Math.round((Number(amount) || 0) * 100);
         const refundOutcome = await db.runTransaction(async (tx) => {
-          const snap = await tx.get(orderDoc.ref);
+          // `matchedOrders` comes from the dual-shape lookup and is untyped at
+          // the SDK boundary; cast the transaction so the DocumentReference
+          // overload is chosen (a bare `any` selects the Query overload and
+          // makes `snap` a QuerySnapshot at compile time).
+          const snap: any = await (tx as any).get(orderDoc.ref);
           const data = (snap.exists ? snap.data() : {}) as any;
           const existingTotal = Number(data.refundedTotalPaise) || 0;
           const ledger: Record<string, number> =
@@ -1022,13 +1146,24 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
     }
 
     // Complete the idempotency claim (merge — the claim doc already exists).
+    // Refund-only and transfer-only deliveries carry no `payment.entity`, so
+    // these two lookups are `undefined` there. Firestore rejects an explicit
+    // undefined value, which made the audit write throw AFTER the money event
+    // had been handled: the handler answered 500, the claim never completed,
+    // and Razorpay retried the same refund forever. Omit absent identifiers.
+    const auditedPaymentId = payload.payload?.payment?.entity?.id;
+    const auditedOrderId = payload.payload?.payment?.entity?.notes?.orderId;
     await auditDocRef.set(
       {
         eventId,
         event,
         payloadSummary: {
-          paymentId: payload.payload?.payment?.entity?.id,
-          orderId: payload.payload?.payment?.entity?.notes?.orderId,
+          ...(typeof auditedPaymentId === "string" && auditedPaymentId
+            ? { paymentId: auditedPaymentId }
+            : {}),
+          ...(typeof auditedOrderId === "string" && auditedOrderId
+            ? { orderId: auditedOrderId }
+            : {}),
         },
         completedAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),

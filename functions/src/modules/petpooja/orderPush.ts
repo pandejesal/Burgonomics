@@ -546,7 +546,20 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         if (data.petpoojaPushClaimedAt && Date.now() - claimedAt < PUSH_CLAIM_TTL_MS) {
           return "busy"; // another push is in flight right now — yield to it
         }
-        tx.set(orderDoc.ref, { petpoojaPushClaimedAt: Date.now() }, { merge: true });
+        // F5 (silent-drop integrity): the lease is not enough on its own. A hard
+        // kill between this write and the success write used to leave a doc with
+        // ONLY `petpoojaPushClaimedAt` set — and neither lane in the retry worker
+        // looks at that field: the crash lane scans `petpoojaStatus ==
+        // "processing"` and the retry lane scans `pending_retry`. The order then
+        // belonged to no lane at all (no KOT, no retry, no alert). Marking
+        // `processing` in the SAME claim write (exactly what the scheduler's own
+        // claim does) makes the crash lane find it and park it
+        // `reconciliation_required` with an alert once the lease expires.
+        tx.set(
+          orderDoc.ref,
+          { petpoojaStatus: "processing", petpoojaPushClaimedAt: Date.now() },
+          { merge: true }
+        );
         return "claimed";
       });
     } catch (err: any) {
@@ -611,6 +624,20 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     );
     return true;
   }
+
+  // ---------------------------------------------------------------------------
+  // F3 (duplicate-KOT integrity): a POS ACK and the Firestore write recording it
+  // are two different failure domains. The previous shape kept both inside ONE
+  // try, so a write failure AFTER the POS had already accepted the ticket fell
+  // into the generic catch, which parked `pending_retry` — and the retry worker
+  // then re-POSTed an order the kitchen already had. These flags capture the
+  // point of no return: once `posAccepted` is true the order may exist at the
+  // POS even though we failed to persist the id, so the ONLY safe state is
+  // `reconciliation_required` (no retry, no retry-count burn, no re-POST).
+  // ---------------------------------------------------------------------------
+  let posAccepted = false;
+  let posAcceptedOrderId = "";
+  let posAcceptedAckBody: string | null = null;
 
   try {
     let branchData: any = null;
@@ -716,6 +743,21 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     // Both shapes prevent retry loops from firing duplicate KOTs.
     const petpoojaOrderId =
       result.petpooja_order_id || result.order_id || result.orderID || result.orderId || "";
+
+    // Point of no return (F3): from here on the POS has ACCEPTED the ticket. Any
+    // later failure (including the Firestore writes below) must never fall
+    // through to `pending_retry`. Recorded in memory BEFORE the first write so a
+    // rejected write cannot erase the fact that the POST was acknowledged.
+    if (ok) {
+      posAccepted = true;
+      posAcceptedOrderId = String(petpoojaOrderId || "");
+      try {
+        posAcceptedAckBody = JSON.stringify(result).slice(0, 500);
+      } catch {
+        posAcceptedAckBody = null;
+      }
+    }
+
     if (ok && petpoojaOrderId) {
       await orderDoc.ref.set(
         {
@@ -785,6 +827,35 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     // suite).
     const kotTransportAmbiguous =
       err?.name === "TimeoutError" || err?.name === "AbortError";
+
+    // F3: the ack landed but we could not persist it. This write is the
+    // reconciliation park; it is intentionally NOT a retry and does NOT touch
+    // petpoojaRetryCount. It also records the acceptance marker (POS id, or the
+    // accepted-no-id flag) so every later dedupe short-circuits before the POS is
+    // ever contacted again. `petpoojaAcceptedUnrecorded` distinguishes this from
+    // the transport-ambiguous case for the operator.
+    const parkAcceptedUnrecorded = () => ({
+      petpoojaStatus: "reconciliation_required",
+      petpoojaSyncStatus: "reconciliation_required",
+      kotSyncFailed: true,
+      // Reuses the existing "do not blind-push" guards (orderPush pre-read +
+      // claim transaction) until an operator has verified the physical ticket.
+      petpoojaAmbiguousProcessing: true,
+      petpoojaAcceptedUnrecorded: true,
+      ...(posAcceptedOrderId
+        ? { petpoojaOrderId: posAcceptedOrderId }
+        : {
+            petpoojaAcceptedNoId: true,
+            petpoojaAcceptedNoIdAt: admin.firestore.FieldValue.serverTimestamp(),
+            petpoojaAcceptedNoIdSource: "order_push_ack_unpersisted",
+          }),
+      ...(posAcceptedAckBody ? { petpoojaAcceptedAck: posAcceptedAckBody } : {}),
+      lastPetpoojaError: `POS acknowledged the KOT but persisting the acceptance failed: ${err.message}`,
+      petpoojaPushClaimedAt: null,
+      petpoojaClaimedAt: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
     if (db && typeof (db as any).runTransaction === "function") {
       try {
         const outcome = await (db as any).runTransaction(async (tx: any) => {
@@ -800,6 +871,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
               { merge: true }
             );
             return "won";
+          }
+          // F3: never re-POST an accepted KOT. Checked before the
+          // transport-ambiguity branch because acceptance is PROVEN here.
+          if (posAccepted) {
+            tx.set(orderDoc.ref, parkAcceptedUnrecorded(), { merge: true });
+            return "parked_accepted_unsaved";
           }
           // K1 stress sweep: transport-ambiguous POST (timeout/abort after
           // request written) — the POS may already hold this KOT. Park for
@@ -843,7 +920,13 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         // transaction already committed reconciliation_required). Leaving
         // `parked === false` let the plain fallback write below clobber a
         // concurrent racer's successful push that landed after the tx.
-        if (outcome === "parked" || outcome === "parked_ambiguous") parked = true;
+        if (
+          outcome === "parked" ||
+          outcome === "parked_ambiguous" ||
+          outcome === "parked_accepted_unsaved"
+        ) {
+          parked = true;
+        }
       } catch (txErr: any) {
         // Transactional write failed — fall back to the legacy write below.
         console.warn(
@@ -861,34 +944,43 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
 
     if (!parked) {
       await orderDoc.ref.set(
-        kotTransportAmbiguous
-          ? {
-              petpoojaStatus: "reconciliation_required",
-              petpoojaSyncStatus: "reconciliation_required",
-              kotSyncFailed: true,
-              petpoojaAmbiguousProcessing: true,
-              lastPetpoojaError: err.message,
-              petpoojaPushClaimedAt: null,
-              petpoojaClaimedAt: null,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }
-          : {
-              petpoojaStatus: "pending_retry",
-              petpoojaSyncStatus: "pending_retry",
-              petpoojaRetryCount: fallbackRetry,
-              lastPetpoojaError: err.message,
-              petpoojaPushClaimedAt: null,
-              petpoojaClaimedAt: null,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
+        posAccepted
+          ? // F3: same rule as the transactional path — an acknowledged POST is
+            // never a retry candidate, even when the tx itself failed.
+            parkAcceptedUnrecorded()
+          : kotTransportAmbiguous
+            ? {
+                petpoojaStatus: "reconciliation_required",
+                petpoojaSyncStatus: "reconciliation_required",
+                kotSyncFailed: true,
+                petpoojaAmbiguousProcessing: true,
+                lastPetpoojaError: err.message,
+                petpoojaPushClaimedAt: null,
+                petpoojaClaimedAt: null,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              }
+            : {
+                petpoojaStatus: "pending_retry",
+                petpoojaSyncStatus: "pending_retry",
+                petpoojaRetryCount: fallbackRetry,
+                lastPetpoojaError: err.message,
+                petpoojaPushClaimedAt: null,
+                petpoojaClaimedAt: null,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
         { merge: true }
       );
     }
 
     await captureErrorSnapshot({
       source: "petpooja",
-      severity: "medium",
-      message: `Petpooja KOT Push failed for order ${orderId} (Attempt ${retryForSnapshot}): ${err.message}`,
+      // A KOT the POS accepted but we could not record is a lost-ticket hazard
+      // (the kitchen may be cooking an order no system tracks) — page, do not
+      // bury it at medium.
+      severity: posAccepted ? "high" : "medium",
+      message: posAccepted
+        ? `Petpooja POS ACKNOWLEDGED the KOT for order ${orderId} but the acceptance could not be persisted — parked reconciliation_required with NO retry (an automatic re-POST would duplicate the ticket): ${err.message}`
+        : `Petpooja KOT Push failed for order ${orderId} (Attempt ${retryForSnapshot}): ${err.message}`,
       orderId,
       branchId,
     });

@@ -175,6 +175,38 @@ const REQUIRED_SECRETS: Array<[envName: string, value: () => string]> = [
 ];
 
 /**
+ * Inbound callback secrets of a dispatch provider that can book a REAL rider.
+ *
+ * F2 (stress sweep 2026-10-24): Borzo/Shadowfax outbound credentials used to be
+ * sufficient to book, while their webhook secrets were optional. A production
+ * boot with keys but no callback secret therefore bought riders whose status
+ * callbacks could never be verified — the empty-secret policy correctly 401s
+ * every callback, so the order sat "dispatched" forever and the customer saw a
+ * frozen tracking page. Fail closed at boot instead: an ENABLED, KEYED provider
+ * must have its callback secret.
+ *
+ * Deliberately conditional on the outbound key: a genuinely unkeyed provider is
+ * excluded from the fan-out (DR2) and will never book, so demanding a secret it
+ * cannot use would only brick boot. Mock mode is exempt for the same reason
+ * (mock riders generate no vendor callbacks) — and production bans mocks before
+ * this list can hide a missing secret.
+ */
+const DISPATCH_WEBHOOK_SECRETS: Array<
+  [envName: string, enabled: () => boolean, value: () => string]
+> = [
+  [
+    "BORZO_WEBHOOK_SECRET",
+    () => config.borzo.enabled && !!config.borzo.apiKey,
+    () => config.borzo.webhookSecret,
+  ],
+  [
+    "SHADOWFAX_WEBHOOK_SECRET",
+    () => config.shadowfax.enabled && !!config.shadowfax.apiKey,
+    () => config.shadowfax.webhookSecret,
+  ],
+];
+
+/**
  * Porter is RETIRED (contract cancelled). Its secrets are required only when a
  * deployment deliberately re-enables it — otherwise finishing the retirement
  * (PORTER_ENABLED=false, blank keys) would make the production boot throw and
@@ -212,6 +244,13 @@ export function assertWebhookSecrets(
       if (!read()) missing.push(name);
     }
   }
+
+  // Enabled live dispatch providers: a booked rider must be able to call back
+  // (F2). Whitespace-only counts as missing — it is not a secret.
+  for (const [name, enabled, read] of DISPATCH_WEBHOOK_SECRETS) {
+    if (enabled() && !(read() || "").trim()) missing.push(name);
+  }
+
   if (missing.length > 0) {
     throw new Error(
       `FATAL: missing secrets (${missing.join(", ")}) — set them in functions/.env ` +
@@ -372,6 +411,11 @@ export function assertProductionKeys(): void {
     // Retired Porter is excluded from REQUIRED_SECRETS, but a deliberately
     // re-enabled Porter must still be subject to the mock-key ban.
     ...(config.porter.enabled ? RETIRED_PORTER_SECRETS : []),
+    // A live dispatch provider's callback secret is a secret like any other:
+    // a placeholder containing "mock" must not pass the production boot.
+    ...DISPATCH_WEBHOOK_SECRETS.filter(([, enabled]) => enabled()).map(
+      ([name, , read]) => [name, read] as [string, () => string]
+    ),
   ].filter(([, read]) =>
     read().toLowerCase().includes("mock")
   ).map(([name]) => name);

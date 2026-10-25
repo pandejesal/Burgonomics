@@ -111,21 +111,41 @@ service cloud.firestore {
     // pending-only: a client cannot mint a paid/completed settlement marker.
     // The walk-in lane may be born completed because cash is tendered at the
     // counter. Absent payment is fine (older clients/walk-in writes).
-    function orderCreatePaymentPendingOnly() {
+    //
+    // ALLOWLIST the map itself, both lanes: `payment.routeTransfer` (the Route
+    // receipt) and the capture/refund bookkeeping are server-written after
+    // gateway verification. executeRouteSplit's fast path treats ANY stored
+    // `payment.routeTransfer` as an already-executed payout and returns
+    // "done" without POSTing the transfer (razorpay.service.ts), so a
+    // client-planted receipt at order create silently suppresses the branch
+    // settlement. Only the display fields the apps write are allowed.
+    function orderCreatePaymentClientFieldsOnly() {
       return !('payment' in request.resource.data) || (
         request.resource.data.payment is map &&
-        (
-          !('status' in request.resource.data.payment) ||
-          request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
+        request.resource.data.payment.keys().hasOnly([
+          'method', 'label', 'status', 'transactionId', 'paidAt'
+        ])
+      );
+    }
+    function orderCreatePaymentPendingOnly() {
+      return orderCreatePaymentClientFieldsOnly() && (
+        !('payment' in request.resource.data) || (
+          request.resource.data.payment is map &&
+          (
+            !('status' in request.resource.data.payment) ||
+            request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
+          )
         )
       );
     }
     function orderCreatePaymentSettledWalkin() {
-      return !('payment' in request.resource.data) || (
-        request.resource.data.payment is map &&
-        (
-          !('status' in request.resource.data.payment) ||
-          request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE', 'completed']
+      return orderCreatePaymentClientFieldsOnly() && (
+        !('payment' in request.resource.data) || (
+          request.resource.data.payment is map &&
+          (
+            !('status' in request.resource.data.payment) ||
+            request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE', 'completed']
+          )
         )
       );
     }
@@ -306,6 +326,11 @@ service cloud.firestore {
         !directDeliveredBypass() &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
+          // Fulfillment identity is immutable to staff clients: flipping
+          // orderType from delivery to takeaway would make directDeliveredBypass()
+          // evaluate the stored (now non-delivery) type and let a second write
+          // mark DELIVERED without the OTP handover proof.
+          'orderType', 'fulfillment',
           'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus',
           'petpoojaOrderId', 'petpoojaAcceptedNoId', 'petpoojaStatus', 'petpoojaSyncStatus',
           'dispatchStatus', 'dispatchProvider', 'dispatchOrderId', 'borzoOrderId', 'shadowfaxOrderId',
