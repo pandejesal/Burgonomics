@@ -1,8 +1,59 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+const { mockDb } = vi.hoisted(() => {
+  const mockDb = {
+    collection: (col: string) => ({
+      where: (field: string, op: string, val: any) => ({
+        limit: (n: number) => ({
+          get: async () => {
+            if (col === "stores" && field === "petpoojaRestId" && val === "pp_store_b") {
+              return { docs: [{ data: () => ({ partnerBranchId: "branch_b" }) }] };
+            }
+            if (col === "branches" && field === "petpoojaStoreId" && val === "pp_code_b") {
+              return { docs: [{ id: "branch_b", data: () => ({ petpoojaStoreId: "pp_code_b" }) }] };
+            }
+            return { docs: [] };
+          },
+        }),
+      }),
+      doc: (id: string) => ({
+        get: async () => {
+          if (id === "branch_a" || id === "branch_b") {
+            return { exists: true, id, data: () => ({}) };
+          }
+          return { exists: false, id, data: () => ({}) };
+        },
+      }),
+    }),
+  };
+  return { mockDb };
+});
+
+vi.mock("firebase-admin", () => {
+  const FieldValue = { serverTimestamp: () => "MOCK_TIMESTAMP" };
+  const firestoreFn: any = vi.fn(() => mockDb);
+  firestoreFn.FieldValue = FieldValue;
+  return {
+    default: {
+      firestore: firestoreFn,
+      auth: vi.fn(() => ({})),
+      messaging: vi.fn(() => ({})),
+      initializeApp: vi.fn(),
+      apps: [{ name: "mock" }],
+    },
+    firestore: firestoreFn,
+    auth: vi.fn(() => ({})),
+    messaging: vi.fn(() => ({})),
+    initializeApp: vi.fn(),
+    apps: [{ name: "mock" }],
+  };
+});
+
 import {
   runPetpoojaTestScenario,
   resolvePetpoojaTestScenario,
   buildPetpoojaTestOrder,
+  assertPetpoojaRelayAccess,
   PETPOOJA_TEST_SCENARIOS,
 } from "./testRunner";
 import { config } from "../../config/env";
@@ -230,5 +281,53 @@ describe("runPetpoojaTestScenario (MT-01 sandbox relay)", () => {
     ).toBe(true);
     expect(petpoojaTestRunnerSchema.safeParse({}).success).toBe(false);
     expect(petpoojaTestRunnerSchema.safeParse({ scenarioId: "" }).success).toBe(false);
+  });
+});
+
+describe("Petpooja QA relay branch scope", () => {
+  const branchOwnerA = { uid: "u1", role: "branch_owner", branchIds: ["branch_a"] };
+
+  beforeEach(() => {
+    config.mock.petpoojaPos = true;
+  });
+
+  it("allows the caller's own mapped branch", () => {
+    expect(() => assertPetpoojaRelayAccess(branchOwnerA, "branch_a")).not.toThrow();
+  });
+
+  it("refuses another outlet's mapped branch", () => {
+    expect(() => assertPetpoojaRelayAccess(branchOwnerA, "branch_b")).toThrow(
+      /outside your assigned branches/
+    );
+    try {
+      assertPetpoojaRelayAccess(branchOwnerA, "branch_b");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+    }
+  });
+
+  it("refuses an outlet that is not linked to any branch", () => {
+    expect(() => assertPetpoojaRelayAccess(branchOwnerA, null)).toThrow(
+      /not linked to a branch/
+    );
+  });
+
+  it("allows a brand admin to relay to any mapped outlet", () => {
+    expect(() =>
+      assertPetpoojaRelayAccess({ uid: "u2", role: "brand_owner", branchIds: [] }, "branch_b")
+    ).not.toThrow();
+  });
+
+  it("branch_staff of branch A cannot relay to branch B", () => {
+    const staffA = {
+      uid: "staff_1",
+      email: "staff@brancha.com",
+      role: "branch_staff",
+      branchIds: ["branch_a"],
+    };
+    expect(() => assertPetpoojaRelayAccess(staffA, "branch_b")).toThrow(
+      /outside your assigned branches/
+    );
+    expect(() => assertPetpoojaRelayAccess(staffA, "branch_a")).not.toThrow();
   });
 });

@@ -120,6 +120,11 @@ export async function calculateOrderPricing(
   // before an 86, or from a stale menu, was still priced and charged. Reading
   // it here costs no extra query and refuses to trust client cart state.
   const catalogAvailability = new Map<string, unknown>();
+  // Per-line read failures (sequential path only). A transient read error is
+  // NOT proof the product is deleted or unverifiable: those lines fall back to
+  // the already-validated client price and mark the result degraded. A doc
+  // that genuinely does not exist still fails closed below.
+  const catalogReadErrors = new Set<string>();
   // True when any line was priced from client input instead of the catalog.
   // Surfaced on the result so callers can tell a clean total from a degraded
   // one; before this it was declared and never set, so the documented signal
@@ -132,13 +137,30 @@ export async function calculateOrderPricing(
   if (wantedIds.length > 0 && db && typeof db.collection === "function") {
     try {
       if (typeof (db as any).getAll === "function") {
-        const refs = wantedIds.map((id) => db.collection("products").doc(id as string));
-        const snaps = await (db as any).getAll(...refs);
-        for (const snap of snaps) {
-          const data = snap.data();
-          if (snap.exists && typeof data?.price === "number") {
-            catalogPrices.set(snap.id, data.price);
-            catalogAvailability.set(snap.id, data?.inStock);
+        try {
+          const refs = wantedIds.map((id) => db.collection("products").doc(id as string));
+          const snaps = await (db as any).getAll(...refs);
+          for (const snap of snaps) {
+            const data = snap.data();
+            if (snap.exists && typeof data?.price === "number") {
+              catalogPrices.set(snap.id, data.price);
+              catalogAvailability.set(snap.id, data?.inStock);
+            }
+          }
+        } catch {
+          // If getAll throws (e.g. single doc error or unsupported batch), degrade to sequential gets
+          for (const id of wantedIds) {
+            try {
+              const snap = await db.collection("products").doc(id as string).get();
+              const data = snap.data();
+              if (snap.exists && typeof data?.price === "number") {
+                catalogPrices.set(id as string, data.price);
+                catalogAvailability.set(id as string, data?.inStock);
+              }
+            } catch {
+              catalogReadFailed = true;
+              catalogReadErrors.add(id as string);
+            }
           }
         }
       } else {
@@ -152,24 +174,30 @@ export async function calculateOrderPricing(
             }
           } catch {
             catalogReadFailed = true;
+            catalogReadErrors.add(id as string);
             // Fallback to validated client price for this item
           }
         }
       }
     } catch (err) {
       catalogReadFailed = true;
-      // Fallback to validated client prices — but never silently: a blind
-      // catalog read failure prices the whole order off untrusted input.
+      // A failure outside the per-document reads means the catalog layer
+      // itself is unavailable. Do NOT mark every wanted id as a transient
+      // per-line failure: that would let a genuinely missing product fall back
+      // to a client price. Fail closed with a retryable 503 instead.
       const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
         captureErrorSnapshot: async () => {},
       }));
       await captureErrorSnapshot({
         source: "payments",
         severity: "high",
-        message: `Catalog price resolution failed, falling back to client prices (${wantedIds.length} items)`,
+        message: `Catalog price resolution failed (${wantedIds.length} items)`,
         branchId: input.branchId,
       }).catch(() => undefined);
       void err;
+      const outage: any = new Error("Menu pricing is temporarily unavailable — please retry checkout.");
+      outage.statusCode = 503;
+      throw outage;
     }
   }
 
@@ -187,12 +215,11 @@ export async function calculateOrderPricing(
     const itemKey = item.productId || item.id;
     const catalogPrice = catalogPrices.get(itemKey);
     if (catalogPrice !== undefined) {
-      // Money-time ELIGIBILITY. Fail CLOSED: only an explicit boolean true is
-      // sellable, so a doc that predates the availability field cannot be sold
-      // on an assumption. Without this, a line that went 86 after it entered
-      // the cart was still priced and charged, because the cart is a
-      // client-side gate and the server never looked.
-      if (catalogAvailability.get(itemKey) !== true) {
+      // Money-time ELIGIBILITY. Only an EXPLICIT false blocks the line: product
+      // docs written by the combo builder and brand imports predate `inStock`
+      // and are legitimately sellable. An explicit 86 still fails closed, and
+      // the availability value comes from the same snapshot as the price.
+      if (catalogAvailability.get(itemKey) === false) {
         const unavailable: any = new Error(
           `${String((item as any)?.name || "An item")} is no longer available — please review your cart.`
         );
@@ -201,14 +228,18 @@ export async function calculateOrderPricing(
         throw unavailable;
       }
       unitPrice = applyCatalogBasePrice(item, catalogPrice);
+    } else if (catalogReadErrors.has(itemKey)) {
+      // Transient read failure for THIS line (the catalog as a whole answered):
+      // use the validated client price and report the degraded total rather
+      // than a non-retryable "unverified" error the customer cannot clear.
+      pricingDegraded = true;
     } else {
       // FAIL CLOSED on an unverifiable price. The catalog is the only
       // authoritative price source, so charging the price the CLIENT sent for a
       // product we cannot look up lets an arbitrary request value set the
       // amount. A deleted, foreign or mistyped product is refused instead of
       // silently priced, because "we could not verify it" is not a licence to
-      // charge it. Rejecting here is why pricingDegraded no longer has to carry
-      // this case on its own.
+      // charge it.
       const unverified: any = new Error(
         `${String((item as any)?.name || "An item")} could not be verified against the menu — please refresh your cart and try again.`
       );

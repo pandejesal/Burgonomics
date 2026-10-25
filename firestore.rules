@@ -93,16 +93,41 @@ service cloud.firestore {
     // OTP proof fields are server-minted by POST /orders/verifyDeliveryOtp;
     // refund/pricing/dispatch fields resolve server-side (Admin SDK /
     // functions); petpoojaOrderId is webhook-owned (menuSyncWebhook).
+    // Items and totals are client-authored at order create; totals are repriced
+    // server-side at payment verification and cash-lane totals remain a documented residual.
     function orderCreateForbiddenKeys() {
       return [
         'deliveryOtp', 'deliveryOtpHash', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
         'refund', 'refundStatus', 'refundId', 'refundAmount',
         'pricing', 'pricingSnapshot', 'petpoojaOrderId', 'dispatchStatus',
-        'routeTransferStatus', 'payment', 'totals', 'total', 'petpoojaAcceptedNoId',
-        'petpoojaStatus', 'petpoojaSyncStatus', 'kotPrinted', 'kotPrintedAt',
-        'dispatchProvider', 'dispatchOrderId', 'borzoOrderId', 'shadowfaxOrderId',
-        'porterOrderId'
+        'routeTransferStatus', 'petpoojaAcceptedNoId', 'petpoojaStatus',
+        'petpoojaSyncStatus', 'reconciliation', 'deliveryPartner',
+        'kotPrinted', 'kotPrintedAt', 'dispatchProvider', 'dispatchOrderId',
+        'borzoOrderId', 'shadowfaxOrderId', 'porterOrderId'
       ];
+    }
+
+    // Nested payment display marker at birth. The customer lane is
+    // pending-only: a client cannot mint a paid/completed settlement marker.
+    // The walk-in lane may be born completed because cash is tendered at the
+    // counter. Absent payment is fine (older clients/walk-in writes).
+    function orderCreatePaymentPendingOnly() {
+      return !('payment' in request.resource.data) || (
+        request.resource.data.payment is map &&
+        (
+          !('status' in request.resource.data.payment) ||
+          request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
+        )
+      );
+    }
+    function orderCreatePaymentSettledWalkin() {
+      return !('payment' in request.resource.data) || (
+        request.resource.data.payment is map &&
+        (
+          !('status' in request.resource.data.payment) ||
+          request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE', 'completed']
+        )
+      );
     }
 
     // Orders CREATE (both lanes): the canonical initial status meta only.
@@ -252,6 +277,7 @@ service cloud.firestore {
           request.resource.data.userId == request.auth.uid &&
           orderCreateInitialStatus() &&
           !request.resource.data.keys().hasAny(orderCreateForbiddenKeys()) &&
+          orderCreatePaymentPendingOnly() &&
           (
             !('paymentStatus' in request.resource.data) ||
             request.resource.data.paymentStatus in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
@@ -265,6 +291,7 @@ service cloud.firestore {
           ownsBranch(request.resource.data.branchId) &&
           orderCreateInitialStatus() &&
           !request.resource.data.keys().hasAny(orderCreateForbiddenKeys()) &&
+          orderCreatePaymentSettledWalkin() &&
           (
             !('paymentStatus' in request.resource.data) ||
             request.resource.data.paymentStatus in ['pending', 'completed']

@@ -703,11 +703,10 @@ app.post(
       const result = await runPetpoojaTestScenario(req.body, req.user);
       res.status(200).json(result);
     } catch (err: any) {
-      // 403 = the zero-mock production refusal raised by the runner itself;
-      // any other failure stays 500.
-      res
-        .status(err.statusCode === 403 ? 403 : 500)
-        .json({ error: err.message || "Petpooja test runner failed" });
+      // 403 = zero-mock production refusal or forbidden branch access;
+      // other staff errors map via staffErrorStatus, or keep err.statusCode.
+      const status = err.statusCode || staffErrorStatus(err, 500);
+      res.status(status).json({ error: err.message || "Petpooja test runner failed" });
     }
   }
 );

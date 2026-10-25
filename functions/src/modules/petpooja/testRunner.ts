@@ -1,5 +1,33 @@
 import { config, isDeclaredProduction } from "../../config/env";
 import { getPetpoojaConfig } from "./client";
+import { db } from "../../core/firebase";
+import { assertBranchAccess } from "../../core/middleware";
+
+/**
+ * Branch-scope the QA relay. The request's `branchId` is the outlet's
+ * Petpooja menu-sharing code (resID), not a Firestore branch id, so it must be
+ * resolved through the authoritative stores/{id} mapping before access is
+ * checked. An unmapped outlet is refused: relaying a synthetic KOT into an
+ * outlet the caller does not own is a cross-branch write.
+ */
+export function assertPetpoojaRelayAccess(
+  caller: any,
+  mappedPartnerBranchId: string | null | undefined
+): void {
+  if (!mappedPartnerBranchId) {
+    const err: any = new Error(
+      "Forbidden: this Petpooja outlet is not linked to a branch — cannot authorize the relay"
+    );
+    err.statusCode = 403;
+    throw err;
+  }
+  try {
+    assertBranchAccess(caller, mappedPartnerBranchId);
+  } catch (err: any) {
+    err.statusCode = 403;
+    throw err;
+  }
+}
 
 /**
  * MT-01 — Petpooja Sandbox 5-Scenario Relay (POST /petpooja/testRunner).
@@ -743,11 +771,57 @@ async function relayScenarioToPetpooja(
  *    claimed nothing had synced when the POS had the order. It returns
  *    `petpoojaOrderId: null` with `petpoojaOrderIdReturned: false`.
  */
+/**
+ * Resolves the supplied branchId (which may be either our internal branchId or the outlet's
+ * Petpooja store ID / menu-sharing code) to the canonical internal branchId for access validation.
+ */
+export async function resolveRelayBranchId(rawBranchId?: string): Promise<string | null> {
+  if (!rawBranchId || typeof rawBranchId !== "string") return null;
+  const trimmed = rawBranchId.trim();
+  if (!trimmed) return null;
+
+  try {
+    if (db && typeof db.collection === "function") {
+      // 1. Check stores mapping (petpoojaRestId -> partnerBranchId)
+      const storeCol = db.collection("stores") as any;
+      if (typeof storeCol.where === "function") {
+        const storeSnap = await storeCol.where("petpoojaRestId", "==", trimmed).limit(1).get();
+        const mappedFromStore = storeSnap.docs?.[0]?.data()?.partnerBranchId;
+        if (mappedFromStore) return mappedFromStore;
+      }
+
+      // 2. Check branches mapping (petpoojaStoreId -> branch.id)
+      const branchCol = db.collection("branches") as any;
+      if (typeof branchCol.where === "function") {
+        const branchSnap = await branchCol.where("petpoojaStoreId", "==", trimmed).limit(1).get();
+        const mappedFromBranch = branchSnap.docs?.[0]?.id;
+        if (mappedFromBranch) return mappedFromBranch;
+      }
+
+      // 3. Direct branches document lookup
+      const directBranch = await db.collection("branches").doc(trimmed).get();
+      if (directBranch.exists) return directBranch.id;
+    }
+  } catch {
+    // non-Firestore test environment
+  }
+
+  return trimmed;
+}
+
 export async function runPetpoojaTestScenario(
   params: PetpoojaTestRunnerParams,
   caller?: any
 ): Promise<PetpoojaTestRunnerResult> {
-  void caller; // no branch-scoped reads — sandbox relay only
+  // Branch-scoping & cross-outlet denial:
+  // When an authenticated caller is present, resolve the supplied branchId
+  // (the outlet's Petpooja menu-sharing code) and enforce that the caller owns
+  // or has access to that branch using the same guard pattern as the stock-push/dispatch lanes,
+  // before any vendor save_order POST.
+  if (caller) {
+    const targetBranchId = await resolveRelayBranchId(params.branchId);
+    assertPetpoojaRelayAccess(caller, targetBranchId);
+  }
   // ZERO-MOCK policy: this runner fabricates a synthetic order BY DESIGN. In
   // a declared-production process the relay would fire that synthetic KOT at
   // a LIVE outlet — and, when credentials are missing, hand back a fake
