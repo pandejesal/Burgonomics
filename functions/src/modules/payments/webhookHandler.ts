@@ -4,8 +4,9 @@ import { db } from "../../core/firebase";
 import { config, assertLivePaymentsContext } from "../../config/env";
 import { verifyRazorpayWebhookSignature, isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
-import { markOrderReconciliation } from "./reconciliation";
+import { markOrderReconciliation, claimCapturedPaymentInTx } from "./reconciliation";
 import { pushOrderToPetpooja } from "../petpooja";
+import { dispatchCustomerAccountNotification } from "../tickets/supportNotifications";
 
 /**
  * Reads a legacy DOT-LITERAL field path — `"payment.razorpayPaymentId"` as a
@@ -649,6 +650,32 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             suppressedReason = foreignAttempt ? "suppressed_foreign_capture" : "suppressed_later_state";
             return { written: false, reason: suppressedReason, recordedPaymentId, fresh };
           }
+          // T3.2 — ATOMIC CAPTURED-PAYMENT CLAIM (gateway-order binding):
+          // one captured payment may confirm at most ONE internal order. The
+          // per-order foreign-recording guard above cannot see another
+          // order's doc; this shared ownership record can. A capture already
+          // owned by a DIFFERENT order is suppressed here — before the
+          // CONFIRMED write, the OTP mint, the split, the coins and the KOT.
+          if (razorpayPaymentId) {
+            const captureClaim = await claimCapturedPaymentInTx(tx, db, {
+              razorpayPaymentId,
+              orderId,
+              razorpayOrderId:
+                (event === "order.paid" ? paymentEntity?.id : paymentEntity?.order_id) || null,
+              amountPaise: typeof capturedPaise === "number" ? capturedPaise : null,
+              eventId,
+            });
+            if (captureClaim.kind === "reused_by_other_order") {
+              suppressedReason = "suppressed_reused_capture";
+              return {
+                written: false,
+                reason: suppressedReason,
+                recordedPaymentId,
+                recordedCaptureOrderId: captureClaim.recordedOrderId,
+                fresh,
+              };
+            }
+          }
           // Same transaction as CONFIRMED: mint the delivery OTP hash when the
           // order is eligible and has none. An existing hash is left untouched,
           // so a redelivery (payment.captured vs order.paid) or a verify that
@@ -756,8 +783,24 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         try {
           const pushed = await pushOrderToPetpooja(orderId);
           if (!pushed) {
+            // Truthful log (review fix): `pushed === false` can mean EITHER a
+            // retryable POS sync outstanding OR a parked
+            // `pending_configuration` state (a dead-end skip with NO
+            // automatic retry — recovery is manual, via the authorized push
+            // route after the menu is corrected). Name the actual state
+            // instead of claiming `pending_retry` for both, and never change
+            // money/notification logic here.
+            const kotState = await (db as any)
+              .collection("orders")
+              .doc(orderId)
+              .get()
+              .then((s: any) => (s.data()?.petpoojaStatus ?? "unknown"))
+              .catch(() => "unknown");
             console.warn(
-              `[Razorpay Webhook] KOT push pending_retry for order ${orderId} — POS sync outstanding, retry worker owns it`
+              `[Razorpay Webhook] KOT push did not complete for order ${orderId} — petpoojaPush.state=${kotState}` +
+                (kotState === "pending_configuration"
+                  ? " (parked: manual recovery required after menu correction — no automatic retry)"
+                  : " (retry worker owns it)")
             );
           }
         } catch (err) {
@@ -885,16 +928,23 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           }
           // The customer otherwise stares at a spinner: tell them plainly.
           // (Status code is untouched, so no status trigger fires — push here.)
+          // Classified `orderUpdates` for the order owner, dispatched after the
+          // money transaction committed. Copy carries no order id, name, or
+          // amount; `targetId` is the inbox pointer, not tray copy.
           try {
-            const { pushToCustomer } = await import("../notifications/fcmClient");
-            await pushToCustomer(
-              orderData?.customerId || orderData?.userId,
-              "⚠️ Payment failed",
-              `Payment for order #${orderId.substring(0, 6)} did not go through. No money was charged — please try again.`,
-              { type: "payment_failed", orderId }
-            );
+            const recipientUid = orderData?.customerId || orderData?.userId;
+            if (recipientUid) {
+              await dispatchCustomerAccountNotification({
+                purpose: "orderUpdates",
+                recipientUid,
+                targetId: orderId,
+                type: "payment_failed",
+                title: "Payment failed",
+                body: "Payment for your order did not go through. No money was charged — please try again.",
+              });
+            }
           } catch {
-            // Non-blocking (see pushToCustomer).
+            // Non-blocking: a push failure never affects the money outcome.
           }
         }
       }
@@ -1111,15 +1161,21 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         if (refundOutcome.isNewRefund) {
         try {
           const orderData = orderDoc.data() as any;
-          const { pushToCustomer } = await import("../notifications/fcmClient");
-          await pushToCustomer(
-            orderData?.customerId || orderData?.userId,
-            "↩️ Refund processed",
-            `₹${amount} refund for order #${orderDoc.id.substring(0, 6)} is on its way (5–7 business days).`,
-            { type: "refund_processed", orderId: orderDoc.id }
-          );
+          const recipientUid = orderData?.customerId || orderData?.userId;
+          // Classified `orderUpdates`, targetId = order id, body carries the
+          // amount but never the order id or any name.
+          if (recipientUid) {
+            await dispatchCustomerAccountNotification({
+              purpose: "orderUpdates",
+              recipientUid,
+              targetId: orderDoc.id,
+              type: "refund_processed",
+              title: "Refund processed",
+              body: `₹${amount} refund for your order is on its way (5–7 business days).`,
+            });
+          }
         } catch {
-          // Non-blocking (see pushToCustomer).
+          // Non-blocking: a push failure never affects the refund record.
         }
         }
       } else {

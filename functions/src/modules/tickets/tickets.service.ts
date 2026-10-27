@@ -1,9 +1,14 @@
 import * as crypto from "crypto";
 import { db } from "../../core/firebase";
 import { captureErrorSnapshot, serviceError } from "../../core/errors";
-import { truncatePushText } from "../notifications/templates";
 import { autoRefund } from "../payments/razorpay.service";
 import { creditTicketLoyaltyCoins } from "../customers/customerCoins";
+import { ticketTierRank } from "./ticketReminder.scheduler";
+import {
+  notifySupportEscalation,
+  notifySupportReply,
+  notifySupportResolution,
+} from "./supportNotifications";
 import * as admin from "firebase-admin";
 
 /**
@@ -172,6 +177,8 @@ export type TicketStatus = "open" | "in_progress" | "escalated" | "resolved" | "
 export type TicketTier = "branch" | "brand_support" | "developer_team";
 
 export interface TicketTimelineEvent {
+  /** Stable id of the persisted event; also the push dedupe key. */
+  id?: string;
   action: string;
   actorId: string;
   actorName: string;
@@ -278,6 +285,22 @@ export async function resolveTicketNote(input: ResolveNoteInput) {
   } finally {
     if (!committed) await releaseResolutionClaim(ticketRef, claimToken);
   }
+
+  // A non-money close is still a CLOSE the customer must hear about: the
+  // partner UI reaches this path via /tickets/resolveNote, so without this the
+  // majority of resolutions went silent. Same `supportReplies` publisher and
+  // the same stable transition id shape as the money path — one resolution per
+  // ticket, one push, whichever path closed it (the terminal-status guard plus
+  // the dispatch ledger make a second send unreachable). Copy is generic: the
+  // staff note is never rendered, and no refund is claimed because no money
+  // moved. Dispatched after the commit; never inside the transaction.
+  await notifySupportResolution({
+    ticketId: input.ticketId,
+    customerId: ticket.customerId,
+    refunded: false,
+    transitionId: `res_${input.ticketId}_${claimToken.claimedAt}`,
+  });
+
   return { success: true, ticketId: input.ticketId };
 }
 
@@ -429,7 +452,13 @@ export async function addTicketMessage(params: {
     }
   }
 
+  // Stable id for THIS persisted message: the push announces exactly one
+  // stored event, so a retried request (or a replayed caller) cannot page the
+  // customer twice for the same message.
+  const messageId = `msg_${crypto.randomUUID()}`;
+
   const event: TicketTimelineEvent = {
+    id: messageId,
     action: "message_added",
     actorId: senderId,
     actorName: senderName,
@@ -443,6 +472,18 @@ export async function addTicketMessage(params: {
     status: senderRole === "customer" ? "open" : "in_progress",
     lastActivityAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Notify AFTER the message is committed — never inside a transaction, and
+  // never in a way that can fail the write. Only a VERIFIED staff role pages
+  // the customer (never the body-supplied role); a customer's own reply pages
+  // nobody.
+  await notifySupportReply({
+    ticketId,
+    customerId: ticket.customerId,
+    authorUid: senderId,
+    authorRole: caller.role ?? "",
+    messageId,
   });
 
   return event;
@@ -815,23 +856,16 @@ export async function resolveTicket(input: ResolveTicketInput) {
   }
 
   // Customers never learned their ticket closed. Best-effort push (never
-  // blocks resolution). B5-S1: PII-free + honest — generic copy, ticket IDs
-  // in data only, refund named only when money actually moved (H17/H33).
-  try {
-    const { pushToCustomer } = await import("../notifications/fcmClient");
-    await pushToCustomer(
-      liveTicket.customerId,
-      "Support ticket resolved",
-      truncatePushText(
-        refundResult
-          ? `Ticket ${liveTicket.ticketNumber || ticketId} is resolved with a refund. Thanks for your patience!`
-          : `Ticket ${liveTicket.ticketNumber || ticketId} is resolved. Thanks for your patience!`
-      ),
-      { type: "ticket_resolved", ticketId }
-    );
-  } catch {
-    // Non-blocking (see pushToCustomer).
-  }
+  // blocks resolution) dispatched AFTER the commit, through the classified
+  // `supportReplies` sender: generic copy, no ticket number (contract §10),
+  // refund named only when money actually moved. The claim timestamp makes the
+  // resolution transition id stable, so a retried request cannot double-page.
+  await notifySupportResolution({
+    ticketId,
+    customerId: liveTicket.customerId,
+    refunded: Boolean(refundResult),
+    transitionId: `res_${ticketId}_${claimToken.claimedAt}`,
+  });
 
   return { success: true, ticketId, resolution };
 }
@@ -859,6 +893,57 @@ export async function escalateTicket(input: EscalateTicketInput) {
   // Loop 7 hardening (fail-closed): scoped staff MUST prove the ticket's
   // branch. Missing/empty/mismatched branchIds -> 403 BEFORE side effects.
   assertTicketBranchAccess(input.caller, ticket.branchId, "escalate tickets");
+
+  // Escalation is a MONOTONIC, non-terminal transition. Routes carry
+  // requireRole(...) and firestore.rules lock status/assignedTo to the server,
+  // but a miswired route must still refuse inside the function (the same
+  // defence-in-depth pattern as assertStaff). Two writes are refused here:
+  //   • a resolved/closed ticket re-opening through an "escalation";
+  //   • a DEMOTION. L3 (developer_team) → L2 (brand_support) would silently
+  //     walk the ladder backwards and page the wrong team.
+  // Both refusals happen BEFORE the developer-team snapshot, the timeline
+  // append, and any doc write.
+  const ticketStatus = String(ticket.status || "").toLowerCase();
+  if (ticketStatus === "resolved" || ticketStatus === "closed") {
+    throw serviceError(
+      "TICKET_ALREADY_RESOLVED",
+      `Ticket ${ticketId} is already ${ticketStatus} — reopen it before escalating.`,
+      409
+    );
+  }
+
+  const targetRank = ticketTierRank(targetTier);
+  if (targetRank === null) {
+    // The input type is a closed union, but the value arrives through a route
+    // body. An unknown target has no position on the ladder, so it is never
+    // written.
+    throw serviceError(
+      "TICKET_ESCALATION_TIER_UNKNOWN",
+      `Ticket ${ticketId} escalation target is not a known tier.`,
+      409
+    );
+  }
+
+  const currentTierValue = ticket.assignedTo?.tier;
+  const currentRank = ticketTierRank(currentTierValue);
+  if (currentTierValue != null && currentRank === null) {
+    // Corrupt/legacy tier: refuse rather than guess a rank — a guess is exactly
+    // how a real demotion gets mistaken for an upward move.
+    throw serviceError(
+      "TICKET_ESCALATION_TIER_UNKNOWN",
+      `Ticket ${ticketId} carries an unrecognized tier — fix the ticket before escalating.`,
+      409
+    );
+  }
+  // An absent tier is the documented entry rung (currentTier() in
+  // ticketReminder.scheduler.ts resolves it to "branch").
+  if (targetRank <= (currentRank ?? 0)) {
+    throw serviceError(
+      "TICKET_ESCALATION_NOT_UPWARD",
+      `Ticket ${ticketId} is already at ${currentTierValue || "branch"} — escalation must move up a tier.`,
+      409
+    );
+  }
 
   // If escalated to developer team, create a formal error snapshot & dispatch alert.
   // The operator-supplied reason is NOT persisted here: reporters paste PII
@@ -906,6 +991,16 @@ export async function escalateTicket(input: EscalateTicketInput) {
   }
 
   await ticketRef.update(updateData);
+
+  // Customer-visible escalation notice, dispatched after the transition is
+  // committed. Copy is generic (no tier internals, no ticket number, no
+  // operator reason) and the transition id makes a retry idempotent.
+  await notifySupportEscalation({
+    ticketId,
+    customerId: ticket.customerId,
+    targetTier,
+    transitionId: `esc_${ticketId}_${targetTier}`,
+  });
 
   return { success: true, ticketId, targetTier, snapshotId };
 }

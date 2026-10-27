@@ -57,23 +57,53 @@ function loadEnv(file) {
   return out;
 }
 
-const env = { ...loadEnv(ENV_PATH), ...process.env };
-
-const APP_KEY = env.PETPOOJA_APP_KEY;
-const APP_SECRET = env.PETPOOJA_APP_SECRET;
-const ACCESS_TOKEN = env.PETPOOJA_ACCESS_TOKEN;
-const ORDER_URL =
-  env.PETPOOJA_ORDER_URL ||
-  "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order";
-const REST_ID = env.PETPOOJA_SANDBOX_MAPPING_CODE || "";
-const CALLBACK_URL =
-  (env.PETPOOJA_CALLBACK_URL || "").trim() ||
-  "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook";
-
+/**
+ * M5 — credentials are loaded ONLY on the explicit live path. DRY-RUN (the
+ * safe default) must not even READ functions/.env: no credential file access,
+ * no partial secret materialization. Live relay requires BOTH the `--live`
+ * flag AND the credentials present — after the mandatory gate import and the
+ * structural gaps have been enforced.
+ */
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run");
+const LIVE_REQUESTED = args.includes("--live");
 const onlyIdx = args.indexOf("--only");
 const ONLY = onlyIdx !== -1 ? args[onlyIdx + 1] : null;
+
+function readEnvCredentials() {
+  const env = { ...loadEnv(ENV_PATH), ...process.env };
+  return {
+    ORDER_URL:
+      env.PETPOOJA_ORDER_URL ||
+      "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+    REST_ID: env.PETPOOJA_SANDBOX_MAPPING_CODE || "",
+    CALLBACK_URL:
+      (env.PETPOOJA_CALLBACK_URL || "").trim() ||
+      "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+    creds: {
+      APP_KEY: env.PETPOOJA_APP_KEY,
+      APP_SECRET: env.PETPOOJA_APP_SECRET,
+      ACCESS_TOKEN: env.PETPOOJA_ACCESS_TOKEN,
+    },
+  };
+}
+
+// M5 — the captured tax catalogue travels as env JSON ( NEVER a hardcoded
+// default). Required for both modes: the payload builder resolves its tax
+// rows from it, and a missing/unrepresentable catalogue is the honest
+// BLOCKED_CONFIGURATION answer.
+let TAX_CATALOG = null;
+{
+  const raw = process.env.PETPOOJA_TAX_CATALOGUE_JSON;
+  if (raw && raw.trim()) {
+    try {
+      TAX_CATALOG = JSON.parse(raw);
+    } catch (err) {
+      console.error("ABORT: PETPOOJA_TAX_CATALOGUE_JSON is not valid JSON: " + err);
+      process.exit(2);
+    }
+  }
+}
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const money = (n) => n.toFixed(2);
@@ -237,21 +267,49 @@ function toTestOrder(scenario) {
 }
 
 async function main() {
-  if (!APP_KEY || !APP_SECRET || !ACCESS_TOKEN) {
-    console.error(
-      "ABORT: PETPOOJA_APP_KEY / PETPOOJA_APP_SECRET / PETPOOJA_ACCESS_TOKEN are not all set in functions/.env"
-    );
-    process.exit(2);
-  }
-  if (!REST_ID) {
-    console.error("ABORT: PETPOOJA_SANDBOX_MAPPING_CODE (restID) is not set");
+  // M5 — MANDATORY GATE IMPORT, exactly once, and a hard abort when missing:
+  // the old optional-import-turned-null let a LIVE relay run through an OLD
+  // dist build whose sendability gate no longer existed. Now: no dist, no
+  // exported gate, no run — exit 2 with a clear reason.
+  let gate = null;
+  try {
+    const mod = await import("../functions/dist/modules/petpooja/testRunner.js");
+    if (typeof mod.evaluatePetpoojaTestOrderSendability !== "function") {
+      throw new Error("dist exports no evaluatePetpoojaTestOrderSendability — rebuild functions (npm run build)");
+    }
+    gate = {
+      evaluate: mod.evaluatePetpoojaTestOrderSendability,
+      format: mod.formatPetpoojaV21Payload,
+    };
+  } catch (err) {
+    console.error("ABORT: mandatory Petpooja gate module unavailable: " + (err && err.message ? err.message : err));
     process.exit(2);
   }
 
-  // Import the SAME payload builder the Cloud Function relay uses.
-  const { formatPetpoojaV21Payload } = await import(
-    "../functions/dist/modules/petpooja/testRunner.js"
-  );
+  // M5 — deferred credential read: dry-run NEVER opens functions/.env.
+  const liveEnv = DRY_RUN ? null : readEnvCredentials();
+  if (DRY_RUN && LIVE_REQUESTED) {
+    console.error("ABORT: --live and --dry-run are mutually exclusive");
+    process.exit(2);
+  }
+  if (!DRY_RUN) {
+    if (!LIVE_REQUESTED) {
+      console.error(
+        "ABORT: relaying orders to Petpooja sends REAL vendor traffic. Re-run with the explicit --live flag after verifying the target outlet; --dry-run keeps this read-only."
+      );
+      process.exit(2);
+    }
+    if (!liveEnv.creds.APP_KEY || !liveEnv.creds.APP_SECRET || !liveEnv.creds.ACCESS_TOKEN) {
+      console.error(
+        "ABORT: PETPOOJA_APP_KEY / PETPOOJA_APP_SECRET / PETPOOJA_ACCESS_TOKEN are not all set in functions/.env"
+      );
+      process.exit(2);
+    }
+    if (!liveEnv.REST_ID) {
+      console.error("ABORT: PETPOOJA_SANDBOX_MAPPING_CODE (restID) is not set");
+      process.exit(2);
+    }
+  }
 
   const selected = ONLY ? SCENARIOS.filter((s) => s.id === ONLY) : SCENARIOS;
   if (selected.length === 0) {
@@ -259,9 +317,15 @@ async function main() {
     process.exit(2);
   }
 
+  const ORDER_URL = DRY_RUN ? null : liveEnv.ORDER_URL;
+  const REST_ID = DRY_RUN ? "" : liveEnv.REST_ID;
+  const CALLBACK_URL = DRY_RUN ? "https://asia-south1-<project>.cloudfunctions.net/api/petpooja/webhook" : liveEnv.CALLBACK_URL;
+  const restIdOut = DRY_RUN ? "<restID-not-set-dry-run>" : REST_ID;
+  const credsOut = { app_key: "<set>", app_secret: "<set>", access_token: "<set>" };
+
   console.log("Petpooja sandbox 5-scenario relay");
   console.log(`  endpoint : ${ORDER_URL}`);
-  console.log(`  restID   : ${REST_ID}`);
+  console.log(`  restID   : ${restIdOut}`);
   console.log(`  callback : ${CALLBACK_URL}`);
   console.log(`  scenarios: ${selected.map((s) => s.id).join(", ")}`);
   console.log(DRY_RUN ? "  MODE      : dry-run (no orders will be relayed)\n" : "  MODE      : LIVE\n");
@@ -272,24 +336,59 @@ async function main() {
   for (const scenario of selected) {
     const order = toTestOrder(scenario);
     const orderID = `bgx_${scenario.id}_${Date.now()}`;
-    const payload = {
-      ...formatPetpoojaV21Payload(order, REST_ID, orderID, CALLBACK_URL, new Date()),
-      app_key: APP_KEY,
-      app_secret: APP_SECRET,
-      access_token: ACCESS_TOKEN,
-    };
-
+    // M5 — the gate import is MANDATORY (already resolved above); structural
+    // gaps abort the run — there is no "gate missing, relay anyway" path.
+    const sendability = gate.evaluate(order);
     const row = {
       scenarioId: scenario.id,
       title: scenario.title,
       orderID,
-      total: payload.orderinfo?.Order?.total,
-      tax_total: payload.orderinfo?.Order?.tax_total,
       httpStatus: null,
       response: null,
       petpoojaOrderId: null,
       ok: false,
     };
+    if (sendability.length > 0) {
+      row.blockedReasons = sendability.map((g) => `${g.field}: ${g.reason}`);
+      row.ok = false;
+      failures += 1;
+      console.log(
+        `--- ${scenario.id} (${scenario.title}) — BLOCKED_CONFIGURATION (no relay) ---\n` +
+          `  orderID : ${orderID}\n` +
+          `  reason  : sendability gate reports this scenario needs POS configuration the\n` +
+          `            outlet has not published (unverified numeric addon/variation ids).\n` +
+          sendability.map((g) => `    - ${g.field}, ${g.reason}`).join("\n") +
+          "\n"
+      );
+      results.push(row);
+      continue;
+    }
+
+    let payload;
+    try {
+      // M5 — the captured tax catalogue travels via env JSON; an
+      // unrepresentable catalogue is the honest BLOCKED_CONFIGURATION answer.
+      payload = DRY_RUN
+        ? {
+            ...gate.format(order, restIdOut, orderID, CALLBACK_URL, new Date(), TAX_CATALOG),
+            ...credsOut,
+          }
+        : {
+            ...gate.format(order, REST_ID, orderID, CALLBACK_URL, new Date(), TAX_CATALOG),
+            app_key: liveEnv.creds.APP_KEY,
+            app_secret: liveEnv.creds.APP_SECRET,
+            access_token: liveEnv.creds.ACCESS_TOKEN,
+          };
+    } catch (err) {
+      row.blockedReasons = [`Tax[].id: ${err && err.message ? err.message : err}`];
+      failures += 1;
+      console.log(`--- ${scenario.id} (${scenario.title}) — BLOCKED_CONFIGURATION (no relay) ---`);
+      console.log(`  reason: ${row.blockedReasons[0]}\n`);
+      results.push(row);
+      continue;
+    }
+    row.total = payload.orderinfo?.OrderInfo?.Order?.details?.total;
+    row.tax_total = payload.orderinfo?.OrderInfo?.Order?.details?.tax_total;
 
     if (DRY_RUN) {
       console.log(`--- ${scenario.id} (${scenario.title}) — dry-run payload ---`);
@@ -304,10 +403,10 @@ async function main() {
         headers: {
           "Content-Type": "application/json",
           "Content-Type-Override": "application/json",
-          "app-key": APP_KEY,
-          "app-secret": APP_SECRET,
-          "access-token": ACCESS_TOKEN,
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          "app-key": liveEnv.creds.APP_KEY,
+          "app-secret": liveEnv.creds.APP_SECRET,
+          "access-token": liveEnv.creds.ACCESS_TOKEN,
+          Authorization: `Bearer ${liveEnv.creds.ACCESS_TOKEN}`,
         },
         body: JSON.stringify(payload),
       });
@@ -345,7 +444,7 @@ async function main() {
       console.log(
         `--- ${scenario.id} (${scenario.title}) ---\n` +
           `  orderID : ${orderID}\n` +
-          `  total   : ${payload.orderinfo?.Order?.total}  tax_total: ${payload.orderinfo?.Order?.tax_total}\n` +
+          `  total   : ${payload.orderinfo?.OrderInfo?.Order?.details?.total}  tax_total: ${payload.orderinfo?.OrderInfo?.Order?.details?.tax_total}\n` +
           `  HTTP    : ${res.status}\n` +
           `  body    : ${typeof row.response === "string" ? row.response : JSON.stringify(row.response)}\n` +
           `  verdict : ${

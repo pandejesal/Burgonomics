@@ -85,13 +85,15 @@ describe("Readiness-8: customer broadcast", () => {
     savedDocs["device_tokens/tok_b"] = { token: "tok_b", userId: "c2" };
     savedDocs["device_tokens/tok_a_dup"] = { token: "tok_a", userId: "c1" };
     const res = await broadcastToDevices(
-      { title: "BOGO Live", body: "Double cheese, today only" },
+      { title: "BOGO Live", body: "Double cheese, today only", purpose: "offers" },
       CALLER
     );
     expect(res.success).toBe(true);
     expect(res.targeted).toBe(2); // deduped
     expect(res.successCount).toBe(2);
     expect(res.failureCount).toBe(0);
+    expect(res.purpose).toBe("offers");
+    expect(res.purposeDefaulted).toBe(false);
     const casts = Object.entries(savedDocs).filter(([p]) =>
       p.startsWith("broadcasts/")
     );
@@ -100,6 +102,8 @@ describe("Readiness-8: customer broadcast", () => {
     expect(cast.title).toBe("BOGO Live");
     expect(cast.targeted).toBe(2);
     expect(cast.successCount).toBe(2);
+    expect(cast.purpose).toBe("offers");
+    expect(cast.purposeDefaulted).toBe(false);
     expect(cast.sentByUid).toBe("brand_1");
     const audits = Object.entries(savedDocs).filter(([p]) =>
       p.startsWith("admin_audit_logs/")
@@ -110,7 +114,7 @@ describe("Readiness-8: customer broadcast", () => {
 
   it("reports honest zeros with no tokens, still recording the wave", async () => {
     const res = await broadcastToDevices(
-      { title: "Quiet", body: "Nobody home" },
+      { title: "Quiet", body: "Nobody home", purpose: "offers" },
       CALLER
     );
     expect(res.targeted).toBe(0);

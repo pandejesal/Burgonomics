@@ -83,6 +83,12 @@ export async function registerDeviceToken(params: {
   uid: string;
   platform?: string;
   appVersion?: string | null;
+  /**
+   * Client installation identity (contract §8, N-02). Stamped only on the
+   * owner's claimed/refreshed doc — never backfilled across legacy rows, never
+   * copied to any other token, and never used to infer prefs here.
+   */
+  installationId?: string | null;
 }): Promise<DeviceTokenRegisterResult> {
   const { token, platform, appVersion } = params;
   const uid = params.uid;
@@ -93,14 +99,29 @@ export async function registerDeviceToken(params: {
     throw new Error("registerDeviceToken: authenticated uid is required");
   }
 
+  const installationId =
+    typeof params.installationId === "string" && params.installationId.length > 0
+      ? params.installationId
+      : undefined;
+  if (params.installationId !== undefined && params.installationId !== null && !installationId) {
+    throw new Error("registerDeviceToken: installationId must be a non-empty string");
+  }
+
   /** The doc shape the route wrote since the endpoint existed — kept stable. */
-  const claimDoc = (): Record<string, unknown> => ({
-    token,
-    userId: uid,
-    platform: platform || "unknown",
-    appVersion: appVersion ?? null,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  const claimDoc = (): Record<string, unknown> => {
+    const doc: Record<string, unknown> = {
+      token,
+      userId: uid,
+      platform: platform || "unknown",
+      appVersion: appVersion ?? null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    // Only stamp when the client actually supplied it. A re-register without
+    // installationId never clears a previously stamped value (merge:true) and
+    // no mass backfill is performed for legacy docs.
+    if (installationId) doc.installationId = installationId;
+    return doc;
+  };
 
   type Gate = "claimed" | "refreshed" | "foreign" | "ownerless";
   const gate: Gate = await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {

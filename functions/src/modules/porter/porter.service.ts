@@ -1490,6 +1490,8 @@ export async function handlePorterWebhook(
           title: "Rider cancelled — rebook needed",
           body: `Order #${orderRef.id.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`,
           data: { type: "rider_cancelled", orderId: orderRef.id, needsRebook: "true" },
+          purpose: "operational",
+          actor: { trusted: true },
         });
       }
     } catch (err: any) {
@@ -1936,6 +1938,8 @@ export async function pollActivePorterOrdersWorker(): Promise<{
               title: "Delivery tracking lost — review needed",
               body: `Order #${doc.id.substring(0, 6)} has no courier updates. Check Porter or rebook.`,
               data: { type: "porter_tracking_lost", orderId: doc.id, needsRebook: "true" },
+              purpose: "operational",
+              actor: { trusted: true },
             });
           } catch {
             // Alert best-effort; snapshot above is the durable trail.

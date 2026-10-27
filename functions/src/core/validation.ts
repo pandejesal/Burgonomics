@@ -340,38 +340,87 @@ export const resolveNoteSchema = z.object({
 
 // MOP-S1 (B5-S1 follow-up): mark-read intake. Empty body marks the whole
 // unread inbox; explicit ids mark only those (capped at 200, service-side).
-export const markReadSchema = z.object({
-  notificationIds: z.array(z.string().min(1).max(256)).max(200).optional(),
-});
+export const markReadSchema = z
+  .object({
+    notificationIds: z.array(z.string().min(1).max(256)).max(200).optional(),
+  })
+  .strict();
 
-// Notification dispatch: exactly one of topic or token, bounded copy.
-export const dispatchNotificationSchema = z.object({
-  topic: z.string().min(1).max(128).optional(),
-  token: z.string().min(1).max(256).optional(),
-  title: z.string().min(1).max(120),
-  body: z.string().min(1).max(500),
-  data: z.record(z.string(), z.string()).optional(),
-}).refine((d) => (d.topic ? 1 : 0) + (d.token ? 1 : 0) === 1, {
-  message: "exactly one of topic or token is required",
-});
+/**
+ * Notification control-plane schemas (N-03). `.strict()` is deliberate: a body
+ * carrying `uid`, `category`, `security`, or any unknown key is a 400 — the
+ * recipient is always the verified caller and the category is server-mapped
+ * from `purpose`.
+ */
+export const notificationInstallationIdSchema = z
+  .string()
+  .min(8, "installationId must be at least 8 characters")
+  .max(128)
+  .regex(/^[A-Za-z0-9._:-]+$/, "installationId contains unsupported characters");
 
-// Notification token registration
-export const registerTokenSchema = z.object({
-  token: z.string().min(10).max(500),
-  platform: z.enum(["ios", "android", "web"]).optional(),
-  appVersion: z.string().max(64).optional(),
-});
+export const notificationPrefsSchema = z
+  .object({
+    offers: z.boolean().optional(),
+    orderUpdates: z.boolean().optional(),
+    announcements: z.boolean().optional(),
+    supportReplies: z.boolean().optional(),
+  })
+  .strict()
+  .refine((prefs) => Object.keys(prefs).length > 0, {
+    message: "at least one notification preference is required",
+  });
+
+export const updateNotificationPreferencesSchema = z
+  .object({
+    installationId: notificationInstallationIdSchema,
+    notificationPrefs: notificationPrefsSchema,
+    // Version is the only ordering primitive (contract §7): 0 creates at v1,
+    // a mismatch is a 409, a replay is idempotent.
+    expectedVersion: z.number().int().min(0).max(1_000_000),
+    mutationId: z.string().min(8).max(128).optional(),
+  })
+  .strict();
+
+// Notification dispatch: exactly one of topic or token, bounded copy. The
+// purpose is an explicit, server-validated intent; `data.type` never classifies.
+export const dispatchNotificationSchema = z
+  .object({
+    topic: z.string().min(1).max(128).optional(),
+    token: z.string().min(1).max(256).optional(),
+    title: z.string().min(1).max(120),
+    body: z.string().min(1).max(500),
+    data: z.record(z.string(), z.string()).optional(),
+    purpose: z.enum(["operational", "orderUpdates", "supportReplies"]).optional(),
+  })
+  .strict()
+  .refine((d) => (d.topic ? 1 : 0) + (d.token ? 1 : 0) === 1, {
+    message: "exactly one of topic or token is required",
+  });
+
+// Notification token registration (uid is never accepted from the body).
+export const registerTokenSchema = z
+  .object({
+    token: z.string().min(10).max(500),
+    platform: z.enum(["ios", "android", "web"]).optional(),
+    appVersion: z.string().max(64).optional(),
+    installationId: notificationInstallationIdSchema.optional(),
+  })
+  .strict();
 
 // Token unregistration
-export const unregisterTokenSchema = z.object({
-  token: z.string().min(10).max(500),
-});
+export const unregisterTokenSchema = z
+  .object({
+    token: z.string().min(10).max(500),
+  })
+  .strict();
 
 // Topic subscription/unsubscription
-export const topicSubscriptionSchema = z.object({
-  token: z.string().min(10).max(500),
-  topics: z.array(z.string().min(1).max(128)).min(1).max(50),
-});
+export const topicSubscriptionSchema = z
+  .object({
+    token: z.string().min(10).max(500),
+    topics: z.array(z.string().min(1).max(128)).min(1).max(50),
+  })
+  .strict();
 
 // Auth: set custom claims
 export const setClaimsSchema = z.object({

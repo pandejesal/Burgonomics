@@ -1,12 +1,38 @@
 import * as admin from "firebase-admin";
+import { randomUUID } from "crypto";
 import { db, messaging } from "../../core/firebase";
-import { config } from "../../config/env";
 import { truncatePushText, buildParityExtras } from "./templates";
+import {
+  ApprovedSend,
+  SendActor,
+  assertSystemBadgeZero,
+  resolveSend,
+} from "./sendGate";
+import {
+  CATEGORY_BY_CUSTOMER_PURPOSE,
+  CustomerPurpose,
+  NotificationPurpose,
+  isNotificationPurpose,
+} from "./registry";
+import {
+  PrefDevice,
+  filterTokensByPrefs,
+  loadCanonicalPrefs,
+} from "./devicePrefs";
 
 export interface SendMulticastResult {
   successCount: number;
   failureCount: number;
   prunedTokens: string[];
+  /** Provider acknowledgements only — never a "delivered" claim. */
+  providerAccepted?: number;
+  providerFailed?: number;
+  suppressedCount?: number;
+  suppressedAll?: boolean;
+  legacyUnresolved?: number;
+  /** Inbox row written before FCM (customer account sends). */
+  inboxRef?: string | null;
+  inboxPersisted?: boolean;
 }
 
 /** B5-S1 (M21 server half): FCM fan-outs are time-bounded — a hung socket
@@ -45,12 +71,36 @@ export async function getUnreadCount(customerId: string | undefined): Promise<nu
   }
 }
 
+export interface FcmSendOptions {
+  /** Registry purpose — supplied by trusted server state, never data.type. */
+  purpose: NotificationPurpose;
+  actor?: SendActor | null;
+  critical?: boolean;
+}
+
 /**
  * Sends a single FCM message via HTTP v1 API.
+ * Every call resolves through the send gate first: an unknown purpose or an
+ * untrusted staff send is quarantined with ZERO transport calls.
  * Fail-closed for critical notifications: throws on failure so callers
  * can handle retry/alerting. Non-critical callers should wrap in try/catch.
  */
-export async function sendFcmMessage(message: admin.messaging.Message, opts: { critical?: boolean } = {}): Promise<boolean> {
+export async function sendFcmMessage(
+  message: admin.messaging.Message,
+  opts: FcmSendOptions
+): Promise<boolean> {
+  const approved = await resolveSend({
+    purpose: opts.purpose,
+    topic: (message as { topic?: string }).topic,
+    token: (message as { token?: string }).token,
+    actor: opts.actor,
+    payloadType: (message.data as Record<string, unknown> | undefined)?.type,
+    source: "sendFcmMessage",
+  });
+  if (approved.kind !== "staff") {
+    throw new Error("sendFcmMessage only carries staff operational messages");
+  }
+
   if (process.env.NODE_ENV === "test" || process.env.VITEST) {
     return true;
   }
@@ -74,81 +124,303 @@ export async function sendFcmMessage(message: admin.messaging.Message, opts: { c
   }
 }
 
-/** Profile arrays are a fan-out index, not proof that a token still belongs to a UID. */
-async function tokensOwnedByRecipient(tokens: string[], recipientUid: string): Promise<string[]> {
-  if (!recipientUid) return [];
+/**
+ * Ownership + installation resolution for recipient-bound sends. Profile
+ * arrays are a fan-out index, not proof that a token still belongs to a UID;
+ * the ledger is authoritative and an unreadable ledger withholds everything.
+ */
+async function ownedDestinations(
+  tokens: string[],
+  recipientUid: string
+): Promise<{ owned: PrefDevice[]; failed: boolean }> {
+  if (!recipientUid) return { owned: [], failed: false };
   try {
-    const refs = tokens.map(token => db.collection("device_tokens").doc(token));
+    const refs = tokens.map((token) => db.collection("device_tokens").doc(token));
     const snapshots = await withTimeout(db.getAll(...refs));
-    const owned = new Set(
-      snapshots
-        .filter(snapshot => snapshot.exists && snapshot.data()?.userId === recipientUid)
-        .map(snapshot => snapshot.id),
-    );
-    return tokens.filter(token => owned.has(token));
+    const owned: PrefDevice[] = [];
+    snapshots.forEach((snapshot: any, index: number) => {
+      if (!snapshot?.exists) return;
+      const data = snapshot.data?.() ?? {};
+      if (data.userId !== recipientUid) return;
+      owned.push({
+        token: tokens[index],
+        installationId:
+          typeof data.installationId === "string" ? data.installationId : undefined,
+      });
+    });
+    return { owned, failed: false };
   } catch {
     // No token, UID, or raw Firestore error in logs. Unverified destinations are
     // withheld; this is not permission to prune a newly rebound user's token.
     console.warn("[FCM] Recipient token ownership lookup failed; destinations withheld");
-    return [];
+    return { owned: [], failed: true };
   }
+}
+
+interface InboxPersistence {
+  ref: string;
+  persisted: boolean;
+}
+
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, any>)
+    : {};
+}
+
+/**
+ * The inbox document id doubles as the push `ref`. It is generated ONCE per
+ * account send and written BEFORE any FCM call; failure/suppression later
+ * updates the same document (never a second dangling row).
+ */
+async function persistInboxDoc(params: {
+  recipientUid: string | undefined;
+  title: string;
+  body: string;
+  purpose: NotificationPurpose;
+  data: Record<string, unknown>;
+}): Promise<InboxPersistence> {
+  const ref = randomUUID();
+  const uid = params.recipientUid;
+  if (!uid || !db || typeof db.collection !== "function") {
+    return { ref, persisted: false };
+  }
+
+  const data = params.data;
+  const targetId =
+    typeof data.targetId === "string" && data.targetId
+      ? data.targetId
+      : typeof data.ticketId === "string" && data.ticketId
+        ? data.ticketId
+        : typeof data.orderId === "string" && data.orderId
+          ? data.orderId
+          : null;
+  // `type` stays a compatibility alias for older clients; `purpose` is the
+  // classification authority.
+  const type = typeof data.type === "string" && data.type ? data.type : params.purpose;
+
+  try {
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("notifications")
+      .doc(ref)
+      .set({
+        id: ref,
+        title: params.title,
+        message: truncatePushText(params.body),
+        purpose: params.purpose,
+        targetId,
+        type,
+        read: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    return { ref, persisted: true };
+  } catch (err: any) {
+    console.warn("[FCM] Inbox persistence failed (non-blocking):", err?.message || err);
+    return { ref, persisted: false };
+  }
+}
+
+async function updateInboxDelivery(
+  inbox: { ref: string; uid?: string } | null | undefined,
+  delivery: string
+): Promise<void> {
+  if (!inbox?.ref || !inbox.uid || !db || typeof db.collection !== "function") return;
+  try {
+    await db
+      .collection("users")
+      .doc(inbox.uid)
+      .collection("notifications")
+      .doc(inbox.ref)
+      .update({
+        delivery,
+        deliveryUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+  } catch (err: any) {
+    console.warn("[FCM] Inbox delivery update failed (non-blocking):", err?.message || err);
+  }
+}
+
+export interface MulticastSendOptions {
+  /** Registry purpose — required on every send primitive. */
+  purpose: NotificationPurpose;
+  actor?: SendActor | null;
+  critical?: boolean;
+  /** The sole bulk exception: offers/announcements to every registered device. */
+  audience?: "all_devices";
+}
+
+function emptyResult(): SendMulticastResult {
+  return { successCount: 0, failureCount: 0, prunedTokens: [] };
 }
 
 /**
  * Sends a multicast FCM message to a list of device tokens, and automatically
  * prunes unregistered or invalid tokens from the user's document in Firestore.
- * Fail-closed for critical notifications: throws on total failure so callers
- * can handle retry/alerting. Recipient-bound sends verify the current ownership
- * ledger immediately before each chunk. This read and the external send are not
- * atomic; it is not a guarantee against rebinds after that read. Omitted UID is
- * the existing trusted-server generic multicast contract, not a recipient send.
+ *
+ * Contract §11: for a customer account send this function persists
+ * `users/{uid}/notifications/{ref}` BEFORE the transport call, injects only
+ * `{purpose, category, recipientUid, ref}` into the wire data, and applies
+ * canonical device prefs (`users/{uid}/device_prefs`) at send time. Withheld
+ * (foreign) and suppressed tokens are measured, never retried with stale state.
+ * Topic/staff sends read zero preference documents.
  */
 export async function sendMulticastFcm(
   tokens: string[],
   payload: Omit<admin.messaging.MulticastMessage, "tokens">,
   userId?: string,
-  opts: { critical?: boolean } = {}
+  opts: MulticastSendOptions = { purpose: "operational" }
 ): Promise<SendMulticastResult> {
-  if (!tokens || tokens.length === 0) {
-    return { successCount: 0, failureCount: 0, prunedTokens: [] };
+  const payloadData = asRecord(payload.data);
+  const approved: ApprovedSend = await resolveSend({
+    purpose: opts.purpose,
+    recipientUid: userId,
+    tokens,
+    audience: opts.audience,
+    actor: opts.actor,
+    payloadType: payloadData.type,
+    source: "sendMulticastFcm",
+  });
+
+  if (approved.kind === "system") {
+    assertSystemBadgeZero(payloadData);
   }
+
+  const candidateTokens = [...new Set(tokens.filter((t) => typeof t === "string" && t))];
 
   if (process.env.NODE_ENV === "test" || process.env.VITEST) {
     return {
-      successCount: tokens.length,
+      successCount: candidateTokens.length,
       failureCount: 0,
       prunedTokens: [],
+      providerAccepted: candidateTokens.length,
+      providerFailed: 0,
+    };
+  }
+  if (candidateTokens.length === 0 && approved.kind !== "customer") {
+    return emptyResult();
+  }
+
+  // Every account send gets its inbox row before FCM — including an empty
+  // destination list (inbox is then the only channel).
+  const notification = asRecord(payload.notification);
+  const inbox =
+    approved.kind === "customer"
+      ? await persistInboxDoc({
+          recipientUid: approved.recipientUid,
+          title: typeof notification.title === "string" ? notification.title : "",
+          body: typeof notification.body === "string" ? notification.body : "",
+          purpose: approved.purpose,
+          data: payloadData,
+        })
+      : null;
+
+  if (inbox && !inbox.persisted) {
+    // The ref must exist before the push: a write failure withholds the send
+    // (no dangling ref, no unopenable notification).
+    if (opts.critical) {
+      throw new Error("notification inbox write failed — push withheld");
+    }
+    return {
+      successCount: 0,
+      failureCount: candidateTokens.length,
+      prunedTokens: [],
+      providerAccepted: 0,
+      providerFailed: 0,
+      inboxRef: inbox.ref,
+      inboxPersisted: false,
     };
   }
 
-  const prunedTokens: string[] = [];
-  let successCount = 0;
-  let failureCount = 0;
+  const result: SendMulticastResult = {
+    successCount: 0,
+    failureCount: 0,
+    prunedTokens: [],
+    providerAccepted: 0,
+    providerFailed: 0,
+    suppressedCount: 0,
+    suppressedAll: false,
+    legacyUnresolved: 0,
+    inboxRef: inbox?.ref ?? null,
+    inboxPersisted: inbox?.persisted ?? false,
+  };
+  let transportFailures = 0;
+
+  if (candidateTokens.length === 0) {
+    await updateInboxDelivery(inbox ? { ref: inbox.ref, uid: approved.recipientUid } : null, "no_devices");
+    return result;
+  }
+
+  const requiresOwnership = approved.kind === "customer" || approved.kind === "system";
+  const canonicalSnapshot =
+    approved.preferenceGated && approved.kind === "customer" && approved.recipientUid
+      ? await loadCanonicalPrefs(approved.recipientUid)
+      : null;
+  const accountData: Record<string, string> =
+    approved.kind === "customer" && approved.recipientUid && inbox
+      ? {
+          purpose: approved.purpose,
+          category:
+            CATEGORY_BY_CUSTOMER_PURPOSE[approved.purpose as CustomerPurpose] ?? "general",
+          recipientUid: approved.recipientUid,
+          ref: inbox.ref,
+        }
+      : payloadData;
 
   // FCM caps multicast at 500 tokens per call — chunk, or large fan-outs
   // throw and NOBODY gets the push.
   const CHUNK_SIZE = 500;
   const chunks: string[][] = [];
-  for (let i = 0; i < tokens.length; i += CHUNK_SIZE) {
-    chunks.push(tokens.slice(i, i + CHUNK_SIZE));
+  for (let i = 0; i < candidateTokens.length; i += CHUNK_SIZE) {
+    chunks.push(candidateTokens.slice(i, i + CHUNK_SIZE));
   }
 
   try {
     if (messaging && typeof messaging.sendEachForMulticast === "function") {
       for (const chunk of chunks) {
-        const destinations = userId === undefined
-          ? chunk
-          : await tokensOwnedByRecipient(chunk, userId);
-        failureCount += chunk.length - destinations.length;
+        const ownership = requiresOwnership
+          ? await ownedDestinations(chunk, approved.recipientUid as string)
+          : { owned: chunk.map((token) => ({ token })), failed: false };
+
+        let destinations = ownership.owned;
+        let suppressedInChunk = 0;
+        if (canonicalSnapshot && approved.kind === "customer") {
+          const suppression = filterTokensByPrefs(
+            approved.purpose,
+            destinations,
+            canonicalSnapshot
+          );
+          suppressedInChunk = suppression.suppressed.length;
+          result.suppressedCount = (result.suppressedCount ?? 0) + suppressedInChunk;
+          result.legacyUnresolved =
+            (result.legacyUnresolved ?? 0) + suppression.legacyUnresolved;
+          const eligible = new Set(suppression.eligible);
+          destinations = destinations.filter((device) => eligible.has(device.token));
+        }
+
+        const withheld = chunk.length - ownership.owned.length;
+        result.failureCount += withheld + suppressedInChunk;
         if (destinations.length === 0) continue;
+
         const response: any = await withTimeout(
-          messaging.sendEachForMulticast({
-            ...payload,
-            tokens: destinations,
-          })
+          messaging.sendEachForMulticast(
+            approved.kind === "customer"
+              ? {
+                  ...payload,
+                  data: accountData,
+                  tokens: destinations.map((device) => device.token),
+                }
+              : {
+                  ...payload,
+                  ...(payload.data !== undefined ? { data: payload.data } : {}),
+                  tokens: destinations.map((device) => device.token),
+                }
+          )
         );
-        successCount += response.successCount;
-        failureCount += response.failureCount;
+        result.successCount += response.successCount;
+        result.failureCount += response.failureCount;
+        transportFailures += response.failureCount;
 
         response.responses.forEach((resp: any, idx: number) => {
           if (!resp.success && resp.error) {
@@ -158,29 +430,45 @@ export async function sendMulticastFcm(
               errorCode === "messaging/invalid-registration-token" ||
               errorCode === "messaging/invalid-argument"
             ) {
-              prunedTokens.push(destinations[idx]);
+              result.prunedTokens.push(destinations[idx].token);
             }
           }
         });
       }
 
+      result.providerAccepted = result.successCount;
+      result.providerFailed = transportFailures;
+      result.suppressedAll =
+        approved.kind === "customer" &&
+        candidateTokens.length > 0 &&
+        (result.suppressedCount ?? 0) === candidateTokens.length;
+
       // Automatically prune invalid tokens from Firestore
-      if (prunedTokens.length > 0 && userId) {
+      if (result.prunedTokens.length > 0 && approved.recipientUid) {
         try {
-          await db.collection("users").doc(userId).update({
-            fcmTokens: admin.firestore.FieldValue.arrayRemove(...prunedTokens),
+          await db.collection("users").doc(approved.recipientUid).update({
+            fcmTokens: admin.firestore.FieldValue.arrayRemove(...result.prunedTokens),
           });
-          console.log(`[FCM Prune] Removed ${prunedTokens.length} dead token(s)`);
+          console.log(`[FCM Prune] Removed ${result.prunedTokens.length} dead token(s)`);
         } catch (pruneErr) {
           console.warn("[FCM Prune] Failed to remove tokens from user:", pruneErr);
         }
       }
 
-      if (successCount === 0 && opts.critical) {
+      if (inbox?.persisted) {
+        await updateInboxDelivery(
+          { ref: inbox.ref, uid: approved.recipientUid },
+          result.successCount > 0 ? "sent" : result.suppressedAll ? "suppressed" : "failed"
+        );
+      }
+
+      // A fully suppressed account send is an expected outcome (the customer
+      // turned the category off) — no throw, inbox already persisted.
+      if (result.successCount === 0 && opts.critical && !result.suppressedAll) {
         throw new Error("FCM multicast delivered zero messages — critical notification failed");
       }
 
-      return { successCount, failureCount, prunedTokens };
+      return result;
     }
 
     // No transport available
@@ -190,28 +478,33 @@ export async function sendMulticastFcm(
 
     // Loop 5: no transport = nothing delivered. Report all-failed so callers
     // (dashboards, retry logic) never celebrate an unsent fan-out.
-    return {
-      successCount: 0,
-      failureCount: tokens.length,
-      prunedTokens: [],
-    };
+    result.failureCount = candidateTokens.length;
+    result.providerFailed = 0;
+    if (inbox?.persisted) {
+      await updateInboxDelivery({ ref: inbox.ref, uid: approved.recipientUid }, "failed");
+    }
+    return result;
   } catch (error: any) {
     if (opts.critical) {
       throw error;
     }
     console.warn("[FCM Multicast] Error sending multicast message:", error?.message || error);
-    return {
-      successCount: 0,
-      failureCount: tokens.length,
-      prunedTokens: [],
-    };
+    result.successCount = 0;
+    result.failureCount = candidateTokens.length;
+    result.providerAccepted = 0;
+    result.providerFailed = 0;
+    if (inbox?.persisted) {
+      await updateInboxDelivery({ ref: inbox.ref, uid: approved.recipientUid }, "failed");
+    }
+    return result;
   }
 }
 
 /**
- * Best-effort inbox fallback: persists a notification doc so push-or-nothing
- * paths (Loop 5) still reach the customer in the in-app tray when FCM
- * delivers zero. Never throws into callers.
+ * Legacy inbox writer kept as a compatibility alias. New account sends route
+ * through `sendMulticastFcm`/`dispatchFCM`, which persist before FCM. This maps
+ * sender-supplied `data.ticketId`/`data.orderId` to `targetId` and keeps
+ * `data.type` as the inbox type alias.
  */
 export async function writeCustomerInboxDoc(
   customerId: string | undefined,
@@ -219,53 +512,58 @@ export async function writeCustomerInboxDoc(
   body: string,
   data: Record<string, string> = {}
 ): Promise<boolean> {
-  try {
-    if (!customerId || !db || typeof db.collection !== "function") return false;
-    const notifId = `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    await db
-      .collection("users")
-      .doc(customerId)
-      .collection("notifications")
-      .doc(notifId)
-      .set({
-        id: notifId,
-        title,
-        message: truncatePushText(body),
-        type: data?.type || "system",
-        targetId: data?.targetId || null,
-        read: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    return true;
-  } catch (err: any) {
-    console.warn("[FCM] Inbox fallback write failed (non-blocking):", err?.message || err);
-    return false;
-  }
+  const purpose: NotificationPurpose = isNotificationPurpose(data.purpose)
+    ? data.purpose
+    : "orderUpdates";
+  const inbox = await persistInboxDoc({
+    recipientUid: customerId,
+    title,
+    body,
+    purpose,
+    data,
+  });
+  return inbox.persisted;
+}
+
+export interface CustomerPushOptions {
+  /**
+   * Required at runtime. Kept optional in the type so sibling writers can
+   * migrate their call sites independently; an absent value is quarantined by
+   * the gate (zero sends), never defaulted.
+   */
+  purpose?: NotificationPurpose;
+  actor?: SendActor | null;
+  badge?: number;
+  critical?: boolean;
 }
 
 /**
  * Customer push by users/{uid} fcmTokens.
- * Fail-closed for critical notifications (order confirmations, OTP, delivery):
- * throws on failure so callers can handle retry/alerting.
- * Non-critical callers should wrap in try/catch.
  *
- * B5-S1: bodies are server-truncated (~120ch), badge = unread count at send
- * (H18), and every push carries shared apns+webpush parity (H34) so iOS/web
- * render the same copy as Android. Callers pass display copy only — free-text
- * subject/names/phones must never reach `body` (H17).
- *
- * Loop 5: when multicast delivers zero, the message is persisted to the
- * recipient inbox (same fallback contract as dispatchFCM) instead of
- * vanishing silently.
+ * Gate -> inbox ref (before FCM) -> ledger ownership -> canonical prefs ->
+ * chunked send. Critical sends still fail closed on a zero-delivery outcome,
+ * except when the customer explicitly suppressed the category.
  */
 export async function pushToCustomer(
   customerId: string | undefined,
   title: string,
   body: string,
   data: Record<string, string>,
-  opts: { badge?: number; critical?: boolean } = {}
+  opts: CustomerPushOptions = {}
 ): Promise<void> {
   try {
+    // Gate even when the uid is missing: a customer purpose with no resolved
+    // recipient quarantines with zero transport calls, never a silent no-op.
+    const approved = await resolveSend({
+      purpose: opts.purpose,
+      recipientUid: customerId,
+      actor: opts.actor,
+      payloadType: data?.type,
+      source: "pushToCustomer",
+    });
+    if (approved.kind !== "customer") {
+      throw new Error("pushToCustomer only carries customer account purposes");
+    }
     if (!customerId || !db || typeof db.collection !== "function") {
       if (opts.critical) throw new Error("FCM unavailable — critical notification cannot be sent");
       return;
@@ -274,13 +572,7 @@ export async function pushToCustomer(
     const badge = typeof opts.badge === "number" ? opts.badge : await getUnreadCount(customerId);
     const userDoc = await db.collection("users").doc(customerId).get();
     const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
-    if (fcmTokens.length === 0) {
-      // No push target at all — inbox is the only channel.
-      await writeCustomerInboxDoc(customerId, title, body, data);
-      if (opts.critical) throw new Error("No FCM tokens registered — critical notification cannot be sent");
-      return;
-    }
-    const result = await sendMulticastFcm(
+    await sendMulticastFcm(
       fcmTokens,
       {
         notification: { title, body: safeBody },
@@ -292,12 +584,8 @@ export async function pushToCustomer(
         ...buildParityExtras(title, safeBody, { badge }),
       },
       customerId,
-      { critical: opts.critical }
+      { purpose: approved.purpose, actor: opts.actor, critical: opts.critical }
     );
-    if (result.successCount === 0) {
-      await writeCustomerInboxDoc(customerId, title, body, data);
-      if (opts.critical) throw new Error("FCM multicast delivered zero messages — critical notification failed");
-    }
   } catch (err: any) {
     if (opts.critical) {
       throw err;

@@ -1147,31 +1147,53 @@ tests. The sandbox outlet exposes no variation definitions at all (81 of 166 ite
 set `itemallowvariation = "1"` with an empty `variation`, §17 census), so **V3/V5
 are blocked on vendor data, not on our payload**.
 
-### 18.4 DISCOUNT: no `discount` object
+### 18.4 DISCOUNT: no `discount` object — now sample-locked
 
 Save-Order guide (§8): "For discounts you have to avoid 'discount' object from the
 order payload. Please use two keys: discount type and discount total from the
 'Order' object." Our builder sends `discount_type` + `discount_total` and an empty
-`Discount` member — **correct by contract**, so the earlier "does the checker want
-a line-level `item_discount`?" question is CLOSED, not open. Residual nit only:
-the guide's example shows `item_discount: ""` where we send `"0.00"`, and
-`item_discount` is absent from the guide's required-field table entirely —
-cosmetic, unchanged without a reason.
+`Discount` member — correct by contract, so the earlier "does the checker want a
+line-level `item_discount`?" question is CLOSED, not open.
 
-### 18.5 The `final_price` tension — recorded, NOT "corrected"
+**Update 2026-10-26 (vendor-corrected sample):** the sample Petpooja sent back with
+the structural rejection carries NO `Discount` member at all — only
+`Restaurant / Customer / Order / OrderItem / Tax` under `orderinfo.OrderInfo`.
+Both builders now omit the member entirely and send discounts as the two Order
+scalars only. The guide's example shows `item_discount: ""` where we send
+`"0.00"` — still cosmetic, still unchanged without a reason. A dry-run line
+carrying a discount still reports `discount_total` truthfully and never claims
+line-level discount semantics it does not have.
+
+### 18.5 `final_price` — RESOLVED by the vendor's corrected sample (unit figure)
 
 Guide p.6 describes `final_price` as "Item Price - Item level discount if any"
 (**a unit figure**) and its example pairs price `"250.00"` with final_price
-`"250"` at `quantity "2"`. But p.4 defines `total` = "Item Final Price [- Order
-level Discount If Any] + GST + packing charges", which balances against the
-**sum of line totals**, not against unit figures. Our builder emits `price` = unit
-including add-ons and `final_price` = unit x qty (the line total), which satisfies
-the `total` formula, and the vendor's Order List totals matched ours for the cases
-it listed. The two readings coincide at quantity 1, so a wrong choice stays
-invisible until a multi-quantity line. **Not changed** — an unverified flip could
-halve the POS total for qty>1. Pinned by the existing assertions (price
-`"249.00"`, quantity `"2"`, final_price `"498.00"`) and the comment at
-`orderPush.ts`.
+`"250"` at `quantity "2"`. The earlier builder emitted the LINE total
+(unit x qty) against the `total`-formula reading, and this section recorded the
+tension instead of flipping it.
+
+**Update 2026-10-26 (vendor-corrected sample):** the vendor's sample settles the
+reading — `final_price` is the UNIT figure (`price - item_discount`), explicitly
+NOT the line total, and its OrderItem example has been sent back to us as the
+authoritative ACCEPTED structure for these exact five scenarios (the sample's
+totals/dates are illustrative, never a totals oracle for our engine). Both
+builders (`orderPush.ts` app path, `testRunner.ts` sandbox path) now emit unit
+`final_price` and the tests pin it at qty > 1:
+
+- `petpooja.structural-contract.test.ts` — the unit invariant
+  `final_price == (price - item_discount)` swept across BOTH builders;
+- `petpooja.service.test.ts` — qty 3 line: price `"249.00"`, final_price
+  `"249.00"`, `"747.00"` explicitly refused;
+- `testRunner.test.ts` — qty 2 + add-ons: price `"150.00"`, final_price
+  `"150.00"`.
+
+Two adjacent sample-locked facts recorded with it: `Tax[].price` is the numeric
+percentage string (`"2.5"`, not `"2.5%"`), and `enable_delivery` /
+`min_prep_time` are NUMBERS while `no_of_persons` / `collect_cash` / `otp` are
+strings. Retained business policy NOT flipped by the sample: full-restaurant
+GST liability, COD collects the full total, ONLINE collects `"0.00"` — the
+sample's own arithmetic differs in places, which is recorded as an OUTSTANDING
+VENDOR QUESTION, not silently reconciled.
 
 ## 19. Consolidated integration evidence (verified 2026-10-19/20)
 

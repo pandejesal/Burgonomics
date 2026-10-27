@@ -326,6 +326,19 @@ service cloud.firestore {
         !directDeliveredBypass() &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
+          // Basket identity is immutable after create. Both apps write `items`
+          // only on CREATE (customer checkout, partner walk-in); no client ever
+          // edits the basket of an existing order (all post-placement changes go
+          // through server routes). A staff-editable basket would let the
+          // kitchen cook a different order than the one the customer was
+          // charged for / the one the KOT builder prices.
+          'items',
+          // Dispatch state is server-owned (dispatch.webhooks.ts,
+          // dispatch.router.ts, porter/borzo/shadowfax services write it).
+          // Grep of both apps: `deliveryStatus` is READ for rendering and never
+          // assigned by a client writer, so a direct staff write could only
+          // forge progress or un-lock a dispatched order.
+          'deliveryStatus',
           // Fulfillment identity is immutable to staff clients: flipping
           // orderType from delivery to takeaway would make directDeliveredBypass()
           // evaluate the stored (now non-delivery) type and let a second write

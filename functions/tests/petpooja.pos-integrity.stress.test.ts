@@ -241,6 +241,19 @@ beforeEach(() => {
   setMockDoc("branches/branch_pos_1", {
     name: "POS Integrity Branch",
     petpoojaStoreId: "res_pos_1",
+    // H2 fixture — captured Petpooja tax catalogue (no builder default).
+    petpoojaTaxes: [
+      { id: "3928", name: "CGST", rate: 2.5 },
+      { id: "3929", name: "SGST", rate: 2.5 },
+    ],
+  });
+  setMockDoc("products/prod_branch_pos_1_7765862", {
+    id: "prod_branch_pos_1_7765862",
+    branchId: "branch_pos_1",
+    petpoojaItemId: "7765862",
+    petpoojaItemTaxIds: ["3928", "3929"],
+    petpoojaTaxInclusive: false,
+    petpoojaTaxUnsupported: false,
   });
 });
 
@@ -256,7 +269,7 @@ const seedOrder = (id: string, extra: Record<string, any> = {}) => {
     branchId: "branch_pos_1",
     customerName: "Integrity Customer",
     customerPhone: "+919825000123",
-    items: [{ id: "itm_1", name: "Burger", price: 199, quantity: 1 }],
+    items: [{ id: "itm_1", productId: "prod_branch_pos_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 199, quantity: 1 }],
     pricing: { grandTotal: 199, gst: 9.95 },
     status: "pending",
     ...extra,

@@ -155,7 +155,10 @@ describe("Prompt 19: Backend FCM Push Notifications & Acoustic Audio Payloads", 
         totalAmount: 250,
       });
 
-      const success = await sendFcmMessage(message);
+      const success = await sendFcmMessage(message, {
+        purpose: "operational",
+        actor: { trusted: true },
+      });
       expect(success).toBe(true);
     });
 
@@ -165,7 +168,8 @@ describe("Prompt 19: Backend FCM Push Notifications & Acoustic Audio Payloads", 
         {
           notification: { title: "Test", body: "Test Body" },
         },
-        "user_123"
+        "user_123",
+        { purpose: "orderUpdates" }
       );
 
       expect(result.successCount).toBeGreaterThanOrEqual(0);

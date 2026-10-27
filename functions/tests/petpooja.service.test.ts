@@ -145,8 +145,32 @@ describe("Petpooja POS Bridge Service", () => {
   });
 
   describe("formatPetpoojaOrderPayload", () => {
-    it("correctly maps order details, items, GST tax splits, and order types", () => {
-      const order = {
+    // Sanitized vendor-shape fixture: real-shaped NUMERIC POS ids taken from
+    // the vendor's corrected save_order sample, no credentials, no real
+    // H2 — the branch's CAPTURED tax catalogue fixture (what menuSyncWebhook
+    // writes; no builder default exists anymore). The ids are the outlet's
+    // own captured rows, used as test FIXTURE truth only.
+    const CAPTURED_TAXES = [
+      { id: "3928", name: "CGST", rate: 2.5 },
+      { id: "3929", name: "SGST", rate: 2.5 },
+    ];
+    const capturedBranch = (extra: Record<string, any> = {}) => ({
+      id: "branch_surat_01",
+      petpoojaStoreId: "PP_SURAT_01",
+      petpoojaTaxes: CAPTURED_TAXES,
+      ...extra,
+    });
+    // H1 — per-product tax metadata snapshots (edited per test as needed).
+    const snapshotFor = (posId: string, taxIds: string[] = ["3928", "3929"]) => ({
+      petpoojaItemId: posId,
+      taxIds,
+      taxInclusive: false,
+      taxUnsupported: false,
+    });
+
+    // customer data (names/phones/address are fictional placeholders).
+    function vendorShapeOrder(extra: Record<string, any> = {}) {
+      return {
         id: "ord_1001",
         orderNumber: "BUR-1001",
         branchId: "branch_surat_01",
@@ -157,13 +181,22 @@ describe("Petpooja POS Bridge Service", () => {
         address: { street: "123 Adajan Main Rd" },
         items: [
           {
-            id: "itm_smash_01",
-            petpoojaItemId: "pp_b1",
+            id: "l1",
+            productId: "prod_branch_surat_01_7765862",
+            petpoojaItemId: "7765862",
             name: "Classic Smash Cheese Burger",
             price: 249,
             quantity: 2,
             isVeg: true,
-            modifiers: [{ id: "bun_brioche", name: "Brioche Bun", price: 20 }],
+            modifiers: [
+              {
+                id: "opt_extra_cheese",
+                petpoojaAddonId: "1150783",
+                petpoojaAddonGroupId: 135699,
+                name: "Extra Cheese",
+                price: 20,
+              },
+            ],
           },
         ],
         pricing: {
@@ -174,95 +207,205 @@ describe("Petpooja POS Bridge Service", () => {
           discount: 50,
           grandTotal: 527.9,
         },
+        ...extra,
       };
+    }
 
-      const branch = { id: "branch_surat_01", petpoojaStoreId: "PP_SURAT_01" };
-      const payload = formatPetpoojaOrderPayload(order, branch, "PP_SURAT_01");
+    it("correctly maps order details, items, GST tax splits, and order types", () => {
+      const branch = capturedBranch();
+      const payload = formatPetpoojaOrderPayload(
+        vendorShapeOrder(),
+        branch,
+        "PP_SURAT_01",
+        "branch_surat_01",
+        "ord_1001",
+        [snapshotFor("7765862")]
+      );
 
-      expect(payload.orderinfo.Order.orderID).toBe("BUR-1001");
-      expect(payload.orderinfo.Order.resID).toBe("PP_SURAT_01");
-      expect(payload.orderinfo.Order.restID).toBe("PP_SURAT_01");
-      // DOC VERIFIED: callback_url must be sent in EVERY save_order request, and
-      // the POS reads it from Order.details. Emitting it only at the top level
-      // was a real defect - no status callback ever reached our webhook. This
-      // pin exists so a refactor cannot silently unregister our callback and
-      // leave every order stuck at "accepted".
-      const callbackUrl = payload.orderinfo.Order.callback_url;
+      // ---- the vendor's envelope (sample of 2026-10-26) ----
+      // `orderinfo` contains exactly OrderInfo + udid + device_type. Extra
+      // siblings and root-level duplicates are what Petpooja called its
+      // structural issues, so they must never come back.
+      expect(Object.keys(payload)).toEqual(["orderinfo"]);
+      expect(Object.keys(payload.orderinfo).sort()).toEqual([
+        "OrderInfo",
+        "device_type",
+        "udid",
+      ]);
+      expect(payload.orderinfo.udid).toBe("");
+      expect(payload.orderinfo.device_type).toBe("Web");
+
+      const info = payload.orderinfo.OrderInfo;
+      const orderDetails = info.Order.details;
+      const customerDetails = info.Customer.details;
+
+      // `orderID` is the client reference the POS echoes to our status
+      // webhook, and the webhook resolves it as `orders/{orderID}` — the
+      // Firestore document id, not the decorative order number.
+      expect(orderDetails.orderID).toBe("ord_1001");
+      // The vendor sample carries restID only on Restaurant.details.
+      expect(info.Restaurant.details.restID).toBe("PP_SURAT_01");
+      expect(info.Restaurant.details).not.toHaveProperty("resID");
+
+      // DOC VERIFIED: callback_url must be sent in EVERY save_order request,
+      // and the POS reads it from Order.details.
+      const callbackUrl = orderDetails.callback_url;
       expect(typeof callbackUrl).toBe("string");
       expect(callbackUrl).toMatch(/\/petpooja\/webhook$/);
       // Official V2.1.0 order_type is a letter code (H/P/D), not 1/2/3.
-      expect(payload.orderinfo.Order.order_type).toBe("H"); // H = home delivery
+      expect(orderDetails.order_type).toBe("H"); // H = home delivery
       // Petpooja accepts COD / CARD / ONLINE — "Prepaid" is not a valid value.
-      expect(payload.orderinfo.Order.payment_type).toBe("ONLINE");
-      expect(payload.orderinfo.Order.total).toBe("527.90");
-      expect(payload.orderinfo.Order.tax).toBe("24.90");
-      expect(payload.orderinfo.Order.discount).toBe("50.00");
-      expect(payload.orderinfo.Order.delivery_charges).toBe("40.00");
-      expect(payload.orderinfo.Order.packing_charges).toBe("15.00");
-      // Official Customer object carries the contact, not the flat order key.
-      expect(payload.orderinfo.Customer.name).toBe("Aarav Mehta");
-      expect(payload.orderinfo.Customer.phone).toBe("+919825100001");
-      expect(payload.orderinfo.Customer.address).toBe("123 Adajan Main Rd");
+      expect(orderDetails.payment_type).toBe("ONLINE");
+      expect(orderDetails.total).toBe("527.90");
+      expect(orderDetails.tax_total).toBe("24.90");
+      // The old `tax`/`discount` aliases are not in the vendor sample.
+      expect(orderDetails).not.toHaveProperty("tax");
+      expect(orderDetails).not.toHaveProperty("discount");
+      expect(orderDetails.discount_total).toBe("50.00");
+      expect(orderDetails.delivery_charges).toBe("40.00");
+      expect(orderDetails.packing_charges).toBe("15.00");
+      expect(orderDetails.service_charge).toBe("0.00");
+      // The vendor sample requires the full charge-tax block (numeric strings).
+      expect(orderDetails.sc_tax_amount).toBe("0.00");
+      expect(orderDetails.dc_tax_percentage).toBe("0");
+      expect(orderDetails.dc_tax_amount).toBe("0.00");
+      expect(orderDetails.dc_gst_details).toEqual([
+        { gst_liable: "vendor", amount: "0.00" },
+        { gst_liable: "restaurant", amount: "0.00" },
+      ]);
+      expect(orderDetails.pc_tax_percentage).toBe("0");
+      expect(orderDetails.pc_tax_amount).toBe("0.00");
+      expect(orderDetails.pc_gst_details).toEqual([
+        { gst_liable: "vendor", amount: "0.00" },
+        { gst_liable: "restaurant", amount: "0.00" },
+      ]);
+      // No legacy aliases anywhere on Order (resID/restID/customer_name/…).
+      expect(orderDetails).not.toHaveProperty("clientOrderID");
+      expect(orderDetails).not.toHaveProperty("resID");
+      expect(orderDetails).not.toHaveProperty("restID");
+      expect(orderDetails).not.toHaveProperty("order_type_legacy");
+      expect(orderDetails).not.toHaveProperty("customer_name");
+      expect(orderDetails).not.toHaveProperty("customer_phone");
+      expect(orderDetails).not.toHaveProperty("customer_address");
+      // Numeric-vs-string typing per the sample.
+      expect(orderDetails.enable_delivery).toBe(0); // number, third-party riders
+      expect(typeof orderDetails.enable_delivery).toBe("number");
+      expect(typeof orderDetails.min_prep_time).toBe("number");
+      expect(orderDetails.no_of_persons).toBe("0"); // string
+      expect(orderDetails.ondc_bap).toBe("");
+      expect(orderDetails.advanced_order).toBe("N");
+      expect(orderDetails.urgent_order).toBe(false);
+      expect(orderDetails.preorder_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(orderDetails.preorder_time).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+      expect(orderDetails.created_on).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      expect(orderDetails.otp).toBe("");
 
-      // Verify GST split (2.5% CGST + 2.5% SGST)
-      expect(payload.orderinfo.tax_details).toHaveLength(2);
-      expect(payload.orderinfo.tax_details[0].tax_name).toBe("CGST");
-      expect(payload.orderinfo.tax_details[0].tax_percent).toBe(2.5);
-      expect(payload.orderinfo.tax_details[1].tax_name).toBe("SGST");
-      expect(payload.orderinfo.tax_details[1].tax_percent).toBe(2.5);
+      // Official Customer details carries the contact — never a flat key.
+      expect(customerDetails.name).toBe("Aarav Mehta");
+      expect(customerDetails.phone).toBe("+919825100001");
+      expect(customerDetails.address).toBe("123 Adajan Main Rd");
 
-      // Official Tax[] shape (id/title/type/price/tax) is emitted alongside.
-      expect(payload.orderinfo.Tax).toHaveLength(2);
-      expect(payload.orderinfo.Tax[0].title).toBe("CGST");
-      expect(payload.orderinfo.Tax[0].type).toBe("P");
-      expect(payload.orderinfo.Tax[0].tax).toBe("12.45");
-
-      // Verify item mapping with addons — official OrderItem names.
-      expect(payload.orderinfo.OrderItem).toHaveLength(1);
-      expect(payload.orderinfo.OrderItem[0].id).toBe("pp_b1");
-      expect(payload.orderinfo.OrderItem[0].name).toBe("Classic Smash Cheese Burger");
-      expect(payload.orderinfo.OrderItem[0].quantity).toBe("2");
-      expect(payload.orderinfo.OrderItem[0].price).toBe("249.00");
-      expect(payload.orderinfo.OrderItem[0].final_price).toBe("498.00");
-      // Official AddonItem carries its entries under `details`.
-      expect(payload.orderinfo.OrderItem[0].AddonItem.details).toHaveLength(1);
-      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].name).toBe("Brioche Bun");
-      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].group_name).toBe("Addons");
-      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].price).toBe("20.00");
-      // Legacy aliases remain for POS parsers that still read them.
-      expect(payload.orderinfo.order_items).toHaveLength(1);
-      expect(payload.orderinfo.order_items[0].item_id).toBe("pp_b1");
-      expect(payload.orderinfo.order_items[0].addons[0].addon_name).toBe("Brioche Bun");
-
-      // ---- the documented envelope ----
-      // Everything must ALSO be reachable at
-      // `orderinfo.OrderInfo.<Member>.details`. Without these levels the live
-      // endpoint answers success:"1" while parsing nothing and registering no
-      // order — the failure this builder shipped with for weeks.
-      const info = payload.orderinfo.OrderInfo;
-      expect(info.Restaurant.details.restID).toBe("PP_SURAT_01");
-      expect(info.Customer.details.name).toBe("Aarav Mehta");
-      expect(info.Order.details.orderID).toBe("BUR-1001");
-      expect(info.Order.details.order_type).toBe("H");
-      expect(info.OrderItem.details).toHaveLength(1);
-      expect(info.OrderItem.details[0].id).toBe("pp_b1");
-      expect(info.OrderItem.details[0].AddonItem.details).toHaveLength(1);
+      // Official Tax[] shape (id/title/type/price/tax/restaurant_liable_amt),
+      // `price` the numeric percentage string (not "2.5%").
       expect(info.Tax.details).toHaveLength(2);
       expect(info.Tax.details[0].title).toBe("CGST");
-      // Discounts travel as the two Order scalars; the member is declared empty.
-      expect(info.Discount.details).toHaveLength(0);
+      expect(info.Tax.details[0].type).toBe("P");
+      expect(info.Tax.details[0].price).toBe("2.5");
+      expect(info.Tax.details[0].tax).toBe("12.45");
+      // Legacy envelope spellings are GONE.
+      expect(payload.orderinfo).not.toHaveProperty("tax_details");
+      expect(payload.orderinfo).not.toHaveProperty("order_items");
+      expect(payload.orderinfo).not.toHaveProperty("items");
+
+      // Verify item mapping with verified add-ons — official OrderItem names.
+      expect(info.OrderItem.details).toHaveLength(1);
+      const line = info.OrderItem.details[0];
+      expect(line.id).toBe("7765862");
+      expect(line.name).toBe("Classic Smash Cheese Burger");
+      expect(line.quantity).toBe("2");
+      // `price` is the per-unit all-in figure; add-on rows are descriptive.
+      expect(line.price).toBe("249.00");
+      // UNIT final_price (not the line total) per the vendor sample.
+      expect(line.final_price).toBe("249.00");
+      expect(line.item_discount).toBe("0.00");
+      // Our checkout prices are tax-EXCLUSIVE, matching the outlet's menu.
+      expect(line.tax_inclusive).toBe(false);
+      expect(line.gst_liability).toBe("restaurant");
+      // Per-line tax rows carry a share of the order GST.
+      expect(line.item_tax).toHaveLength(2);
+      expect(line.item_tax[0].tax_percentage).toBe("2.5");
+      // The AddonItem carries verified numeric POS ids.
+      expect(line.AddonItem.details).toHaveLength(1);
+      expect(line.AddonItem.details[0].name).toBe("Extra Cheese");
+      expect(line.AddonItem.details[0].group_name).toBe("Addons");
+      expect(line.AddonItem.details[0].price).toBe("20.00");
+      // Vendor sample: add-on id numeric STRING, group_id a NUMBER (int).
+      expect(line.AddonItem.details[0].id).toBe("1150783");
+      expect(line.AddonItem.details[0].group_id).toBe(135699);
+      expect(typeof line.AddonItem.details[0].group_id).toBe("number");
+      // Legacy line aliases are GONE.
+      expect(line).not.toHaveProperty("addon_items");
+      expect(line).not.toHaveProperty("item_id");
+      expect(line).not.toHaveProperty("item_name");
+      expect(line).not.toHaveProperty("addons");
+      expect(line).not.toHaveProperty("item_attribute");
+      expect(line).not.toHaveProperty("tax_percentage");
+      expect(line).not.toHaveProperty("addon_id");
+      expect(line).not.toHaveProperty("addon_name");
+    });
+
+    it("unit final_price stays a UNIT figure for quantity > 1 (no line-total inflation)", () => {
+      // Vendor sample: `final_price = price - item_discount` — a UNIT figure.
+      // The old line-total form (unit x qty) overstated shipping lines and
+      // broke the sample invariant for multi-quantity lines.
+      const payload = formatPetpoojaOrderPayload(
+        vendorShapeOrder({ items: [
+          { id: "l1", productId: "prod_branch_surat_01_7765862", petpoojaItemId: "7765862", name: "Burger", price: 249, quantity: 3 },
+        ] }),
+        capturedBranch(),
+        "PP_SURAT_01",
+        "branch_surat_01",
+        "ord_1001",
+        [snapshotFor("7765862")]
+      );
+      const line = payload.orderinfo.OrderInfo.OrderItem.details[0];
+      expect(line.quantity).toBe("3");
+      expect(line.price).toBe("249.00");
+      expect(line.final_price).toBe("249.00");
+      expect(line.final_price).not.toBe("747.00");
+    });
+
+    it("COD orders collect the FULL total; ONLINE orders collect 0 (retained policy)", () => {
+      const codPayload = formatPetpoojaOrderPayload(
+        vendorShapeOrder({ paymentMethod: "COD" }),
+        capturedBranch({ id: "b1", petpoojaStoreId: "PP_1" }),
+        "PP_1",
+        "branch_surat_01",
+        "ord_c1",
+        [snapshotFor("7765862")]
+      );
+      const codOrder = codPayload.orderinfo.OrderInfo.Order.details;
+      expect(codOrder.payment_type).toBe("COD");
+      expect(codOrder.collect_cash).toBe("527.90");
+
+      const onlinePayload = formatPetpoojaOrderPayload(
+        vendorShapeOrder(),
+        capturedBranch({ id: "b1", petpoojaStoreId: "PP_1" }),
+        "PP_1",
+        "branch_surat_01",
+        "ord_o1",
+        [snapshotFor("7765862")]
+      );
+      const onlineOrder = onlinePayload.orderinfo.OrderInfo.Order.details;
+      expect(onlineOrder.payment_type).toBe("ONLINE");
+      expect(onlineOrder.collect_cash).toBe("0.00");
     });
 
     it("carries the vendor's optional variation fields, as empty strings when absent", () => {
-      // Vendor "API Guide for Placing Orders on Petpooja POS" (pp.6-7) lists
-      // `variation_id` ("Unique ID for variant received from Menu Push Payload")
-      // and `variation_name` ("Half Dish or Full Dish") as OPTIONAL, and its own
-      // OrderItem example emits both as EMPTY STRINGS for a line with no variant.
-      // The sandbox outlet exposes no variation definitions (81 of 166 items are
-      // variation-flagged with an empty `variation` - see the menu census), so
-      // the absent case is what ships for V1/V2/V4 and it must be a PRESENT ""
-      // rather than an omitted key, which a stricter POS parser could read
-      // differently. There was no test on these two keys at all before this one.
+      // Vendor pp.6-7: `variation_id`/`variation_name` are OPTIONAL and its own
+      // OrderItem example emits both as EMPTY STRINGS for a line with no
+      // variant. The key must exist (not omitted) — a stricter parser could
+      // read a missing member differently.
       const order = {
         id: "ord_var_01",
         orderNumber: "BUR-VAR-01",
@@ -273,10 +416,10 @@ describe("Petpooja POS Bridge Service", () => {
         customerPhone: "+919825100009",
         address: { street: "123 Adajan Main Rd" },
         items: [
-          { id: "l_no_variant", petpoojaItemId: "30791", name: "Tandoori Dahi Kebab", price: 350, quantity: 1 },
+          { id: "l_no_variant", petpoojaResolvedId: "30791", name: "Tandoori Dahi Kebab", price: 350, quantity: 1 },
           {
             id: "l_with_variant",
-            petpoojaItemId: "30792",
+            petpoojaResolvedId: "30792",
             name: "Half Dish Case",
             price: 200,
             quantity: 1,
@@ -286,12 +429,11 @@ describe("Petpooja POS Bridge Service", () => {
         ],
       };
 
-      const payload = formatPetpoojaOrderPayload(order, null, "TEST_RES_ID");
-      const [noVariant, withVariant] = payload.orderinfo.OrderItem;
+      const payload = formatPetpoojaOrderPayload(order, capturedBranch(), "TEST_RES_ID", "branch_surat_01", undefined, [snapshotFor("30791"), snapshotFor("30792")]);
+      const [noVariant, withVariant] = payload.orderinfo.OrderInfo.OrderItem.details;
 
       expect(noVariant.variation_id).toBe("");
       expect(noVariant.variation_name).toBe("");
-      // The key must exist; undefined/absent is the shape the guide does not show.
       expect(Object.prototype.hasOwnProperty.call(noVariant, "variation_id")).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(noVariant, "variation_name")).toBe(true);
 
@@ -303,7 +445,7 @@ describe("Petpooja POS Bridge Service", () => {
       // The relay reads `petpoojaVariationId || variationId` (and the matching
       // name pair). CartLine documents in the app carry the short spelling, so
       // a regression that kept only the prefixed one would silently strip the
-      // variant off every variation line while still passing the case above.
+      // variant off every variation line after shipping the case above.
       const order = {
         id: "ord_var_02",
         orderNumber: "BUR-VAR-02",
@@ -322,9 +464,9 @@ describe("Petpooja POS Bridge Service", () => {
         ],
       };
 
-      const payload = formatPetpoojaOrderPayload(order, null, "TEST_RES_ID");
-      expect(payload.orderinfo.OrderItem[0].variation_id).toBe("110");
-      expect(payload.orderinfo.OrderItem[0].variation_name).toBe("Full Dish");
+      const payload = formatPetpoojaOrderPayload(order, capturedBranch(), "TEST_RES_ID", "branch_surat_01", undefined, [snapshotFor("30792")]);
+      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].variation_id).toBe("110");
+      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].variation_name).toBe("Full Dish");
     });
 
     it("maps takeaway and dine-in fulfillment types correctly", () => {
@@ -341,13 +483,13 @@ describe("Petpooja POS Bridge Service", () => {
         items: [],
       };
 
-      const payload1 = formatPetpoojaOrderPayload(takeawayOrder, null, "TEST_RES_ID");
-      expect(payload1.orderinfo.Order.order_type).toBe("P");
-      expect(payload1.orderinfo.Order.payment_type).toBe("COD");
+      const payload1 = formatPetpoojaOrderPayload(takeawayOrder, capturedBranch(), "TEST_RES_ID", "branch_x");
+      expect(payload1.orderinfo.OrderInfo.Order.details.order_type).toBe("P");
+      expect(payload1.orderinfo.OrderInfo.Order.details.payment_type).toBe("COD");
 
-      const payload2 = formatPetpoojaOrderPayload(dineInOrder, null, "TEST_RES_ID");
-      expect(payload2.orderinfo.Order.order_type).toBe("D");
-      expect(payload2.orderinfo.Order.payment_type).toBe("ONLINE");
+      const payload2 = formatPetpoojaOrderPayload(dineInOrder, capturedBranch(), "TEST_RES_ID", "branch_x");
+      expect(payload2.orderinfo.OrderInfo.Order.details.order_type).toBe("D");
+      expect(payload2.orderinfo.OrderInfo.Order.details.payment_type).toBe("ONLINE");
     });
 
     it("resolves the POS item id and price from the CartLine shape the app actually writes", () => {
@@ -377,8 +519,9 @@ describe("Petpooja POS Bridge Service", () => {
             quantity: 1,
             veg: true,
             name: "French Fries",
-            // The cart's documented escape hatch for POS ids.
-            meta: { petpoojaItemId: "30799" },
+            // The cart's agreement escape hatch: it must AGREE with the
+            // branch-scoped doc id's numeric tail (H3) or the line blocks.
+            meta: { petpoojaItemId: "30787" },
           },
         ],
         pricing: { subtotal: 920, gst: 46, grandTotal: 966 },
@@ -386,23 +529,21 @@ describe("Petpooja POS Bridge Service", () => {
 
       const payload = formatPetpoojaOrderPayload(
         order,
-        null,
+        capturedBranch(),
         "TEST_RES_ID",
-        "branch_surat_01"
+        "branch_surat_01",
+        undefined,
+        [snapshotFor("30791"), snapshotFor("30787")]
       );
-      const lines = payload.orderinfo.OrderItem as Array<Record<string, unknown>>;
+      const lines = payload.orderinfo.OrderInfo.OrderItem.details as Array<Record<string, unknown>>;
 
       // `prod_<branchId>_<itemid>` is stripped by exact prefix.
       expect(lines[0].id).toBe("30791");
-      expect(lines[0].item_id).toBe("30791");
-      // `meta.petpoojaItemId` outranks the doc-id fallback.
-      expect(lines[1].id).toBe("30799");
+      // meta.petpoojaItemId AGREES with the prefix tail (H3: agreement only).
+      expect(lines[1].id).toBe("30787");
       // Prices come from `unitPrice`, not the absent `price`/`basePrice`.
       expect(lines[0].price).toBe("350.00");
       expect(lines[1].price).toBe("220.00");
-      // `veg` is honoured; reading only `isVeg` reported every line as veg.
-      expect(lines[0].item_attribute).toBe("2");
-      expect(lines[1].item_attribute).toBe("1");
       // The tax split is a share of the order's embedded GST, per line.
       expect(Number(lines[0].item_tax[0].amount) + Number(lines[0].item_tax[1].amount)).toBeCloseTo(
         (46 * 700) / 920 / 1,
@@ -410,23 +551,336 @@ describe("Petpooja POS Bridge Service", () => {
       );
     });
 
-    it("leaves the item id empty rather than inventing one when nothing resolves", () => {
+    it("throws BLOCKED_CONFIGURATION (never invents) when a line's Petpooja item id cannot be verified", () => {
+      // Wrong-branch id / empty resolution is NOT represented as an empty
+      // `item.id` — a fabricated/unverified id is exactly what the vendor's
+      // structural rejection punished CANNOT be risked.
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_2002",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ lineId: "l1", productId: "prod_other_branch_9", unitPrice: 100, quantity: 1 }],
+            pricing: { grandTotal: 100 },
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01"
+        )
+      ).toThrow(/BLOCKED_CONFIGURATION/);
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_2002",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ lineId: "l1", productId: "prod_other_branch_9", unitPrice: 100, quantity: 1 }],
+            pricing: { grandTotal: 100 },
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01"
+        )
+      ).toThrow(/no verified Petpooja item id/);
+    });
+
+    it("throws BLOCKED_CONFIGURATION for add-ons whose POS ids are not verified numeric credentials", () => {
+      // BOTH fake shapes are banned outright: an internal id ("mod_…") and the
+      // literal "addon" fallback are placeholders pretending to be configured,
+      // and a group id that collapses `Number(internalId) || 0` sends the KOT
+      // to a non-existent add-on group.
+      const cases = [
+        { id: "mod_extra_cheese", name: "Extra Cheese", price: 30 },
+        { id: "addon", name: "Unnamed Addon", price: 10 },
+        { id: "opt_extra", petpoojaAddonId: "1150783", name: "Extra Cheese", price: 30 }, // no group id
+        {
+          id: "opt_extra",
+          petpoojaAddonId: "1150783",
+          // Internal group id "grp_bun" is NOT a numeric POS group — the old
+          // `Number(...) || 0` folded it to 0, which is fabrication.
+          petpoojaAddonGroupId: "grp_bun",
+          name: "Extra Cheese",
+          price: 30,
+        },
+      ];
+      for (const modifier of cases) {
+        expect(() =>
+          formatPetpoojaOrderPayload(
+            {
+              id: "ord_addon_1",
+              fulfillmentType: "TAKEAWAY",
+              paymentMethod: "COD",
+              items: [
+                {
+                  id: "l1",
+                  petpoojaResolvedId: "7765862",
+                  name: "Burger",
+                  price: 249,
+                  quantity: 1,
+                  modifiers: [modifier],
+                },
+              ],
+              pricing: { grandTotal: 249 },
+            },
+            capturedBranch(),
+            "TEST_RES_ID",
+            "branch_surat_01",
+            undefined,
+            [snapshotFor("7765862")]
+          )
+        ).toThrow(/BLOCKED_CONFIGURATION/);
+      }
+    });
+
+    it("blocks a line that claims a variation it cannot verify", () => {
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_var_block",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [
+              {
+                id: "l1",
+                petpoojaResolvedId: "7765862",
+                name: "Burger",
+                price: 249,
+                quantity: 1,
+                variationRequired: true,
+              },
+            ],
+            pricing: { grandTotal: 249 },
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01",
+          undefined,
+          [snapshotFor("7765862")]
+        )
+      ).toThrow(/variation_id/);
+    });
+
+    // ---------------- NEW — independent-review H1/H2/H3 pins ----------------
+
+    it("H1: a tax-INCLUSIVE product blocks the push before the vendor (no honest representation)", () => {
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_h1_inc",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ id: "l1", petpoojaResolvedId: "30791", name: "Inclusive Item", price: 100, quantity: 1 }],
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01",
+          undefined,
+          [{ ...snapshotFor("30791"), taxInclusive: true }]
+        )
+      ).toThrow(/TAX-INCLUSIVE/);
+    });
+
+    it("H1: unsupported tax shapes block before the vendor", () => {
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_h1_unsup",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ id: "l1", petpoojaResolvedId: "30791", name: "Unsupported Item", price: 100, quantity: 1 }],
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01",
+          undefined,
+          [{ ...snapshotFor("30791"), taxUnsupported: true }]
+        )
+      ).toThrow(/not representable/);
+    });
+
+    it("H1: a 4-row captured catalogue with item taxIds [3928,3929] sends exactly 2 matching rows", () => {
+      const fourRowBranch = capturedBranch({
+        petpoojaTaxes: [
+          { id: "3928", name: "CGST", rate: 2.5 },
+          { id: "3929", name: "SGST", rate: 2.5 },
+          { id: "11213", name: "SGST6", rate: 6 },
+          { id: "20375", name: "CGST6", rate: 6 },
+        ],
+      });
+      // Representable: rows sum to the engine's effective rate (formal GST 5%
+      // of the taxable food amount below).
       const payload = formatPetpoojaOrderPayload(
         {
-          id: "ord_2002",
+          id: "ord_h1_four",
           fulfillmentType: "TAKEAWAY",
           paymentMethod: "COD",
-          items: [{ lineId: "l1", productId: "prod_other_branch_9", unitPrice: 100, quantity: 1 }],
-          pricing: { grandTotal: 100 },
+          items: [{ id: "l1", petpoojaResolvedId: "30791", name: "Matched Item", price: 200, quantity: 1 }],
+          pricing: { foodSubtotal: 200, discount: 0, loyaltyDiscount: 0, gst: 10, grandTotal: 210 },
         },
-        null,
+        fourRowBranch,
         "TEST_RES_ID",
-        "branch_surat_01"
+        "branch_surat_01",
+        undefined,
+        [snapshotFor("30791", ["3928", "3929"])]
       );
-      // Wrong-branch prefix must NOT be stripped into a bogus id.
-      expect((payload.orderinfo.OrderItem as any)[0].id).toBe("");
+      const rows = payload.orderinfo.OrderInfo.OrderItem.details[0].item_tax;
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r: any) => r.id)).toEqual(["3928", "3929"]);
+      // Order-level Tax member carries exactly the matched union, not all 4.
+      expect(payload.orderinfo.OrderInfo.Tax.details).toHaveLength(2);
+    });
+
+    it("H1: an item declaring an unknown tax id (99999) blocks the push", () => {
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_h1_unknown",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ id: "l1", petpoojaResolvedId: "30791", name: "Unknown-Tax Item", price: 100, quantity: 1 }],
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01",
+          undefined,
+          [snapshotFor("30791", ["99999"])]
+        )
+      ).toThrow(/99999/);
+    });
+
+    it("H1: a line with no product tax metadata snapshot blocks (missing ids — not notice-only)", () => {
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_h1_missing",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ id: "l1", petpoojaResolvedId: "30791", name: "Metadata-less Item", price: 100, quantity: 1 }],
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01"
+        )
+      ).toThrow(/no product tax metadata snapshot/);
+    });
+
+    it("H1: matched rows whose rate sum disagrees with the order's GST engine rate block", () => {
+      // The captured rows sum to 5% but the ORDER was priced at the 12% slab.
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_h1_rate",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ id: "l1", petpoojaResolvedId: "30791", name: "Rate-Mismatch Item", price: 200, quantity: 1 }],
+            pricing: { foodSubtotal: 200, discount: 0, loyaltyDiscount: 0, gst: 12, grandTotal: 212 },
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01",
+          undefined,
+          [snapshotFor("30791")]
+        )
+      ).toThrow(/representable/);
+    });
+
+    it("H2: a branch with no captured tax catalogue blocks the push (no invented defaults)", () => {
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_h2_missing",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [],
+          },
+          { id: "branch_bare", petpoojaStoreId: "PP_BARE" },
+          "PP_BARE",
+          "branch_bare"
+        )
+      ).toThrow(/branch\.petpoojaTaxes/);
+    });
+
+    it("H3: internal-only ids (line1, uuid-shaped, prod without numeric tail) block", () => {
+      for (const badItem of [
+        { id: "line1", name: "X", price: 10, quantity: 1 },
+        { id: "a3c1f6e2-8a9b-4c0d-9e1f-2b3c4d5e6f70", name: "X", price: 10, quantity: 1 },
+        { id: "internal_9", productId: "prod_branch_surat_01", name: "X", price: 10, quantity: 1 },
+      ]) {
+        expect(() =>
+          formatPetpoojaOrderPayload(
+            {
+              id: "ord_h3_internal",
+              fulfillmentType: "TAKEAWAY",
+              paymentMethod: "COD",
+              items: [badItem],
+            },
+            capturedBranch(),
+            "TEST_RES_ID",
+            "branch_surat_01"
+          )
+        ).toThrow(/no verified Petpooja item id|blocked/);
+      }
+    });
+
+    it("H3: a numeric-looking CLIENT item id alone is not provenance — it must agree with the trusted resolution", () => {
+      // A client-stamped petpoojaItemId with NO trusted mapping blocks...
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_h3_client",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ id: "l1", petpoojaItemId: "30791", name: "Claimed Item", price: 10, quantity: 1 }],
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01"
+        )
+      ).toThrow(/no verified Petpooja item id/);
+      // ...and a client stamp that DISAGREES with the branch-prefixed id blocks.
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_h3_disagree",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [
+              {
+                id: "l1",
+                productId: "prod_branch_surat_01_30791",
+                petpoojaItemId: "9999999",
+                name: "Disagreeing Item",
+                price: 10,
+                quantity: 1,
+              },
+            ],
+          },
+          capturedBranch(),
+          "TEST_RES_ID",
+          "branch_surat_01"
+        )
+      ).toThrow(/no verified Petpooja item id/);
+    });
+
+    it("H3: the correct branch-prefixed product id resolves its numeric tail as the POS id", () => {
+      const payload = formatPetpoojaOrderPayload(
+        {
+          id: "ord_h3_ok",
+          fulfillmentType: "TAKEAWAY",
+          paymentMethod: "COD",
+          items: [{ id: "l1", productId: "prod_branch_surat_01_30791", name: "Prefixed Item", price: 100, quantity: 1 }],
+        },
+        capturedBranch(),
+        "TEST_RES_ID",
+        "branch_surat_01",
+        undefined,
+        [snapshotFor("30791")]
+      );
+      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].id).toBe("30791");
     });
   });
+
 
   describe("normalizePetpoojaStatus", () => {
     it("correctly maps numeric Petpooja status codes", () => {

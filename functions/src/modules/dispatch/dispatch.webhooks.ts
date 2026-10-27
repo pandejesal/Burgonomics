@@ -1464,6 +1464,8 @@ export async function handleDispatchWebhook(
                   await dispatchFCM({
                     topic: `branch_${branchId}_orders`,
                     ...riderCancelBranchAlert(targetOrderId, outcome.riderCancelOutcome),
+                    purpose: "operational",
+                    actor: { trusted: true },
                   });
                 }
               } catch {
@@ -1750,6 +1752,8 @@ export async function handleDispatchWebhook(
         await dispatchFCM({
           topic: `branch_${branchId}_orders`,
           ...riderCancelBranchAlert(orderRef.id, riderCancelOutcome),
+          purpose: "operational",
+          actor: { trusted: true },
         });
       }
     } catch (err: any) {

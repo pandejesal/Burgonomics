@@ -216,15 +216,28 @@ import { config } from "../src/config/env";
 
 const seedPending = (id: string, retryCount = 0, createdAt = 1700000000000 - 60000) => {
   savedDocs["branches/branch_ahmedabad_1"] = {
+      // H2 fixture — captured Petpooja tax catalogue (no builder default).
+      petpoojaTaxes: [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ],
     name: "Ahmedabad Main",
     petpoojaStoreId: "res_ahm_01",
   };
+    savedDocs["products/prod_branch_ahmedabad_1_7765862"] = {
+      id: "prod_branch_ahmedabad_1_7765862",
+      branchId: "branch_ahmedabad_1",
+      petpoojaItemId: "7765862",
+      petpoojaItemTaxIds: ["3928", "3929"],
+      petpoojaTaxInclusive: false,
+      petpoojaTaxUnsupported: false,
+    };
   savedDocs[`orders/${id}`] = {
     id,
     branchId: "branch_ahmedabad_1",
     customerName: "Ambiguous Case",
     customerPhone: "+919825000001",
-    items: [{ id: "itm_1", name: "Smash Burger", price: 250, quantity: 1 }],
+    items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Smash Burger", price: 250, quantity: 1 }],
     pricing: { grandTotal: 250, gst: 12.5 },
     status: "pending",
     paymentStatus: "completed",
@@ -299,6 +312,13 @@ describe("KOT push transport-ambiguity + dead-letter race (stress sweep)", () =>
     mockDb.runTransaction = undefined;
     seedPending("ord_kf", 4); // exhausted at the scan, no tx protection
 
+    // fcmClient short-circuits in the vitest env BEFORE any transport send;
+    // exercise the real messaging seam here (the hook this test exists for).
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevVitest = process.env.VITEST;
+    process.env.NODE_ENV = "development";
+    delete process.env.VITEST;
+
     try {
       const tick = await retryPendingPetpoojaOrdersWorker();
       // The dead-letter pass must REPORT the fail-over (finance/ops truth):
@@ -318,6 +338,8 @@ describe("KOT push transport-ambiguity + dead-letter race (stress sweep)", () =>
       expect(doc.petpoojaRetryCount).toBe(4); // no budget burn on dead-letter
     } finally {
       // Restore the default harness for sibling tests.
+      if (prevVitest !== undefined) process.env.VITEST = prevVitest;
+      process.env.NODE_ENV = prevNodeEnv;
       (mockDb as any).runTransaction = originalRunTransaction;
     }
   });

@@ -379,4 +379,57 @@ describe("createPaymentOrder — reused intent must stay bound to the same inter
     expect(savedDocs["payment_intents/k_race"].razorpayOrderId).toBe("order_mock_RACEWINNER");
     expect(savedDocs["payment_intents/k_race"].orderId).toBe("ord_a");
   });
+
+  /**
+   * STALE-INTENT DEFECT (reuse fast path): a live intent was handed back on an
+   * idempotency-key hit BEFORE `bindBasketToStoredOrder`, so a request whose
+   * basket had changed under the same key received the OLD intent amount while
+   * the KOT builder still cooked the STORED basket. These two cases pin the
+   * repair: the same binding the fresh path runs now also runs before reuse.
+   */
+  it("reuse fast path: an UNCHANGED basket still reuses the live intent", async () => {
+    const storedItems = [{ productId: "p1", quantity: 1, price: 199 }];
+    seedOrder("ord_a", "cust_a", { items: storedItems });
+    seedLiveIntent("k_reuse_same", { orderId: "ord_a", items: storedItems });
+
+    const reused = await createPaymentOrder({
+      ...basket,
+      orderId: "ord_a",
+      idempotencyKey: "k_reuse_same",
+    });
+
+    expect((reused as any).reused).toBe(true);
+    expect(reused.razorpayOrderId).toBe("order_mock_STALE");
+    expect(reused.amountPaise).toBe(19900);
+    // Legitimate retry is not invalidated: the intent is untouched.
+    expect(savedDocs["payment_intents/k_reuse_same"].razorpayOrderId).toBe("order_mock_STALE");
+  });
+
+  it("reuse fast path: a MUTATED basket is refused with 409 BASKET_MISMATCH, never the stale amount", async () => {
+    const storedItems = [{ productId: "p1", quantity: 1, price: 199 }];
+    seedOrder("ord_a", "cust_a", { items: storedItems });
+    seedLiveIntent("k_reuse_mutated", { orderId: "ord_a", items: storedItems });
+
+    const err: any = await createPaymentOrder({
+      ...basket,
+      // Same key, same product, a DIFFERENT basket: the client fingerprint is
+      // not a server proof that the request still describes the stored order.
+      items: [{ id: "p1", productId: "p1", name: "Burger", price: 199, quantity: 2 }],
+      orderId: "ord_a",
+      idempotencyKey: "k_reuse_mutated",
+    }).then(
+      (res) => ({ unexpectedSuccess: res }),
+      (e) => e
+    );
+
+    expect(err.code).toBe("BASKET_MISMATCH");
+    expect(err.statusCode).toBe(409);
+    // The old intent amount is not handed to the caller…
+    expect(err.amountPaise).toBeUndefined();
+    expect(err.amount).toBeUndefined();
+    expect(err.unexpectedSuccess).toBeUndefined();
+    // …and the rejected request did not invalidate or overwrite the intent.
+    expect(savedDocs["payment_intents/k_reuse_mutated"].razorpayOrderId).toBe("order_mock_STALE");
+    expect(savedDocs["payment_intents/k_reuse_mutated"].amountPaise).toBe(19900);
+  });
 });

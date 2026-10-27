@@ -1,11 +1,32 @@
-import { db, messaging } from "../../core/firebase";
+import { db } from "../../core/firebase";
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { truncatePushText, buildParityExtras } from "../notifications/templates";
+import { sendFcmMessage } from "../notifications/fcmClient";
+import { TRUSTED_SERVER_ACTOR } from "../notifications/sendGate";
 
 export type TicketEscalationTier = "branch" | "brand_support" | "developer_team";
 
-const TIER_ORDER: TicketEscalationTier[] = ["branch", "brand_support", "developer_team"];
+/**
+ * Canonical escalation ladder (upward-only). Shared with the ticket service so
+ * a staff escalation cannot move a ticket backwards down this list.
+ */
+export const TICKET_TIER_ORDER: TicketEscalationTier[] = [
+  "branch",
+  "brand_support",
+  "developer_team",
+];
+
+/**
+ * Rank of a tier in the canonical ladder, or `null` when the value is not a
+ * known tier. Unknown tiers are never guessed a position.
+ */
+export function ticketTierRank(tier: unknown): number | null {
+  if (typeof tier !== "string") return null;
+  const index = TICKET_TIER_ORDER.indexOf(tier as TicketEscalationTier);
+  return index === -1 ? null : index;
+}
+
 const TIER_WAIT_MS: Record<TicketEscalationTier, number> = {
   branch: 60 * 60 * 1000, // 60 min: branch must resolve
   brand_support: 2 * 60 * 60 * 1000, // +120 min: brand support must resolve
@@ -19,7 +40,7 @@ const ESCALATED_TOPIC = "tickets_escalated";
  */
 export function currentTier(ticket: any): TicketEscalationTier {
   const tier = ticket?.assignedTo?.tier;
-  return TIER_ORDER.includes(tier) ? (tier as TicketEscalationTier) : "branch";
+  return TICKET_TIER_ORDER.includes(tier) ? (tier as TicketEscalationTier) : "branch";
 }
 
 /** Best-effort millis for Firestore Timestamps, epoch numbers, and ISO strings. */
@@ -43,8 +64,8 @@ function activityMillis(value: any, fallback: number): number {
  */
 export function nextTierForInactivity(ticket: any, nowMillis: number): TicketEscalationTier | null {
   const tier = currentTier(ticket);
-  const idx = TIER_ORDER.indexOf(tier);
-  if (idx >= TIER_ORDER.length - 1) return null; // already at final tier
+  const idx = TICKET_TIER_ORDER.indexOf(tier);
+  if (idx >= TICKET_TIER_ORDER.length - 1) return null; // already at final tier
 
   // Compute when the current tier's clock started: from lastActivityAt if present,
   // otherwise from createdAt. Accepts Timestamp objects, epoch numbers, and
@@ -57,7 +78,7 @@ export function nextTierForInactivity(ticket: any, nowMillis: number): TicketEsc
   const waitMs = TIER_WAIT_MS[tier];
 
   if (nowMillis - lastActivity >= waitMs) {
-    return TIER_ORDER[idx + 1];
+    return TICKET_TIER_ORDER[idx + 1];
   }
   return null;
 }
@@ -79,31 +100,13 @@ async function publishTicketAlert(params: {
   // PII-free generic copy only (H17) + server truncate backstop (~120ch).
   const safeBody = truncatePushText(body);
 
-  if (!messaging || typeof messaging.send !== "function") {
-    logger.warn("[Ticket Escalator] FCM messaging unavailable — alert logged only:", title);
-    return;
-  }
-
+  // Staff topic alerts ⇒ `operational` purpose from trusted server context
+  // (contract §2). Raw `messaging.send` outside sendGate/fcmClient is no
+  // longer permitted; gate refusals reject and are counted by allSettled.
   attempts.push(
-    messaging.send({
-      topic: ESCALATED_TOPIC,
-      notification: { title, body: safeBody },
-      data: {
-        type: dataType,
-        ticketId,
-        ticketNumber: ticket?.ticketNumber || "",
-      },
-      android: { priority: "high" },
-      ...buildParityExtras(title, safeBody),
-    })
-  );
-
-  if (branchId) {
-    // Suffixed form only — bare branch topics have zero subscribers (see
-    // /notifications/subscribe allowlist).
-    attempts.push(
-      messaging.send({
-        topic: `branch_${branchId}_tickets`,
+    sendFcmMessage(
+      {
+        topic: ESCALATED_TOPIC,
         notification: { title, body: safeBody },
         data: {
           type: dataType,
@@ -112,7 +115,29 @@ async function publishTicketAlert(params: {
         },
         android: { priority: "high" },
         ...buildParityExtras(title, safeBody),
-      })
+      },
+      { purpose: "operational", actor: TRUSTED_SERVER_ACTOR }
+    )
+  );
+
+  if (branchId) {
+    // Suffixed form only — bare branch topics have zero subscribers (see
+    // /notifications/subscribe allowlist).
+    attempts.push(
+      sendFcmMessage(
+        {
+          topic: `branch_${branchId}_tickets`,
+          notification: { title, body: safeBody },
+          data: {
+            type: dataType,
+            ticketId,
+            ticketNumber: ticket?.ticketNumber || "",
+          },
+          android: { priority: "high" },
+          ...buildParityExtras(title, safeBody),
+        },
+        { purpose: "operational", actor: TRUSTED_SERVER_ACTOR }
+      )
     );
   }
 

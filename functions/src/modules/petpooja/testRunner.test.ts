@@ -21,6 +21,19 @@ const { mockDb } = vi.hoisted(() => {
           if (id === "branch_a" || id === "branch_b") {
             return { exists: true, id, data: () => ({}) };
           }
+          if (id === "branch_test_1") {
+            // H2 fixture — captured Petpooja tax catalogue for the relay.
+            return {
+              exists: true,
+              id,
+              data: () => ({
+                petpoojaTaxes: [
+                  { id: "3928", name: "CGST", rate: 2.5 },
+                  { id: "3929", name: "SGST", rate: 2.5 },
+                ],
+              }),
+            };
+          }
           return { exists: false, id, data: () => ({}) };
         },
       }),
@@ -54,6 +67,8 @@ import {
   resolvePetpoojaTestScenario,
   buildPetpoojaTestOrder,
   assertPetpoojaRelayAccess,
+  evaluatePetpoojaTestOrderSendability,
+  formatPetpoojaV21Payload,
   PETPOOJA_TEST_SCENARIOS,
 } from "./testRunner";
 import { config } from "../../config/env";
@@ -281,6 +296,255 @@ describe("runPetpoojaTestScenario (MT-01 sandbox relay)", () => {
     ).toBe(true);
     expect(petpoojaTestRunnerSchema.safeParse({}).success).toBe(false);
     expect(petpoojaTestRunnerSchema.safeParse({ scenarioId: "" }).success).toBe(false);
+  });
+});
+
+describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-26)", () => {
+  // Sanitized vendor-shape fixture: NUMERIC ids of the shape the vendor's own
+  // sample mints, no credentials, fictional contacts. NOT outlet 5439 data —
+  // the runner's DEMO outlet publishes no addons/variations, which the
+  // sendability gate below pins separately.
+  function vendorShapeOrder(): any {
+    return {
+      scenarioId: "vendor-shape-fixture",
+      orderType: "delivery",
+      status: "placed",
+      items: [
+        {
+          id: "7765862",
+          name: "Garlic Bread (3Pieces)",
+          price: 140,
+          quantity: 2,
+          isVeg: true,
+          variation: { id: "89058", name: "3Pieces" },
+          modifiers: [
+            { id: "1150783", name: "Mojito", price: 0, groupId: 135699 },
+            { id: "1150813", name: "Cheese", price: 10, groupId: 135700 },
+          ],
+        },
+      ],
+      pricing: { itemTotal: 300, discount: 0, gst: 15, deliveryFee: 50, packagingFee: 20, grandTotal: 385 },
+    };
+  }
+
+  it("emits ONLY orderinfo → OrderInfo + udid + device_type, with no Discount member", () => {
+    const payload = formatPetpoojaV21Payload(
+      vendorShapeOrder(),
+      "test_rest_id",
+      "bgx_fixture_1",
+      "https://callback.example.test/petpooja/webhook",
+      new Date(),
+      [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ]
+    );
+    expect(Object.keys(payload)).toEqual(["orderinfo"]);
+    expect(Object.keys(payload.orderinfo).sort()).toEqual(["OrderInfo", "device_type", "udid"]);
+    expect(payload.orderinfo.udid).toBe("");
+    expect(payload.orderinfo.device_type).toBe("Web");
+    expect(payload.orderinfo.OrderInfo).not.toHaveProperty("Discount");
+    // No legacy siblings under orderinfo, and no legacy members on Order.
+    expect(payload.orderinfo).not.toHaveProperty("Order");
+    expect(payload.orderinfo.OrderInfo.Order.details).not.toHaveProperty("clientOrderID");
+    expect(payload.orderinfo.OrderInfo.Order.details).not.toHaveProperty("restID");
+    expect(payload.orderinfo.OrderInfo.Order.details).not.toHaveProperty("resID");
+    expect(payload.orderinfo.OrderInfo.Restaurant.details).not.toHaveProperty("resID");
+    const line = payload.orderinfo.OrderInfo.OrderItem.details[0];
+    for (const legacy of ["addon_items", "item_id", "item_name", "addons", "item_attribute", "tax_percentage"]) {
+      expect(line).not.toHaveProperty(legacy);
+    }
+  });
+
+  it("carries the order callback, COD full collect, and typed scalars per the sample", () => {
+    const payload = formatPetpoojaV21Payload(
+      vendorShapeOrder(),
+      "test_rest_id",
+      "bgx_fixture_2",
+      "https://callback.example.test/petpooja/webhook",
+      new Date(),
+      [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ]
+    );
+    const order = payload.orderinfo.OrderInfo.Order.details;
+    // The vendor echoes this in its order-status callback and our webhook
+    // resolves `orders/{orderID}` — the MT-01 client reference, exactly.
+    expect(order.orderID).toBe("bgx_fixture_2");
+    expect(order.callback_url).toBe("https://callback.example.test/petpooja/webhook");
+    expect(order.payment_type).toBe("COD");
+    // Retained policy: COD collects the FULL total; ONLINE collects 0.
+    expect(order.collect_cash).toBe("385.00");
+    expect(order.total).toBe("385.00");
+    expect(order.tax_total).toBe("15.00");
+    expect(order).not.toHaveProperty("tax");
+    // enable_delivery is a NUMBER (0 = third-party riders, always correct here;
+    // the sample's `1` is a restaurant-rider example).
+    expect(order.enable_delivery).toBe(0);
+    expect(typeof order.enable_delivery).toBe("number");
+    expect(order.min_prep_time).toBe(0);
+    expect(order.no_of_persons).toBe("0");
+    expect(order.dc_tax_percentage).toBe("0");
+    expect(order.dc_tax_amount).toBe("0.00");
+    expect(order.dc_gst_details).toEqual([
+      { gst_liable: "vendor", amount: "0.00" },
+      { gst_liable: "restaurant", amount: "0.00" },
+    ]);
+    expect(order.pc_gst_details).toEqual([
+      { gst_liable: "vendor", amount: "0.00" },
+      { gst_liable: "restaurant", amount: "0.00" },
+    ]);
+    expect(order.otp).toBe("");
+    expect(order.ondc_bap).toBe("");
+    expect(order.preorder_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(order.preorder_time).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(order.created_on).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it("final_price is the UNIT figure (price - item_discount), even for quantity 2", () => {
+    const payload = formatPetpoojaV21Payload(
+      vendorShapeOrder(),
+      "test_rest_id",
+      "bgx_fixture_3",
+      "https://callback.example.test/petpooja/webhook",
+      new Date(),
+      [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ]
+    );
+    const line = payload.orderinfo.OrderInfo.OrderItem.details[0];
+    // price is the all-in unit (140 + 0 mojito + 10 cheese = 150)
+    expect(line.price).toBe("150.00");
+    expect(line.item_discount).toBe("0.00");
+    // UNIT, never the 2x line total.
+    expect(line.final_price).toBe("150.00");
+    expect(line.quantity).toBe("2");
+  });
+
+  it("Tax[].price is the numeric percentage string, add-on group_id an integer", () => {
+    const payload = formatPetpoojaV21Payload(
+      vendorShapeOrder(),
+      "test_rest_id",
+      "bgx_fixture_4",
+      "https://callback.example.test/petpooja/webhook",
+      new Date(),
+      [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ]
+    );
+    const taxes = payload.orderinfo.OrderInfo.Tax.details;
+    for (const t of taxes) {
+      expect(t.type).toBe("P");
+      expect(t.price).toBe("2.5");
+      expect(String(t.price)).not.toContain("%");
+      expect(typeof t.tax).toBe("string");
+    }
+    const addons = payload.orderinfo.OrderInfo.OrderItem.details[0].AddonItem.details;
+    expect(addons[0]).toEqual({
+      id: "1150783",
+      name: "Mojito",
+      group_name: "Addons",
+      price: "0.00",
+      group_id: 135699,
+      quantity: "1",
+    });
+    expect(addons[0].group_id).toBe(135699); // the REAL configured group id (M4)
+    expect(addons[1]).toMatchObject({ id: "1150813", group_id: 135700 });
+  });
+
+  it("uses clearly-synthetic non-empty contacts (test-only, never a production customer)", () => {
+    const payload = formatPetpoojaV21Payload(
+      vendorShapeOrder(),
+      "test_rest_id",
+      "bgx_fixture_5",
+      "https://callback.example.test/petpooja/webhook",
+      new Date(),
+      [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ]
+    );
+    const restaurant = payload.orderinfo.OrderInfo.Restaurant.details;
+    const customer = payload.orderinfo.OrderInfo.Customer.details;
+    expect(restaurant.restID).toBe("test_rest_id");
+    for (const v of [restaurant.res_name, restaurant.address, restaurant.contact_information]) {
+      expect(v.length).toBeGreaterThan(0);
+    }
+    expect(restaurant.contact_information).toBe("9000000000");
+    for (const v of [customer.name, customer.email, customer.phone, customer.address, customer.latitude, customer.longitude]) {
+      expect(v.length).toBeGreaterThan(0);
+    }
+    // The synthetic markers are unmistakable: reserved-fictional phone,
+    // RFC-2606 email, "Sandbox" naming.
+    expect(customer.phone).toBe("9000000000");
+    expect(customer.email).toContain("example.com");
+    expect(customer.name).toContain("Sandbox");
+  });
+});
+
+describe("evaluatePetpoojaTestOrderSendability — structural verdicts, never fabricated acceptance", () => {
+  it("accepts the item-only scenarios (real numeric outlet ids)", () => {
+    expect(evaluatePetpoojaTestOrderSendability(buildPetpoojaTestOrder("dinein-basic-kot"))).toEqual([]);
+    expect(evaluatePetpoojaTestOrderSendability(buildPetpoojaTestOrder("delivery-gst-fee"))).toEqual([]);
+    expect(evaluatePetpoojaTestOrderSendability(buildPetpoojaTestOrder("cancel-refund-sync"))).toEqual([]);
+    expect(evaluatePetpoojaTestOrderSendability(buildPetpoojaTestOrder("bulk-party-order"))).toEqual([]);
+  });
+
+  it("reports BLOCKED_CONFIGURATION for the unconfigured addon fixture", () => {
+    const gaps = evaluatePetpoojaTestOrderSendability(buildPetpoojaTestOrder("takeaway-with-modifiers"));
+    expect(gaps.length).toBeGreaterThanOrEqual(2);
+    for (const g of gaps) {
+      expect(g.field).toBe("OrderItem.details[].AddonItem");
+      // M4: the internal id AND the missing (non-positive) group id both report.
+      expect(g.reason).toMatch(
+        /not a verified numeric Petpooja addon id|no positive Petpooja add-on GROUP id/
+      );
+    }
+  });
+
+  it("reports gaps for missing ids, but never mints an acceptance", () => {
+    const gaps = evaluatePetpoojaTestOrderSendability({
+      scenarioId: "gapped",
+      orderType: "takeaway",
+      status: "placed",
+      items: [
+        { id: "", name: "No Id Burger", price: 10, quantity: 1, isVeg: true, modifiers: [] },
+      ],
+      pricing: { itemTotal: 10, discount: 0, gst: 0.5, deliveryFee: 0, packagingFee: 0, grandTotal: 10.5 },
+    } as any);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].field).toBe("OrderItem.details[].id");
+  });
+
+  it("relays refuse to POST a BLOCKED_CONFIGURATION order — no fetch, no fake success", async () => {
+    const prevMock = config.mock.petpoojaPos;
+    const savedCreds = { ...config.petpooja };
+    const fetchMock = vi.fn();
+    try {
+      config.mock.petpoojaPos = false;
+      config.petpooja.appKey = "test_app_key";
+      config.petpooja.appSecret = "test_app_secret";
+      config.petpooja.accessToken = "test_access_token";
+      vi.stubGlobal("fetch", fetchMock);
+      // The fixture's addons have no verified POS ids: the structural gate
+      // must block BEFORE any vendor call, with the blocked reason surfaced.
+      await expect(
+        runPetpoojaTestScenario({ scenarioId: "takeaway-with-modifiers", branchId: "branch_test_1" })
+      ).rejects.toMatchObject({
+        code: "BLOCKED_CONFIGURATION",
+        statusCode: 409,
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.mock.petpoojaPos = prevMock;
+      config.petpooja.appKey = savedCreds.appKey;
+      config.petpooja.appSecret = savedCreds.appSecret;
+      config.petpooja.accessToken = savedCreds.accessToken;
+      vi.unstubAllGlobals();
+    }
   });
 });
 

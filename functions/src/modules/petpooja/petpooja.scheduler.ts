@@ -505,9 +505,11 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
           try {
             await dispatchFCM({
               topic: `branch_${branchId}_orders`,
-              title: "KOT sync failed — enter manually",
+              title: "KOT sync failed - enter manually",
               body: `Order #${doc.id.substring(0, 6)} is confirmed but POS sync failed after retries. Enter the KOT in Petpooja by hand.`,
               data: { type: "kot_sync_failed", orderId: doc.id },
+              purpose: "operational",
+              actor: { trusted: true },
             });
           } catch (fcmErr: any) {
             logger.warn("[Petpooja Retry Worker] KOT-failed branch alert failed:", fcmErr?.message || fcmErr);

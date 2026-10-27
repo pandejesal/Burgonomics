@@ -1,7 +1,8 @@
 import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { db } from "../../core/firebase";
 import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlertMessage } from "./templates";
-import { sendFcmMessage, sendMulticastFcm, writeCustomerInboxDoc } from "./fcmClient";
+import { sendFcmMessage, sendMulticastFcm } from "./fcmClient";
+import { TRUSTED_SERVER_ACTOR } from "./sendGate";
 import { captureErrorSnapshot } from "../../core/errors";
 
 const REGION = "asia-south1";
@@ -37,7 +38,11 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
         tableNumber: order.tableNumber,
       });
 
-      const sent = await sendFcmMessage(kotMessage, { critical: true });
+      const sent = await sendFcmMessage(kotMessage, {
+        purpose: "operational",
+        actor: TRUSTED_SERVER_ACTOR,
+        critical: true,
+      });
       if (sent) {
         console.log(`[onOrderCreatedTrigger] Dispatched acoustic KOT alert to branch_${branchId}_orders`);
       } else {
@@ -73,48 +78,34 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
       if (customerId && typeof db.collection === "function") {
         const userDoc = await db.collection("users").doc(customerId).get();
         const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
-        if (fcmTokens.length > 0) {
-          const confirmMessage = buildCustomerOrderUpdateMessage(
-            fcmTokens[0],
-            {
-              id: orderId,
-              orderNumber: order.shortCode || order.orderNumber || orderId.substring(0, 6).toUpperCase(),
-              fulfillmentType: order.fulfillment || order.fulfillmentType || "delivery",
-              storeName: order.store?.name || "Burgonomics",
-              etaMinutes: order.etaMinutes,
-              deliveryPartnerName: order.deliveryPartner?.name,
-              allVeg: order.allVeg === true ? true : undefined,
-              refundInitiated: order.refundStatus === "refunded" || order.refundStatus === "INITIATED" ? true : undefined,
-              paymentMethod: order.payment?.method,
-            },
-            "PLACED"
-          );
-          await sendMulticastFcm(
-            fcmTokens,
-            {
-              notification: confirmMessage.notification,
-              data: confirmMessage.data,
-              android: confirmMessage.android,
-              apns: confirmMessage.apns,
-            },
-            customerId,
-            { critical: true }
-          ).then(async (result) => {
-            // Loop 5: push-or-nothing left customers silent — fall back to
-            // the in-app inbox when FCM delivers zero.
-            if (result.successCount === 0) {
-              const n = confirmMessage.notification;
-              if (n && n.title && n.body) {
-                await writeCustomerInboxDoc(
-                  customerId,
-                  n.title,
-                  n.body,
-                  confirmMessage.data as Record<string, string>
-                );
-              }
-            }
-          });
-        }
+        const confirmMessage = buildCustomerOrderUpdateMessage(
+          fcmTokens[0] || "",
+          {
+            id: orderId,
+            orderNumber: order.shortCode || order.orderNumber || orderId.substring(0, 6).toUpperCase(),
+            fulfillmentType: order.fulfillment || order.fulfillmentType || "delivery",
+            storeName: order.store?.name || "Burgonomics",
+            etaMinutes: order.etaMinutes,
+            deliveryPartnerName: order.deliveryPartner?.name,
+            allVeg: order.allVeg === true ? true : undefined,
+            refundInitiated: order.refundStatus === "refunded" || order.refundStatus === "INITIATED" ? true : undefined,
+            paymentMethod: order.payment?.method,
+          },
+          "PLACED"
+        );
+        // Zero tokens is not a reason to lose the message: the shared sender
+        // persists the inbox row first, then no transport call happens.
+        await sendMulticastFcm(
+          fcmTokens,
+          {
+            notification: confirmMessage.notification,
+            data: confirmMessage.data,
+            android: confirmMessage.android,
+            apns: confirmMessage.apns,
+          },
+          customerId,
+          { purpose: "orderUpdates", actor: TRUSTED_SERVER_ACTOR, critical: true }
+        );
       }
     } catch (err: any) {
       console.error("[onOrderCreatedTrigger] Failed to dispatch customer confirmation:", err?.message || err);
@@ -172,53 +163,40 @@ export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
         const userData = userDoc.data();
         const fcmTokens: string[] = userData?.fcmTokens || [];
 
-        if (fcmTokens.length > 0) {
-          const sampleToken = fcmTokens[0];
-          const updateMessage = buildCustomerOrderUpdateMessage(
-            sampleToken,
-            {
-              id: orderId,
-              orderNumber:
-                after.shortCode || after.orderNumber || orderId.substring(0, 6).toUpperCase(),
-              fulfillmentType: after.fulfillment || after.fulfillmentType || "delivery",
-              storeName: after.store?.name || "Burgonomics",
-              etaMinutes: after.etaMinutes || after.deliveryPartner?.etaMinutes,
-              deliveryPartnerName: after.deliveryPartner?.name,
-              allVeg: after.allVeg === true ? true : undefined,
-              refundInitiated:
-                after.refundStatus === "refunded" || after.refundStatus === "INITIATED"
-                  ? true
-                  : undefined,
-              paymentMethod: after.payment?.method,
-            },
-            afterStatusCode
-          );
+        const sampleToken = fcmTokens[0] || "";
+        const updateMessage = buildCustomerOrderUpdateMessage(
+          sampleToken,
+          {
+            id: orderId,
+            orderNumber:
+              after.shortCode || after.orderNumber || orderId.substring(0, 6).toUpperCase(),
+            fulfillmentType: after.fulfillment || after.fulfillmentType || "delivery",
+            storeName: after.store?.name || "Burgonomics",
+            etaMinutes: after.etaMinutes || after.deliveryPartner?.etaMinutes,
+            deliveryPartnerName: after.deliveryPartner?.name,
+            allVeg: after.allVeg === true ? true : undefined,
+            refundInitiated:
+              after.refundStatus === "refunded" || after.refundStatus === "INITIATED"
+                ? true
+                : undefined,
+            paymentMethod: after.payment?.method,
+          },
+          afterStatusCode
+        );
 
-          await sendMulticastFcm(
-            fcmTokens,
-            {
-              notification: updateMessage.notification,
-              data: updateMessage.data,
-              android: updateMessage.android,
-              apns: updateMessage.apns,
-            },
-            customerId,
-            { critical: true }
-          ).then(async (result) => {
-            // Loop 5: inbox fallback — see PLACED path above.
-            if (result.successCount === 0) {
-              const n = updateMessage.notification;
-              if (n && n.title && n.body) {
-                await writeCustomerInboxDoc(
-                  customerId,
-                  n.title,
-                  n.body,
-                  updateMessage.data as Record<string, string>
-                );
-              }
-            }
-          });
-        }
+        // Inbox persistence happens before FCM inside the shared sender, so a
+        // customer with no registered token still receives the update in-app.
+        await sendMulticastFcm(
+          fcmTokens,
+          {
+            notification: updateMessage.notification,
+            data: updateMessage.data,
+            android: updateMessage.android,
+            apns: updateMessage.apns,
+          },
+          customerId,
+          { purpose: "orderUpdates", actor: TRUSTED_SERVER_ACTOR, critical: true }
+        );
       }
     } catch (err: any) {
       // Never interpolate raw customerId into log text (PII boundary).
@@ -263,7 +241,11 @@ export const onTicketCreatedUrgentTrigger = onDocumentCreated(
         ticketNumber: ticket.ticketNumber || ticketId.substring(0, 6),
         priority: ticket.priority,
       });
-      await sendFcmMessage(message, { critical: true });
+      await sendFcmMessage(message, {
+        purpose: "operational",
+        actor: TRUSTED_SERVER_ACTOR,
+        critical: true,
+      });
     } catch (err: any) {
       console.error("[onTicketCreatedUrgentTrigger] Failed:", err?.message || err);
       await captureErrorSnapshot({
@@ -305,7 +287,11 @@ export const onTicketEscalatedNotificationTrigger = onDocumentUpdated(
           priority: after.priority,
         });
 
-        await sendFcmMessage(message, { critical: true });
+        await sendFcmMessage(message, {
+        purpose: "operational",
+        actor: TRUSTED_SERVER_ACTOR,
+        critical: true,
+      });
       } catch (err: any) {
         console.error("[onTicketEscalatedNotificationTrigger] Failed:", err?.message || err);
         await captureErrorSnapshot({

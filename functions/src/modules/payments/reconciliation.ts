@@ -119,6 +119,127 @@ export function buildOrderReconciliationPayload(
   };
 }
 
+// ---------------------------------------------------------------------------
+// T3.3 — SHARED claim-lease TTL (Phase 3 MONEY).
+//
+// Both money side-effect lanes on one order (the refund claim and the Route
+// transfer claim) use a 10-minute lease. The cross-lane serialization guards
+// must agree on "fresh" vs "stale" with the lanes' own takeover windows, so
+// the constant lives here ONCE (a divergent copy would let one lane treat the
+// other's still-live lease as expired — the exact race the guards exist to
+// close). razorpay.service.ts and routeTransfers.ts already keep their local
+// lease constants at the same value; their new cross-guards read THIS one.
+// ---------------------------------------------------------------------------
+
+export const MONEY_CLAIM_TTL_MS = 10 * 60_000;
+
+export function activeMoneyClaimAgeMs(
+  claimedAt: unknown,
+  nowMs: number = Date.now()
+): number | null {
+  if (typeof claimedAt === "number" && Number.isFinite(claimedAt) && claimedAt > 0) {
+    return Math.max(0, nowMs - claimedAt);
+  }
+  // Firestore Timestamp sentinel support (toMillis) for serverTimestamp-based leases.
+  if (claimedAt && typeof (claimedAt as any).toMillis === "function") {
+    return Math.max(0, nowMs - (claimedAt as any).toMillis());
+  }
+  return null;
+}
+
+/** Fresh (< TTL) means the other lane's side effect may be on the wire NOW. */
+export function isMoneyClaimFresh(claimedAt: unknown, nowMs: number = Date.now()): boolean {
+  const age = activeMoneyClaimAgeMs(claimedAt, nowMs);
+  return age !== null && age < MONEY_CLAIM_TTL_MS;
+}
+
+// ---------------------------------------------------------------------------
+// T3.2 — ATOMIC CAPTURED-PAYMENT CLAIM (Phase 3 MONEY).
+//
+// The per-order foreign-payment guards (recordedPaymentId read inside each
+// order's own confirm transaction) cannot see ANOTHER order's doc, so two
+// internal orders with equal stored totals both confirmed on the same
+// captured payment — reproduced by
+// tests/payment-capture-cross-order-binding.test.ts (RED: confirmedCount 2).
+//
+// The claim is a `payment_captures/{razorpayPaymentId}` ownership record
+// created INSIDE the confirm transaction (same optimistic-retry domain as the
+// CONFIRMED write). Concurrent cross-order confirmations conflict on the
+// claim read and retry against the winner's binding; a second capture of the
+// same payment delivered for a DIFFERENT order is suppressed and parked
+// `suppressed_reused_capture` for ops review — never a blind confirm, never a
+// second split/OTP/coin debit for money another order already owns.
+//
+// Backward compatible: an order already confirmed before this record existed
+// still re-verifies idempotently when the claim's orderId matches; a claim
+// doc with no orderId (corrupt/legacy) is treated as UNRESOLVED and refuses
+// a new order fail-closed (manual claim repair is the cure) — never guessed.
+// ---------------------------------------------------------------------------
+
+export interface CaptureClaimParams {
+  razorpayPaymentId: string;
+  orderId: string;
+  razorpayOrderId?: string | null;
+  amountPaise?: number | null;
+  eventId?: string | null;
+  /** Deterministic clock seam for tests; defaults to Date.now(). */
+  nowMs?: number;
+}
+
+export type CaptureClaimTxOutcome =
+  | { kind: "claimed" }
+  | { kind: "owned_by_order" }
+  | { kind: "reused_by_other_order"; recordedOrderId: string | null };
+
+export function getCaptureClaimDocId(razorpayPaymentId: string): string {
+  return String(razorpayPaymentId);
+}
+
+/**
+ * Claims the captured payment for ONE internal order inside the caller's
+ * confirm transaction. All inputs must be gateway/server-truth (never a
+ * client-asserted value); the caller decides suppression policy on the
+ * `reused_by_other_order` outcome.
+ */
+export async function claimCapturedPaymentInTx(
+  tx: any,
+  db: any,
+  params: CaptureClaimParams
+): Promise<CaptureClaimTxOutcome> {
+  const { razorpayPaymentId, orderId, razorpayOrderId, amountPaise, eventId, nowMs } = params;
+  if (!razorpayPaymentId) {
+    // No payment id (e.g. an order.paid with no listed payment anywhere):
+    // there is nothing to allow or refuse — the caller's own order-level
+    // guards apply. The claim cannot attest what it cannot name.
+    return { kind: "claimed" };
+  }
+  const claimRef = db.collection("payment_captures").doc(getCaptureClaimDocId(razorpayPaymentId));
+  const snap = await tx.get(claimRef);
+  const existing = snap && snap.exists ? snap.data() : undefined;
+  if (existing) {
+    const recordedOrderId = typeof existing?.orderId === "string" && existing.orderId ? existing.orderId : null;
+    if (recordedOrderId && recordedOrderId === orderId) return { kind: "owned_by_order" };
+    // Fail CLOSED on a different-order claim and on a claim that names no
+    // order (unresolved): both are owned by nobody provable — never a blind
+    // confirm against ambiguity.
+    return { kind: "reused_by_other_order", recordedOrderId };
+  }
+  tx.set(
+    claimRef,
+    {
+      razorpayPaymentId,
+      razorpayOrderId: razorpayOrderId || null,
+      orderId,
+      amountPaise: typeof amountPaise === "number" ? amountPaise : null,
+      eventId: eventId || null,
+      claimedAt: typeof nowMs === "number" ? nowMs : Date.now(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: false }
+  );
+  return { kind: "claimed" };
+}
+
 /**
  * Deterministically parks a captured payment for a terminal order (cancelled or refunded)
  * into `unmatched_payments` under a single stable document ID (`ump_term_${razorpayPaymentId}`).

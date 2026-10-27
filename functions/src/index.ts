@@ -97,6 +97,17 @@ import { withSchedulerLock } from "./core/schedulerLock";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
+import { registerDeviceToken, httpResponseFor } from "./core/deviceTokenRegister";
+import { authorizeDispatch } from "./modules/notifications/registry";
+import {
+  auditAdminDispatch,
+  resolveDispatchTarget,
+} from "./modules/notifications/sendGate";
+import {
+  DevicePrefsVersionConflict,
+  getDevicePreferences,
+  updateDevicePreferences,
+} from "./modules/notifications/devicePrefs";
 import {
   setUserCustomClaims,
   assignUserRole,
@@ -140,6 +151,8 @@ import {
   dispatchNotificationSchema,
   registerTokenSchema,
   unregisterTokenSchema,
+  notificationInstallationIdSchema,
+  updateNotificationPreferencesSchema,
   topicSubscriptionSchema,
   setClaimsSchema,
   assignRoleSchema,
@@ -290,6 +303,7 @@ app.use(
     "/notifications/unsubscribe",
     "/notifications/registerToken",
     "/notifications/unregisterToken",
+    "/notifications/preferences",
     "/auth/setClaims",
     "/auth/assignRole",
     "/auth/revokeRole",
@@ -719,6 +733,19 @@ app.post(
       // 403 = zero-mock production refusal or forbidden branch access;
       // other staff errors map via staffErrorStatus, or keep err.statusCode.
       const status = err.statusCode || staffErrorStatus(err, 500);
+      // Wire fix (relay catch): a 409 BLOCKED_CONFIGURATION previously lost
+      // its code and gap detail in the generic { error } envelope — support
+      // could not act on WHY the relay refused. Surface them safely; every
+      // other failure keeps its previous generic shape (RBAC wording
+      // preserved).
+      if (err?.code === "BLOCKED_CONFIGURATION") {
+        res.status(409).json({
+          code: "BLOCKED_CONFIGURATION",
+          gaps: Array.isArray(err?.petpoojaDetail) ? err.petpoojaDetail : err?.petpoojaDetail,
+          error: err.message || "Petpooja test runner blocked by configuration",
+        });
+        return;
+      }
       res.status(status).json({ error: err.message || "Petpooja test runner failed" });
     }
   }
@@ -1171,22 +1198,32 @@ app.post(
 app.post(
   "/notifications/dispatch",
   requireAuth,
-  requireRole(["brand_owner", "developer", "support", "branch_owner"]),
+  requireRole([
+    "brand_owner",
+    "developer",
+    "support",
+    "regional_manager",
+    "branch_owner",
+    "branch_staff",
+  ]),
   validateBody(dispatchNotificationSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
-      // Topic/token validation already done by schema; enforce role scoping
-      const { topic, token, title, body, data } = req.body as {
+      // Topic/token validation already done by schema; enforce role scoping.
+      const { topic, token, title, body, data, purpose } = req.body as {
         topic?: string;
         token?: string;
         title: string;
         body: string;
         data?: Record<string, string>;
+        purpose?: "operational" | "orderUpdates" | "supportReplies";
       };
       const role = (req.user as any)?.role as string | undefined;
       const isBrandAdmin =
         (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
+
       if (topic) {
+        // Topic path is unchanged (contract §3.5): staff operational only.
         const clean = filterSubscribableTopics([topic], { role, isBrandAdmin });
         if (clean.length === 0) {
           res.status(403).json({ error: "Forbidden: topic is outside your role scope" });
@@ -1202,18 +1239,56 @@ app.post(
             return;
           }
         }
-      } else {
-        // Token path
-        if (!isBrandAdmin) {
-          const { db } = await import("./core/firebase");
-          const tokenDoc = await db.collection("device_tokens").doc(token as string).get();
-          if (!tokenDoc.exists) {
-            res.status(403).json({ error: "Forbidden: token is not a registered device" });
-            return;
-          }
-        }
+        const success = await dispatchFCM({
+          topic,
+          title,
+          body,
+          data,
+          purpose: "operational",
+          actor: { uid: req.user?.uid, role, trusted: true },
+        });
+        res.status(200).json({ success });
+        return;
       }
-      const success = await dispatchFCM({ topic, token, title, body, data });
+
+      // Token path (§3): resolve the ledger owner, then apply the role matrix.
+      // Every denial is the same generic body — no existence oracle.
+      const target = await resolveDispatchTarget(token as string);
+      const decision = authorizeDispatch({
+        caller: {
+          uid: req.user?.uid,
+          role,
+          branchIds: Array.isArray((req.user as any)?.branchIds)
+            ? ((req.user as any).branchIds as string[])
+            : [],
+          isBrandAdmin: (req.user as any)?.isBrandAdmin === true,
+        },
+        tokenOwner: target ? { uid: target.ownerUid, role: target.role, branchIds: target.branchIds } : null,
+        requestedPurpose: purpose,
+      });
+      if (!decision.allowed || !decision.ownerUid) {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
+
+      if (decision.auditRequired && req.user?.uid) {
+        await auditAdminDispatch({
+          actorUid: req.user.uid,
+          purpose: decision.purpose,
+          recipientUid: decision.ownerUid,
+          token: token as string,
+        });
+      }
+
+      const success = await dispatchFCM({
+        token,
+        title,
+        body,
+        data,
+        purpose: decision.purpose,
+        recipientUid: decision.ownerUid,
+        actor: { uid: req.user?.uid, role, trusted: true },
+      });
       res.status(200).json({ success });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to dispatch notification" });
@@ -1227,10 +1302,11 @@ app.post(
 // beyond rules). This endpoint validates, stamps metadata, and links both.
 app.post("/notifications/registerToken", requireAuth, validateBody(registerTokenSchema), async (req: AuthenticatedRequest, res) => {
   try {
-    const { token, platform, appVersion } = req.body as {
+    const { token, platform, appVersion, installationId } = req.body as {
       token?: string;
       platform?: string;
       appVersion?: string;
+      installationId?: string;
     };
     if (!token || typeof token !== "string" || token.length < 10 || token.length > 500) {
       res.status(400).json({ error: "valid token is required" });
@@ -1253,8 +1329,7 @@ app.post("/notifications/registerToken", requireAuth, validateBody(registerToken
     // foreign/ownerless binding refuses race-safe, and the exact wire
     // contract (200 {success}, generic 409) is pinned by httpResponseFor's
     // unit tests.
-    const { registerDeviceToken, httpResponseFor } = await import("./core/deviceTokenRegister");
-    const result = await registerDeviceToken({ token, uid, platform, appVersion });
+    const result = await registerDeviceToken({ token, uid, platform, appVersion, installationId });
     const http = httpResponseFor(result);
     res.status(http.status).json(http.body);
   } catch (err: any) {
@@ -1279,6 +1354,79 @@ app.post("/notifications/unregisterToken", requireAuth, validateBody(unregisterT
     res.status(200).json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to unregister token" });
+  }
+});
+
+// Canonical per-installation notification preferences (contract §7, §8).
+// The server is the only writer of users/{uid}/device_prefs/{installationId};
+// the body can never carry a uid, category enum, or security field (strict
+// schema), and every write is CAS-guarded by expectedVersion.
+//
+// GET is the canonical read the customer hydration barrier depends on. An
+// absent record is a normal 200 with documented defaults at version 0 — never
+// a 404 (404 means route/build mismatch and must stay terminal on the client).
+app.get("/notifications/preferences", requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const parsed = notificationInstallationIdSchema.safeParse(req.query?.installationId);
+    if (!parsed.success) {
+      res.status(400).json({ error: "valid installationId is required" });
+      return;
+    }
+    const result = await getDevicePreferences({ uid, installationId: parsed.data });
+    res.status(200).json(result);
+  } catch {
+    res.status(500).json({ error: "Failed to read notification preferences" });
+  }
+});
+
+app.post("/notifications/preferences", requireAuth, validateBody(updateNotificationPreferencesSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { installationId, notificationPrefs, expectedVersion, mutationId } = req.body as {
+      installationId: string;
+      notificationPrefs: Record<string, boolean>;
+      expectedVersion: number;
+      mutationId?: string;
+    };
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const result = await updateDevicePreferences({
+      uid,
+      installationId,
+      notificationPrefs,
+      expectedVersion,
+      mutationId,
+    });
+    res.status(200).json(result);
+  } catch (err: any) {
+    if (
+      err instanceof DevicePrefsVersionConflict ||
+      err?.code === "PREF_VERSION_CONFLICT" ||
+      err?.code === "idempotency_conflict"
+    ) {
+      const code =
+        err?.code === "idempotency_conflict" ? "idempotency_conflict" : "PREF_VERSION_CONFLICT";
+      // The customer conflict card rebases on these values; omitting them makes
+      // "Keep mine" send expectedVersion 0 against an existing doc forever.
+      res.status(409).json({
+        error:
+          code === "idempotency_conflict"
+            ? "idempotency conflict"
+            : "preferences version conflict",
+        code,
+        currentVersion: typeof err?.currentVersion === "number" ? err.currentVersion : 0,
+        currentPrefs: err?.currentPrefs ?? null,
+      });
+      return;
+    }
+    res.status(500).json({ error: "Failed to update notification preferences" });
   }
 });
 

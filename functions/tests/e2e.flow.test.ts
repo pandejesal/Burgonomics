@@ -67,7 +67,11 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
           };
         }
         return {
-          exists: true,
+          // HONEST-RIG FIX: a document that was never written must NOT be
+          // reported as existing (the old `exists: true`-always shape made
+          // the atomic payment_captures claim read an EMPTY doc that "did
+          // not exist" and fail CLOSED on every lifecycle verification).
+          exists: savedDocs[path] !== undefined || fallbackData !== undefined,
           data: () => savedDocs[path] || fallbackData || {},
           ref,
         };

@@ -96,6 +96,11 @@ describe("KOT Truth & Relay Semantics (Review Finding 5 & Limitations)", () => {
     savedDocs["branches/branch_truth_1"] = {
       name: "Ahmedabad Truth Outlet",
       petpoojaStoreId: "res_truth_01",
+      // H2 — the branch's captured Petpooja tax catalogue (fixture truth).
+      petpoojaTaxes: [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ],
     };
 
     savedDocs["orders/ord_truth_1"] = {
@@ -103,9 +108,29 @@ describe("KOT Truth & Relay Semantics (Review Finding 5 & Limitations)", () => {
       branchId: "branch_truth_1",
       customerName: "Relay Truth Customer",
       customerPhone: "+919825000001",
-      items: [{ id: "itm_1", name: "Smash Burger", price: 200, quantity: 1 }],
+      // H3 — branch-scoped catalog key the prefetch resolves; the product doc
+      // below is the synced vendor metadata snapshot (agreement + tax meta).
+      items: [
+        {
+          id: "itm_1",
+          productId: "prod_branch_truth_1_7765862",
+          name: "Smash Burger",
+          price: 200,
+          quantity: 1,
+        },
+      ],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
+    };
+
+    // H1/H3 — the synced product snapshot the push prefetch reads.
+    savedDocs["products/prod_branch_truth_1_7765862"] = {
+      id: "prod_branch_truth_1_7765862",
+      branchId: "branch_truth_1",
+      petpoojaItemId: "7765862",
+      petpoojaItemTaxIds: ["3928", "3929"],
+      petpoojaTaxInclusive: false,
+      petpoojaTaxUnsupported: false,
     };
   });
 

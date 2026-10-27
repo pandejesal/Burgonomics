@@ -13,6 +13,8 @@ import { captureErrorSnapshot } from "../../core/errors";
 import {
   markOrderReconciliation,
   parkTerminalPaymentCapture,
+  claimCapturedPaymentInTx,
+  isMoneyClaimFresh,
 } from "./reconciliation";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
@@ -854,6 +856,20 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       // refused here — before any gateway order is handed out — instead of
       // surfacing as a post-capture ORDER_MISMATCH at verify.
       assertIntentBoundToOrder(reusableIntent, params.orderId);
+      // A live intent carries the total priced for the basket bound at intent
+      // time. Returning that total without re-binding lets a MUTATED basket
+      // with the same idempotency key (the key is a client fingerprint, not a
+      // server proof) receive a stale amount for goods the customer is no
+      // longer buying — while the KOT still cooks the stored basket. Run the
+      // exact binding the fresh path runs, so a mutated basket gets the same
+      // non-retryable 409 BASKET_MISMATCH instead of the stale intent. An
+      // unchanged basket is fingerprint-equal and reuses as before.
+      bindBasketToStoredOrder({
+        storedOrder,
+        requestItems: params.items,
+        requestBranchId,
+        requestOrderType: params.orderType,
+      });
       return reusedIntentResponse(reusableIntent);
     }
     if (corruptIntent) {
@@ -1418,6 +1434,25 @@ export async function verifyPayment(
     });
   }
 
+  // KOT PARITY WITH THE WEBHOOK CHANNEL. `payment.captured` pushes a paid order
+  // to the POS right after it confirms (webhookHandler.ts), but this channel
+  // used to confirm and never tell the kitchen: a verify-only payer — webhook
+  // delayed, dropped, or not yet configured — got a confirmed order that never
+  // rang at the outlet.
+  //
+  // Idempotency is owned by pushOrderToPetpooja itself: it dedupes on the
+  // persisted `petpoojaOrderId` / `petpoojaAcceptedNoId` markers and serializes
+  // concurrent callers through its own claim transaction, so a webhook racing
+  // this push (or the customer re-verifying) cannot ring the kitchen twice.
+  //
+  // A POS failure must NEVER un-confirm a captured payment: orderPush parks the
+  // order in its existing retry/reconciliation state and returns false, and the
+  // helper swallows unexpected throws. The payment result below is reported
+  // truthfully either way.
+  if (finished.success) {
+    await pushConfirmedOrderToPos(orderId);
+  }
+
   const orderSummary = {
     id: orderId,
     orderId,
@@ -1643,6 +1678,24 @@ export async function executeRouteSplit(args: {
                 ? claimedAt.toMillis()
                 : 0;
           if (Date.now() - claimedMs < TRANSFER_CLAIM_TTL_MS) return { kind: "busy" };
+        }
+
+        // T3.3 — REFUND-SIDE-EFFECT SERIALIZATION (Phase 3 MONEY): a FRESH
+        // refund claim (refundActiveClaim / legacy refundClaimedAt, < the
+        // shared TTL in reconciliation.ts) means a reverse_all refund may
+        // already be on the wire — claiming a payout behind it would race a
+        // reversal at the provider. Yield (busy): after the refund settles
+        // the order reads refunded and the terminal check refuses it, or a
+        // new attempt re-claims. A STALE refund lease is a dead claim — the
+        // recovery takeover proceeds (never held hostage by a crashed claim).
+        {
+          const refundClaimActive =
+            freshData.refundActiveClaim && typeof freshData.refundActiveClaim === "object"
+              ? freshData.refundActiveClaim.claimedAt
+              : freshData.refundClaimedAt ?? null;
+          if (refundClaimActive != null && isMoneyClaimFresh(refundClaimActive)) {
+            return { kind: "busy" };
+          }
         }
 
         // 2. TERMINAL / CANCELLED REFUND SPLIT GUARD (Finding 2)
@@ -2030,6 +2083,35 @@ async function finishVerifiedPayment(args: {
       };
     }
 
+    // T3.2 — ATOMIC CAPTURED-PAYMENT CLAIM (verify path): mirrored from the
+    // webhook confirm tx. One captured payment may confirm at most ONE
+    // internal order; a claim owned by a DIFFERENT order suppresses this
+    // confirmation before any write, OTP mint, audit or coin debit. No
+    // live-API fetch here — the binding decision stays inside the tx.
+    const t32Claim = await (async () => {
+      return claimCapturedPaymentInTx(tx, db, {
+        razorpayPaymentId,
+        orderId,
+        razorpayOrderId,
+        amountPaise:
+          typeof capturedAmountPaise === "number"
+            ? capturedAmountPaise
+            : Number(fresh?.pricing?.grandTotal) > 0
+            ? Math.round(Number(fresh.pricing.grandTotal) * 100)
+            : null,
+      });
+    })();
+    if (t32Claim.kind === "reused_by_other_order") {
+      return {
+        conflict: true,
+        reusedCapture: true,
+        recordedPaymentId,
+        recordedRazorpayOrderId,
+        reusedByOrderId: t32Claim.recordedOrderId,
+        orderStatus: typeof fresh?.status === "string" ? fresh.status : fresh?.status?.code,
+      };
+    }
+
     const statusCodeRaw =
       typeof fresh?.status === "string" ? fresh.status : fresh?.status?.code;
     const normalized = String(statusCodeRaw || "").toUpperCase();
@@ -2152,6 +2234,8 @@ async function finishVerifiedPayment(args: {
     return {
       conflict: true,
       success: false,
+      reusedCapture: !!txOutcome.reusedCapture,
+      reusedByOrderId: txOutcome.reusedByOrderId ?? null,
       recordedPaymentId: txOutcome.recordedPaymentId,
       recordedRazorpayOrderId: txOutcome.recordedRazorpayOrderId,
       orderStatus: txOutcome.orderStatus,
@@ -2208,6 +2292,42 @@ async function finishVerifiedPayment(args: {
     transfer: transferResult,
     deliveryOtp: txOutcome.generatedOtp,
   };
+}
+
+/**
+ * Post-confirm KOT dispatch for the client verify channel (webhook parity).
+ *
+ * Deliberately never throws. The payment is already captured, so a POS problem
+ * is a kitchen-sync problem, not a payment problem: `pushOrderToPetpooja`
+ * writes the authoritative failure state itself (`pending_retry`, or
+ * `reconciliation_required` for a transport-ambiguous POST) and releases its
+ * claim, and swallowing here keeps that state from being masked by a 500 to
+ * the payer.
+ */
+async function pushConfirmedOrderToPos(orderId: string): Promise<void> {
+  try {
+    // Lazy: the POS barrel is not on the payment path's import cost, and tests
+    // that never confirm never load it.
+    const { pushOrderToPetpooja } = await import("../petpooja");
+    const pushed = await pushOrderToPetpooja(orderId);
+    if (!pushed) {
+      console.warn(
+        `[Payments] KOT push deferred for order ${orderId} — POS sync outstanding, existing retry/reconciliation state owns it`
+      );
+    }
+  } catch (err: any) {
+    console.warn(
+      `[Payments] KOT push failed for order ${orderId}:`,
+      err?.message || err
+    );
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Post-confirm KOT push threw for order ${orderId} — paid order stays confirmed, POS retry/reconciliation owns the sync`,
+      orderId,
+      errorStack: err?.stack,
+    }).catch(() => undefined);
+  }
 }
 
 export interface RefundParams {
@@ -2683,6 +2803,30 @@ export async function autoRefund(
         partials.statusCode = 409;
         partials.code = "REFUND_PARTIALS_EXIST";
         throw partials;
+      }
+    }
+
+    // T3.3 — TRANSFER-SIDE-EFFECT SERIALIZATION (Phase 3 MONEY): a FRESH
+    // Route-transfer claim (`routeTransferStatus:"transferring"` with a live
+    // lease) means the payout POST may already be on the wire — a concurrent
+    // reverse_all refund would race it at the provider. Refuse (409, no
+    // blind retry, no state flip): the operator retries after the transfer
+    // settles — the terminal/fullness checks then handle the outcome. A
+    // STALE transfer lease is a dead claim (recovery domain) and does NOT
+    // block the refund; existing reconciliation covers its unknown outcome.
+    {
+      const transferClaimMs = data?.routeTransferClaimedAt ?? null;
+      if (
+        data?.routeTransferStatus === "transferring" &&
+        transferClaimMs != null &&
+        isMoneyClaimFresh(transferClaimMs)
+      ) {
+        const conflicting: any = new Error(
+          "A Route transfer payout for this order is currently in flight — refund after it settles (do not refund mid-payout)."
+        );
+        conflicting.statusCode = 409;
+        conflicting.code = "ROUTE_TRANSFER_IN_PROGRESS";
+        throw conflicting;
       }
     }
 

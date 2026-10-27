@@ -1,7 +1,14 @@
-import { db, messaging } from "../../core/firebase";
+import { db } from "../../core/firebase";
 import * as admin from "firebase-admin";
 import { truncatePushText, buildParityExtras } from "./templates";
-import { getUnreadCount } from "./fcmClient";
+import { getUnreadCount, sendFcmMessage, sendMulticastFcm } from "./fcmClient";
+import {
+  NotificationPurpose,
+  STAFF_PURPOSE,
+  SYSTEM_PURPOSE,
+  isNotificationPurpose,
+} from "./registry";
+import { SendActor, resolveSend } from "./sendGate";
 
 export interface FCMDispatchParams {
   topic?: string;
@@ -12,6 +19,12 @@ export interface FCMDispatchParams {
   sound?: string;
   recipientUid?: string;
   badge?: number;
+  /**
+   * Required at runtime. The route/trigger supplies it from server state;
+   * a missing/unknown value is quarantined by the gate (zero sends).
+   */
+  purpose?: NotificationPurpose;
+  actor?: SendActor | null;
 }
 
 /**
@@ -52,22 +65,22 @@ export async function markNotificationsRead(
     return 0;
   }
 
-  // Silent badge clear (best-effort, never throws into callers).
+  // Silent badge clear (best-effort, never throws into callers). The system
+  // purpose is ownership-checked, never preference-gated, and badge-0 only.
+  // Transport/timeout policy lives in fcmClient — this file never calls FCM.
   try {
-    if (messaging && typeof messaging.send === "function") {
-      const userDoc = await db.collection("users").doc(recipientUid).get();
-      const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
-      if (fcmTokens.length > 0) {
-        const { sendMulticastFcm } = await import("./fcmClient");
-        await sendMulticastFcm(
-          fcmTokens,
-          {
-            data: { type: "badge_clear", badge: "0" },
-            ...buildParityExtras("", "", { badge: 0 }),
-          },
-          recipientUid
-        );
-      }
+    const userDoc = await db.collection("users").doc(recipientUid).get();
+    const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
+    if (fcmTokens.length > 0) {
+      await sendMulticastFcm(
+        fcmTokens,
+        {
+          data: { type: "badge_clear", badge: "0" },
+          ...buildParityExtras("", "", { badge: 0 }),
+        },
+        recipientUid,
+        { purpose: SYSTEM_PURPOSE }
+      );
     }
   } catch {
     // Non-blocking: inbox is already marked read above.
@@ -76,14 +89,30 @@ export async function markNotificationsRead(
 }
 
 /**
- * Dispatches high-priority push notifications via FCM and writes to in-app notification center.
+ * Dispatches high-priority push notifications via FCM and writes to in-app
+ * notification center.
  *
  * B5-S1: badge = unread count at send (H18 — explicit opts win, else counted
  * from the recipient inbox, else 1), bodies server-truncated, shared
  * apns+webpush parity on every send (H34).
+ *
+ * N-05: every account send resolves through the gate and the customer inbox
+ * row is written BEFORE FCM by the shared multicast primitive (data carries
+ * only purpose/category/recipientUid/ref). Topic/staff sends read zero prefs
+ * and write no inbox row.
  */
 export async function dispatchFCM(params: FCMDispatchParams): Promise<boolean> {
   const { topic, token, title, body, data, sound, recipientUid, badge } = params;
+  const approved = await resolveSend({
+    purpose: params.purpose,
+    topic,
+    token,
+    recipientUid,
+    actor: params.actor,
+    payloadType: data?.type,
+    source: "dispatchFCM",
+  });
+
   const safeBody = truncatePushText(body);
 
   const isBranchAlert = topic && topic.startsWith("branch_");
@@ -92,10 +121,12 @@ export async function dispatchFCM(params: FCMDispatchParams): Promise<boolean> {
   const effectiveSound = sound || (isBranchAlert ? "new_order" : "default");
 
   // Badge = unread count at send: explicit param wins (callers that already
-  // counted), else count the recipient inbox now, else legacy 1.
-  let effectiveBadge = typeof badge === "number" ? badge : 1;
-  if (typeof badge !== "number" && recipientUid) {
-    const counted = await getUnreadCount(recipientUid);
+  // counted), else count the recipient inbox now, else legacy 1. System sends
+  // are badge-0 ONLY (contract §2) — never derive or accept a nonzero badge.
+  const isSystem = approved.kind === "system";
+  let effectiveBadge = isSystem ? 0 : typeof badge === "number" ? badge : 1;
+  if (!isSystem && typeof badge !== "number" && approved.recipientUid) {
+    const counted = await getUnreadCount(approved.recipientUid);
     // +1: this dispatch writes its inbox doc below, so count the doc about
     // to land (capped at 99 like getUnreadCount).
     effectiveBadge = Math.min(counted + 1, 99);
@@ -118,45 +149,46 @@ export async function dispatchFCM(params: FCMDispatchParams): Promise<boolean> {
     ...buildParityExtras(title, safeBody, { badge: effectiveBadge }),
   };
 
-  let messagePayload: admin.messaging.Message | null = null;
+  // Customer account send: the shared primitive persists the inbox row before
+  // FCM, applies canonical device prefs and verifies token ownership.
+  if (approved.kind === "customer") {
+    if (!token || !approved.recipientUid) return false;
+    const result = await sendMulticastFcm([token], basePayload, approved.recipientUid, {
+      purpose: approved.purpose,
+      actor: params.actor,
+    });
+    return result.successCount > 0 || result.inboxPersisted === true;
+  }
+
+  if (approved.kind === "system") {
+    if (!approved.recipientUid) return false;
+    const result = await sendMulticastFcm(
+      token ? [token] : approved.tokens,
+      { ...basePayload, data: { ...(data || {}), type: "badge_clear", badge: "0" } },
+      approved.recipientUid,
+      { purpose: SYSTEM_PURPOSE }
+    );
+    return result.successCount > 0;
+  }
+
+  // Staff operational: topic or single staff token. No inbox, no prefs.
+  // Transport/timeout policy lives in fcmClient (sendFcmMessage): this module
+  // never touches `messaging` directly (contract §2, enforced by
+  // tests/notifications.transport-boundary.test.ts).
   if (topic) {
-    messagePayload = { ...basePayload, topic };
-  } else if (token) {
-    messagePayload = { ...basePayload, token };
+    return sendFcmMessage(
+      { ...basePayload, topic },
+      { purpose: STAFF_PURPOSE, actor: params.actor }
+    );
   }
-
-  // Return value is the actual delivery outcome — callers (dashboard
-  // indicators, retry logic) must not report "sent" on failure.
-  let pushDelivered = false;
-  try {
-    if (messagePayload && typeof messaging.send === "function") {
-      await messaging.send(messagePayload);
-      pushDelivered = true;
-    }
-  } catch (err) {
-    console.warn("[FCM] Failed to send push message (non-blocking for app):", (err as any)?.message || err);
+  if (token) {
+    return sendFcmMessage(
+      { ...basePayload, token },
+      { purpose: STAFF_PURPOSE, actor: params.actor }
+    );
   }
-
-  // Write to recipient's in-app notification collection if provided
-  let inboxWritten = false;
-  if (recipientUid) {
-    const notifId = `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    await db
-      .collection("users")
-      .doc(recipientUid)
-      .collection("notifications")
-      .doc(notifId)
-      .set({
-        id: notifId,
-        title,
-        message: safeBody,
-        type: data?.type || "system",
-        targetId: data?.targetId || null,
-        read: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    inboxWritten = true;
-  }
-
-  return pushDelivered || inboxWritten;
+  return false;
 }
+
+/** Re-exported for sibling senders that only need the type guard. */
+export { isNotificationPurpose };

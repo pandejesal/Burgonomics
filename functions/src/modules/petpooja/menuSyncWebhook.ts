@@ -30,6 +30,14 @@ export interface PetpoojaMenuItem {
   addon_groups?: any[];
   itemallowvariation?: string | number | boolean;
   variation?: unknown[];
+  // TAX METADATA (capture-only, 2026-10-26): the save_order side needs each
+  // item's tax rows + inclusivity, and the reference records that the mapper
+  // dropped all of it (§17.8: "Tax does not reach the product document").
+  // spellings: `item_tax` is a CSV of tax ids ("3928,3929"), resolved through
+  // the top-level `taxes[]; `tax_inclusive` arrives as boolean/string.
+  item_tax?: string | number;
+  tax_inclusive?: string | number | boolean;
+  gst_type?: string;
 }
 
 export type DocIdAnomalyReason =
@@ -72,6 +80,124 @@ export function classifyDocIdAnomaly(id: unknown): DocIdAnomalyReason | null {
 
 export function isValidFirestoreDocId(id: unknown): id is string {
   return typeof id === "string" && classifyDocIdAnomaly(id) === null;
+}
+
+// ---------------------------------------------------------------------------
+// TAX METADATA CAPTURE (2026-10-26)
+//
+// The menu push carries the outlet's tax catalogue (`taxes[]`), each item's
+// tax-group membership (`item_tax: "3928,3929"`) and its inclusivity
+// (`tax_inclusive`). None of it reached a document before — the reference
+// records §17.8 "Tax does not reach the product document", so the order push
+// could not read provenance-backed tax semantics and silently kept sending
+// unrelated default row ids. The capture below is RECORD-ONLY + PROVENANCE:
+// it never rewrites the pricing engine, never flips GST liability, and never
+// invents a rate the feed did not send. Unsupported shapes are counted and
+// surfaced honestly (vendor decision needed) instead of silently flattened.
+// ---------------------------------------------------------------------------
+
+export interface CapturedPetpoojaTaxRow {
+  /** Vendor tax row id, e.g. "3928". */
+  id: string;
+  /** Row title exactly as the feed names it, "" when absent (never invented). */
+  name: string;
+  /** Numeric rate (e.g. 2.5). Only rows with a parseable rate > 0 are captured. */
+  rate: number;
+}
+
+export interface TaxCatalogueCapture {
+  rows: CapturedPetpoojaTaxRow[];
+  /** Rows in the feed that could not be captured (supports the census). */
+  unsupported: number;
+  unsupportedReasons: string[];
+  /** True when the payload carried a `taxes` member at all. */
+  payloadHadTaxes: boolean;
+}
+
+/** Accepts number | "2.5" — everything else is not a rate. */
+function parseTaxRate(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+export function captureTaxCatalogue(rawTaxes: unknown): TaxCatalogueCapture {
+  const capture: TaxCatalogueCapture = {
+    rows: [],
+    unsupported: 0,
+    unsupportedReasons: [],
+    payloadHadTaxes: Array.isArray(rawTaxes) || (typeof rawTaxes === "object" && rawTaxes !== null),
+  };
+  if (!Array.isArray(rawTaxes)) {
+    if (capture.payloadHadTaxes) {
+      capture.unsupportedReasons.push(`taxes member is not an array (${typeof rawTaxes})`);
+      capture.unsupported = 1;
+    }
+    return capture;
+  }
+  for (const row of rawTaxes) {
+    if (!row || typeof row !== "object") {
+      capture.unsupported++;
+      capture.unsupportedReasons.push("tax row is not an object");
+      continue;
+    }
+    const r = row as Record<string, unknown>;
+    const idRaw = r.id ?? r.tax_id ?? r.taxid;
+    const id = idRaw === undefined || idRaw === null ? "" : String(idRaw).trim();
+    if (!id) {
+      capture.unsupported++;
+      capture.unsupportedReasons.push("tax row carries no id");
+      continue;
+    }
+    const rate =
+      parseTaxRate(r.rate) ??
+      parseTaxRate(r.tax_rate) ??
+      parseTaxRate(r.tax_percentage) ??
+      parseTaxRate(r.percentage) ??
+      parseTaxRate(r.percent);
+    if (rate === null || rate <= 0) {
+      capture.unsupported++;
+      capture.unsupportedReasons.push(
+        `tax row ${id} carries no parseable positive rate (fields seen: ${Object.keys(r)
+          .filter((k) => /rate|percent|pct/i.test(k))
+          .join(", ") || "none"})`
+      );
+      continue;
+    }
+    const nameRaw = r.title ?? r.name ?? r.tax_name ?? r.taxname;
+    capture.rows.push({
+      id,
+      name: nameRaw === undefined || nameRaw === null ? "" : String(nameRaw),
+      rate,
+    });
+  }
+  return capture;
+}
+
+/** `item_tax` is a CSV of tax ids; "" / undefined mean "nothing captured". */
+export function parseItemTaxCsv(raw: unknown): string[] {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return [];
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * `tax_inclusive` decodes STRICTLY: true ← true/"1"/1; false ← false/"0"/0;
+ * any OTHER shape returns null (recorded as-is — never coerced, never guessed).
+ */
+export function parseTaxInclusiveFlag(raw: unknown): boolean | null {
+  if (raw === true) return true;
+  if (raw === false) return false;
+  if (raw === 1 || raw === "1") return true;
+  if (raw === 0 || raw === "0") return false;
+  return null;
 }
 
 /**
@@ -359,6 +485,16 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   const items = (menuData.items || []) as PetpoojaMenuItem[];
   const categories = menuData.categories || [];
 
+  // TAX CATALOGUE (record-only + provenance). Written onto the branch so the
+  // order push reads outlet-proven ids instead of assuming unrelated defaults;
+  // unsupported rows are counted honestly and NEVER silently dropped.
+  const taxCatalogue = captureTaxCatalogue(menuData.taxes);
+  let itemsTaxInclusiveTrueCount = 0;
+  let itemsTaxInclusiveUnknownCount = 0;
+  let itemTaxIdsUnresolvableCount = 0;
+  const seenTaxGroupIds = new Set<string>();
+  let mixedTaxGroupCatalogue = false;
+
   // Resolve the item -> category NAME join ONCE, before the loop: the real push
   // carries the id on each item and the name only in the top-level catalog.
   const categoryNames = buildCategoryNameMap(menuData.categories);
@@ -442,6 +578,28 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     const inStock = item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
     if (inStock) inStockTrueCount++;
 
+    // PER-ITEM TAX METADATA (record-only; typed per the capture contract).
+    const itemTaxIds = parseItemTaxCsv((item as any).item_tax);
+    const taxInclusive = parseTaxInclusiveFlag((item as any).tax_inclusive);
+    if (taxInclusive === true) itemsTaxInclusiveTrueCount++;
+    if (taxInclusive === null) itemsTaxInclusiveUnknownCount++;
+    for (const taxId of itemTaxIds) {
+      seenTaxGroupIds.add(taxId);
+      if (!taxCatalogue.rows.some((row) => row.id === taxId)) {
+        itemTaxIdsUnresolvableCount++;
+      }
+    }
+    // The pull-model order push applies ONE uniform GST group (the branch
+    // catalogue):
+    //  tax-INCLUSIVE items or items whose tax rows are not verifiable from
+    //  this catalogue cannot be represented — flagged truthfully for the next
+    //  vendor decision, never silently mapped onto an unrelated default.
+    const itemTaxUnsupported =
+      taxInclusive === true ||
+      (taxCatalogue.rows.length > 0 && itemTaxIds.length > 0 && itemTaxIds.some(
+        (taxId) => !taxCatalogue.rows.some((row) => row.id === taxId)
+      ));
+
     // Record-only: keep the existing price mapping and stock whitelist intact.
     if (!(Number(item.price) > 0)) {
       unpricedSkuCount++;
@@ -500,6 +658,16 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       inStock,
       isVeg,
       branchId,
+      // Tax metadata, captured verbatim (2026-10-26): ids/name/rate from the
+      // feed; `taxInclusive: null` = undecodable shape (recorded, never
+      // coerced); unsupported = unrepresentable in the uniform GST model.
+      petpoojaItemTaxIds: itemTaxIds,
+      petpoojaTaxInclusive: taxInclusive,
+      petpoojaGstType:
+        typeof (item as any).gst_type === "string" && (item as any).gst_type.trim() !== ""
+          ? (item as any).gst_type
+          : null,
+      petpoojaTaxUnsupported: itemTaxUnsupported,
       // Delivery filters products by this restId (stores/{id}.petpoojaRestId
       // must equal the branch's restId once outlets are linked — Runbook §5).
       restId,
@@ -697,6 +865,26 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     }
   }
 
+  // Honest handling of tax shapes the uniform payload CANNOT represent:
+  // recorded loudly (catalogue decision needed from the vendor), never
+  // silently flattened into an unrelated default.
+  if (itemsTaxInclusiveTrueCount > 0 || itemTaxIdsUnresolvableCount > 0) {
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: `Menu sync for branch ${branchId} captured tax metadata it cannot order-push representably: ${itemsTaxInclusiveTrueCount} tax-inclusive item(s), ${itemTaxIdsUnresolvableCount} item-tax row(s) not named by the captured catalogue. Recorded on the product docs (petpoojaTaxInclusive/petpoojaItemTaxIds/petpoojaTaxUnsupported); order push keeps the branch-level rows until the vendor decides the mixed model. Vendor decision needed.`,
+      branchId,
+    });
+  }
+  if (taxCatalogue.payloadHadTaxes && taxCatalogue.rows.length === 0) {
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: `Menu sync for branch ${branchId} received a taxes[] catalogue whose rows capture nothing — NOT writing petpoojaTaxes (a guessed id would push tax rows that name no outlet row). Reasons: ${taxCatalogue.unsupportedReasons.slice(0, 3).join("; ") || "all rows unsupported"}. Vendor decision needed.`,
+      branchId,
+    });
+  }
+
   await db.collection("branches").doc(branchId).set(
     {
       lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
@@ -706,6 +894,17 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       petpoojaItemCount: tombstoneRefused
         ? Math.max(previousItemCount, observedItemCount, validItemsCount)
         : validItemsCount,
+      // PROVENANCE-BACKED tax catalogue: only outlet-pushed rows ever land
+      // here (orderPush reads these ids first); absent rows change nothing, so
+      // a broken capture can never plant a guess.
+      ...(taxCatalogue.rows.length > 0
+        ? {
+            petpoojaTaxes: taxCatalogue.rows,
+            petpoojaTaxesSource: "menu_push",
+            petpoojaTaxesUnsupportedRowCount: taxCatalogue.unsupported || 0,
+            petpoojaTaxesUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }
+        : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
@@ -759,6 +958,15 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       unpricedInStockVariationMissingCount,
       malformedItemCount,
       anomalyCensus,
+      // ADDITIVE tax-metadata census (2026-10-26): the captured rows + every
+      // straight count the branch decision depends on. Record-only.
+      taxCatalogCaptured: taxCatalogue.rows.length,
+      taxCatalogUnsupported: taxCatalogue.unsupported,
+      taxCatalogUnsupportedReasons: taxCatalogue.unsupportedReasons.slice(0, 5),
+      petpoojaTaxesWritten: taxCatalogue.rows.length > 0,
+      itemsTaxInclusiveTrueCount,
+      itemsTaxInclusiveUnknownCount,
+      itemTaxIdsUnresolvableCount,
       error: unexplainedVendorMessage,
       simulated: config.mock.petpoojaPos,
       source: "menuSyncWebhook",
