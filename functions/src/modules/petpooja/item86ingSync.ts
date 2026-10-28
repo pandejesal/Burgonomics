@@ -35,9 +35,31 @@ export function normalizePetpoojaStatus(rawStatus: any): string {
 }
 
 /**
- * Instant stock-out (86ing) webhook handler from Petpooja physical POS.
+ * True ONLY when the verified webhook context proves the caller presented a
+ * credential `verifyPetpoojaAuth` accepted (static app-key token or an
+ * HMAC-SHA256 signature over the raw body).
+ *
+ * Default-deny: an omitted context (`{}` by default), `null`, a non-object, a
+ * non-boolean `authenticated`, or an explicit `false` is UNTRUSTED. A caller
+ * cannot opt in with a truthy string/number — only the boolean `true` the
+ * middleware itself sets authorises canonical writes.
  */
-export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
+export function isTrustedPetpoojaAuth(auth: unknown): boolean {
+  if (!auth || typeof auth !== "object" || Array.isArray(auth)) return false;
+  return (auth as { authenticated?: unknown }).authenticated === true;
+}
+
+/**
+ * Instant stock-out (86ing) webhook handler from Petpooja physical POS.
+ *
+ * Default-deny: `auth` is the verified context from `verifyPetpoojaAuth`.
+ * Without an explicit `authenticated: true` the toggle is recorded as a hint
+ * row for review and NO product stock is written.
+ */
+export async function handlePetpoojaStockWebhook(
+  payload: any,
+  auth: unknown = {}
+): Promise<void> {
   // Field-name tolerance: the published callback samples and our own route
   // contract disagree on `rest_id`/`restID` and `in_stock`/`inStock`. Read
   // both so a rename on Petpooja's side can never silently drop an 86ing
@@ -46,6 +68,45 @@ export async function handlePetpoojaStockWebhook(payload: any): Promise<void> {
   const rest_id = p.rest_id ?? p.restID ?? p.restId;
   const item_id = p.item_id ?? p.itemID ?? p.itemId;
   const in_stock = p.in_stock ?? p.inStock;
+
+  if (!isTrustedPetpoojaAuth(auth)) {
+    // Hint row only. An unverified caller must not 86 (or un-86) a live item:
+    // a wrong "available" sells food the kitchen cannot make, and a wrong
+    // "86" hides sellable inventory. `isSafeDocId` is enforced because the id
+    // comes straight from the payload; an unsafe id gets a fixed marker.
+    const hintItemId =
+      item_id !== null && item_id !== undefined && isSafeDocId(String(item_id))
+        ? String(item_id)
+        : null;
+    try {
+      await db
+        .collection("petpooja_stock_hints")
+        .doc(`sh_${hintItemId ?? "unidentified"}`)
+        .set(
+          {
+            restId: rest_id !== null && rest_id !== undefined ? String(rest_id) : null,
+            itemId: hintItemId,
+            rawInStock: in_stock ?? null,
+            trusted: false,
+            reason: "unauthenticated Petpooja 86ing webhook — stock not applied",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+    } catch (err: any) {
+      console.warn(
+        "[Petpooja 86ing] failed to record unauthenticated hint:",
+        err?.message || err
+      );
+    }
+    console.warn(
+      `[Petpooja 86ing] REFUSED unauthenticated stock toggle item=${
+        hintItemId ?? "unknown"
+      } rest=${rest_id ?? "unknown"} — hint recorded, stock unchanged`
+    );
+    return;
+  }
+
   if (!item_id) {
     // Loop 6: a malformed 86ing payload (no item_id) used to log-and-drop —
     // silent stock-toggle loss. Snapshot loud so ops sees it; return (no
@@ -323,22 +384,32 @@ async function resolveOrderByPosOrderId(posOrderId: string, branchId: string | n
   }
 }
 
+/**
+ * The verified auth context callers SHOULD pass. The handlers accept `unknown`
+ * at the parameter boundary so a malformed value cannot bypass the runtime
+ * default-deny check (a compile-time-only contract would not protect a
+ * JavaScript caller or an untyped route).
+ */
 export interface PetpoojaWebhookAuth {
   /**
-   * False when `verifyPetpoojaAuth` admitted the call by callback SHAPE rather
-   * than by credential. An untrusted call may still apply a bounded status
-   * change, but must not write sync state (the POS id / "synced") that the retry
-   * worker and the outbound dedupe key off — a forged one would silently drop a
-   * genuinely un-pushed order from the retry queue.
+   * True ONLY when `verifyPetpoojaAuth` proved the caller's credential (static
+   * app-key token or a valid HMAC signature over the raw body) or otherwise
+   * admitted a verified call. Every other value — omitted, `{}`, `null`, a
+   * non-boolean, or an explicit false (the middleware's credential-less
+   * SHAPE admission) — is UNTRUSTED and may not write canonical state.
    */
   authenticated?: boolean;
 }
 
 export async function handlePetpoojaWebhook(
   payload: any,
-  auth: PetpoojaWebhookAuth = {}
+  auth: unknown = {}
 ): Promise<void> {
-  const untrusted = auth.authenticated === false;
+  // Default-deny. This used to read `auth.authenticated === false`, so an
+  // omitted/empty/malformed auth context fell through to the trusted path and
+  // could rewrite canonical order status, POS acceptance, refunds and payment
+  // facts. Only the boolean `true` set after verification is trusted.
+  const trusted = isTrustedPetpoojaAuth(auth);
   // Our own order references. `order_id` / `clientOrderID` are the legacy
   // client fields. The documented order-status callback instead carries
   // `orderID` = "Unique client order id which is used to update order status at
@@ -384,6 +455,9 @@ export async function handlePetpoojaWebhook(
             restId,
             branchId: branchId ?? null,
             rawStatus: rawStatus ?? null,
+            // A hint row is allowed for an unverified caller (it changes no
+            // canonical state), but triage must be able to tell them apart.
+            trusted,
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
@@ -508,6 +582,7 @@ export async function handlePetpoojaWebhook(
             rawStatus: payload.status || payload.order_status || null,
             restId: restIdRaw || null,
             status: "needs_review",
+            trusted,
             reason: parkReason,
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -534,46 +609,45 @@ export async function handlePetpoojaWebhook(
     orderDoc.id || orderDoc.ref?.id || String(orderId ?? posOrderId);
   orderId = resolvedOrderId;
 
-  // An unauthenticated caller (a callback admitted by SHAPE) must not steer
-  // another outlet's order. The POS-id path already scopes by branch; this
-  // covers the doc-id path, where the caller supplied our internal order id
-  // directly: require a restID that resolves to a linked branch AND an order
-  // that belongs to it.
-  if (untrusted) {
-    const claimedBranch = restIdRaw ? await resolveBranchIdForRestId(restIdRaw) : null;
-    const orderBranch = String(((orderDoc.data() || {}) as Record<string, any>).branchId ?? "");
-    if (!claimedBranch || !orderBranch || orderBranch !== claimedBranch) {
-      console.warn(
-        `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} refused: restID ${restIdRaw || "absent"} resolves to ${
-          claimedBranch || "UNLINKED"
-        }, order belongs to ${orderBranch || "none"}`
-      );
-      try {
-        await db
-          .collection("unmatched_petpooja_orders")
-          .doc(`upo_${resolvedOrderId}`)
-          .set(
-            {
-              orderId: resolvedOrderId,
-              // Same rule as the primary park: a client ref is never labelled a
-              // POS id in the review queue.
-              posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
-              callbackOrderId: callbackOrderId || null,
-              rawStatus: payload.status || payload.order_status || null,
-              restId: restIdRaw || null,
-              status: "needs_review",
-              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-      } catch (err) {
-        console.warn(
-          `[Petpooja Webhook] Failed to park refused untrusted order ${resolvedOrderId}:`,
-          (err as any)?.message || err
+  // ---- Default-deny gate ----
+  // Only a VERIFIED auth context may reach canonical writes. Everything else
+  // (omitted auth, `{}`, a malformed value, or an explicit false from the
+  // middleware's credential-less SHAPE admission) is a HINT: the event is
+  // parked for human review and returns here — before status, POS acceptance,
+  // refunds, payment facts or any other canonical field can be touched. The
+  // store-status recording above is unchanged because it changes no canonical
+  // state.
+  if (!trusted) {
+    console.warn(
+      `[Petpooja Webhook] UNTRUSTED callback for order ${resolvedOrderId} — hint recorded, canonical state unchanged`
+    );
+    try {
+      await db
+        .collection("unmatched_petpooja_orders")
+        .doc(`upo_${resolvedOrderId}`)
+        .set(
+          {
+            orderId: resolvedOrderId,
+            // Same rule as the primary park: a client ref is never labelled a
+            // POS id in the review queue.
+            posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+            callbackOrderId: callbackOrderId || null,
+            rawStatus: payload.status || payload.order_status || null,
+            restId: restIdRaw || null,
+            status: "needs_review",
+            trusted: false,
+            reason: "unauthenticated Petpooja callback — canonical state not applied",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
         );
-      }
-      return;
+    } catch (err) {
+      console.warn(
+        `[Petpooja Webhook] Failed to park untrusted order ${resolvedOrderId}:`,
+        (err as any)?.message || err
+      );
     }
+    return;
   }
 
   const rawStatus = payload.status || payload.order_status;
@@ -645,11 +719,12 @@ export async function handlePetpoojaWebhook(
   // of `pending_retry` — otherwise the retry worker would keep re-pushing an
   // order the POS has demonstrably already accepted.
   //
-  // Gated on a CREDENTIALED callback and on an accepting status:
-  // - untrusted (shape-admitted) callers must not write `petpoojaOrderId` /
-  //   `synced`, because the retry worker and the outbound dedupe both key off
-  //   those — a forged value would silently drop a genuinely un-pushed order
-  //   from the retry queue. What they claim is recorded under a separate field.
+  // Only a VERIFIED caller reaches this block (untrusted events return at the
+  // default-deny gate above), and only an accepting status may write sync
+  // state:
+  // - `petpoojaOrderId` / `synced` are what the retry worker and the outbound
+  //   dedupe key off; a forged value would silently drop a genuinely un-pushed
+  //   order from the retry queue, so only a verified context may set them.
   // - a `Reject`/unknown status must not be promoted to a plain `synced` state
   //   with no signal that the KOT was refused.
   //
@@ -668,7 +743,6 @@ export async function handlePetpoojaWebhook(
         ? explicitPosOrderId
         : "";
   if (
-    !untrusted &&
     posDerivedId &&
     orderData.petpoojaOrderId !== posDerivedId &&
     accepting
@@ -677,7 +751,6 @@ export async function handlePetpoojaWebhook(
     updateData.petpoojaStatus = "synced";
     updateData.petpoojaSyncStatus = "synced";
   } else if (
-    !untrusted &&
     accepting &&
     !orderData.petpoojaOrderId &&
     (resolvedBy === "client-callback" ||
@@ -704,15 +777,6 @@ export async function handlePetpoojaWebhook(
       }
     } else if (callbackOrderId) {
       updateData.petpoojaCallbackOrderId = callbackOrderId;
-    }
-  } else if (untrusted) {
-    const claimedId =
-      posDerivedId ||
-      (callbackOrderId && resolvedBy !== "client-callback" ? callbackOrderId : "");
-    if (claimedId && orderData.petpoojaOrderId !== claimedId) {
-      updateData.petpoojaCallbackOrderId = claimedId;
-    } else if (resolvedBy === "client-callback" && callbackOrderId) {
-      updateData.petpoojaCallbackClientRef = callbackOrderId;
     }
   }
   if (eventId) {

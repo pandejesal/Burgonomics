@@ -532,7 +532,11 @@ app.post(
 app.post("/petpooja/stockWebhook", verifyPetpoojaAuth, async (req, res) => {
   const p = req.body || {};
   try {
-    await handlePetpoojaStockWebhook(p);
+    // Default-deny: only the boolean `true` set after credential/signature
+    // verification may 86 an item. An absent flag must never read as trusted.
+    await handlePetpoojaStockWebhook(p, {
+      authenticated: (req as any).petpoojaAuthenticated === true,
+    });
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/stockWebhook",
       outcome: "ok",
@@ -605,12 +609,13 @@ app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
 app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
   const p = req.body || {};
   try {
-    // `petpoojaAuthenticated` is false only when the middleware admitted the call
-    // by callback SHAPE (the vendor sends no credential header). The handler uses
-    // it to keep sync state — the POS id and "synced" — out of reach of an
-    // unauthenticated caller.
+    // `petpoojaAuthenticated` is set by verifyPetpoojaAuth: true only after a
+    // verified credential (app-key token or raw-body HMAC signature), false for
+    // the credential-less callback admitted by SHAPE. The handler is
+    // default-deny, so pass a strict boolean — an absent flag must never read
+    // as trusted.
     await handlePetpoojaWebhook(p, {
-      authenticated: (req as any).petpoojaAuthenticated !== false,
+      authenticated: (req as any).petpoojaAuthenticated === true,
     });
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/webhook",

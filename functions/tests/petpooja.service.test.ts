@@ -422,11 +422,14 @@ describe("Petpooja POS Bridge Service", () => {
 
   describe("86ing & Menu Webhook Handlers", () => {
     it("handles incoming 86ing out-of-stock webhook from Petpooja POS", async () => {
-      await handlePetpoojaStockWebhook({
-        rest_id: "branch_surat_01",
-        item_id: "pp_b1",
-        in_stock: 0,
-      });
+      await handlePetpoojaStockWebhook(
+        {
+          rest_id: "branch_surat_01",
+          item_id: "pp_b1",
+          in_stock: 0,
+        },
+        { authenticated: true }
+      );
 
       // rest_id is unlinked in this fixture, so stock is staged on an
       // attributed orphan doc — never silently merged into another branch.
@@ -464,11 +467,14 @@ describe("Petpooja POS Bridge Service", () => {
 
       for (const [in_stock, expected] of cases) {
         for (const key of Object.keys(savedDocs)) delete savedDocs[key];
-        await handlePetpoojaStockWebhook({
-          rest_id: "branch_surat_01",
-          item_id: "pp_b1",
-          in_stock,
-        } as any);
+        await handlePetpoojaStockWebhook(
+          {
+            rest_id: "branch_surat_01",
+            item_id: "pp_b1",
+            in_stock,
+          } as any,
+          { authenticated: true }
+        );
         expect(
           savedDocs["products/prod_unlinked_pp_b1"]?.inStock,
           `in_stock=${String(in_stock)} must resolve to inStock=${expected}`
@@ -625,10 +631,13 @@ describe("Petpooja POS Bridge Service", () => {
     });
 
     it("processes webhook food ready status update", async () => {
-      await handlePetpoojaWebhook({
-        order_id: "order_test_999",
-        status: "FOOD_READY",
-      });
+      await handlePetpoojaWebhook(
+        {
+          order_id: "order_test_999",
+          status: "FOOD_READY",
+        },
+        { authenticated: true }
+      );
       expect(savedDocs["orders/order_test_999"]?.status).toMatchObject({
         code: "READY_FOR_PICKUP",
         kind: "in_progress",
@@ -638,10 +647,13 @@ describe("Petpooja POS Bridge Service", () => {
     });
 
     it("processes webhook numeric 5 (food ready) status update", async () => {
-      await handlePetpoojaWebhook({
-        order_id: "order_test_999",
-        status: 5,
-      });
+      await handlePetpoojaWebhook(
+        {
+          order_id: "order_test_999",
+          status: 5,
+        },
+        { authenticated: true }
+      );
 
       expect(savedDocs["orders/order_test_999"]?.status).toMatchObject({
         code: "READY_FOR_PICKUP",

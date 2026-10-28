@@ -290,10 +290,15 @@ describe("End-to-End Platform Integration Flow", () => {
     expect(savedDocs[`orders/${orderId}`].kotPrinted).toBe(true);
 
     // 5. Petpooja Webhook: Kitchen status transitions to FOOD_READY (Code 5)
-    await handlePetpoojaWebhook({
-      order_id: orderId,
-      status: 5,
-    });
+    // Explicit verified context: the handler is default-deny and only writes
+    // canonical state for a credential/signature-verified callback.
+    await handlePetpoojaWebhook(
+      {
+        order_id: orderId,
+        status: 5,
+      },
+      { authenticated: true }
+    );
     expect(savedDocs[`orders/${orderId}`].status).toMatchObject({
       code: "READY_FOR_PICKUP",
       kind: "in_progress",

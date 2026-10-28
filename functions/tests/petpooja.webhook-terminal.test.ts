@@ -89,7 +89,20 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { handlePetpoojaWebhook } from "../src/modules/petpooja/item86ingSync";
+import {
+  handlePetpoojaWebhook as handlePetpoojaWebhookVerified,
+} from "../src/modules/petpooja/item86ingSync";
+
+// Default-deny (2026-10-28): the production handler writes canonical order
+// state ONLY for an explicit verified auth context (`authenticated: true`).
+// The regressions below target terminal/replay/resolution behaviour, so they
+// opt into that trusted path here. The default-deny matrix (omitted, empty and
+// malformed auth) has its own suite:
+// tests/petpooja.webhook-auth-default-deny.test.ts.
+const handlePetpoojaWebhook = (
+  payload: any,
+  auth?: { authenticated?: boolean }
+) => handlePetpoojaWebhookVerified(payload, auth ?? { authenticated: true });
 
 const seedDelivered = (id: string, extra: Record<string, any> = {}) => {
   savedDocs[`orders/${id}`] = {
@@ -380,7 +393,7 @@ describe("handlePetpoojaWebhook — POS-assigned order id (only when proven)", (
     expect(savedDocs["unmatched_petpooja_orders/upo_PP-9004"]).toBeDefined();
   });
 
-  it("does not let an untrusted callback write the POS id or suppress retries", async () => {
+  it("does not let an untrusted callback write ANY canonical order state", async () => {
     savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
     savedDocs["orders/ord_untrusted"] = {
       id: "ord_untrusted",
@@ -394,15 +407,19 @@ describe("handlePetpoojaWebhook — POS-assigned order id (only when proven)", (
       { authenticated: false }
     );
     const doc = savedDocs["orders/ord_untrusted"];
-    // A bounded status change is still applied...
-    expect(doc.status).toMatchObject({ code: "CONFIRMED" });
-    // ...but sync state is off limits: the retry worker and the outbound dedupe
-    // both key off these, so a forged value would drop a real order from retry.
+    // Default-deny: an unverified caller cannot change canonical status...
+    expect(doc.status).toMatchObject({ code: "PENDING" });
+    expect(doc.petpoojaKitchenStatus).toBeUndefined();
+    // ...nor sync state (the retry worker and outbound dedupe key off these)...
     expect(doc.petpoojaOrderId).toBeUndefined();
     expect(doc.petpoojaStatus).toBe("pending_retry");
     expect(doc.petpoojaSyncStatus).toBe("pending_retry");
-    // What the caller claimed is recorded separately, for visibility only.
-    expect(doc.petpoojaCallbackOrderId).toBe("PP-9005");
+    // ...and its claim is only recorded in the review queue.
+    expect(doc.petpoojaCallbackOrderId).toBeUndefined();
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_untrusted"]).toMatchObject({
+      status: "needs_review",
+      trusted: false,
+    });
   });
 
   it("refuses an untrusted callback whose restID is not the order's branch", async () => {
@@ -523,22 +540,28 @@ describe("handlePetpoojaWebhook — documented client-ref callback (orderID only
     });
   });
 
-  it("lets an untrusted client-ref callback change status but never promote sync state", async () => {
+  it("refuses an untrusted client-ref callback: no status change, no sync promotion", async () => {
     seedLinkedOrder("ord_cb5");
     await handlePetpoojaWebhook(
       { restID: "31z58ciw0h", orderID: "ord_cb5", status: "5" },
       { authenticated: false }
     );
     const doc = savedDocs["orders/ord_cb5"];
-    // Bounded status change is preserved ...
-    expect(doc.status).toMatchObject({ code: "READY_FOR_PICKUP" });
-    // ... but the retry/dedupe state stays untouched, and the claim is only
-    // recorded under the visibility field.
+    // Default-deny: no canonical status change ...
+    expect(doc.status).toMatchObject({ code: "PENDING" });
+    expect(doc.petpoojaKitchenStatus).toBeUndefined();
+    // ... no retry/dedupe state, no acceptance claim on the order doc.
     expect(doc.petpoojaOrderId).toBeUndefined();
     expect(doc.petpoojaAcceptedNoId).toBeUndefined();
     expect(doc.petpoojaStatus).toBe("pending_retry");
     expect(doc.petpoojaSyncStatus).toBe("pending_retry");
-    expect(doc.petpoojaCallbackClientRef).toBe("ord_cb5");
+    expect(doc.petpoojaCallbackClientRef).toBeUndefined();
+    // The event is recorded as a hint row for review instead.
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_cb5"]).toMatchObject({
+      status: "needs_review",
+      trusted: false,
+      callbackOrderId: "ord_cb5",
+    });
   });
 
   it("keeps the genuine POS-id fallback working when the callback carries a proven POS id", async () => {
