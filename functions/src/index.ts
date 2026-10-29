@@ -49,6 +49,7 @@ import {
   syncAllBranchesPetpoojaMenu,
   retryPendingPetpoojaOrdersWorker,
 } from "./modules/petpooja/petpooja.scheduler";
+import { posPendingAlertsWorker } from "./modules/petpooja/posPendingAlerts";
 import {
   getDeliveryQuote,
   bookPorterRider,
@@ -1536,6 +1537,28 @@ export const retryPetpoojaOrders = onSchedule(
       return;
     }
     console.log(`[Retry Worker] Retried ${result!.retriedCount} KOT orders`);
+  }
+);
+
+export const alertPendingPetpoojaOrders = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/1 * * * *", // Every minute: 2-min alert / 5-min escalation
+    timeZone: "Asia/Kolkata",
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "alert-pending-petpooja-orders",
+      50 * 1000,
+      () => posPendingAlertsWorker()
+    );
+    if (!ran) {
+      console.log("[POS Pending Alerts] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[POS Pending Alerts] 2m=${result!.alerts2m} 5m=${result!.escalations5m}`
+    );
   }
 );
 

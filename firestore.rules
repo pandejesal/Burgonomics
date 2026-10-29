@@ -102,6 +102,20 @@ service cloud.firestore {
       ];
     }
 
+    // Orders UPDATE: financial, identity, dispatch and OTP-proof fields are
+    // server-owned for BOTH brand and branch staff. The previous brand-owner
+    // arm was unmasked, and branch staff could plant refundLedger /
+    // refundedTotalPaise accounting that a later refund claim trusted.
+    function orderServerOwnedKeys() {
+      return [
+        'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
+        'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount',
+        'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
+        'routeTransferStatus',
+        'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil'
+      ];
+    }
+
     // Orders CREATE (both lanes): the canonical initial status meta only.
     // Core ordersService.createOrder writes resolveStatus('PLACED') =
     // {code:'PLACED',label,kind:'upcoming',terminal:false}; partner
@@ -174,7 +188,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isUser(userId) || isAdmin();
       allow create: if isUser(userId)
-        && !request.resource.data.keys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints'])
+        && !request.resource.data.keys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints', 'branchIds', 'cityIds', 'active', 'isDeleted', 'deletedAt'])
         // First token link is server-stamped by POST /notifications/registerToken.
         && !request.resource.data.keys().hasAny(['fcmTokens']);
       // Brand/operator authority is bounded by the SAME fan-out invariant:
@@ -183,7 +197,7 @@ service cloud.firestore {
       // registerToken gate refuses. Role/tenant fields stay brand-writable.
       allow update: if (isBrandOwner() && fcmTokensRemovalOnly()) || (
         isUser(userId)
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints', 'branchIds', 'cityIds', 'active', 'isDeleted', 'deletedAt'])
         && fcmTokensRemovalOnly()
       );
       allow delete: if false;
@@ -269,19 +283,16 @@ service cloud.firestore {
         )
       );
 
-      allow update: if isBrandOwner() || (
+      allow update: if (
+        isBrandOwner() &&
+        !directDeliveredBypass() &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
+      ) || (
         isBranchOwner() &&
         ownsBranch(resource.data.branchId) &&
         // Loop 12: delivery handover needs OTP proof — never direct.
         !directDeliveredBypass() &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
-          'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus',
-          // Loop 7: delivery-OTP proof fields are server-owned (verifyDeliveryOtp
-          // path only) — staff must not clear lockouts/attempts or rewrite the
-          // hash to bypass handover proof via direct client update.
-          'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil'
-        ])
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
       ) || (
         // Customers may cancel their own pre-terminal orders only — canonical
         // cancelled literal-shape plus timestamps, nothing else. Terminal

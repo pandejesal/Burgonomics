@@ -86,6 +86,13 @@ function dispatchInProgressError(): Error {
   return retry;
 }
 
+function orderMissingError(orderId: string): Error {
+  const err: any = new Error(`Order ${orderId} not found`);
+  err.statusCode = 404;
+  err.code = "ORDER_NOT_FOUND";
+  return err;
+}
+
 function terminalError(deliveryStatus: string): Error {
   const err: any = new Error(
     `This order is already ${deliveryStatus} — dispatch is locked. Use the order timeline for post-delivery actions.`
@@ -104,6 +111,45 @@ function isActiveDispatch(d: any): boolean {
   const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(d?.deliveryStatus);
   const hasProviderOrder = !!(d?.dispatchOrderId || d?.porterOrderId);
   return active && hasProviderOrder;
+}
+
+/**
+ * Persisted marker of a branch-terminal (in-house) rider assignment. Mirrors
+ * `porter.service.manualBranchDispatch` — kept as a local constant because
+ * importing the porter service here would invert the adapter dependency.
+ */
+const IN_HOUSE_DISPATCH_TYPE = "manual_branch_terminal";
+
+/**
+ * True while an in-house rider owns the order. No provider claim may be taken
+ * on such an order: a paid carrier on top of a live manual assignment is two
+ * riders for one delivery.
+ */
+function isInHouseAssignmentActive(d: any): boolean {
+  return (
+    d?.dispatchType === IN_HOUSE_DISPATCH_TYPE &&
+    (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(d?.deliveryStatus || "")
+  );
+}
+
+function terminalDeliveryStatus(d: any): string | null {
+  const ds = d?.deliveryStatus;
+  if (ds === "delivered" || ds === "cancelled") return ds;
+  // Canonical status object can be terminal before deliveryStatus catches up.
+  // `kind === "completed"` is included because a finished order sometimes
+  // leaves the sidecar at "confirmed"/"ready" while the canonical object is
+  // already closed — claiming or pasting on top of it would resurrect it.
+  if (d?.status?.terminal === true || d?.status?.kind === "completed") return "completed";
+  return null;
+}
+
+function inHouseAssignmentError(): Error {
+  const err: any = new Error(
+    "This order is already assigned to an in-house rider — cancel that assignment before booking a carrier."
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_EXISTS";
+  return err;
 }
 
 /** Bounded audit history of torn-down bookings (newest last). */
@@ -230,18 +276,31 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
     const outcome: any = await (db as any).runTransaction(async (tx: any) => {
       const fresh = await tx.get(orderDoc.ref);
       const d = (fresh.exists ? fresh.data() : undefined) as any;
-      if (!d) return { claimed: true };
+      // Deleted between the caller's pre-read and the claim: 404 before any
+      // provider side effect (a booking against a gone doc is unreconcilable).
+      if (!d) return { missing: true as const };
+      // Re-checked INSIDE the claim: the caller's pre-read can be stale, and a
+      // terminal flip or an in-house assignment landing in between must win.
+      const terminal = terminalDeliveryStatus(d);
+      if (terminal) return { terminal };
+      if (isInHouseAssignmentActive(d)) return { inHouse: true as const };
       if (isActiveDispatch(d)) return { reuse: true, data: d };
       if (busyCheck(d)) return { busy: true };
       tx.set(orderDoc.ref, claimWrite, { merge: true });
       return { claimed: true };
     });
+    if (outcome?.missing) throw orderMissingError(orderDoc.id);
+    if (outcome?.terminal) throw terminalError(outcome.terminal);
+    if (outcome?.inHouse) throw inHouseAssignmentError();
     if (outcome?.reuse) return storedDispatchSummary(outcome.data);
     if (outcome?.busy) throw dispatchInProgressError();
     return null;
   }
 
   // Fallback for Firestore shims without transactions (tests): same rules.
+  const terminal = terminalDeliveryStatus(order);
+  if (terminal) throw terminalError(terminal);
+  if (isInHouseAssignmentActive(order)) throw inHouseAssignmentError();
   if (isActiveDispatch(order)) return storedDispatchSummary(order);
   if (busyCheck(order)) throw dispatchInProgressError();
   await orderDoc.ref.set(claimWrite, { merge: true });
@@ -419,8 +478,11 @@ function assertOrderDispatchable(order: any): void {
 }
 
 function assertDispatchNotLocked(order: any): void {
-  const ds = order?.deliveryStatus;
-  if (ds === "delivered" || ds === "cancelled") throw terminalError(ds);
+  // Canonical proof, not just the deliveryStatus sidecar: `status.terminal` /
+  // `status.kind === "completed"` locks dispatch even when deliveryStatus
+  // still reads confirmed/ready. Shared by the paste lane and the book path.
+  const terminal = terminalDeliveryStatus(order);
+  if (terminal) throw terminalError(terminal);
 }
 
 /**
@@ -725,6 +787,33 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
           at: Date.now(),
         });
         continue;
+      }
+      // Ambiguous booking (e.g. timeout/abort during create-order): the remote
+      // courier may already have been booked. Do NOT mark needsRebook: true
+      // or trigger auto-rebook (that would dispatch a second courier).
+      // Park under needs_reconciliation until staff or webhook confirms status.
+      if (err?.code === "PROVIDER_BOOK_AMBIGUOUS") {
+        attempts.push({
+          provider: quote.provider,
+          outcome: "error",
+          error: err.message,
+          at: Date.now(),
+        });
+        await orderDoc.ref.set(
+          {
+            dispatchStatus: "needs_reconciliation",
+            dispatchClaimedAt: null,
+            dispatchError: err.message,
+            dispatchAttempts: attempts,
+            needsRebook: false,
+            rebookTrigger: null,
+            ...(quoteSnapshot ? { dispatchQuote: quoteSnapshot } : {}),
+            ...buildReleasedBindingWrite(order, "dispatch_failed"),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        throw err;
       }
       // Unexpected error = a bug or an order-level abort: release the claim
       // so staff can retry, then surface loudly (never half-book silently).
@@ -1271,6 +1360,9 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
       // pre-read already refused the common case; this re-check closes the
       // same race window for a delivered/cancelled flip landing in-flight).
       assertDispatchNotLocked(d);
+      // An in-house rider owns this order: pasting a provider booking over a
+      // live manual assignment would present two riders for one delivery.
+      if (isInHouseAssignmentActive(d)) return { inHouse: true as const };
       const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(d.deliveryStatus || "");
       const holder = d.dispatchOrderId || d.porterOrderId;
       // Replay: already dispatched WITH this porter id → idempotent success.
@@ -1288,6 +1380,7 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
     });
     if (outcome?.missing) throw orderMissingError();
     if (outcome?.reuse) return storedDispatchSummary(outcome.reuse);
+    if (outcome?.inHouse) throw inHouseAssignmentError();
     if (outcome?.foreignDispatch) throw foreignDispatchError(outcome.foreignDispatch);
     if (outcome?.busy) throw dispatchInProgressError();
     // Fail closed on an unrecognised outcome: a future return shape must not
@@ -1297,6 +1390,7 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
     // Fallback for Firestore shims without transactions: same rules, one
     // snapshot (the pre-read), no weaker guarantee than before.
     assertDispatchNotLocked(order);
+    if (isInHouseAssignmentActive(order)) throw inHouseAssignmentError();
     const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(order.deliveryStatus || "");
     const holder = order.dispatchOrderId || order.porterOrderId;
     if (active && holder === pid) return storedDispatchSummary(order);

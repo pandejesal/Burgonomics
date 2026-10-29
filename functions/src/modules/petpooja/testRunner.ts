@@ -353,27 +353,26 @@ const OUTLET_TAX = {
 } as const;
 
 /**
- * Builds the save_order body the published Orders API expects.
+ * Builds the save_order body the vendor's corrected sample expects.
  *
- * VERIFIED 2026-10-15 against the live API (references/petpooja_save_order_api.md §12):
- *   - The body MUST carry a lower-case `orderinfo` object. A FLAT body is
- *     rejected outright: `{"success":"0","message":"Invalid order relay payload "}`.
- *   - Inside `orderinfo` there is a REQUIRED `OrderInfo` level, and every member
- *     is a `{ details: ... }` wrapper: `orderinfo.OrderInfo.{Restaurant,
- *     Customer,Order,OrderItem,Tax,Discount}`. The previous builder omitted the
- *     `OrderInfo` level entirely, so the endpoint answered `success:"1"` while
- *     parsing nothing and echoing empty `restID`/`clientOrderID` — which is what
- *     the earlier, wrong "the endpoint is a stub" reading was based on.
- *   - The response's `orderID` is EMPTY even for a correctly parsed POST that
- *     registers fine, so it says nothing about fulfilment. Confirm fulfilment
- *     on the outlet's dashboard Order List, not in the response body.
- *   - Unknown keys are ignored, so both the published names AND the legacy
- *     spellings are emitted — the POS reads whichever it implements, and
- *     neither spelling can point at a different outlet.
+ * LOCKED 2026-10-26 to the sample Petpooja sent after rejecting the first five
+ * sandbox relays as structurally wrong:
+ *   - Root: `app_key` / `app_secret` / `access_token` (added by the caller).
+ *   - One lower-case `orderinfo` envelope containing ONLY:
+ *       `OrderInfo` (Restaurant / Customer / Order / OrderItem / Tax, each a
+ *       `{ details: ... }` wrapper), `udid`, and `device_type`.
+ *   - No legacy duplicate members under `orderinfo`, and no `Discount` object.
+ *   - `final_price` is a UNIT figure (`price - item_discount`), not the line
+ *     total; `Tax[].price` is a numeric percentage string.
  *
- * `restID` is a verified branch mapping code and is sent at the top level, in
- * `orderinfo.OrderInfo.Restaurant.details`, and inside `orderinfo.Order`:
- * never a fallback chain, so no spelling can target another restaurant.
+ * Earlier notes claimed `orderinfo.OrderInfo` alone was enough and that
+ * "unknown keys are ignored". The vendor has now shown the opposite for the
+ * five acceptance cases: extra/misplaced members are what it calls structural
+ * issues, so nothing outside the sample is emitted.
+ *
+ * `restID` is a verified branch mapping code and appears only inside
+ * `orderinfo.OrderInfo.Restaurant.details` — never a fallback chain, so no
+ * spelling can target another restaurant.
  */
 export function formatPetpoojaV21Payload(
   order: PetpoojaTestOrder,
@@ -385,8 +384,6 @@ export function formatPetpoojaV21Payload(
   const gst = order.pricing.gst;
   const itemTotal = order.pricing.itemTotal;
   const discount = order.pricing.discount;
-  const gstRatePct =
-    itemTotal > 0 ? round2((gst / Math.max(itemTotal - discount, 1)) * 100) : 0;
   const halfGst = round2(gst / 2);
   const stamp = petpoojaTimestamp(at);
   const orderTypeCode = petpoojaOrderType(order.orderType);
@@ -398,6 +395,9 @@ export function formatPetpoojaV21Payload(
       (sum, mod) => sum + mod.price,
       0
     );
+    // `price` is the all-in UNIT figure (base + add-ons), which is how
+    // Petpooja defines it and how this runner's scenario totals are built.
+    const unitPrice = item.price + modifierTotal;
     // Item tax follows the item's own line value, so addons/variants are taxed
     // with their parent item (the restaurant-liable split Petpooja expects:
     // vendor GST on the final line price, never on the raw MRP).
@@ -408,25 +408,17 @@ export function formatPetpoojaV21Payload(
       name: mod.name,
       group_name: "Addons",
       price: money(mod.price),
+      // Vendor sample types group_id as an integer.
+      group_id: 0,
       quantity: "1",
     }));
 
     return {
-      // ---- official V2.1.0 OrderItem names ----
       id: item.id,
       name: item.name,
-      price: money(item.price),
-      final_price: money(item.price * item.quantity + modifierTotal),
-      quantity: String(item.quantity),
-      gst_liability: "restaurant",
-      // The outlet's catalog declares `tax_inclusive: false` on its items and
-      // the totals here add GST on top of the item price, so the payload must
-      // say the same. It previously claimed `true`, which tells the POS the
-      // price already contains the tax and lets it back the GST out a second
-      // time.
+      // The runner adds GST ON TOP of its item prices, so this must be false.
       tax_inclusive: false,
-      tax_percentage: String(gstRatePct),
-      item_discount: money(0),
+      gst_liability: "restaurant",
       item_tax: [
         {
           id: OUTLET_TAX.cgst.id,
@@ -441,19 +433,16 @@ export function formatPetpoojaV21Payload(
           amount: money(lineHalf),
         },
       ],
-      variation_id: item.variation?.id || "",
+      item_discount: money(0),
+      price: money(unitPrice),
+      // Vendor sample: final_price = price - item_discount, a UNIT figure.
+      // The old line-total form exceeded `price` for qty > 1 and add-ons.
+      final_price: money(unitPrice),
+      quantity: String(item.quantity),
+      description: "",
       variation_name: item.variation?.name || "",
-      // The documented OrderItem carries its add-ons as `AddonItem.details`.
+      variation_id: item.variation?.id || "",
       AddonItem: { details: addons },
-      // ---- legacy spellings the POS parser may still read ----
-      // The flat contract in the official PDF names this key `addon_items`; it
-      // was never emitted, so a POS implementing the documented contract saw
-      // every line as addon-free.
-      addon_items: addons,
-      item_id: item.id,
-      item_name: item.name,
-      addons: addons.map((a) => ({ addon_id: a.id, addon_name: a.name, price: a.price })),
-      item_attribute: item.isVeg ? "1" : "2",
     };
   });
 
@@ -462,7 +451,8 @@ export function formatPetpoojaV21Payload(
       id: OUTLET_TAX.cgst.id,
       title: OUTLET_TAX.cgst.name,
       type: "P",
-      price: `${OUTLET_TAX.cgst.rate}%`,
+      // Numeric percentage string, matching the vendor sample ("2.5", not "2.5%").
+      price: OUTLET_TAX.cgst.rate,
       tax: money(halfGst),
       restaurant_liable_amt: money(halfGst),
     },
@@ -470,50 +460,68 @@ export function formatPetpoojaV21Payload(
       id: OUTLET_TAX.sgst.id,
       title: OUTLET_TAX.sgst.name,
       type: "P",
-      price: `${OUTLET_TAX.sgst.rate}%`,
+      price: OUTLET_TAX.sgst.rate,
       tax: money(halfGst),
       restaurant_liable_amt: money(halfGst),
     },
   ];
 
+  const orderDetails = {
+    orderID: clientOrderID,
+    preorder_date: stamp.slice(0, 10),
+    preorder_time: stamp.slice(11),
+    service_charge: money(0),
+    sc_tax_amount: money(0),
+    delivery_charges: money(order.pricing.deliveryFee),
+    // Delivery/packing charges carry no separate tax in this pricing model.
+    dc_tax_percentage: "0",
+    dc_tax_amount: money(0),
+    dc_gst_details: [
+      { gst_liable: "vendor", amount: money(0) },
+      { gst_liable: "restaurant", amount: money(0) },
+    ],
+    packing_charges: money(order.pricing.packagingFee),
+    pc_tax_amount: money(0),
+    pc_tax_percentage: "0",
+    pc_gst_details: [
+      { gst_liable: "vendor", amount: money(0) },
+      { gst_liable: "restaurant", amount: money(0) },
+    ],
+    order_type: orderTypeCode,
+    ondc_bap: "",
+    advanced_order: "N",
+    urgent_order: false,
+    urgent_time: 0,
+    payment_type: "COD",
+    table_no: order.tableNumber || "",
+    no_of_persons: "0",
+    discount_total: money(discount),
+    tax_total: money(gst),
+    discount_type: "F",
+    total: money(order.pricing.grandTotal),
+    description: `MT-01 sandbox relay — ${order.scenarioId}`,
+    created_on: stamp,
+    // Riders are always third-party.
+    enable_delivery: 0,
+    min_prep_time: 0,
+    callback_url: callbackUrl,
+    collect_cash: money(order.pricing.grandTotal),
+    otp: "",
+  };
+
   return {
-    // Credentials are added by the caller (see relayScenarioToPetpooja).
-    //
-    // The published Orders API carries every member under
-    // `orderinfo.OrderInfo`, and wraps each member in a `details` object —
-    // OrderItem / Tax / Discount holding a `details` ARRAY:
-    //
-    //   orderinfo.OrderInfo.{Restaurant,Customer,Order,OrderItem,Tax,Discount}
-    //
-    // BOTH levels are REQUIRED to be PARSED. Without them the endpoint still
-    // answers `success:"1"` but parses nothing and echoes empty
-    // restID/clientOrderID. Whether an unparsed POST still registers an order
-    // is UNPROVEN and must not be asserted either way: an empty echo is not
-    // evidence of non-registration, because the endpoint returns an empty
-    // `orderID` even when the order DOES register (see orderPush.ts). See §12
-    // of references/petpooja_save_order_api.md.
-    restID: restId,
-    res_name: "Burgonomics",
-    address: "Burgonomics, Ahmedabad",
-    Contact_information: "",
-    // The API guide's flat contract marks the customer `name` and `address`
-    // as REQUIRED top-level fields. They are also emitted inside
-    // orderinfo.OrderInfo.Customer.details; unknown keys are ignored by the
-    // live API, so both spellings are safe and only one can be read.
-    name: "Petpooja Sandbox Tester",
-    phone: "",
-    email: "",
-    latitude: "",
-    longitude: "",
+    // Structure is LOCKED to the vendor's corrected sample (2026-10-26):
+    // app credentials at the root, one `orderinfo` envelope, `OrderInfo` plus
+    // `udid`/`device_type` as its only members. No legacy duplicate members
+    // and no `Discount` object.
     orderinfo: {
       OrderInfo: {
         Restaurant: {
           details: {
-            restID: restId,
-            resID: restId,
             res_name: "Burgonomics",
             address: "Burgonomics, Ahmedabad",
             contact_information: "",
+            restID: restId,
           },
         },
         Customer: {
@@ -526,114 +534,13 @@ export function formatPetpoojaV21Payload(
             longitude: "",
           },
         },
-        Order: {
-          details: {
-            orderID: clientOrderID,
-            clientOrderID,
-            restID: restId,
-            resID: restId,
-            order_type: orderTypeCode,
-            payment_type: "COD",
-            total: money(order.pricing.grandTotal),
-            tax: money(gst),
-            tax_total: money(gst),
-            discount: money(discount),
-            discount_type: "F",
-            discount_total: money(discount),
-            delivery_charges: money(order.pricing.deliveryFee),
-            packing_charges: money(order.pricing.packagingFee),
-            service_charge: money(0),
-            advanced_order: "N",
-            preorder_date: stamp.slice(0, 10),
-            preorder_time: stamp.slice(11),
-            created_on: stamp,
-            // Delivery/packing charges carry no separate tax in our pricing
-            // engine; production sends "0" here. The runner sent "5", claiming a
-            // 5% tax on charges the totals never included.
-            dc_tax_percentage: "0",
-            pc_tax_percentage: "0",
-            min_prep_time: "0",
-            description: `MT-01 sandbox relay — ${order.scenarioId}`,
-            // Riders are always third-party, so this is "0" for every order type,
-            // matching orderPush.ts. The previous version inverted it and told
-            // the POS to self-deliver non-delivery orders.
-            enable_delivery: "0",
-            callback_url: callbackUrl,
-            ...(order.tableNumber ? { table_no: order.tableNumber } : {}),
-            // legacy flat customer keys
-            customer_name: "Petpooja Sandbox Tester",
-            customer_phone: "",
-            customer_address: isDelivery ? "Sandbox Test Address, Ahmedabad" : "",
-          },
-        },
+        Order: { details: orderDetails },
         OrderItem: { details: orderItems },
-        // The official Tax[] shape is id / title / type / price / tax /
-        // restaurant_liable_amt. The previous destructure dropped
-        // `restaurant_liable_amt`, so the POS was told the restaurant owed no
-        // GST on any line while the item lines claimed otherwise.
         Tax: { details: taxLines },
-        // The contract carries discounts as `discount_type` + `discount_total`
-        // scalars on Order (spec §8) and defines no `Discount` object. A stray
-        // object carrying a `price` sits in the same namespace as Tax and can be
-        // read as a charge, so it stays empty.
-        Discount: { details: [] },
       },
-      // ---- legacy aliases ----
-      // The members directly under `orderinfo` (the shape this builder used
-      // before the missing OrderInfo level was found) plus the flat-PDF
-      // spellings the POS parser may still read.
-      Customer: {
-        email: "",
-        name: "Petpooja Sandbox Tester",
-        address: isDelivery ? "Sandbox Test Address, Ahmedabad" : "",
-        phone: "",
-      },
-      Order: {
-        orderID: clientOrderID,
-        clientOrderID,
-        restID: restId,
-        resID: restId,
-        // Mirrors the authoritative Order details above so callers reading the
-        // legacy path (the 5-scenario harness prints `orderinfo.Order.total`)
-        // see real figures rather than `undefined`.
-        order_type: orderTypeCode,
-        payment_type: "COD",
-        total: money(order.pricing.grandTotal),
-        tax: money(gst),
-        tax_total: money(gst),
-        discount: money(discount),
-        discount_type: "F",
-        discount_total: money(discount),
-        delivery_charges: money(order.pricing.deliveryFee),
-        packing_charges: money(order.pricing.packagingFee),
-        advanced_order: "N",
-        preorder_date: stamp.slice(0, 10),
-        preorder_time: stamp.slice(11),
-        created_on: stamp,
-        dc_tax_percentage: "0",
-        pc_tax_percentage: "0",
-        enable_delivery: "0",
-        callback_url: callbackUrl,
-        ...(order.tableNumber ? { table_no: order.tableNumber } : {}),
-        customer_name: "Petpooja Sandbox Tester",
-        customer_phone: "",
-        customer_address: isDelivery ? "Sandbox Test Address, Ahmedabad" : "",
-      },
-      OrderItem: orderItems,
-      Tax: taxLines,
-      tax_details: taxLines.map((t) => ({
-        tax_name: t.title,
-        // `t.price` is already a percentage ("2.5%"). The previous version
-        // divided it by two, so the legacy contract advertised 1.25% CGST
-        // against a 2.5% tax row.
-        tax_percent: Number(String(t.price).replace("%", "")),
-        tax_amount: Number(t.tax),
-      })),
-      order_items: orderItems,
-      items: orderItems,
+      udid: "",
+      device_type: "Web",
     },
-    udid: "burgonomics-sandbox",
-    device_type: "Web",
   };
 }
 

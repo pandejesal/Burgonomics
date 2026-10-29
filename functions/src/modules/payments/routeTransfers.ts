@@ -449,9 +449,15 @@ export async function retryPendingRouteTransfersWorker() {
     try {
       const won: any[] = await (db as any).runTransaction(async (tx: any) => {
         const mine: any[] = [];
+        // Two-phase read-before-write: Firestore transactions require all reads
+        // to be executed before any writes.
+        const snapshots: Array<{ doc: any; data: any }> = [];
         for (const doc of docs) {
           const fresh = await tx.get(doc.ref);
           const data = (fresh.exists ? fresh.data() : undefined) as any;
+          snapshots.push({ doc, data });
+        }
+        for (const { doc, data } of snapshots) {
           const status = data?.routeTransferStatus;
           // `pending_retry` is the scheduled lane; `transferring` is only
           // claimable when its lease below reads as expired (a verify or

@@ -1344,7 +1344,11 @@ export async function executeRouteSplit(args: {
         if (freshData.routeTransferStatus === "transferring") {
           const claimedAt = freshData.routeTransferClaimedAt;
           const claimedMs =
-            claimedAt && typeof claimedAt.toMillis === "function" ? claimedAt.toMillis() : 0;
+            typeof claimedAt === "number" && Number.isFinite(claimedAt)
+              ? claimedAt
+              : claimedAt && typeof claimedAt.toMillis === "function"
+                ? claimedAt.toMillis()
+                : 0;
           if (Date.now() - claimedMs < TRANSFER_CLAIM_TTL_MS) return "busy";
         }
         // NUMERIC local-clock lease (never a serverTimestamp sentinel): a

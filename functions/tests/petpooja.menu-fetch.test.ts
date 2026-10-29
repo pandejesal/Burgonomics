@@ -1183,6 +1183,52 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
     expect(latestSyncLog().unpricedInStockVariationMissingCount).toBe(1);
   });
 
+  it("(h) with the opt-in availability policy, unknown '2' is sellable only when priced", async () => {
+    const warn = spyOnWarn();
+    const prevPolicy = config.petpooja.unknownStockPolicy;
+    config.petpooja.unknownStockPolicy = "available";
+    try {
+      await handlePetpoojaMenuWebhook({
+        success: "1",
+        rest_id: "demo",
+        items: [
+          { itemid: "pos", itemname: "Priced unknown", price: "199", in_stock: "2" },
+          { itemid: "zero", itemname: "Unpriced unknown", price: "0", in_stock: "2" },
+          { itemid: "out", itemname: "Explicit out", price: "99", in_stock: "0" },
+          { itemid: "in", itemname: "Explicit in", price: "99", in_stock: 1 },
+        ],
+      });
+
+      expect(latestSyncLog()).toMatchObject({
+        catalogueReady: true,
+        availabilityWarning: null,
+        inStockValues: { "2": 2, "0": 1, "1": 1 },
+      });
+      expect(savedDocs["products/prod_demo_pos"]).toMatchObject({
+        price: 199,
+        priceAvailable: true,
+        inStock: true,
+        pushInStock: "2",
+      });
+      // The price guard wins over the vendor flag AND the availability policy:
+      // an unknown-stock item with no price never becomes a ₹0 order.
+      expect(savedDocs["products/prod_demo_zero"]).toMatchObject({
+        price: 0,
+        priceAvailable: false,
+        inStock: false,
+        pushInStock: "2",
+      });
+      expect(savedDocs["products/prod_demo_out"]).toMatchObject({ inStock: false });
+      expect(savedDocs["products/prod_demo_in"]).toMatchObject({ inStock: true });
+      // No all-dark warning (the priced unknown item is orderable) and no
+      // price warning (the unpriced item was not explicitly flagged in stock).
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      config.petpooja.unknownStockPolicy = prevPolicy;
+      warn.mockRestore();
+    }
+  });
+
   it("(d) treats a zero-item sync as NOT all-dark, and survives odd shapes without throwing", async () => {
     const warn = spyOnWarn();
     try {
@@ -1286,21 +1332,31 @@ describe("Petpooja menu PUSH — unpriced SKU observability", () => {
           { itemid: "defined", itemname: "Defined variation", price: 0, in_stock: "1", itemallowvariation: "1", variation: [{ price: "10" }] },
           { itemid: "invalid", itemname: "Invalid price", price: "unknown", in_stock: true },
           { itemid: "out", itemname: "Negative price", price: -1, in_stock: "2", itemallowvariation: "1" },
+          // Keep the catalogue orderable so this test isolates the price
+          // warning from the independent all-dark warning.
+          { itemid: "ok", itemname: "Priced", price: "10", in_stock: 1 },
         ],
       });
 
-      expect(res).toEqual({ success: true, itemCount: 6 });
+      expect(res).toEqual({ success: true, itemCount: 7 });
       expect(syncLogRows()).toHaveLength(1);
       expect(latestSyncLog()).toMatchObject({
         unpricedSkuCount: 6, unpricedInStockCount: 5,
         unpricedVariationFlaggedCount: 5, unpricedInStockVariationMissingCount: 3,
-        status: "COMPLETED", error: null, created: 6,
+        status: "COMPLETED", error: null, created: 7,
       });
-      expect(savedDocs["products/prod_demo_missing0"]).toMatchObject({ price: 0, inStock: true });
+      // An unpriced SKU is never sellable, even when the vendor flag says
+      // in stock: the server pricing engine would otherwise have a ₹0 item.
+      expect(savedDocs["products/prod_demo_missing0"]).toMatchObject({
+        price: 0,
+        priceAvailable: false,
+        inStock: false,
+        pushInStock: 1,
+      });
       expect(snapshotRows()).toEqual([]);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith(
-        `[Petpooja Menu Sync] outlet ${DEMO_REST_ID} ingested 6 items: 6 unpriced, 5 unpriced in stock; 3 of those are variation-flagged without definitions — live money hazard`
+        `[Petpooja Menu Sync] outlet ${DEMO_REST_ID} ingested 7 items: 6 unpriced, 5 vendor-flagged in stock but blocked from sale because price is missing; 3 of those are variation-flagged without definitions`
       );
     } finally {
       warn.mockRestore();

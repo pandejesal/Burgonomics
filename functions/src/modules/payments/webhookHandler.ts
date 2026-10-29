@@ -56,12 +56,18 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
 
   const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
   const event = payload.event;
-  // Fail-closed idempotency key: a payload without a real Razorpay event id
-  // is rejected outright. The old `|| evt_Date.now()` fallback minted a fresh
-  // key per delivery, so every Razorpay retry double-fired KOT + status flips.
-  const eventId = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : null;
+  // Fail-closed idempotency key: read official `x-razorpay-event-id` header
+  // first, falling back to payload.id. A delivery without a valid event id is
+  // rejected outright (fail-closed, no duplicate processing).
+  const headerEvtId = req.headers["x-razorpay-event-id"];
+  const eventId =
+    typeof headerEvtId === "string" && headerEvtId.trim().length > 0
+      ? headerEvtId.trim()
+      : typeof payload.id === "string" && payload.id.length > 0
+        ? payload.id
+        : null;
   if (!eventId) {
-    console.warn("[Razorpay Webhook] missing payload.id — rejecting (fail-closed, no order write)");
+    console.warn("[Razorpay Webhook] missing x-razorpay-event-id header and payload.id — rejecting (fail-closed, no order write)");
     res.status(401).json({ error: "Missing webhook event id" });
     return;
   }

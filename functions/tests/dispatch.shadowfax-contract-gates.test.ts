@@ -7,16 +7,17 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
  *   1. A MISSING API TOKEN must refuse BEFORE any provider wire call. The
  *      router never gets here (isEligible() requires the key), so this is a
  *      defence-in-depth pin for a direct adapter call: without it,
- *      `shadowfaxHeaders()` would send `Authorization: Token ` and the resulting
+ *      `shadowfaxHeaders()` would send `Authorization: Bearer ` and the resulting
  *      provider 401 is classified `transient`, i.e. a silent failover to another
  *      courier for a LOCAL config fault. The refusal is a plain Error (not a
  *      ProviderDispatchError), so the router cannot walk the ranked list.
  *   2. The existing CONTRACT gate is unchanged: credentials alone stay
  *      ineligible until a human records SHADOWFAX_CONTRACT_VERIFIED.
  *
- * Deliberately NOT pinned here (main-scoped decisions, no policy change in this
- * commit): declared `order_value`/`paid` semantics (F4) and any provider
- * payload/path claim — the vendor contract remains unverified.
+ * The official Shadowfax developer docs captured 2026-10-29 now pin the
+ * serviceability/book paths, Bearer auth and the nested `{message,data}`
+ * response shape. Live traffic remains behind SHADOWFAX_CONTRACT_VERIFIED
+ * until a human confirms the vendor-issued packet and credentials.
  *
  * Harness: real `Response`, stubbed `global.fetch` (same technique as
  * tests/dispatch.provider-contract.test.ts). No firebase-admin, no provider
@@ -165,10 +166,10 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
     expect(fetchCalls).toHaveLength(1);
     // A newline/space pasted into the secret would otherwise reach the wire and
     // be rejected 401 -> transient -> a silent walk for a local config fault.
-    expect(fetchCalls[0].init.headers.Authorization).toBe("Token test_sfx_token");
+    expect(fetchCalls[0].init.headers.Authorization).toBe("Bearer test_sfx_token");
   });
 
-  it("positive control: a keyed quote reaches the wire exactly once with the Token header", async () => {
+  it("positive control: a keyed quote reaches the wire exactly once with the Bearer header", async () => {
     config.shadowfax.apiKey = "test_sfx_token";
     fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42, pickup_eta: 6 });
 
@@ -180,7 +181,7 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
       "https://hlbackend.staging.shadowfax.in/api/v1/order-serviceability/"
     );
     expect(fetchCalls[0].init.method).toBe("PUT");
-    expect(fetchCalls[0].init.headers.Authorization).toBe("Token test_sfx_token");
+    expect(fetchCalls[0].init.headers.Authorization).toBe("Bearer test_sfx_token");
   });
 
   it("positive control: a keyed book reaches the wire and returns the provider order id", async () => {
@@ -201,6 +202,39 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
     );
     const sent = JSON.parse(String(fetchCalls[0].init.body));
     expect(sent.client_code).toBe("test_sfx_client");
+  });
+
+  it("unwraps the documented { message, data } booking response", async () => {
+    config.shadowfax.apiKey = "test_sfx_token";
+    fetchHandler = () =>
+      okJson(
+        {
+          message: "Order placed successfully",
+          data: {
+            sfx_order_id: 12345,
+            track_url: "https://sfx/track/nested",
+            rider_details: {
+              name: "Nested Rider",
+              contact_number: "9999999999",
+              vehicle_number: "GJ01AB1234",
+            },
+          },
+        },
+        201
+      );
+
+    const booked = await shadowfaxAdapter.book({
+      ...ctx(),
+      orderId: "ord_sfx_nested_ok",
+      quote: undefined as any,
+    });
+
+    expect(booked.kind).toBe("booked");
+    expect(booked.providerOrderId).toBe("12345");
+    expect(booked.trackingUrl).toBe("https://sfx/track/nested");
+    expect(booked.riderName).toBe("Nested Rider");
+    expect(booked.riderPhone).toBe("9999999999");
+    expect(booked.riderVehicleNumber).toBe("GJ01AB1234");
   });
 
   it("the mock path still runs with no key and makes no wire call", async () => {

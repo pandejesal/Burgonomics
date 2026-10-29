@@ -24,30 +24,28 @@ import {
 /**
  * Shadowfax adapter — Hyperlocal Marketplace API.
  *
- * CONTRACT STATUS: PARTIALLY DOCUMENTED / UNVERIFIED (2026-10-20). The doc URL
- * this file used to call "doc-confirmed"
- * (https://developer.shadowfax.in/docs/hyperlocal/marketplace) returns HTTP 404,
- * the Postman collection is auth-gated (see the book() note), and
- * references/delivery_routing.md records that no native contract evidence exists
- * locally. Every path/field below is therefore OUR READING of partial evidence —
- * verify each one at key grant. The provider stays behind
- * SHADOWFAX_CONTRACT_VERIFIED until a human confirms the contract; credentials
- * alone never enable live traffic.
- *   - Auth (UNVERIFIED): `Authorization: Token <api_token>`, token issued by the
- *     Shadowfax team.
- *   - Quote = serviceability (UNVERIFIED): `PUT /api/v1/order-serviceability/` →
+ * CONTRACT STATUS: OFFICIAL DOCS CAPTURED 2026-10-29; live traffic remains
+ * human-gated. The official developer portal now documents:
+ *   - Auth: `Authorization: Bearer <token>` or OAuth2
+ *     `POST /oauth/token/` (client credentials, 24h expiry).
+ *   - Quote = serviceability: `PUT /api/v1/order-serviceability/` →
  *     `{ serviceable, pickup_eta, delivery_cost }`. HTTP 400 (non-serviceable
  *     area) and a 200 body with `serviceable:false` both class not_serviced
  *     (DR3) — no fare is invented (DR2). No distance field → haversine.
- *   - Book (UNVERIFIED): `POST /api/v2/orders/` with `client_code`
+ *   - Book: `POST /api/v2/orders/` with `client_code`
  *     (SHADOWFAX_CLIENT_CODE), `order_details` (paid is the STRING
  *     "true"/"false"), pickup/drop details (latitude/longitude as numbers),
- *     `order_items`. Response: `sfx_order_id`, `track_url`. The rider arrives
- *     later via the ALLOTTED callback, so book falls back to a pending rider
- *     identity.
- *   - Retry-window note (UNVERIFIED, our assumption): place the order within
- *     minutes of a successful serviceability check (router quotes immediately
- *     before booking, DR7).
+ *     `order_items`. Response: `{ message, data: { sfx_order_id, track_url,
+ *     rider_details, ... } }`. The rider arrives later via the ALLOTTED
+ *     callback, so book falls back to a pending rider identity.
+ *   - Retry window: place the order within a couple of minutes of a successful
+ *     serviceability check (the official docs state this; the router quotes
+ *     immediately before booking, DR7).
+ *
+ * The paths/fields are no longer a guess, but the provider stays behind
+ * SHADOWFAX_CONTRACT_VERIFIED until a human confirms the vendor-issued
+ * integration packet and credentials. Credentials alone never enable live
+ * traffic.
  */
 
 function shadowfaxHeaders(): Record<string, string> {
@@ -55,9 +53,9 @@ function shadowfaxHeaders(): Record<string, string> {
     "Content-Type": "application/json",
     // Trim HERE as well as in the guard: validate-what-you-send. A token pasted
     // with a trailing newline/space would otherwise pass the guard and reach the
-    // wire as `Authorization: Token  abc ` -> 401 -> classified transient -> a
+    // wire as `Authorization: Bearer  abc ` -> 401 -> classified transient -> a
     // silent walk to another courier for a LOCAL config fault.
-    Authorization: `Token ${(config.shadowfax.apiKey || "").trim()}`,
+    Authorization: `Bearer ${(config.shadowfax.apiKey || "").trim()}`,
   };
 }
 
@@ -65,7 +63,7 @@ function shadowfaxHeaders(): Record<string, string> {
  * Fail closed on a missing token BEFORE any provider call. `isEligible()`
  * already requires the key, so the router never reaches this — but a direct
  * adapter call (a future caller, a test harness, a refactor) would otherwise
- * send `Authorization: Token ` and get an opaque 401 classified as transient.
+ * send `Authorization: Bearer ` and get an opaque 401 classified as transient.
  *
  * Deliberately a plain Error, not ProviderDispatchError: a missing credential is
  * not a provider failure. At BOOK time that keeps the router from releasing the
@@ -77,7 +75,7 @@ function shadowfaxHeaders(): Record<string, string> {
 function assertShadowfaxCredentials(operation: string): void {
   // Trimmed: an env value of "   " is not a token. `isEligible()` only checks
   // truthiness, so a whitespace-only key would otherwise pass the eligibility
-  // gate and reach the wire as `Authorization: Token    ` (opaque 401).
+  // gate and reach the wire as `Authorization: Bearer    ` (opaque 401).
   const token = (config.shadowfax.apiKey || "").trim();
   if (!token) {
     const err: any = new Error(
@@ -245,9 +243,10 @@ export const shadowfaxAdapter: ProviderAdapter = {
     // Both creds are required: quote needs the token, book needs client_code.
     // A keyed-but-incomplete provider is EXCLUDED (DR2), never walked into a
     // guaranteed book failure.
-    // Key grant alone is NOT enough: Shadowfax's native contract is UNVERIFIED,
-    // so a keyed provider stays out of the live fan-out until a human records
-    // SHADOWFAX_CONTRACT_VERIFIED=true. Without this, "keys granted" would
+    // Key grant alone is NOT enough: the official docs are captured, but the
+    // vendor-issued integration packet and live credentials still need human
+    // confirmation. A keyed provider stays out of the live fan-out until a
+    // human records SHADOWFAX_CONTRACT_VERIFIED=true. Without this, "keys granted" would
     // silently send real traffic to an unconfirmed integration the moment
     // DISPATCH_REQUIRE_LIVE was off (GAP 2, readiness gate is opt-in).
     return (
@@ -386,9 +385,9 @@ export const shadowfaxAdapter: ProviderAdapter = {
 
     // A real contact is required to place an order: the old code fell back to
     // the invented literal "9876543210" (audit finding 5). Fail closed instead
-    // of transmitting a fabricated number. (Shadowfax's required-field set is
-    // UNVERIFIED — their doc URL 404s and the Postman collection is auth-gated
-    // — so an omitted key would be the honest-but-unconfirmed alternative.)
+    // of transmitting a fabricated number. The official 2026-10-29 docs now
+    // document the required pickup/drop contact fields; live traffic still
+    // needs the vendor-issued integration packet and credentials.
     const pickupContactNumber = contactDigits(pickup.phone);
     const dropContactNumber = contactDigits(drop.phone, ctx.customerPhone);
     if (!pickupContactNumber || !dropContactNumber) {
@@ -415,45 +414,70 @@ export const shadowfaxAdapter: ProviderAdapter = {
         }))
       : [{ id: "order", name: "Food order", price: orderValueInr(ctx), quantity: 1 }];
 
-    const res = await fetchProviderJson("shadowfax", `${shadowfaxBase}/api/v2/orders/`, {
-      method: "POST",
-      headers: shadowfaxHeaders(),
-      body: JSON.stringify({
-        client_code: clientCode,
-        order_details: {
-          order_value: orderValueInr(ctx),
-          paid: paidFlag(ctx),
-          ...(ctx.orderId ? { client_order_id: ctx.orderId } : {}),
-        },
-        pickup_details: {
-          // No invented locality: an empty city is "unknown", a hardcoded
-          // "Ahmedabad" geocodes a branch in another city to the wrong place
-          // (audit finding 6, the same defect the drop-side fix removed).
-          city: order.branchCity || "",
-          contact_number: pickupContactNumber,
-          name: (pickup.name || "Burgonomics Branch").slice(0, 120),
-          address: (pickupAddressBlock(order) || "Burgonomics Branch").slice(0, 350),
-          latitude: ctx.pickup.lat,
-          longitude: ctx.pickup.lng,
-        },
-        drop_details: {
-          // No invented locality: an empty city is "unknown", a hardcoded
-          // "Ahmedabad" geocodes a drop pin in another city to the wrong place
-          // (audit finding 6). Shadowfax's required-field set is UNVERIFIED
-          // (their doc URL 404s, the Postman collection is auth-gated).
-          city: dropAddr.city || "",
-          contact_number: contactDigits(drop.phone, ctx.customerPhone || ""),
-          name: (drop.name || "Customer").slice(0, 120),
-          address: (dropAddr.line || "Customer Delivery Address").slice(0, 350),
-          latitude: ctx.drop.lat,
-          longitude: ctx.drop.lng,
-        },
-        order_items: orderItems,
-      }),
-    });
+    let res: any;
+    try {
+      res = await fetchProviderJson("shadowfax", `${shadowfaxBase}/api/v2/orders/`, {
+        method: "POST",
+        headers: shadowfaxHeaders(),
+        body: JSON.stringify({
+          client_code: clientCode,
+          order_details: {
+            order_value: orderValueInr(ctx),
+            paid: paidFlag(ctx),
+            ...(ctx.orderId ? { client_order_id: ctx.orderId } : {}),
+          },
+          pickup_details: {
+            // No invented locality: an empty city is "unknown", a hardcoded
+            // "Ahmedabad" geocodes a branch in another city to the wrong place
+            // (audit finding 6, the same defect the drop-side fix removed).
+            city: order.branchCity || "",
+            contact_number: pickupContactNumber,
+            name: (pickup.name || "Burgonomics Branch").slice(0, 120),
+            address: (pickupAddressBlock(order) || "Burgonomics Branch").slice(0, 350),
+            latitude: ctx.pickup.lat,
+            longitude: ctx.pickup.lng,
+          },
+          drop_details: {
+            // No invented locality: an empty city is "unknown", a hardcoded
+            // "Ahmedabad" geocodes a drop pin in another city to the wrong place
+            // (audit finding 6). The official docs now describe this shape; the
+            // vendor packet/credentials still gate live traffic.
+            city: dropAddr.city || "",
+            contact_number: contactDigits(drop.phone, ctx.customerPhone || ""),
+            name: (drop.name || "Customer").slice(0, 120),
+            address: (dropAddr.line || "Customer Delivery Address").slice(0, 350),
+            latitude: ctx.drop.lat,
+            longitude: ctx.drop.lng,
+          },
+          order_items: orderItems,
+        }),
+      });
+    } catch (err: any) {
+      const message = String(err?.message || "");
+      if (/timed?\s?out|abort/i.test(message)) {
+        const ambiguous: any = new Error(
+          "Shadowfax create-order timed out with no response: the request may already have created an order - do not book another courier; reconcile by client_order_id before any rebook"
+        );
+        ambiguous.statusCode = 502;
+        ambiguous.code = "PROVIDER_BOOK_AMBIGUOUS";
+        throw ambiguous;
+      }
+      throw err;
+    }
     assertProviderOk(res, "shadowfax");
 
-    const rawProviderOrderId = res.data?.sfx_order_id ?? res.data?.id ?? null;
+    // Official response shape: { message, data: { sfx_order_id, track_url,
+    // rider_details, ... } }. Keep the flat shape as a compatibility fallback
+    // for older sandbox captures; the nested shape is the documented contract.
+    const responseBody = res.data;
+    const payload =
+      responseBody &&
+      typeof responseBody === "object" &&
+      responseBody.data &&
+      typeof responseBody.data === "object"
+        ? responseBody.data
+        : responseBody;
+    const rawProviderOrderId = payload?.sfx_order_id ?? payload?.order_id ?? payload?.id ?? null;
     const providerOrderId =
       typeof rawProviderOrderId === "string" && rawProviderOrderId.trim() !== ""
         ? rawProviderOrderId
@@ -475,7 +499,7 @@ export const shadowfaxAdapter: ProviderAdapter = {
       throw err;
     }
 
-    const rider = res.data?.rider || {};
+    const rider = payload?.rider_details || payload?.rider || {};
     return {
       kind: "booked",
       provider: "shadowfax",
@@ -485,10 +509,11 @@ export const shadowfaxAdapter: ProviderAdapter = {
       // Real identity, or empty. A fabricated placeholder name would be promoted
       // to a customer-visible `status: "rider_assigned"` (dispatch.router.ts);
       // empty keeps the dispatch `pending` until ALLOTTED fills the real rider.
-      riderName: res.data?.rider_name || rider.name || "",
-      riderPhone: res.data?.rider_contact || rider.phone || "",
-      riderVehicleNumber: res.data?.rider_vehicle || rider.vehicle_number || "",
-      trackingUrl: res.data?.track_url || res.data?.track || res.data?.tracking_url || "",
+      riderName: rider.name || payload?.rider_name || "",
+      riderPhone: rider.contact_number || rider.phone || payload?.rider_contact || "",
+      riderVehicleNumber:
+        rider.vehicle_number || payload?.rider_vehicle || "",
+      trackingUrl: payload?.track_url || payload?.track || payload?.tracking_url || "",
       source: "shadowfax_api_live",
       geoSource: "live_gps",
     };

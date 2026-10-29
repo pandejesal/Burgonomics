@@ -106,8 +106,10 @@ function fakeDb(docs: Array<{ id: string; data: Record<string, any> }>) {
 describe("orderBackfill runner", () => {
   // runOrderBackfill touches admin.firestore.FieldPath.documentId(), which
   // lazily loads the firebase-admin subpath on first access (~300ms cold,
-  // can spike higher under CI load). Give the runner tests headroom.
-  const RUNNER_TIMEOUT = 10000;
+  // can spike higher under CI load). The original 10s ceiling timed out only
+  // when the full suite ran with parallel workers (it passes alone in ~3.4s),
+  // so give the runner tests enough headroom to stay deterministic under load.
+  const RUNNER_TIMEOUT = 30000;
 
   it(
     "dry-run plans without writing",

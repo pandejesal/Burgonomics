@@ -10,8 +10,33 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
       commit: async () => {},
     }),
     collection: (colName: string) => ({
+      where: (field: string, op: string, val: any) => ({
+        limit: (n: number) => ({
+          get: async () => {
+            const matched = Object.entries(savedDocs)
+              .filter(([p]) => p.startsWith(`${colName}/`))
+              .map(([p, data]) => {
+                const id = p.slice(colName.length + 1);
+                return {
+                  id,
+                  ref: { id, path: p },
+                  data: () => data,
+                };
+              })
+              .filter((d) => d.data()[field] === val)
+              .slice(0, n);
+            return { docs: matched, empty: matched.length === 0 };
+          },
+        }),
+      }),
       doc: (docId: string) => ({
         id: docId,
+        update: vi.fn(async (data: any) => {
+          savedDocs[`${colName}/${docId}`] = {
+            ...(savedDocs[`${colName}/${docId}`] || {}),
+            ...data,
+          };
+        }),
         set: vi.fn(async (data: any) => {
           savedDocs[`${colName}/${docId}`] = {
             ...(savedDocs[`${colName}/${docId}`] || {}),
@@ -19,7 +44,9 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
           };
         }),
         get: vi.fn(async () => ({
-          exists: true,
+          exists:
+            Object.prototype.hasOwnProperty.call(savedDocs, `${colName}/${docId}`) ||
+            colName === "orders",
           data: () =>
             savedDocs[`${colName}/${docId}`] || {
               branchId: "branch_ahmedabad_1",
@@ -37,6 +64,13 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
               status: "pending",
             },
           ref: {
+            id: docId,
+            update: vi.fn(async (data: any) => {
+              savedDocs[`${colName}/${docId}`] = {
+                ...(savedDocs[`${colName}/${docId}`] || {}),
+                ...data,
+              };
+            }),
             set: vi.fn(async (data: any) => {
               savedDocs[`${colName}/${docId}`] = {
                 ...(savedDocs[`${colName}/${docId}`] || {}),
@@ -89,6 +123,7 @@ import {
   handlePetpoojaMenuWebhook,
   extractMenuRestId,
 } from "../src/modules/petpooja";
+import { computeStockQuarantineDocId } from "../src/modules/petpooja/item86ingSync";
 import { config } from "../src/config/env";
 
 describe("Petpooja POS Bridge Service", () => {
@@ -144,78 +179,124 @@ describe("Petpooja POS Bridge Service", () => {
       const branch = { id: "branch_surat_01", petpoojaStoreId: "PP_SURAT_01" };
       const payload = formatPetpoojaOrderPayload(order, branch, "PP_SURAT_01");
 
-      expect(payload.orderinfo.Order.orderID).toBe("BUR-1001");
-      expect(payload.orderinfo.Order.resID).toBe("PP_SURAT_01");
-      expect(payload.orderinfo.Order.restID).toBe("PP_SURAT_01");
+      // ---- the vendor's envelope (sample of 2026-10-26) ----
+      // `orderinfo` contains exactly OrderInfo + udid + device_type. Extra
+      // siblings and root-level duplicates are what Petpooja called structural
+      // issues, so they must never come back.
+      expect(Object.keys(payload)).toEqual(["orderinfo"]);
+      expect(Object.keys(payload.orderinfo).sort()).toEqual([
+        "OrderInfo",
+        "device_type",
+        "udid",
+      ]);
+      expect(payload.orderinfo.udid).toBe("");
+      expect(payload.orderinfo.device_type).toBe("Web");
+
+      const info = payload.orderinfo.OrderInfo;
+      const orderDetails = info.Order.details;
+      const customerDetails = info.Customer.details;
+
+      // `orderID` is the client reference the POS echoes to our status webhook,
+      // and the webhook resolves it as `orders/{orderID}`. It must be the
+      // Firestore document id, not the decorative order number.
+      expect(orderDetails.orderID).toBe("ord_1001");
+      // The vendor sample carries restID only on Restaurant.details.
+      expect(info.Restaurant.details.restID).toBe("PP_SURAT_01");
+      expect(info.Restaurant.details).not.toHaveProperty("resID");
       // DOC VERIFIED: callback_url must be sent in EVERY save_order request, and
-      // the POS reads it from Order.details. Emitting it only at the top level
-      // was a real defect - no status callback ever reached our webhook. This
-      // pin exists so a refactor cannot silently unregister our callback and
-      // leave every order stuck at "accepted".
-      const callbackUrl = payload.orderinfo.Order.callback_url;
+      // the POS reads it from Order.details.
+      const callbackUrl = orderDetails.callback_url;
       expect(typeof callbackUrl).toBe("string");
       expect(callbackUrl).toMatch(/\/petpooja\/webhook$/);
       // Official V2.1.0 order_type is a letter code (H/P/D), not 1/2/3.
-      expect(payload.orderinfo.Order.order_type).toBe("H"); // H = home delivery
+      expect(orderDetails.order_type).toBe("H"); // H = home delivery
       // Petpooja accepts COD / CARD / ONLINE — "Prepaid" is not a valid value.
-      expect(payload.orderinfo.Order.payment_type).toBe("ONLINE");
-      expect(payload.orderinfo.Order.total).toBe("527.90");
-      expect(payload.orderinfo.Order.tax).toBe("24.90");
-      expect(payload.orderinfo.Order.discount).toBe("50.00");
-      expect(payload.orderinfo.Order.delivery_charges).toBe("40.00");
-      expect(payload.orderinfo.Order.packing_charges).toBe("15.00");
-      // Official Customer object carries the contact, not the flat order key.
-      expect(payload.orderinfo.Customer.name).toBe("Aarav Mehta");
-      expect(payload.orderinfo.Customer.phone).toBe("+919825100001");
-      expect(payload.orderinfo.Customer.address).toBe("123 Adajan Main Rd");
+      expect(orderDetails.payment_type).toBe("ONLINE");
+      expect(orderDetails.total).toBe("527.90");
+      expect(orderDetails.tax_total).toBe("24.90");
+      // The old `tax`/`discount` aliases are not in the sample.
+      expect(orderDetails).not.toHaveProperty("tax");
+      expect(orderDetails).not.toHaveProperty("discount");
+      expect(orderDetails.discount_total).toBe("50.00");
+      expect(orderDetails.delivery_charges).toBe("40.00");
+      expect(orderDetails.packing_charges).toBe("15.00");
+      expect(orderDetails.service_charge).toBe("0.00");
+      // The vendor sample requires the full charge-tax block.
+      expect(orderDetails.sc_tax_amount).toBe("0.00");
+      expect(orderDetails.dc_tax_percentage).toBe("0");
+      expect(orderDetails.dc_tax_amount).toBe("0.00");
+      expect(orderDetails.dc_gst_details).toEqual([
+        { gst_liable: "vendor", amount: "0.00" },
+        { gst_liable: "restaurant", amount: "0.00" },
+      ]);
+      expect(orderDetails.pc_tax_percentage).toBe("0");
+      expect(orderDetails.pc_tax_amount).toBe("0.00");
+      expect(orderDetails.pc_gst_details).toHaveLength(2);
+      expect(orderDetails.ondc_bap).toBe("");
+      expect(orderDetails.advanced_order).toBe("N");
+      expect(orderDetails.urgent_order).toBe(false);
+      expect(orderDetails.urgent_time).toBe(0);
+      expect(orderDetails.no_of_persons).toBe("0");
+      expect(orderDetails.table_no).toBe("");
+      // Numbers, not strings, in the vendor sample.
+      expect(orderDetails.enable_delivery).toBe(0);
+      expect(orderDetails.min_prep_time).toBe(0);
+      // ONLINE order: nothing for the rider to collect.
+      expect(orderDetails.collect_cash).toBe("0.00");
+      expect(orderDetails.otp).toBe("");
 
-      // Verify GST split (2.5% CGST + 2.5% SGST)
-      expect(payload.orderinfo.tax_details).toHaveLength(2);
-      expect(payload.orderinfo.tax_details[0].tax_name).toBe("CGST");
-      expect(payload.orderinfo.tax_details[0].tax_percent).toBe(2.5);
-      expect(payload.orderinfo.tax_details[1].tax_name).toBe("SGST");
-      expect(payload.orderinfo.tax_details[1].tax_percent).toBe(2.5);
+      // Official Customer object carries the contact.
+      expect(customerDetails.name).toBe("Aarav Mehta");
+      expect(customerDetails.phone).toBe("+919825100001");
+      expect(customerDetails.address).toBe("123 Adajan Main Rd");
 
-      // Official Tax[] shape (id/title/type/price/tax) is emitted alongside.
-      expect(payload.orderinfo.Tax).toHaveLength(2);
-      expect(payload.orderinfo.Tax[0].title).toBe("CGST");
-      expect(payload.orderinfo.Tax[0].type).toBe("P");
-      expect(payload.orderinfo.Tax[0].tax).toBe("12.45");
-
-      // Verify item mapping with addons — official OrderItem names.
-      expect(payload.orderinfo.OrderItem).toHaveLength(1);
-      expect(payload.orderinfo.OrderItem[0].id).toBe("pp_b1");
-      expect(payload.orderinfo.OrderItem[0].name).toBe("Classic Smash Cheese Burger");
-      expect(payload.orderinfo.OrderItem[0].quantity).toBe("2");
-      expect(payload.orderinfo.OrderItem[0].price).toBe("249.00");
-      expect(payload.orderinfo.OrderItem[0].final_price).toBe("498.00");
-      // Official AddonItem carries its entries under `details`.
-      expect(payload.orderinfo.OrderItem[0].AddonItem.details).toHaveLength(1);
-      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].name).toBe("Brioche Bun");
-      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].group_name).toBe("Addons");
-      expect(payload.orderinfo.OrderItem[0].AddonItem.details[0].price).toBe("20.00");
-      // Legacy aliases remain for POS parsers that still read them.
-      expect(payload.orderinfo.order_items).toHaveLength(1);
-      expect(payload.orderinfo.order_items[0].item_id).toBe("pp_b1");
-      expect(payload.orderinfo.order_items[0].addons[0].addon_name).toBe("Brioche Bun");
-
-      // ---- the documented envelope ----
-      // Everything must ALSO be reachable at
-      // `orderinfo.OrderInfo.<Member>.details`. Without these levels the live
-      // endpoint answers success:"1" while parsing nothing and registering no
-      // order — the failure this builder shipped with for weeks.
-      const info = payload.orderinfo.OrderInfo;
-      expect(info.Restaurant.details.restID).toBe("PP_SURAT_01");
-      expect(info.Customer.details.name).toBe("Aarav Mehta");
-      expect(info.Order.details.orderID).toBe("BUR-1001");
-      expect(info.Order.details.order_type).toBe("H");
-      expect(info.OrderItem.details).toHaveLength(1);
-      expect(info.OrderItem.details[0].id).toBe("pp_b1");
-      expect(info.OrderItem.details[0].AddonItem.details).toHaveLength(1);
+      // Official Tax[] shape (id/title/type/price/tax/restaurant_liable_amt).
+      // `price` is a numeric percentage string, as in the vendor sample.
       expect(info.Tax.details).toHaveLength(2);
       expect(info.Tax.details[0].title).toBe("CGST");
-      // Discounts travel as the two Order scalars; the member is declared empty.
-      expect(info.Discount.details).toHaveLength(0);
+      expect(info.Tax.details[0].type).toBe("P");
+      expect(info.Tax.details[0].price).toBe("2.5");
+      expect(info.Tax.details[0].tax).toBe("12.45");
+      expect(info.Tax.details[0].restaurant_liable_amt).toBe("12.45");
+      // The sample has no Discount member at all.
+      expect(info).not.toHaveProperty("Discount");
+
+      // Verify item mapping with addons — vendor OrderItem names only.
+      expect(info.OrderItem.details).toHaveLength(1);
+      const line = info.OrderItem.details[0];
+      expect(line.id).toBe("pp_b1");
+      expect(line.name).toBe("Classic Smash Cheese Burger");
+      expect(line.quantity).toBe("2");
+      expect(line.price).toBe("249.00");
+      // `final_price = price - item_discount` — a UNIT figure. The old line
+      // total ("498.00") violated the vendor's own invariant.
+      expect(line.final_price).toBe("249.00");
+      expect(line.item_discount).toBe("0.00");
+      // Our checkout adds GST on top of the item price.
+      expect(line.tax_inclusive).toBe(false);
+      expect(line.gst_liability).toBe("restaurant");
+      expect(line.item_tax).toHaveLength(2);
+      expect(line.item_tax[0].tax_percentage).toBe("2.5");
+      expect(line.item_tax[0].amount).toBe("12.45");
+      expect(line.description).toBe("");
+      expect(line.variation_id).toBe("");
+      expect(line.variation_name).toBe("");
+      // Official AddonItem carries its entries under `details`; group_id is an
+      // integer and quantity a string, per the sample.
+      expect(line.AddonItem.details).toHaveLength(1);
+      expect(line.AddonItem.details[0]).toMatchObject({
+        id: "bun_brioche",
+        name: "Brioche Bun",
+        group_name: "Addons",
+        price: "20.00",
+        group_id: 0,
+        quantity: "1",
+      });
+      // The legacy duplicate spellings are gone.
+      expect(line).not.toHaveProperty("item_id");
+      expect(line).not.toHaveProperty("addons");
+      expect(line).not.toHaveProperty("addon_items");
+      expect(line).not.toHaveProperty("item_attribute");
     });
 
     it("carries the vendor's optional variation fields, as empty strings when absent", () => {
@@ -249,10 +330,11 @@ describe("Petpooja POS Bridge Service", () => {
             petpoojaVariationName: "Half Dish",
           },
         ],
+        pricing: { grandTotal: 550 },
       };
 
       const payload = formatPetpoojaOrderPayload(order, null, "TEST_RES_ID");
-      const [noVariant, withVariant] = payload.orderinfo.OrderItem;
+      const [noVariant, withVariant] = payload.orderinfo.OrderInfo.OrderItem.details;
 
       expect(noVariant.variation_id).toBe("");
       expect(noVariant.variation_name).toBe("");
@@ -285,11 +367,12 @@ describe("Petpooja POS Bridge Service", () => {
             variationName: "Full Dish",
           },
         ],
+        pricing: { grandTotal: 200 },
       };
 
       const payload = formatPetpoojaOrderPayload(order, null, "TEST_RES_ID");
-      expect(payload.orderinfo.OrderItem[0].variation_id).toBe("110");
-      expect(payload.orderinfo.OrderItem[0].variation_name).toBe("Full Dish");
+      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].variation_id).toBe("110");
+      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].variation_name).toBe("Full Dish");
     });
 
     it("maps takeaway and dine-in fulfillment types correctly", () => {
@@ -298,21 +381,40 @@ describe("Petpooja POS Bridge Service", () => {
         fulfillmentType: "TAKEAWAY",
         paymentMethod: "COD",
         items: [],
+        pricing: { grandTotal: 0 },
       };
       const dineInOrder = {
         id: "ord_1003",
         fulfillmentType: "DINE_IN",
         paymentMethod: "PREPAID",
         items: [],
+        pricing: { grandTotal: 0 },
       };
 
       const payload1 = formatPetpoojaOrderPayload(takeawayOrder, null, "TEST_RES_ID");
-      expect(payload1.orderinfo.Order.order_type).toBe("P");
-      expect(payload1.orderinfo.Order.payment_type).toBe("COD");
+      expect(payload1.orderinfo.OrderInfo.Order.details.order_type).toBe("P");
+      expect(payload1.orderinfo.OrderInfo.Order.details.payment_type).toBe("COD");
 
       const payload2 = formatPetpoojaOrderPayload(dineInOrder, null, "TEST_RES_ID");
-      expect(payload2.orderinfo.Order.order_type).toBe("D");
-      expect(payload2.orderinfo.Order.payment_type).toBe("ONLINE");
+      expect(payload2.orderinfo.OrderInfo.Order.details.order_type).toBe("D");
+      expect(payload2.orderinfo.OrderInfo.Order.details.payment_type).toBe("ONLINE");
+    });
+
+    it("refuses client-authored totals when server pricing is absent", () => {
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_no_pricing",
+            fulfillmentType: "DELIVERY",
+            paymentMethod: "COD",
+            items: [{ id: "l1", name: "Tampered", price: 1, quantity: 1 }],
+            totalAmount: 1,
+            total: 1,
+          },
+          null,
+          "TEST_RES_ID"
+        )
+      ).toThrow(/server-authoritative pricing/);
     });
 
     it("resolves the POS item id and price from the CartLine shape the app actually writes", () => {
@@ -355,20 +457,24 @@ describe("Petpooja POS Bridge Service", () => {
         "TEST_RES_ID",
         "branch_surat_01"
       );
-      const lines = payload.orderinfo.OrderItem as Array<Record<string, unknown>>;
+      const lines = payload.orderinfo.OrderInfo.OrderItem.details as Array<
+        Record<string, any>
+      >;
 
       // `prod_<branchId>_<itemid>` is stripped by exact prefix.
       expect(lines[0].id).toBe("30791");
-      expect(lines[0].item_id).toBe("30791");
       // `meta.petpoojaItemId` outranks the doc-id fallback.
       expect(lines[1].id).toBe("30799");
       // Prices come from `unitPrice`, not the absent `price`/`basePrice`.
       expect(lines[0].price).toBe("350.00");
       expect(lines[1].price).toBe("220.00");
-      // `veg` is honoured; reading only `isVeg` reported every line as veg.
-      expect(lines[0].item_attribute).toBe("2");
-      expect(lines[1].item_attribute).toBe("1");
-      // The tax split is a share of the order's embedded GST, per line.
+      // Unit figures, per the vendor sample; qty carries the multiplier.
+      expect(lines[0].final_price).toBe("350.00");
+      expect(lines[0].quantity).toBe("2");
+      // The vendor sample has no veg flag — the POS resolves it from the menu
+      // item id, and the duplicate legacy key is no longer emitted.
+      expect(lines[0]).not.toHaveProperty("item_attribute");
+      // The tax split is a share of the order's GST, per line.
       expect(Number(lines[0].item_tax[0].amount) + Number(lines[0].item_tax[1].amount)).toBeCloseTo(
         (46 * 700) / 920 / 1,
         2
@@ -389,7 +495,7 @@ describe("Petpooja POS Bridge Service", () => {
         "branch_surat_01"
       );
       // Wrong-branch prefix must NOT be stripped into a bogus id.
-      expect((payload.orderinfo.OrderItem as any)[0].id).toBe("");
+      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].id).toBe("");
     });
   });
 
@@ -421,22 +527,26 @@ describe("Petpooja POS Bridge Service", () => {
   });
 
   describe("86ing & Menu Webhook Handlers", () => {
-    it("handles incoming 86ing out-of-stock webhook from Petpooja POS", async () => {
+    it("handles incoming 86ing out-of-stock webhook from Petpooja POS for unlinked outlet by capturing review evidence", async () => {
       await handlePetpoojaStockWebhook({
         rest_id: "branch_surat_01",
         item_id: "pp_b1",
         in_stock: 0,
       });
 
-      // rest_id is unlinked in this fixture, so stock is staged on an
-      // attributed orphan doc — never silently merged into another branch.
-      expect(savedDocs["products/prod_unlinked_pp_b1"]?.inStock).toBe(false);
-      expect(
-        savedDocs["products/prod_unlinked_pp_b1"]?.branchId
-      ).toBeUndefined();
+      // rest_id is unlinked in this fixture, so canonical products are NOT mutated and no prod_unlinked doc is created.
+      expect(savedDocs["products/prod_unlinked_pp_b1"]).toBeUndefined();
+      const productKeys = Object.keys(savedDocs).filter((k) => k.startsWith("products/"));
+      expect(productKeys).toHaveLength(0);
+
+      // Captured in unmatched_petpooja_stock as explicit review evidence.
+      const qId = computeStockQuarantineDocId("branch_surat_01", "pp_b1");
+      expect(savedDocs[`unmatched_petpooja_stock/${qId}`]).toBeDefined();
+      expect(savedDocs[`unmatched_petpooja_stock/${qId}`]?.inStock).toBe(false);
+      expect(savedDocs[`unmatched_petpooja_stock/${qId}`]?.status).toBe("needs_review");
     });
 
-    it("fails CLOSED on the stock verb for every value outside the on-whitelist", async () => {
+    it("fails CLOSED on the stock verb for every value outside the on-whitelist on linked canonical product", async () => {
       // The vendor documents the Item On/Off Webhook as carrying "the item stock
       // status (in-stock or out-of-stock)" but documents NO value encoding for it
       // - while its Push Menu payload uses "2" for all 166 items (see the
@@ -464,13 +574,21 @@ describe("Petpooja POS Bridge Service", () => {
 
       for (const [in_stock, expected] of cases) {
         for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+        savedDocs["branches/branch_surat_01"] = { petpoojaStoreId: "PP_SURAT_01" };
+        savedDocs["products/prod_branch_surat_01_pp_b1"] = {
+          id: "prod_branch_surat_01_pp_b1",
+          branchId: "branch_surat_01",
+          petpoojaItemId: "pp_b1",
+          inStock: true,
+        };
+
         await handlePetpoojaStockWebhook({
-          rest_id: "branch_surat_01",
+          rest_id: "PP_SURAT_01",
           item_id: "pp_b1",
           in_stock,
         } as any);
         expect(
-          savedDocs["products/prod_unlinked_pp_b1"]?.inStock,
+          savedDocs["products/prod_branch_surat_01_pp_b1"]?.inStock,
           `in_stock=${String(in_stock)} must resolve to inStock=${expected}`
         ).toBe(expected);
       }
@@ -620,7 +738,9 @@ describe("Petpooja POS Bridge Service", () => {
       const success = await pushOrderToPetpooja("order_test_999");
       expect(success).toBe(true);
       expect(savedDocs["orders/order_test_999"]?.petpoojaStatus).toBe("synced");
-      expect(savedDocs["orders/order_test_999"]?.kotPrinted).toBe(true);
+      // Finding 5: A mock or relay push sets kotPushedAt, but does not manufacture kotPrinted!
+      expect(savedDocs["orders/order_test_999"]?.kotPrinted).toBeUndefined();
+      expect(savedDocs["orders/order_test_999"]?.kotPushedAt).toBeDefined();
       expect(savedDocs["orders/order_test_999"]?.petpoojaMock).toBe(true);
     });
 

@@ -287,7 +287,9 @@ describe("End-to-End Platform Integration Flow", () => {
     const kotPushed = await pushOrderToPetpooja(orderId);
     expect(kotPushed).toBe(true);
     expect(savedDocs[`orders/${orderId}`].petpoojaStatus).toBe("synced");
-    expect(savedDocs[`orders/${orderId}`].kotPrinted).toBe(true);
+    // Finding 5: Relay response / mock does not manufacture kotPrinted
+    expect(savedDocs[`orders/${orderId}`].kotPrinted).toBeUndefined();
+    expect(savedDocs[`orders/${orderId}`].kotPushedAt).toBeDefined();
 
     // 5. Petpooja Webhook: Kitchen status transitions to FOOD_READY (Code 5)
     await handlePetpoojaWebhook({

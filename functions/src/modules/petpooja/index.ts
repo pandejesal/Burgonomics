@@ -11,7 +11,7 @@ export {
   extractMenuRestId,
   menuApiFailureReason,
 } from "./menuSyncWebhook";
-export { pushOrderToPetpooja, formatPetpoojaOrderPayload } from "./orderPush";
+export { pushOrderToPetpooja, formatPetpoojaOrderPayload, wasPushDeferredBusy } from "./orderPush";
 export {
   handlePetpoojaStockWebhook,
   pushItemStockToPetpooja,

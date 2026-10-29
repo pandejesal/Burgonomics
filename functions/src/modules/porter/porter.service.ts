@@ -2,6 +2,7 @@ import * as crypto from "crypto";
 import { db } from "../../core/firebase";
 import { config, assertLiveDispatchContext } from "../../config/env";
 import { extractRiderGps } from "../dispatch/dispatch.webhooks";
+import { ACTIVE_DELIVERY_STATUSES } from "../dispatch/types";
 import {
   timingSafeEqual,
   verifyPorterWebhookSignature,
@@ -260,6 +261,150 @@ function dispatchInProgressError(): Error {
   return retry;
 }
 
+// ---------------------------------------------------------------------------
+// In-house (branch terminal) assignment ownership
+// ---------------------------------------------------------------------------
+
+/**
+ * Persisted marker of an in-house rider assignment made from the branch POS.
+ * Cross-path exclusion keys off THIS marker plus an active delivery status, so
+ * a provider claim can never be layered on top of a live manual assignment.
+ * `dispatch.router.ts` carries the same predicate (importing this module from
+ * the router would invert the provider-adapter dependency).
+ */
+const MANUAL_BRANCH_DISPATCH_TYPE = "manual_branch_terminal";
+
+/** The order is currently owned by an in-house rider (active, no lease). */
+function isManualBranchAssignmentActive(order: any): boolean {
+  return (
+    order?.dispatchType === MANUAL_BRANCH_DISPATCH_TYPE &&
+    (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(order?.deliveryStatus || "")
+  );
+}
+
+/**
+ * Active status + any provider binding means an external dispatch owns the
+ * order. A released binding is nulled by the teardown paths, so those orders
+ * stay assignable in-house.
+ */
+function hasActiveProviderBinding(order: any): boolean {
+  const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(
+    order?.deliveryStatus || ""
+  );
+  if (!active) return false;
+  return Boolean(
+    order?.dispatchProvider ||
+      order?.dispatchOrderId ||
+      order?.porterOrderId ||
+      order?.borzoOrderId ||
+      order?.shadowfaxOrderId
+  );
+}
+
+/** Every provider-order id an order can still present to a webhook/poller. */
+const PROVIDER_ORDER_ID_FIELDS = [
+  "dispatchOrderId",
+  "porterOrderId",
+  "borzoOrderId",
+  "shadowfaxOrderId",
+] as const;
+
+/**
+ * Provider-order ids that were never released. A teardown nulls all of these
+ * (`buildReleasedBindingWrite` in dispatch.router); anything left here is a
+ * binding the providers can still resolve to THIS order, whatever the local
+ * deliveryStatus currently says. `null`/blank is a released/absent binding.
+ */
+function unresolvedProviderOrderIds(order: any): string[] {
+  return PROVIDER_ORDER_ID_FIELDS.filter((field) => {
+    const value = order?.[field];
+    return value !== null && value !== undefined && String(value).trim() !== "";
+  });
+}
+
+/**
+ * Canonical terminal proof: deliveryStatus delivered/cancelled OR the
+ * canonical status object marked terminal/completed. The deliveryStatus
+ * sidecar can still read "confirmed"/"ready" after a finished order, so every
+ * claim path must consult the canonical object too.
+ */
+function porterTerminalStatus(order: any): string | null {
+  const ds = order?.deliveryStatus;
+  if (ds === "delivered" || ds === "cancelled") return ds;
+  if (order?.status?.terminal === true || order?.status?.kind === "completed") {
+    return "completed";
+  }
+  return null;
+}
+
+function isFreshGenericDispatchClaim(order: any): boolean {
+  return (
+    order?.dispatchStatus === "dispatch_pending" &&
+    Date.now() - porterClaimFreshMs(order?.dispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS
+  );
+}
+
+function isFreshPorterDispatchClaim(order: any): boolean {
+  return (
+    order?.porterDispatchStatus === "dispatch_pending" &&
+    Date.now() - porterClaimFreshMs(order?.porterDispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS
+  );
+}
+
+/**
+ * Any pending claim lease, fresh or expired. An expired lease is NOT proof the
+ * remote booking never happened (the crash may have landed after the POST), so
+ * the in-house path refuses both and never "releases" a claim it cannot cancel
+ * at the provider.
+ */
+function hasPendingDispatchClaim(order: any): boolean {
+  return (
+    order?.dispatchStatus === "dispatch_pending" ||
+    order?.porterDispatchStatus === "dispatch_pending"
+  );
+}
+
+function manualAssignmentLockedError(deliveryStatus: string): Error {
+  const err: any = new Error(
+    `This order is already ${deliveryStatus} — dispatch is locked. Use the order timeline for post-delivery actions.`
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_LOCKED";
+  return err;
+}
+
+function manualAssignmentConflictError(message: string): Error {
+  const err: any = new Error(message);
+  err.statusCode = 409;
+  err.code = "DISPATCH_EXISTS";
+  return err;
+}
+
+function manualAssignmentClaimStaleError(): Error {
+  const err: any = new Error(
+    "A dispatch attempt for this order started but never completed. Its remote booking may still be live, so it cannot be assumed cancelled — reconcile it with the provider, then release the dispatch before assigning an in-house rider."
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_CLAIM_STALE";
+  return err;
+}
+
+function manualAssignmentReconciliationError(): Error {
+  const err: any = new Error(
+    "This order has a provider booking awaiting reconciliation — a remote rider may already be on the way. Reconcile the booking before assigning an in-house rider."
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_RECONCILIATION_REQUIRED";
+  return err;
+}
+
+function orderMissingError(orderId: string): Error {
+  const err: any = new Error(`Order ${orderId} not found`);
+  err.statusCode = 404;
+  err.code = "ORDER_NOT_FOUND";
+  return err;
+}
+
 /** Drops undefined values — Firestore rejects them inside any write payload. */
 function definedFields(o: Record<string, any>): Record<string, any> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
@@ -332,21 +477,18 @@ function storedDispatchSummary(d: any): any {
 async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | null> {
   const isDispatched = (d: any): boolean =>
     !!d?.porterOrderId && ["dispatched", "in_transit"].includes(d?.deliveryStatus);
-  const isFreshPending = (d: any): boolean =>
-    d?.porterDispatchStatus === "dispatch_pending" &&
-    Date.now() - porterClaimFreshMs(d?.porterDispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS;
   // Cross-provider guards (multi-provider dispatch layer): the generic router
   // (/dispatch/book) runs its own claim over the same order doc. A direct
   // /porter/book tap must never race it or hijack another provider's booking.
-  const crossProvider = (d: any): "busy" | "conflict" | null => {
+  const crossProvider = (d: any): "busy" | "conflict" | "in_house" | null => {
     const active = ["dispatched", "in_transit", "driver_allocated"].includes(d?.deliveryStatus);
+    // An in-house rider already owns this order: booking a paid Porter rider
+    // on top of a live manual assignment is two riders for one order.
+    if (active && isManualBranchAssignmentActive(d)) return "in_house";
     // Another provider owns an active dispatch (porterOrderId absent = not ours).
     if (active && d?.dispatchOrderId && !d?.porterOrderId) return "conflict";
     // The router holds a fresh generic claim — same 202 retry contract.
-    if (
-      d?.dispatchStatus === "dispatch_pending" &&
-      Date.now() - porterClaimFreshMs(d?.dispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS
-    ) {
+    if (isFreshGenericDispatchClaim(d)) {
       return "busy";
     }
     return null;
@@ -359,6 +501,10 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
     err.code = "DISPATCH_EXISTS";
     return err;
   };
+  const inHouseError = (): Error =>
+    manualAssignmentConflictError(
+      "This order is already assigned to an in-house rider — cancel that assignment before booking a Porter rider."
+    );
   const claimWrite = {
     porterDispatchStatus: "dispatch_pending",
     porterDispatchClaimedAt: Date.now(),
@@ -368,18 +514,30 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
     const outcome: any = await (db as any).runTransaction(async (tx: any) => {
       const fresh = await tx.get(orderDoc.ref);
       const d = (fresh.exists ? fresh.data() : undefined) as any;
-      if (!d) return { claimed: true };
+      // Deleted between the caller's pre-read and the claim: fail 404 BEFORE
+      // any provider POST. A booking against a gone document is a paid rider
+      // nobody can reconcile.
+      if (!d) return { missing: true as const };
+      // Canonical terminal lock: deliveryStatus can still read
+      // "confirmed"/"ready" on a finished order, and booking on top of it
+      // would resurrect (and re-pay for) a completed delivery.
+      const terminal = porterTerminalStatus(d);
+      if (terminal) return { terminal };
       if (isDispatched(d)) return { reuse: true, data: d };
       const cross = crossProvider(d);
+      if (cross === "in_house") return { in_house: true };
       if (cross === "conflict") return { conflict: true, data: d };
       if (cross === "busy") return { busy: true };
       // Another tap owns the booking right now — never POST ours. Stale
       // claims (>10 min, owner crashed) are taken over below.
-      if (isFreshPending(d)) return { busy: true };
+      if (isFreshPorterDispatchClaim(d)) return { busy: true };
       tx.set(orderDoc.ref, claimWrite, { merge: true });
       return { claimed: true };
     });
+    if (outcome?.missing) throw orderMissingError(orderDoc.id);
+    if (outcome?.terminal) throw manualAssignmentLockedError(outcome.terminal);
     if (outcome?.reuse) return storedDispatchSummary(outcome.data);
+    if (outcome?.in_house) throw inHouseError();
     if (outcome?.conflict) throw conflictError(outcome.data);
     if (outcome?.busy) throw dispatchInProgressError();
     return null;
@@ -388,11 +546,14 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
   // Fallback for Firestore shims without transactions (tests): same rules on
   // the already-read order. Concurrent taps are serialized by the caller's
   // per-order pending UI state (partner H-M8 fix); this is the last guard.
+  const terminal = porterTerminalStatus(order);
+  if (terminal) throw manualAssignmentLockedError(terminal);
   if (isDispatched(order)) return storedDispatchSummary(order);
   const cross = crossProvider(order);
+  if (cross === "in_house") throw inHouseError();
   if (cross === "conflict") throw conflictError(order);
   if (cross === "busy") throw dispatchInProgressError();
-  if (isFreshPending(order)) throw dispatchInProgressError();
+  if (isFreshPorterDispatchClaim(order)) throw dispatchInProgressError();
   await orderDoc.ref.set(claimWrite, { merge: true });
   return null;
 }
@@ -1520,27 +1681,65 @@ export interface ManualBranchDispatchParams {
 
 /**
  * Manual Dispatch from Branch POS Terminal device when Porter 3PL courier is unavailable.
+ *
+ * Cross-path exclusion (in-house vs external): the assignment is decided and
+ * written in ONE transaction that re-reads the order. It refuses a terminal
+ * order, an active external binding, a live manual assignment for a different
+ * rider, and any pending generic/Porter claim lease. An EXPIRED lease is
+ * refused too — the crash that stranded it may have happened AFTER the
+ * provider POST, so it is not evidence the remote booking was cancelled, and
+ * this function never claims a provider-side cancellation it cannot perform.
+ *
+ * Replaying the SAME rider on an already-manual order is idempotent: nothing
+ * is written, so `dispatchedAt` / `updatedAt` are untouched.
  */
 export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
-  const { orderId, riderName, riderPhone, staffName, notes, caller } = params;
-  if (!orderId || !riderName || !riderPhone) {
+  const { orderId, staffName, notes, caller } = params;
+  const riderName = typeof params.riderName === "string" ? params.riderName.trim() : "";
+  const riderPhone = typeof params.riderPhone === "string" ? params.riderPhone.trim() : "";
+
+  if (!orderId) {
     throw new Error("orderId, riderName, and riderPhone are required for manual branch dispatch");
+  }
+  // Blank (or whitespace-only) rider identity would dispatch an anonymous
+  // rider the store cannot hand food to — reject before any read or write.
+  if (!riderName || !riderPhone) {
+    const invalid: any = new Error(
+      "Rider name and phone number are required for manual branch dispatch — blank values are rejected."
+    );
+    invalid.statusCode = 400;
+    invalid.code = "INVALID_RIDER_DETAILS";
+    throw invalid;
   }
 
   const orderDoc = await db.collection("orders").doc(orderId).get();
-  if (!orderDoc.exists) {
-    throw new Error(`Order ${orderId} not found`);
-  }
+  if (!orderDoc.exists) throw orderMissingError(orderId);
+  // Fast pre-check for the common denial; authorization is re-evaluated
+  // against the document as read INSIDE the transaction below.
   if (caller) await assertOrderBranchAccess(caller, orderDoc.data()!);
 
-  const dispatchResult = {
-    dispatchType: "manual_branch_terminal",
-    deliveryStatus: "dispatched",
-    riderName: riderName.trim(),
-    riderPhone: riderPhone.trim(),
+  // No non-transactional path: a check-then-act assignment is exactly the race
+  // (and the stale pre-read) this guard exists to close.
+  if (!db || typeof (db as any).runTransaction !== "function") {
+    const err: any = new Error(
+      "Manual branch dispatch requires transactional storage — refusing to assign a rider without a race-safe re-read."
+    );
+    err.statusCode = 503;
+    err.code = "TRANSACTION_UNAVAILABLE";
+    throw err;
+  }
+
+  // Everything this call can state truthfully. Timestamps are deliberately
+  // NOT here: they are serverTimestamp() sentinels in the write below, which
+  // resolve only after commit and are not safely serializable, so the fresh
+  // response must not echo them as if they were real values.
+  const manualFields = {
+    dispatchType: MANUAL_BRANCH_DISPATCH_TYPE,
+    deliveryStatus: "dispatched" as const,
+    riderName,
+    riderPhone,
     riderVehicleNumber: "Local / In-Store",
     dispatchedBy: staffName || "unattributed",
-    dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
     manualDispatchNotes: notes || "Dispatched via Branch POS Terminal fallback",
     // An in-house rider settles any pending auto-rebook: leaving needsRebook
     // set would make the worker book a 3PL rider ALONGSIDE this one (double
@@ -1548,15 +1747,103 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
     needsRebook: false,
     rebookTrigger: null,
     autoRebookAttempts: 0,
+  };
+
+  const manualWrite = {
+    ...manualFields,
+    dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
-  await orderDoc.ref.set(dispatchResult, { merge: true });
+  const storedManualSummary = (d: any) => ({
+    success: true,
+    orderId,
+    dispatchType: MANUAL_BRANCH_DISPATCH_TYPE,
+    deliveryStatus: "dispatched" as const,
+    riderName: d.riderName,
+    riderPhone: d.riderPhone,
+    riderVehicleNumber: d.riderVehicleNumber,
+    dispatchedBy: d.dispatchedBy,
+    dispatchedAt: d.dispatchedAt,
+    manualDispatchNotes: d.manualDispatchNotes,
+    needsRebook: d.needsRebook ?? false,
+    rebookTrigger: d.rebookTrigger ?? null,
+    autoRebookAttempts: d.autoRebookAttempts ?? 0,
+    updatedAt: d.updatedAt,
+    reused: true as const,
+  });
 
+  const outcome: any = await (db as any).runTransaction(async (tx: any) => {
+    const fresh = await tx.get(orderDoc.ref);
+    const d = (fresh.exists ? fresh.data() : undefined) as any;
+    if (!d) return { missing: true as const };
+    // Re-authorize on the FRESH document: the pre-read verdict can be stale
+    // (order re-linked to another branch between read and write).
+    if (caller) await assertOrderBranchAccess(caller, d);
+
+    const terminal = porterTerminalStatus(d);
+    if (terminal) return { terminal };
+    // An ACTIVE external binding is a live dispatch: staff must cancel it.
+    if (hasActiveProviderBinding(d)) {
+      return {
+        conflict: `This order is already dispatched via ${
+          d.dispatchProvider || "an external provider"
+        } — cancel that dispatch before assigning an in-house rider.`,
+      };
+    }
+    // BLOCKER (GLM review): an INACTIVE status no longer proves the binding is
+    // gone. A lingering porterOrderId/dispatchOrderId/borzoOrderId/
+    // shadowfaxOrderId can still be resolved by the provider webhook, which
+    // would then overwrite this in-house assignment (or re-arm auto-rebook).
+    // We cannot cancel a remote booking from here, so refuse until it is
+    // reconciled — never write an in-house rider over an unresolved booking.
+    if (unresolvedProviderOrderIds(d).length > 0) return { needsReconciliation: true as const };
+    if (isManualBranchAssignmentActive(d)) {
+      const sameRider =
+        String(d.riderName ?? "").trim() === riderName &&
+        String(d.riderPhone ?? "").trim() === riderPhone;
+      // Idempotent replay: return the stored assignment, write nothing.
+      if (sameRider) return { reuse: d };
+      return {
+        conflict:
+          "This order is already assigned to a different in-house rider — cancel that assignment before assigning another.",
+      };
+    }
+    if (isFreshGenericDispatchClaim(d) || isFreshPorterDispatchClaim(d)) {
+      return { busy: true as const };
+    }
+    // Conservative: an expired lease is not proof of a cancelled remote
+    // booking. Never mutate/clear it here (no fake provider cancellation).
+    if (hasPendingDispatchClaim(d)) return { staleClaim: true as const };
+    if (d.porterDispatchStatus === "needs_reconciliation") {
+      return { needsReconciliation: true as const };
+    }
+
+    tx.set(orderDoc.ref, manualWrite, { merge: true });
+    return { ok: true as const };
+  });
+
+  if (outcome?.missing) throw orderMissingError(orderId);
+  if (outcome?.terminal) throw manualAssignmentLockedError(outcome.terminal);
+  if (outcome?.conflict) throw manualAssignmentConflictError(outcome.conflict);
+  if (outcome?.busy) throw dispatchInProgressError();
+  if (outcome?.staleClaim) throw manualAssignmentClaimStaleError();
+  if (outcome?.needsReconciliation) throw manualAssignmentReconciliationError();
+  if (outcome?.reuse) return storedManualSummary(outcome.reuse);
+  if (!outcome?.ok) {
+    // Fail closed: a future return shape must not silently report success
+    // without the order having been flipped.
+    throw new Error("manualBranchDispatch: unrecognised transaction outcome");
+  }
+
+  // Fresh assignment: only the resolved values are returned. The committed
+  // timestamps are sentinels at this point (no read-back), so echoing them
+  // would assert a resolution that has not happened; a caller that needs them
+  // reads the order (the replay path returns the stored values below).
   return {
     success: true,
     orderId,
-    ...dispatchResult,
+    ...manualFields,
   };
 }
 

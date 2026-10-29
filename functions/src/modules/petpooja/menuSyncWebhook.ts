@@ -71,6 +71,31 @@ function buildCategoryNameMap(categories: any): Map<string, string> {
 }
 
 /**
+ * Resolve a Push Menu item's effective availability.
+ *
+ * The vendor does not document the Push Menu `in_stock` encoding, and a real
+ * 166-item push carried only `"2"`. Three rules, in order:
+ *   1. An unpriced item is NEVER sellable. Missing/variation-only prices were
+ *      the reason 81 SKUs could otherwise become ₹0 orders.
+ *   2. Recognised flags win: 1 / "1" / true = available, 0 / "0" / false = out.
+ *   3. An unrecognised flag (including "2" and an absent field) follows the
+ *      operator's explicit policy. The default is fail-closed; setting
+ *      PETPOOJA_UNKNOWN_STOCK_POLICY=available keeps a positive-priced menu
+ *      orderable until the authoritative stock webhook corrects an item.
+ */
+function resolvePushStock(
+  raw: unknown,
+  price: unknown,
+  policy: "available" | "unavailable"
+): boolean {
+  const priceKnown = Number.isFinite(Number(price)) && Number(price) > 0;
+  if (!priceKnown) return false;
+  if (raw === 1 || raw === "1" || raw === true) return true;
+  if (raw === 0 || raw === "0" || raw === false) return false;
+  return policy === "available";
+}
+
+/**
  * Synchronizes menu from Petpooja endpoint into the canonical `products`
  * collection — the single menu source both apps read (Partner filters by
  * `branchId`, Delivery by `restId`). `petpoojaItemId` is the join key for
@@ -349,7 +374,20 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // overwrite (and steal) the first branch's doc.
     const productId = `prod_${branchId}_${item.itemid}`;
     const productRef = db.collection("products").doc(productId);
-    const inStock = item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
+    const rawInStock = (item as any)?.in_stock;
+    const priceKnown = Number.isFinite(Number(item.price)) && Number(item.price) > 0;
+    // The flag's documented-as-true spellings, used only for the price-hazard
+    // census below. The effective `inStock` is resolved separately because an
+    // unrecognised flag (the real push carried "2" on all 166 items) must not
+    // silently make a priced item unsellable when the operator has opted into
+    // the availability policy, and must never make an unpriced item sellable.
+    const flagInStock =
+      item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
+    const inStock = resolvePushStock(
+      item.in_stock,
+      item.price,
+      config.petpooja.unknownStockPolicy
+    );
 
     // Census bucket. Normalised ONLY for grouping (`String(value)`), so "2"
     // stays "2" and the numeric 1 / "1" / true collapse to one key. An absent or
@@ -357,16 +395,18 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // string "undefined". Optional chaining keeps a non-object entry (a bare
     // string / number in `items`) from throwing here — this read must never be
     // the thing that fails a sync.
-    const rawInStock = (item as any)?.in_stock;
     const rawInStockKey =
       rawInStock === undefined || rawInStock === null ? "(absent)" : String(rawInStock);
     rawInStockValues[rawInStockKey] = (rawInStockValues[rawInStockKey] || 0) + 1;
     if (inStock) inStockTrueCount++;
 
-    // Record-only: keep the existing price mapping and stock whitelist intact.
-    if (!(Number(item.price) > 0)) {
+    // Record-only: keep the raw-price hazard visible even though
+    // `resolvePushStock` now blocks every unpriced item from sale.
+    // `unpricedInStockCount` therefore counts items the VENDOR flagged in stock
+    // (the old whitelist), not items we would actually sell.
+    if (!priceKnown) {
       unpricedSkuCount++;
-      if (inStock) unpricedInStockCount++;
+      if (flagInStock) unpricedInStockCount++;
       const variationFlagged =
         item.itemallowvariation === "1" || item.itemallowvariation === 1 || item.itemallowvariation === true;
       if (variationFlagged) {
@@ -378,7 +418,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
         // the money hazard: an unpriced, in-stock, variation-flagged item whose
         // item-local array is empty is exactly what this counter exists to catch,
         // whatever the deprecated object happens to carry.
-        if (inStock && !(Array.isArray(item.variation) && item.variation.length > 0)) {
+        if (flagInStock && !(Array.isArray(item.variation) && item.variation.length > 0)) {
           unpricedInStockVariationMissingCount++;
         }
       }
@@ -413,12 +453,16 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       petpoojaItemId: item.itemid,
       name: item.itemname,
       description: item.itemdescription || item.item_description || "",
-      price: Number(item.price) || 0,
+      price: priceKnown ? Number(item.price) : 0,
+      priceAvailable: priceKnown,
       categoryId,
       categoryName,
       imageUrl:
         item.itemimageurl || item.item_image_url || item.image_url || item.image || null,
       inStock,
+      // Raw Push Menu value, kept for the operator's next census. The
+      // authoritative stock webhook writes `rawInStock` separately.
+      pushInStock: rawInStock === undefined ? null : rawInStock,
       isVeg,
       branchId,
       // Delivery filters products by this restId (stores/{id}.petpoojaRestId
@@ -458,11 +502,13 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     );
   }
 
-  // PRICE OBSERVABILITY: fire only when this becomes a live money hazard,
-  // not while out-of-stock items make it harmless or on a healthy outlet.
+  // PRICE OBSERVABILITY: fire when the vendor flags an unpriced item in stock.
+  // resolvePushStock now blocks every unpriced item from sale, so this is no
+  // longer a live ₹0-order hazard — but the operator still needs to know the
+  // menu contains SKUs that cannot be ordered until their prices are fixed.
   if (unpricedInStockCount > 0) {
     console.warn(
-      `[Petpooja Menu Sync] outlet ${restId} ingested ${items.length} items: ${unpricedSkuCount} unpriced, ${unpricedInStockCount} unpriced in stock; ${unpricedInStockVariationMissingCount} of those are variation-flagged without definitions — live money hazard`
+      `[Petpooja Menu Sync] outlet ${restId} ingested ${items.length} items: ${unpricedSkuCount} unpriced, ${unpricedInStockCount} vendor-flagged in stock but blocked from sale because price is missing; ${unpricedInStockVariationMissingCount} of those are variation-flagged without definitions`
     );
   }
 
