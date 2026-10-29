@@ -505,6 +505,10 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           reconciliation: null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
+         const gatewayOrderIdRaw =
+           event === "order.paid" ? paymentEntity?.id : paymentEntity?.order_id;
+         const gatewayOrderId =
+           typeof gatewayOrderIdRaw === "string" && gatewayOrderIdRaw ? gatewayOrderIdRaw : null;
          let confirmWritten = false;
          let suppressedReason = null;
          let otpMinted = false;
@@ -534,11 +538,31 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           // so a redelivery (payment.captured vs order.paid) or a verify that
           // already confirmed is idempotent rather than re-minting.
           const mintedOtp = mintDeliveryOtp(fresh);
+          // Keep BOTH storage shapes in lockstep. The app's finalizePaidOrder
+          // reads the nested payment object (status + payment id + captured
+          // amount); writing only the literal dotted keys leaves it seeing
+          // `payment.status: pending` and refuses to finalize a paid order.
+          const settledPayment = {
+            ...(fresh?.payment && typeof fresh.payment === "object" && !Array.isArray(fresh.payment)
+              ? fresh.payment
+              : {}),
+            status: "completed",
+            ...(razorpayPaymentId
+              ? { razorpayPaymentId, transactionId: razorpayPaymentId }
+              : {}),
+            ...(gatewayOrderId ? { razorpayOrderId: gatewayOrderId } : {}),
+            ...(typeof capturedPaise === "number"
+              ? { capturedAmountPaise: capturedPaise }
+              : {}),
+            verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
           tx.set(
             orderRef,
-            mintedOtp
-              ? { ...basePayload, deliveryOtpHash: mintedOtp.deliveryOtpHash }
-              : basePayload,
+            {
+              ...basePayload,
+              payment: settledPayment,
+              ...(mintedOtp ? { deliveryOtpHash: mintedOtp.deliveryOtpHash } : {}),
+            },
             { merge: true }
           );
           return { written: true, reason: null, recordedPaymentId, fresh, otpMinted: !!mintedOtp };
@@ -727,6 +751,21 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               {
                 paymentStatus: "failed",
                 "payment.status": "failed",
+                // Keep the nested object the apps read in sync with the
+                // literal dotted compatibility fields. A stale nested
+                // `pending` makes the payer's order look un-settled.
+                payment: {
+                  ...(orderData?.payment &&
+                  typeof orderData.payment === "object" &&
+                  !Array.isArray(orderData.payment)
+                    ? orderData.payment
+                    : {}),
+                  status: "failed",
+                  ...(failedPaymentId
+                    ? { lastFailedPaymentId: failedPaymentId }
+                    : {}),
+                  failedAt: admin.firestore.FieldValue.serverTimestamp(),
+                },
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
               },
               { merge: true }

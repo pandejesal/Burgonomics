@@ -1664,6 +1664,22 @@ async function finishVerifiedPayment(args: {
         ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
           ? { "payment.capturedAmountPaise": capturedAmountPaise }
           : {}),
+        // Mirror the same truth into the nested object the apps actually read.
+        // Without this the customer app sees payment.status=pending after a
+        // successful capture and refuses to finalize the paid order.
+        payment: {
+          ...(fresh?.payment && typeof fresh.payment === "object" && !Array.isArray(fresh.payment)
+            ? fresh.payment
+            : {}),
+          status: "completed",
+          razorpayPaymentId,
+          razorpayOrderId,
+          transactionId: razorpayPaymentId,
+          ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
+            ? { capturedAmountPaise }
+            : {}),
+          verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
         status: {
           code: "CONFIRMED",
           label: "Order confirmed",

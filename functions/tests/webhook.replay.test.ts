@@ -172,6 +172,14 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     const firstKotId = savedDocs["orders/order_replay_1"].petpoojaOrderId;
     expect(firstKotId).toMatch(/^pp_kot_/);
     expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("completed");
+    // The nested payment object is what the customer app's finalizePaidOrder
+    // reads; top-level/dotted markers alone leave it refusing a paid order.
+    expect(savedDocs["orders/order_replay_1"].payment).toMatchObject({
+      status: "completed",
+      razorpayPaymentId: "pay_test_123",
+      transactionId: "pay_test_123",
+      capturedAmountPaise: 25000,
+    });
 
     const second = mockReqRes(capturedPayload("evt_replay_9"));
     await handleRazorpayWebhook(second.req, second.res);
