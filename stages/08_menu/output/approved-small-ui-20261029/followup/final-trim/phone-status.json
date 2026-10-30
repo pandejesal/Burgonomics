@@ -1,0 +1,19 @@
+{
+  "status": "INSTALLED_REQUESTED_REMOVALS_VERIFIED",
+  "targetDevice": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "latestLocalDiscovery": { "devices": ["RZCX51TXRKB"] },
+  "precedingInstalledSha256": "035f65964391ac73f8ab84a5b8daf5a35dcb7f3147422a937f32a61dbb098f1a",
+  "lastVerifiedInstalledSha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+  "stagedCandidateSha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+  "freshInstalledApkChecked": true,
+  "installationPerformed": true,
+  "nativeFinalTrimUiVerified": true,
+  "nativeSwipeAndRotationAcceptance": "INCOMPLETE: screen changed during rotation capture; a subsequent swipe was refused. No pass is inferred.",
+  "usbPreviewRouteVerified": false,
+  "remoteDeviceAllocated": false,
+  "ownerSteering": "Owner performed their own checks and requested the promised lower-Home merchandising sections before backend/integration work.",
+  "phoneControlStoppedForNewTask": true,
+  "dataClearPerformed": false,
+  "basketSeededOrRestored": false
+}

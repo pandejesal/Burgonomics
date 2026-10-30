@@ -1,0 +1,15 @@
+{
+  "status": "FAIL",
+  "samples": [],
+  "pageErrors": [],
+  "consoleErrors": [
+    "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+  ],
+  "failures": [
+    "page.evaluate: TypeError: Cannot read properties of null (reading 'bestSellers')\n    at eval (eval at evaluate (:368:30), <anonymous>:17:35)\n    at async <anonymous>:394:30"
+  ],
+  "blockedWrites": [],
+  "railFixtures": false,
+  "phoneAcceptance": false,
+  "providerAcceptance": false
+}

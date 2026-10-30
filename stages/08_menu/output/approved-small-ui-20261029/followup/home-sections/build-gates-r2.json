@@ -1,0 +1,22 @@
+﻿{
+    "Started":  "2026-10-30T02:34:07.7987478Z",
+    "PreviousAttempt":  "build-gates.json",
+    "PreviousUnitFailure":  "Old dietary test router mock lacked useNavigate; only its fixture export was added, with all assertions retained",
+    "SourcePreGates":  0,
+    "TypecheckExit":  0,
+    "UnitExit":  1,
+    "UnitFiles":  null,
+    "UnitTests":  null,
+    "UnitExclusion":  "tests/rules/**",
+    "WebBuild":  null,
+    "MobileBuild":  null,
+    "CapacitorSync":  null,
+    "DebugAssemble":  null,
+    "SourceComparison":  null,
+    "ApkCompatibility":  null,
+    "InstallationPerformed":  false,
+    "StrictRuntimeConsoleGate":  1,
+    "RuntimeLimitation":  "Existing fail-closed Razorpay test/missing-key guard remains unresolved; UI observations are not provider or production acceptance",
+    "ProviderAcceptance":  false,
+    "Completed":  null
+}

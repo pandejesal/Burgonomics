@@ -256,3 +256,22 @@ compact Menu, fonts, conditional favourites, announcements and final trim.
 All prior phone-data, no-backend/rules/Partner/provider, no-commit/push/deploy
 boundaries remain. “Then backend” does not authorise integration operations now.
 Evidence: [Home sections](output/approved-small-ui-20261029/followup/home-sections/README.md).
+
+## 16. Final UI/UX audit and publication — 30 October 2026
+
+The owner asked for a full UI/UX check, a preview, and a committed/pushed clean
+worktree. The bounded audit covers 17 routes at 320/390px in light/dark: 34
+samples, zero broken pages, zero horizontal overflow, zero uncaught errors.
+Fixed: a clipped Coupon “Apply” at 320px, one-line store-name truncation, Home's
+missing level-1 heading and promo `h3`-before-`h2` order. Inline and
+equivalent-control target-size exceptions, the 24px AA floor and the 44px project
+aim are recorded rather than redefined.
+
+All changes are committed in the Delivery worktree `launch/delivery-ui-20261028`
+and pushed to `origin`; that worktree is clean. The root workspace keeps its own
+docs commit. Unrelated dirty files from other sessions were left untouched. The
+existing fail-closed Razorpay key guard is an unresolved configuration provider
+blocker: it is not silenced, and no payment, POS, courier, auth or production
+acceptance follows. The final APK `33615bd9…` is verified but not installed —
+the phone disconnected. Evidence:
+[final UI/UX audit](output/approved-small-ui-20261029/followup/ui-ux-final-audit/README.md).

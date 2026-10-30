@@ -1,0 +1,2169 @@
+{
+  "status": "OBSERVED",
+  "scope": "Reachable guest Delivery/UI routes; synthetic public-outlet location; not phone, provider, auth, checkout or production acceptance",
+  "samples": [
+    {
+      "route": "home",
+      "path": "/home",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H2",
+          "text": "Big Bang Burgers"
+        },
+        {
+          "level": "H2",
+          "text": "The Big Bang Meal"
+        },
+        {
+          "level": "H2",
+          "text": "Peri Peri Fries"
+        },
+        {
+          "level": "H2",
+          "text": "Mix Your Own Burger"
+        },
+        {
+          "level": "H2",
+          "text": "On the menu"
+        },
+        {
+          "level": "H2",
+          "text": "Best sellers"
+        },
+        {
+          "level": "H3",
+          "text": "Cheese Burst Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Super Hero Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Great Indian Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Tandoori Paneer Burger"
+        },
+        {
+          "level": "H3",
+          "text": "American Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Gochuchang Burger"
+        },
+        {
+          "level": "H2",
+          "text": "Make it a meal"
+        },
+        {
+          "level": "H3",
+          "text": "Any Big Bang Burger Meal"
+        },
+        {
+          "level": "H3",
+          "text": "Any Classic Burger Meal"
+        },
+        {
+          "level": "H3",
+          "text": "Jr Hero Burger Meal"
+        }
+      ],
+      "controlCount": 47,
+      "smallTargets": [
+        {
+          "label": "Cheese Burst Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "Super Hero Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "Great Indian Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "Tandoori Paneer Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "American Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "Gochuchang Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        }
+      ],
+      "smallTargetCount": 6,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 1961,
+      "scrollHeight": 2714,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "homeSections": {
+        "bestSellers": 1,
+        "meals": 1,
+        "onTheMenu": 1
+      },
+      "blank": false
+    },
+    {
+      "route": "home",
+      "path": "/home",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H2",
+          "text": "Big Bang Burgers"
+        },
+        {
+          "level": "H2",
+          "text": "The Big Bang Meal"
+        },
+        {
+          "level": "H2",
+          "text": "Peri Peri Fries"
+        },
+        {
+          "level": "H2",
+          "text": "Mix Your Own Burger"
+        },
+        {
+          "level": "H2",
+          "text": "On the menu"
+        },
+        {
+          "level": "H2",
+          "text": "Best sellers"
+        },
+        {
+          "level": "H3",
+          "text": "Cheese Burst Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Super Hero Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Great Indian Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Tandoori Paneer Burger"
+        },
+        {
+          "level": "H3",
+          "text": "American Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Gochuchang Burger"
+        },
+        {
+          "level": "H2",
+          "text": "Make it a meal"
+        },
+        {
+          "level": "H3",
+          "text": "Any Big Bang Burger Meal"
+        },
+        {
+          "level": "H3",
+          "text": "Any Classic Burger Meal"
+        },
+        {
+          "level": "H3",
+          "text": "Jr Hero Burger Meal"
+        }
+      ],
+      "controlCount": 47,
+      "smallTargets": [
+        {
+          "label": "Cheese Burst Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "Super Hero Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "Great Indian Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "Tandoori Paneer Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "American Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        },
+        {
+          "label": "Gochuchang Burger",
+          "tag": "a",
+          "width": 200,
+          "height": 22
+        }
+      ],
+      "smallTargetCount": 6,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 1961,
+      "scrollHeight": 2707,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "homeSections": {
+        "bestSellers": 1,
+        "meals": 1,
+        "onTheMenu": 1
+      },
+      "blank": false
+    },
+    {
+      "route": "menu",
+      "path": "/menu?view=grid",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Menu"
+        },
+        {
+          "level": "H2",
+          "text": "Combos"
+        },
+        {
+          "level": "H3",
+          "text": "2 Jr. Hero Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Any Big Bang Burger Meal"
+        },
+        {
+          "level": "H3",
+          "text": "Any Classic Burger Meal"
+        },
+        {
+          "level": "H3",
+          "text": "Jr Hero Burger Meal"
+        },
+        {
+          "level": "H2",
+          "text": "Big Bang Burgers"
+        },
+        {
+          "level": "H3",
+          "text": "American Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Cheese Burst Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Gochuchang Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Great Indian Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Super Hero Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Tandoori Paneer Burger"
+        },
+        {
+          "level": "H2",
+          "text": "Pasta"
+        },
+        {
+          "level": "H3",
+          "text": "Arrabiata Pasta"
+        },
+        {
+          "level": "H3",
+          "text": "Pink Sauce Pasta"
+        }
+      ],
+      "controlCount": 61,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [
+        "Big Bang Series",
+        "Big Bang Series",
+        "Big Bang Series",
+        "Big Bang Series",
+        "Big Bang Series",
+        "Big Bang Series",
+        "Big Bang Series"
+      ],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 1329,
+      "scrollHeight": 8067,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "menu",
+      "path": "/menu?view=grid",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Menu"
+        },
+        {
+          "level": "H2",
+          "text": "Combos"
+        },
+        {
+          "level": "H3",
+          "text": "2 Jr. Hero Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Any Big Bang Burger Meal"
+        },
+        {
+          "level": "H3",
+          "text": "Any Classic Burger Meal"
+        },
+        {
+          "level": "H3",
+          "text": "Jr Hero Burger Meal"
+        },
+        {
+          "level": "H2",
+          "text": "Big Bang Burgers"
+        },
+        {
+          "level": "H3",
+          "text": "American Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Cheese Burst Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Gochuchang Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Great Indian Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Super Hero Burger"
+        },
+        {
+          "level": "H3",
+          "text": "Tandoori Paneer Burger"
+        },
+        {
+          "level": "H2",
+          "text": "Pasta"
+        },
+        {
+          "level": "H3",
+          "text": "Arrabiata Pasta"
+        },
+        {
+          "level": "H3",
+          "text": "Pink Sauce Pasta"
+        }
+      ],
+      "controlCount": 61,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 1329,
+      "scrollHeight": 8049,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "search",
+      "path": "/search",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Search"
+        },
+        {
+          "level": "H3",
+          "text": "Search the 100% Pure Veg Menu"
+        }
+      ],
+      "controlCount": 22,
+      "smallTargets": [
+        {
+          "label": "Search the menu",
+          "tag": "input",
+          "width": 226,
+          "height": 27
+        }
+      ],
+      "smallTargetCount": 1,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 352,
+      "scrollHeight": 1267,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "search",
+      "path": "/search",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Search"
+        },
+        {
+          "level": "H3",
+          "text": "Search the 100% Pure Veg Menu"
+        }
+      ],
+      "controlCount": 22,
+      "smallTargets": [
+        {
+          "label": "Search the menu",
+          "tag": "input",
+          "width": 296,
+          "height": 27
+        }
+      ],
+      "smallTargetCount": 1,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 352,
+      "scrollHeight": 1161,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "cart",
+      "path": "/cart",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Your cart"
+        },
+        {
+          "level": "H2",
+          "text": "Your burger box is empty"
+        }
+      ],
+      "controlCount": 6,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 164,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "cart",
+      "path": "/cart",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Your cart"
+        },
+        {
+          "level": "H2",
+          "text": "Your burger box is empty"
+        }
+      ],
+      "controlCount": 6,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 164,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "offers",
+      "path": "/offers",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Offers"
+        },
+        {
+          "level": "H2",
+          "text": "Buy 1 Get 1 Free"
+        },
+        {
+          "level": "H3",
+          "text": "This outlet's menu isn't available yet"
+        }
+      ],
+      "controlCount": 11,
+      "smallTargets": [
+        {
+          "label": "All",
+          "tag": "button",
+          "width": 46,
+          "height": 33
+        }
+      ],
+      "smallTargetCount": 1,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 6,
+      "bodyLength": 402,
+      "scrollHeight": 1645,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "offers",
+      "path": "/offers",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Offers"
+        },
+        {
+          "level": "H2",
+          "text": "Buy 1 Get 1 Free"
+        },
+        {
+          "level": "H3",
+          "text": "This outlet's menu isn't available yet"
+        }
+      ],
+      "controlCount": 11,
+      "smallTargets": [
+        {
+          "label": "All",
+          "tag": "button",
+          "width": 46,
+          "height": 33
+        }
+      ],
+      "smallTargetCount": 1,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 3,
+      "bodyLength": 402,
+      "scrollHeight": 1531,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "stores",
+      "path": "/stores",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Choose a store"
+        },
+        {
+          "level": "H2",
+          "text": "Nearby"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Mansi Circle"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Nehrunagar"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Navrangpura"
+        },
+        {
+          "level": "H2",
+          "text": "All stores"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics DEMO"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Science City"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics SOBO"
+        },
+        {
+          "level": "H2",
+          "text": "You're near Burgonomics Burgonomics Mansi Circle"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Mansi Circle"
+        }
+      ],
+      "controlCount": 31,
+      "smallTargets": [
+        {
+          "label": "Refresh stores",
+          "tag": "button",
+          "width": 40,
+          "height": 40
+        },
+        {
+          "label": "Search stores",
+          "tag": "input",
+          "width": 147,
+          "height": 18
+        },
+        {
+          "label": "Use my current location",
+          "tag": "button",
+          "width": 104,
+          "height": 40
+        },
+        {
+          "label": "View info and actions for Burgonomics Mansi Circle",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "View info and actions for Burgonomics Nehrunagar",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "View info and actions for Burgonomics Navrangpura",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "Alphabetical",
+          "tag": "button",
+          "width": 85,
+          "height": 21
+        },
+        {
+          "label": "Nearest",
+          "tag": "button",
+          "width": 77,
+          "height": 23
+        },
+        {
+          "label": "View info and actions for Burgonomics DEMO",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "View info and actions for Burgonomics Science City",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "View info and actions for Burgonomics SOBO",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 29,
+          "height": 29
+        },
+        {
+          "label": "View info and actions for Burgonomics Mansi Circle",
+          "tag": "button",
+          "width": 32,
+          "height": 32
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 32,
+          "height": 32
+        }
+      ],
+      "smallTargetCount": 19,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 9,
+      "bodyLength": 598,
+      "scrollHeight": 946,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "stores",
+      "path": "/stores",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Choose a store"
+        },
+        {
+          "level": "H2",
+          "text": "Nearby"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Mansi Circle"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Nehrunagar"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Navrangpura"
+        },
+        {
+          "level": "H2",
+          "text": "All stores"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics DEMO"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Science City"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics SOBO"
+        },
+        {
+          "level": "H2",
+          "text": "You're near Burgonomics Burgonomics Mansi Circle"
+        },
+        {
+          "level": "H3",
+          "text": "Burgonomics Mansi Circle"
+        }
+      ],
+      "controlCount": 31,
+      "smallTargets": [
+        {
+          "label": "Refresh stores",
+          "tag": "button",
+          "width": 41,
+          "height": 41
+        },
+        {
+          "label": "Search stores",
+          "tag": "input",
+          "width": 163,
+          "height": 19
+        },
+        {
+          "label": "Use my current location",
+          "tag": "button",
+          "width": 105,
+          "height": 41
+        },
+        {
+          "label": "View info and actions for Burgonomics Mansi Circle",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "View info and actions for Burgonomics Nehrunagar",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "View info and actions for Burgonomics Navrangpura",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "Alphabetical",
+          "tag": "button",
+          "width": 87,
+          "height": 21
+        },
+        {
+          "label": "Nearest",
+          "tag": "button",
+          "width": 78,
+          "height": 23
+        },
+        {
+          "label": "View info and actions for Burgonomics DEMO",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "View info and actions for Burgonomics Science City",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "View info and actions for Burgonomics SOBO",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 30,
+          "height": 30
+        },
+        {
+          "label": "View info and actions for Burgonomics Mansi Circle",
+          "tag": "button",
+          "width": 32,
+          "height": 32
+        },
+        {
+          "label": "BUTTON",
+          "tag": "button",
+          "width": 32,
+          "height": 32
+        }
+      ],
+      "smallTargetCount": 19,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 7,
+      "bodyLength": 598,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "orders",
+      "path": "/auth/login?redirect=%2Forders",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": false,
+      "guestGate": true,
+      "blank": false
+    },
+    {
+      "route": "orders",
+      "path": "/auth/login?redirect=%2Forders",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": false,
+      "guestGate": true,
+      "blank": false
+    },
+    {
+      "route": "profile",
+      "path": "/profile",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 2,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Profile"
+        },
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 8,
+      "smallTargets": [
+        {
+          "label": "Terms",
+          "tag": "a",
+          "width": 44,
+          "height": 18
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 359,
+      "scrollHeight": 924,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "profile",
+      "path": "/profile",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 2,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Profile"
+        },
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 8,
+      "smallTargets": [
+        {
+          "label": "Terms",
+          "tag": "a",
+          "width": 44,
+          "height": 18
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 202,
+          "height": 39
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 359,
+      "scrollHeight": 855,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "settings",
+      "path": "/auth/login?redirect=%2Fprofile%2Fsettings",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": false,
+      "guestGate": true,
+      "blank": false
+    },
+    {
+      "route": "settings",
+      "path": "/auth/login?redirect=%2Fprofile%2Fsettings",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": false,
+      "guestGate": true,
+      "blank": false
+    },
+    {
+      "route": "favorites",
+      "path": "/auth/login?redirect=%2Fprofile%2Ffavorites",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": false,
+      "guestGate": true,
+      "blank": false
+    },
+    {
+      "route": "favorites",
+      "path": "/auth/login?redirect=%2Fprofile%2Ffavorites",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": false,
+      "guestGate": true,
+      "blank": false
+    },
+    {
+      "route": "addresses",
+      "path": "/auth/login?redirect=%2Fprofile%2Faddresses",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": false,
+      "guestGate": true,
+      "blank": false
+    },
+    {
+      "route": "addresses",
+      "path": "/auth/login?redirect=%2Fprofile%2Faddresses",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": false,
+      "guestGate": true,
+      "blank": false
+    },
+    {
+      "route": "login",
+      "path": "/auth/login",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "login",
+      "path": "/auth/login",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Welcome to BURGONOMICS"
+        }
+      ],
+      "controlCount": 4,
+      "smallTargets": [
+        {
+          "label": "Terms of Service",
+          "tag": "a",
+          "width": 240,
+          "height": 39
+        },
+        {
+          "label": "Privacy Policy",
+          "tag": "a",
+          "width": 99,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 224,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "support",
+      "path": "/support",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Help & Support"
+        },
+        {
+          "level": "H3",
+          "text": "No tickets yet"
+        },
+        {
+          "level": "H3",
+          "text": "No channels"
+        },
+        {
+          "level": "H3",
+          "text": "Share store feedback"
+        },
+        {
+          "level": "H3",
+          "text": "No FAQs"
+        }
+      ],
+      "controlCount": 8,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 636,
+      "scrollHeight": 2149,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "support",
+      "path": "/support",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Help & Support"
+        },
+        {
+          "level": "H3",
+          "text": "No tickets yet"
+        },
+        {
+          "level": "H3",
+          "text": "No channels"
+        },
+        {
+          "level": "H3",
+          "text": "Share store feedback"
+        },
+        {
+          "level": "H3",
+          "text": "No FAQs"
+        }
+      ],
+      "controlCount": 8,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 636,
+      "scrollHeight": 2049,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "about",
+      "path": "/about",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 2,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "About"
+        },
+        {
+          "level": "H1",
+          "text": "BURGONOMICS"
+        }
+      ],
+      "controlCount": 7,
+      "smallTargets": [
+        {
+          "label": "Terms & conditions",
+          "tag": "a",
+          "width": 140,
+          "height": 18
+        },
+        {
+          "label": "Privacy policy",
+          "tag": "a",
+          "width": 100,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 824,
+      "scrollHeight": 1454,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "about",
+      "path": "/about",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 2,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "About"
+        },
+        {
+          "level": "H1",
+          "text": "BURGONOMICS"
+        }
+      ],
+      "controlCount": 7,
+      "smallTargets": [
+        {
+          "label": "Terms & conditions",
+          "tag": "a",
+          "width": 140,
+          "height": 18
+        },
+        {
+          "label": "Privacy policy",
+          "tag": "a",
+          "width": 100,
+          "height": 18
+        }
+      ],
+      "smallTargetCount": 2,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 824,
+      "scrollHeight": 1300,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "privacy",
+      "path": "/privacy",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 2,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Privacy Policy"
+        },
+        {
+          "level": "H1",
+          "text": "Privacy Policy"
+        }
+      ],
+      "controlCount": 5,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 3288,
+      "scrollHeight": 3487,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "privacy",
+      "path": "/privacy",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 2,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Privacy Policy"
+        },
+        {
+          "level": "H1",
+          "text": "Privacy Policy"
+        }
+      ],
+      "controlCount": 5,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 3288,
+      "scrollHeight": 2899,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "terms",
+      "path": "/terms",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 2,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Terms & Conditions"
+        },
+        {
+          "level": "H1",
+          "text": "Terms & Conditions"
+        }
+      ],
+      "controlCount": 5,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 1625,
+      "scrollHeight": 1965,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "terms",
+      "path": "/terms",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 1,
+      "h1Count": 2,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "Terms & Conditions"
+        },
+        {
+          "level": "H1",
+          "text": "Terms & Conditions"
+        }
+      ],
+      "controlCount": 5,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 1625,
+      "scrollHeight": 1593,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "not-found",
+      "path": "/a-route-that-does-not-exist",
+      "width": 320,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 0,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "404"
+        },
+        {
+          "level": "H2",
+          "text": "This page ran out of buns"
+        }
+      ],
+      "controlCount": 1,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 125,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    },
+    {
+      "route": "not-found",
+      "path": "/a-route-that-does-not-exist",
+      "width": 390,
+      "title": "BURGONOMICS — The House of DAMN GOOD BURGERS",
+      "mainCount": 0,
+      "h1Count": 1,
+      "headings": [
+        {
+          "level": "H1",
+          "text": "404"
+        },
+        {
+          "level": "H2",
+          "text": "This page ran out of buns"
+        }
+      ],
+      "controlCount": 1,
+      "smallTargets": [],
+      "smallTargetCount": 0,
+      "clippedText": [],
+      "overflow": 0,
+      "horizontalOverflowElements": 0,
+      "bodyLength": 125,
+      "scrollHeight": 844,
+      "viewportHeight": 844,
+      "matchedHeading": true,
+      "guestGate": false,
+      "blank": false
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "route": "/stores",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/home",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/home",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/home",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/menu",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/menu",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/search",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/search",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/cart",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/cart",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/offers",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/offers",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/stores",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/stores",
+      "text": "Blocked call to navigator.vibrate because user hasn't tapped on the frame or any embedded frame yet: https://www.chromestatus.com/feature/5644273861001216."
+    },
+    {
+      "route": "/stores",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/stores",
+      "text": "Blocked call to navigator.vibrate because user hasn't tapped on the frame or any embedded frame yet: https://www.chromestatus.com/feature/5644273861001216."
+    },
+    {
+      "route": "/orders",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/orders",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/profile",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/profile",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/profile/settings",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/profile/settings",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/profile/favorites",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/profile/favorites",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/profile/addresses",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/profile/addresses",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/auth/login",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/auth/login",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/support",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/support",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/about",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/about",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/privacy",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/privacy",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/terms",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/terms",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/a-route-that-does-not-exist",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/a-route-that-does-not-exist",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/home",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    },
+    {
+      "route": "/cart",
+      "text": "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+    }
+  ],
+  "blockedWrites": [],
+  "homeData": {
+    "status": "ready",
+    "error": null,
+    "activeStoreId": "str_003",
+    "loadedStoreId": "str_003",
+    "counts": {
+      "categories": 15,
+      "bestSellers": 6,
+      "combos": 5
+    }
+  },
+  "store": {
+    "name": "Burgonomics Mansi Circle",
+    "locationFixture": "Public outlet coordinates in isolated guest browser; not device GPS"
+  },
+  "secondHomeState": {
+    "url": "http://127.0.0.1:48176/stores",
+    "bodyText": "Choose a store\nDelivery\nTakeaway\nDine-in\nNearby\nShowing stores near you.\nNearby\nB\nBurgonomics Mansi Circle\nOpen\n·\n0 m\nB\nBurgonomics Nehrunagar\nOpen\n·\n1.8 km\nB\nBurgonomics Navrangpura\nOpen\n·\n2.9 km\nAll stores\nAlphabetical\nNearest\nB\nBurgonomics DEMO\nOpen\n·\n4.6 km\nB\nBurgonomics Science City\nOpen\n·\n6.4 km\nB\nBurgonomics SOBO\nOpen\n·\n6.7 km\nYou're near Burgonomics Burgonomics Mansi Circle\n\nWe can prep everything from your closest kitchen. You can always switch later.\n\nB\nBurgonomics Mansi Circle\nOpen\n·\n0 m\nContinue with Burgonomics Mansi Circle\nChoose another store\nSelection is saved on this device.",
+    "state": {
+      "homeStatus": "idle",
+      "homeError": null,
+      "bundle": false,
+      "loadedStoreId": null,
+      "activeStoreId": null,
+      "hydrated": true,
+      "storeCount": 17
+    }
+  },
+  "keyboard": [
+    {
+      "tag": "span",
+      "label": "",
+      "visible": false,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Refresh stores",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Delivery",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "input",
+      "label": "Search stores",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Use my current location",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Burgonomics Mansi Circle, Ahmedabad. Open now. Delivery in 15 minutes.",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "View info and actions for Burgonomics Mansi Circle",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "2px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Burgonomics Nehrunagar, Ahmedabad. Open now. Delivery in 15 minutes. 1",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "View info and actions for Burgonomics Nehrunagar",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "2px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Burgonomics Navrangpura, Ahmedabad. Open now. Delivery in 15 minutes. ",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "View info and actions for Burgonomics Navrangpura",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "2px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Alphabetical",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Nearest",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "2px",
+      "inViewport": true
+    },
+    {
+      "tag": "button",
+      "label": "Burgonomics DEMO, Ahmedabad. Open now, closes at 11:30 PM. Delivery in",
+      "visible": true,
+      "outline": "solid",
+      "outlineWidth": "3px",
+      "inViewport": true
+    }
+  ],
+  "brokenRoutes": [],
+  "guestGateRoutes": [
+    "orders",
+    "settings",
+    "favorites",
+    "addresses"
+  ],
+  "summary": {
+    "samples": 34,
+    "broken": 0,
+    "smallTargetInstances": 82,
+    "horizontalOverflow": 0,
+    "clippedTextInstances": 7,
+    "pageErrors": 0,
+    "consoleErrors": 40,
+    "unknownFocus": 0
+  }
+}

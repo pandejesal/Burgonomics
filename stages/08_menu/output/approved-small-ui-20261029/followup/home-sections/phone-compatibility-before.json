@@ -1,0 +1,73 @@
+{
+  "compatible": true,
+  "installed": {
+    "sha256": "035690a03f52cd541dbce5c52d8acb38f4309330b6c5f43194f08f04f40ec240",
+    "package": "com.burgonomics",
+    "versionCode": 1,
+    "versionName": "1.0.0",
+    "signers": [
+      "8f3f90a62057409a48d7fc2a750798ec2e209b889ab377ba692204c94a069a48"
+    ],
+    "debuggable": true,
+    "signatureVerified": true
+  },
+  "candidate": {
+    "sha256": "c0448c3234c031cd9a25b68b96f799d5f26ec25533b9660353f1cee19d36499b",
+    "package": "com.burgonomics",
+    "versionCode": 1,
+    "versionName": "1.0.0",
+    "signers": [
+      "8f3f90a62057409a48d7fc2a750798ec2e209b889ab377ba692204c94a069a48"
+    ],
+    "debuggable": true,
+    "signatureVerified": true
+  },
+  "candidatePath": "C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\approved-small-ui-20261029\\followup\\home-sections\\burgonomics-home-sections-debug.apk",
+  "mobileWebDir": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\dist\\mobile",
+  "bundledWebFilesCompared": 179,
+  "hostedAssociationFilesNotBundled": [
+    ".well-known/apple-app-site-association",
+    ".well-known/assetlinks.json"
+  ],
+  "emptyGeneratedCordovaFiles": [
+    "cordova.js",
+    "cordova_plugins.js"
+  ],
+  "remoteServerUrl": false,
+  "webContentsDebuggingEnabled": false,
+  "nativeQaPolicy": {
+    "removedAutomaticEntryPoints": [
+      "com.google.firebase.provider.FirebaseInitProvider",
+      "com.google.firebase.iid.FirebaseInstanceIdReceiver",
+      "com.google.firebase.messaging.FirebaseMessagingService",
+      "com.capacitorjs.plugins.pushnotifications.MessagingService"
+    ],
+    "metadata": {
+      "firebase_messaging_auto_init_enabled": false,
+      "firebase_analytics_collection_enabled": false,
+      "firebase_analytics_collection_deactivated": true
+    },
+    "qaOnly": true
+  },
+  "nativeAppCheck": "unavailable in this QA build; runtime startup not yet tested",
+  "installationPerformed": false,
+  "limitations": [
+    "Local APK verification only; recheck the device identity immediately before install.",
+    "Asset identity is not UI, API, privacy, provider or production acceptance.",
+    "QA overlay prevents native Firebase initialization; it is not a release configuration."
+  ],
+  "freshInstalled": {
+    "sha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+    "package": "com.burgonomics",
+    "versionCode": 1,
+    "versionName": "1.0.0",
+    "signers": [
+      "8f3f90a62057409a48d7fc2a750798ec2e209b889ab377ba692204c94a069a48"
+    ],
+    "debuggable": true,
+    "signatureVerified": true
+  },
+  "targetDevice": "RZCX51TXRKB",
+  "freshInstalledPath": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\delivery-native-20261029\\home-sections-phone-20261030\\installed-before.apk",
+  "scope": "Compatible data-preserving debug update only; no uninstall/clear/downgrade"
+}

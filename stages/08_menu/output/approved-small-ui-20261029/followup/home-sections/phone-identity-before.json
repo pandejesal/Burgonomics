@@ -1,0 +1,16 @@
+{
+  "device": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "observedAt": "2026-10-30T02:52:57.853008+00:00",
+  "installedSha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+  "expectedBaselineMatches": true,
+  "pulledInstalledApk": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\delivery-native-20261029\\home-sections-phone-20261030\\installed-before.apk",
+  "metadata": {
+    "versionCode": "1 minSdk=24 targetSdk=36",
+    "versionName": "1.0.0",
+    "firstInstallTime": "2026-10-27 11:32:45",
+    "lastUpdateTime": "2026-10-30 05:15:20"
+  },
+  "homeUpdateInstallationPerformed": false,
+  "scope": "Read-only APK bytes and limited package metadata; no screenshots, UI actions, app-data reads, basket changes or data clear"
+}

@@ -1,0 +1,230 @@
+{
+  "status": "FAIL",
+  "samples": [
+    {
+      "theme": "light",
+      "mode": "Delivery",
+      "width": 320,
+      "sectionIds": [
+        "cats-heading",
+        "best-heading",
+        "combos-heading",
+        "home-awards-heading",
+        "home-upcoming-heading"
+      ],
+      "headingFont": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "bestSellerCards": 6,
+      "mealCards": 5,
+      "minimumAddTargetHeight": 44,
+      "overflow": 0
+    },
+    {
+      "theme": "light",
+      "mode": "Dine-in",
+      "width": 320,
+      "sectionIds": [
+        "cats-heading",
+        "best-heading",
+        "combos-heading",
+        "home-awards-heading",
+        "home-upcoming-heading"
+      ],
+      "headingFont": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "bestSellerCards": 6,
+      "mealCards": 5,
+      "minimumAddTargetHeight": 44,
+      "overflow": 0
+    },
+    {
+      "theme": "light",
+      "mode": "Delivery",
+      "width": 390,
+      "sectionIds": [
+        "cats-heading",
+        "best-heading",
+        "combos-heading",
+        "home-awards-heading",
+        "home-upcoming-heading"
+      ],
+      "headingFont": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "bestSellerCards": 6,
+      "mealCards": 5,
+      "minimumAddTargetHeight": 44,
+      "overflow": 0
+    },
+    {
+      "theme": "light",
+      "mode": "Dine-in",
+      "width": 390,
+      "sectionIds": [
+        "cats-heading",
+        "best-heading",
+        "combos-heading",
+        "home-awards-heading",
+        "home-upcoming-heading"
+      ],
+      "headingFont": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "bestSellerCards": 6,
+      "mealCards": 5,
+      "minimumAddTargetHeight": 44,
+      "overflow": 0
+    },
+    {
+      "theme": "dark",
+      "mode": "Delivery",
+      "width": 320,
+      "sectionIds": [
+        "cats-heading",
+        "best-heading",
+        "combos-heading",
+        "home-awards-heading",
+        "home-upcoming-heading"
+      ],
+      "headingFont": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "bestSellerCards": 6,
+      "mealCards": 5,
+      "minimumAddTargetHeight": 44,
+      "overflow": 0
+    },
+    {
+      "theme": "dark",
+      "mode": "Dine-in",
+      "width": 320,
+      "sectionIds": [
+        "cats-heading",
+        "best-heading",
+        "combos-heading",
+        "home-awards-heading",
+        "home-upcoming-heading"
+      ],
+      "headingFont": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "bestSellerCards": 6,
+      "mealCards": 5,
+      "minimumAddTargetHeight": 44,
+      "overflow": 0
+    },
+    {
+      "theme": "dark",
+      "mode": "Delivery",
+      "width": 390,
+      "sectionIds": [
+        "cats-heading",
+        "best-heading",
+        "combos-heading",
+        "home-awards-heading",
+        "home-upcoming-heading"
+      ],
+      "headingFont": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "bestSellerCards": 6,
+      "mealCards": 5,
+      "minimumAddTargetHeight": 44,
+      "overflow": 0
+    },
+    {
+      "theme": "dark",
+      "mode": "Dine-in",
+      "width": 390,
+      "sectionIds": [
+        "cats-heading",
+        "best-heading",
+        "combos-heading",
+        "home-awards-heading",
+        "home-upcoming-heading"
+      ],
+      "headingFont": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "bestSellerCards": 6,
+      "mealCards": 5,
+      "minimumAddTargetHeight": 44,
+      "overflow": 0
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+  ],
+  "failures": [
+    "Browser errors observed"
+  ],
+  "blockedWrites": [],
+  "railFixtures": false,
+  "phoneAcceptance": false,
+  "providerAcceptance": false,
+  "catalog": {
+    "storeId": "str_003",
+    "loadedStoreMatches": true,
+    "catalogProductCount": 56,
+    "bestSellers": [
+      {
+        "id": "prd_mansi-circle_cheese-burst-burger",
+        "name": "Cheese Burst Burger",
+        "price": 199
+      },
+      {
+        "id": "prd_mansi-circle_super-hero-burger",
+        "name": "Super Hero Burger",
+        "price": 219
+      },
+      {
+        "id": "prd_mansi-circle_great-indian-burger",
+        "name": "Great Indian Burger",
+        "price": 169
+      },
+      {
+        "id": "prd_mansi-circle_tandoori-paneer-burger",
+        "name": "Tandoori Paneer Burger",
+        "price": 209
+      },
+      {
+        "id": "prd_mansi-circle_american-burger",
+        "name": "American Burger",
+        "price": 159
+      },
+      {
+        "id": "prd_mansi-circle_gochuchang-burger",
+        "name": "Gochuchang Burger",
+        "price": 179
+      }
+    ],
+    "meals": [
+      {
+        "id": "prd_mansi-circle_2-jr-hero-burger",
+        "productId": "prd_mansi-circle_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "price": 109
+      },
+      {
+        "id": "prd_mansi-circle_any-big-bang-burger-meal",
+        "productId": "prd_mansi-circle_any-big-bang-burger-meal",
+        "name": "Any Big Bang Burger Meal",
+        "price": 299
+      },
+      {
+        "id": "prd_mansi-circle_any-classic-burger-meal",
+        "productId": "prd_mansi-circle_any-classic-burger-meal",
+        "name": "Any Classic Burger Meal",
+        "price": 199
+      },
+      {
+        "id": "prd_mansi-circle_jr-hero-burger-meal",
+        "productId": "prd_mansi-circle_jr-hero-burger-meal",
+        "name": "Jr Hero Burger Meal",
+        "price": 149
+      },
+      {
+        "id": "prd_mansi-circle_make-it-a-meal",
+        "productId": "prd_mansi-circle_make-it-a-meal",
+        "name": "Make It A Meal",
+        "price": 119
+      }
+    ],
+    "allRowsMatchActualStoreProducts": true,
+    "rankingVerified": false
+  },
+  "locationFixture": "Public outlet coordinates in an isolated guest browser; never phone GPS",
+  "mealNavigation": {
+    "productId": "prd_mansi-circle_2-jr-hero-burger",
+    "correctProductOpened": true,
+    "cartCountBefore": 0,
+    "cartCountAfter": 0
+  }
+}
