@@ -82,12 +82,40 @@ gesture acceptance. See `../../integration-readiness.md`.
 - Inert preview rebuilt from that commit: `http://127.0.0.1:48244/followup/index.html`.
   Home is the real Mansi Circle catalogue (no rail fixture); Cart is explicitly
   sampled. The whitelist rejects APKs, private reports and directory listings.
-- **Install state:** the phone was online only for the earlier Home build
-  `c0448c3234c031cd9a25b68b96f799d5f26ec25533b9660353f1cee19d36499b`
-  (installed with `install -r`, first install unchanged). It disconnected before
-  this final UI-fix APK could be installed, so the four audit fixes are **not on
-  the phone yet**. No `adb reconnect` recovered it: `adb devices` is empty.
-  Install `33615bd9…` on reconnection with `install -r` only.
+- **Install state:** `33615bd9…` is installed on `RZCX51TXRKB` with `install -r`
+  only, verified by pulling the installed bytes back (`phone-install-final.json`);
+  first install remains 27 October 11:32:45. No uninstall, data clear or basket
+  change. The USB preview route `tcp:48244` is reversed, so the phone can open
+  `http://127.0.0.1:48244/followup/index.html`.
+
+## Why the Razorpay key warning fires
+
+`src/core/config/env.ts:119` asserts on every production/release bundle:
+
+```ts
+if (ENV_NAME === "production" || IS_RELEASE_BUILD) {
+  if (!rzpKey || rzpKey.startsWith("rzp_test_")) console.error("…TEST key or has no key configured…");
+}
+```
+
+The QA build is a real `vite build` (`import.meta.env.PROD === true`), so the
+assertion always runs. Checked configuration as of 30 October: **no
+`VITE_RAZORPAY_KEY_ID` / `VITE_RAZORPAY_KEY` exists** in `Burgonomics/.env`,
+`burgonomics-foundation-core/.env`, `.env.production` or `.env.sweep`. The only
+occurrence is the placeholder in `.env.example`. So the message is accurate —
+it is the “no key configured” branch, not a stale test key.
+
+To clear it, set a **live** publishable key where the build reads it, e.g.
+`burgonomics-foundation-core/.env.production`:
+
+```dotenv
+VITE_RAZORPAY_KEY_ID=rzp_live_xxxxxxxxxxxxxxxx
+```
+
+Then rebuild. A `rzp_test_…` value is refused by design, and the **secret**
+(`RAZORPAY_KEY_SECRET`, webhook secret) is server-side and must never use a
+`VITE_` prefix. Setting the key only clears the warning; it does not prove
+payments work — that needs a real capture test.
 
 ## Source control
 
