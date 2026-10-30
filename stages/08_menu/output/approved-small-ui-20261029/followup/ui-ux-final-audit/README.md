@@ -88,6 +88,36 @@ gesture acceptance. See `../../integration-readiness.md`.
   change. The USB preview route `tcp:48244` is reversed, so the phone can open
   `http://127.0.0.1:48244/followup/index.html`.
 
+## Test-mode build (owner is testing payments)
+
+Because **every `vite build` is a production bundle**, `rzp_test_*` keys are
+refused by the guard and by `razorpayAdapter` (`allowsTestKeys()` is false when
+`PROD === true`). Test checkout therefore needs a **development-mode bundle**.
+Verified with a probe build:
+
+| Build command | `import.meta.env.PROD` | Test key allowed |
+|---|---|---|
+| `vite build` | `true` | No |
+| `vite build --mode development` | `true` | No |
+| `NODE_ENV=development vite build --mode development` | `false` | **Yes** |
+
+Built `burgonomics-testmode-debug.apk`
+(`760a170ede644150086d89ab40e070bf3b7c7a486cf10ceffb5551f26e36eef3`) with
+`NODE_ENV=development`, `VITE_APP_ENV=development` and the existing
+`rzp_test_*` publishable key from `functions/.env` (read at build time, never
+printed or committed). Serving the bundle and loading it produced **zero console
+errors** — the FATAL Razorpay line is gone.
+
+This artifact is explicitly **not release-representative**: a development bundle
+also enables the dev-only order-status tick and the tracking screen's “advance
+status” control. Do not ship it.
+
+Not installed yet: the phone disconnected immediately before installation, so
+`33615bd9…` (release-style) is still on the device. Install `760a170e…` with
+`install -r` when it reconnects.
+
+
+
 ## Why the Razorpay key warning fires
 
 `src/core/config/env.ts:119` asserts on every production/release bundle:
