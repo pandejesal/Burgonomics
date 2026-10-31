@@ -114,16 +114,24 @@ const BASKETS: Basket[] = [
 
 describe("pricing parity — 20 baskets", () => {
   it.each(BASKETS.map((b) => [b.name, b] as const))("%s balances", async (_name, b) => {
-    const r = await calculateOrderPricing({ ...b, deliveryFee: 35, packagingFee: 15 });
+    const r = await calculateOrderPricing({
+      ...b,
+      serverDeliveryFee: 35,
+      packagingFee: 15,
+    });
 
-    // Recomputed books must match reported books
-    const taxable = Math.max(0, r.foodSubtotal - r.discount - r.loyaltyDiscount);
-    expect(r.gst).toBeCloseTo(Math.round(taxable * 0.05 * 100) / 100, 2);
+    // Recomputed books must match reported books (R1/R2): menu prices are
+    // GST-INCLUSIVE, so the reported share is netFood·5/105 and the total is
+    // netFood + packaging + delivery — no tax is ever added.
+    const netFood = Math.max(0, r.foodSubtotal - r.discount - r.loyaltyDiscount);
+    expect(r.gst).toBeCloseTo(Math.round(((netFood * 0.05) / 1.05) * 100) / 100, 2);
     const packing = b.orderType === "dinein" ? 0 : 15;
     const delivery = b.orderType === "delivery" ? 35 : 0;
     expect(r.packagingFee).toBe(packing);
     expect(r.deliveryFee).toBe(delivery);
-    expect(r.grandTotal).toBe(Math.max(0, Math.round(taxable + packing + delivery + r.gst)));
+    expect(r.grandTotal).toBe(
+      Math.round(Math.max(0, netFood + packing + delivery) * 100) / 100
+    );
 
     // Caps hold
     expect(r.discount).toBeLessThanOrEqual(r.foodSubtotal);
@@ -132,11 +140,15 @@ describe("pricing parity — 20 baskets", () => {
       expect(r.loyaltyDiscount).toBeLessThanOrEqual(b.loyaltyPointsToRedeem);
     }
 
-    // Razorpay split conserves money (paise-exact)
-    const foodPaise = Math.round(r.foodSubtotal * 100);
-    const discPaise = Math.round((r.discount + r.loyaltyDiscount) * 100);
+    // Razorpay split conserves money (paise-exact) and sums to the TOTAL —
+    // royalty is on the ex-GST food value (R3).
+    const netPaise = Math.round(netFood * 100);
+    const gstPaise = Math.round(r.gst * 100);
+    expect(r.split.brandRoyaltyPaise).toBe(
+      Math.round(((netPaise - gstPaise) * 5) / 100)
+    );
     expect(r.split.brandRoyaltyPaise + r.split.branchTransferPaise).toBe(
-      foodPaise - discPaise + Math.round(packing * 100) + Math.round(delivery * 100) + Math.round(r.gst * 100)
+      Math.round(r.grandTotal * 100)
     );
 
     // Non-negative, finite everywhere
@@ -171,8 +183,8 @@ describe("pricing parity — 20 baskets", () => {
       couponCode: "NEG50",
     });
     expect(r.discount).toBe(0);
-    // Full price, not 99 - (-50) = 149.
-    expect(r.grandTotal).toBe(Math.round(99 + 15 + r.gst));
+    // Full inclusive price (₹99) + packaging; GST is already inside the ₹99.
+    expect(r.grandTotal).toBe(114);
   });
 
   it("flat coupon larger than the subtotal is clamped to the subtotal", async () => {
@@ -205,16 +217,18 @@ describe("pricing parity — 20 baskets", () => {
   });
 
   it("golden basket: percent coupon capped at 80", async () => {
-    // 4 x 249 = 996; 10% = 99.6 → capped 80; taxable 916; gst 45.8; total 916+15+35+45.8 = 1011.8 → 1012
+    // 4 x 249 = 996; 10% = 99.6 → capped 80; net food 916; included GST 43.62;
+    // total 916 + 15 + 35 = 966 (the GST is inside the 916, never added).
     const r = await calculateOrderPricing({
       items: [{ id: "l1", productId: "prod_bigbang", name: "BB", price: 249, quantity: 4 }],
       branchId: "b1",
       orderType: "delivery",
-      deliveryFee: 35,
+      serverDeliveryFee: 35,
       packagingFee: 15,
       couponCode: "PERC10",
     });
     expect(r.discount).toBe(80);
-    expect(r.grandTotal).toBe(1012);
+    expect(r.gst).toBe(43.62);
+    expect(r.grandTotal).toBe(966);
   });
 });

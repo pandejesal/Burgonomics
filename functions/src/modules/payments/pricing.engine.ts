@@ -14,9 +14,27 @@ export interface CalculateOrderPricingInput {
   items: PricingLineItem[];
   branchId: string;
   orderType: "delivery" | "takeaway" | "dinein";
-  /** Ignored: the customer-facing fee is the published checkout quote. */
+  /**
+   * IGNORED. A request body may still carry it (old clients do), but the
+   * customer-facing fee is the SERVER-persisted courier quote: see
+   * `serverDeliveryFee`. Reading this field is how a client used to set its own
+   * delivery price.
+   */
   deliveryFee?: number;
+  /**
+   * SERVER-ONLY. The fee from the persisted `delivery_fee_quotes` document
+   * (R5/R6). No HTTP route maps any request field onto this; only
+   * `createPaymentOrder` and `repriceOrderForVerification` may supply it.
+   */
+  serverDeliveryFee?: number;
+  /** Client-supplied packaging — IGNORED. The branch config is the source. */
   packagingFee?: number;
+  /**
+   * SERVER-ONLY. Packaging locked from a server-written pricing snapshot
+   * (R7 repricing), so a branch config edit between pricing and verification
+   * cannot move a total the customer already agreed to.
+   */
+  serverPackagingFee?: number;
   couponCode?: string;
   loyaltyPointsToRedeem?: number;
 }
@@ -25,7 +43,11 @@ export interface PricingBreakdown {
   foodSubtotal: number;
   packagingFee: number;
   deliveryFee: number;
+  /** GST INCLUDED in the menu prices — reported, never added (R1). */
   gst: number;
+  /** Half of `gst`, rounded in paise; `cgst + sgst === gst` exactly. */
+  cgst: number;
+  sgst: number;
   discount: number;
   loyaltyDiscount: number;
   grandTotal: number;
@@ -39,6 +61,18 @@ export interface PricingBreakdown {
     branchTransferPaise: number;
   };
 }
+
+/**
+ * Owner decision 2026-10-31: menu prices are GST-inclusive. The GST share of an
+ * inclusive amount at rate r is amount·r/(1+r) — NOT amount·r.
+ */
+export const GST_RATE = 0.05;
+
+/** Round to whole paise (2 decimals). */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 
 /**
  * Computes unit price for a single line item including customizations and modifiers.
@@ -331,20 +365,37 @@ export async function calculateOrderPricing(
     pricingDegraded = true;
   }
 
-  // Customer-facing delivery fee. The checkout bill is built by the client
-  // pricing engine: `resolvePricingConfig` takes the published delivery quote
-  // (DEFAULT_DELIVERY_QUOTE_FEE = ₹35) and applies NO free-delivery threshold,
-  // so checkout.tsx:1051 and payment.tsx:829 display ₹35 for every delivery
-  // basket. The server mirrors THAT number — the client `deliveryFee` is
-  // untrusted (and the real client does not even send it, which used to price
-  // every delivery at ₹0). Store/branch fee fields do not reach the client bill
-  // (resolvePricingConfig honours only minOrderAmount), so applying them here
-  // would make an honest client pay a different amount.
-  //
-  // The courier dispatch fare is a separate provider cost and is NOT this fee.
-  const DELIVERY_QUOTE_FEE_RUPEES = 35;
-  const deliveryFee =
-    input.orderType === "delivery" ? DELIVERY_QUOTE_FEE_RUPEES : 0;
+  // Customer-facing delivery fee (R5/R6). The ONLY source is the persisted
+  // courier quote handed in by the server through `serverDeliveryFee`. A
+  // delivery order without one is UNPRICEABLE: no ₹35 default (the old static
+  // quote), no zero, no client value. The courier quote is the provider fare
+  // itself — there is no markup and no free-delivery threshold.
+  let deliveryFee = 0;
+  if (input.orderType === "delivery") {
+    const quoted = Number(input.serverDeliveryFee);
+    if (input.serverDeliveryFee === undefined || !Number.isFinite(quoted) || quoted < 0) {
+      const err: any = new Error(
+        "Delivery pricing requires a server courier quote — re-quote the delivery fee and retry checkout."
+      );
+      err.statusCode = 422;
+      err.code = "DELIVERY_FEE_REQUIRED";
+      throw err;
+    }
+    deliveryFee = round2(quoted);
+  }
+
+  // R7: a server-written packaging snapshot wins over live branch config, so
+  // repricing an agreed total cannot be moved by a later config edit.
+  if (input.serverPackagingFee !== undefined) {
+    const locked = Number(input.serverPackagingFee);
+    if (!Number.isFinite(locked) || locked < 0) {
+      const err: any = new Error("Stored packaging fee is invalid — cannot reprice this order.");
+      err.statusCode = 422;
+      err.code = "PACKAGING_FEE_INVALID";
+      throw err;
+    }
+    packagingFee = round2(locked);
+  }
   if (input.orderType === "dinein") {
     packagingFee = 0;
   }
@@ -401,36 +452,38 @@ export async function calculateOrderPricing(
     );
   }
 
-  // 5. 5% GST calculated on net food subtotal
-  const taxableFoodAmount = Math.max(0, foodSubtotal - discount - loyaltyDiscount);
-  const gst = Math.round(taxableFoodAmount * 0.05 * 100) / 100;
-
-  // 6. Grand Total
-  const grandTotal = Math.max(0, Math.round(taxableFoodAmount + packagingFee + deliveryFee + gst));
-
-  // 7. Razorpay Route Marketplace Royalty Split (in Paise)
-  const foodSubtotalPaise = Math.round(foodSubtotal * 100);
-  const totalDiscountPaise = Math.round((discount + loyaltyDiscount) * 100);
-  const packagingPaise = Math.round(packagingFee * 100);
-  const deliveryPaise = Math.round(deliveryFee * 100);
+  // 5. GST is INCLUDED in the menu price (owner decision 2026-10-31, R1).
+  // The inclusive share of `netFood` at 5% is netFood·5/105; reporting it must
+  // never change the amount the customer pays. Packaging and delivery sit
+  // outside the base (unchanged).
+  const netFood = round2(Math.max(0, foodSubtotal - discount - loyaltyDiscount));
+  const netFoodPaise = Math.round(netFood * 100);
+  const gst = round2((netFood * GST_RATE) / (1 + GST_RATE));
   const gstPaise = Math.round(gst * 100);
+  // Split in paise so CGST + SGST always equals GST exactly.
+  const cgstPaise = Math.round(gstPaise / 2);
+  const sgstPaise = gstPaise - cgstPaise;
 
-  const brandRoyaltyPaise = Math.round(
-    (foodSubtotalPaise - totalDiscountPaise) * (royaltyPercentage / 100)
-  );
-  const branchTransferPaise =
-    foodSubtotalPaise -
-    totalDiscountPaise -
-    brandRoyaltyPaise +
-    packagingPaise +
-    deliveryPaise +
-    gstPaise;
+  // 6. Grand Total (R2): net food + packaging + delivery, rounded to paise —
+  // no whole-rupee rounding and no tax added on top.
+  const grandTotal = round2(Math.max(0, netFood + packagingFee + deliveryFee));
+  const grandPaise = Math.round(grandTotal * 100);
+
+  // 7. Razorpay Route Marketplace Royalty Split (in Paise). R3: royalty is on
+  // the EX-GST food value (unchanged historic meaning — the branch keeps and
+  // remits the GST), and the branch leg takes the remainder, so the two legs
+  // always sum to the charged total.
+  const exGstPaise = netFoodPaise - gstPaise;
+  const brandRoyaltyPaise = Math.round((exGstPaise * royaltyPercentage) / 100);
+  const branchTransferPaise = grandPaise - brandRoyaltyPaise;
 
   return {
     foodSubtotal,
     packagingFee,
     deliveryFee,
     gst,
+    cgst: cgstPaise / 100,
+    sgst: sgstPaise / 100,
     discount,
     loyaltyDiscount,
     grandTotal,
@@ -461,6 +514,13 @@ export interface RepriceVerification {
  * paise — against the stored grandTotal. A mismatch means the stored price
  * drifted from catalog truth between pricing and payment (tamper, stale
  * coupon, catalog edit) and must be resolved before money moves.
+ *
+ * R7 (owner decision 2026-10-31): the courier fee and packaging are NOT
+ * re-quoted here. They are reused from the SERVER-WRITTEN `pricing` snapshot
+ * stamped at intent time (`orders.pricing` is in the rules' server-owned key
+ * set, so no client can write it; the top-level `deliveryFee`/`packagingFee`
+ * fields ARE client-writable and are never read). A verified payment therefore
+ * cannot be failed by a courier price move, and no provider is called.
  *
  * Fail-closed on unpriceable input: missing/empty items, missing branch, or
  * an unknown orderType throws 422 UNPRICEABLE instead of coercing a price.
@@ -496,15 +556,31 @@ export async function repriceOrderForVerification(
     throw unpriceable("unknown order type on the order.");
   }
 
+  const storedPricing = (orderData as any)?.pricing;
+  const storedDeliveryFee = Number(storedPricing?.deliveryFee);
+  const storedPackagingFee = Number(storedPricing?.packagingFee);
+
   const recomputed = await calculateOrderPricing({
     items,
     branchId,
     orderType,
-    deliveryFee: (orderData as any)?.deliveryFee,
-    packagingFee: (orderData as any)?.packagingFee,
+    serverDeliveryFee:
+      orderType === "delivery" &&
+      storedPricing?.deliveryFee !== undefined &&
+      Number.isFinite(storedDeliveryFee) &&
+      storedDeliveryFee >= 0
+        ? storedDeliveryFee
+        : undefined,
+    serverPackagingFee:
+      storedPricing?.packagingFee !== undefined &&
+      Number.isFinite(storedPackagingFee) &&
+      storedPackagingFee >= 0
+        ? storedPackagingFee
+        : undefined,
     couponCode: (orderData as any)?.couponCode,
     loyaltyPointsToRedeem: (orderData as any)?.loyaltyPointsToRedeem,
   });
+
 
   const storedGrandTotal = Number((orderData as any)?.pricing?.grandTotal);
   const storedPaise =
