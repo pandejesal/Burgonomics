@@ -43,23 +43,112 @@ export async function cleanupExpiredGuestSessionsWorker(): Promise<{
 }
 
 /**
+ * Deletes a document and everything beneath it. Production uses the Admin
+ * SDK's recursive delete; the shim fallback removes subcollection documents
+ * first, then the document itself.
+ */
+async function purgeDocumentTree(ref: any): Promise<void> {
+  if (typeof (db as any).recursiveDelete === "function") {
+    await (db as any).recursiveDelete(ref);
+    return;
+  }
+  if (typeof ref.listCollections === "function") {
+    for (const collection of await ref.listCollections()) {
+      const snap = await collection.get();
+      const batch = db.batch();
+      for (const doc of snap.docs || []) batch.delete(doc.ref);
+      await batch.commit();
+    }
+  }
+  await ref.delete();
+}
+
+/**
+ * Purges every subcollection under a document that itself is retained (the
+ * sanitized `users/{uid}` profile). Guarded per collection so one failure does
+ * not abort the rest.
+ */
+async function purgeSubcollections(parentRef: any, label: string): Promise<boolean> {
+  if (typeof parentRef.listCollections !== "function") return true;
+  let collections: any[] = [];
+  try {
+    collections = await parentRef.listCollections();
+  } catch (err: any) {
+    console.warn(`[Auth Cleanup] cannot list subcollections of ${label}:`, err?.message || err);
+    return false;
+  }
+  let ok = true;
+  for (const collection of collections) {
+    try {
+      if (typeof (db as any).recursiveDelete === "function") {
+        await (db as any).recursiveDelete(collection);
+      } else {
+        const snap = await collection.get();
+        const batch = db.batch();
+        for (const doc of snap.docs || []) batch.delete(doc.ref);
+        await batch.commit();
+      }
+    } catch (err: any) {
+      ok = false;
+      console.warn(
+        `[Auth Cleanup] cannot delete subcollection ${collection?.path || "(unknown)"} of ${label}:`,
+        err?.message || err
+      );
+    }
+  }
+  return ok;
+}
+
+/** Removes the device-token identity docs bound to a deleted account. */
+async function deleteDeviceTokensForUser(uid: string): Promise<boolean> {
+  try {
+    const snap = await db.collection("device_tokens").where("userId", "==", uid).get();
+    let ok = true;
+    for (const doc of snap.docs || []) {
+      try {
+        await doc.ref.delete();
+      } catch (err: any) {
+        ok = false;
+        console.warn(
+          `[Auth Cleanup] cannot delete device token ${doc.id}:`,
+          err?.message || err
+        );
+      }
+    }
+    return ok;
+  } catch (err: any) {
+    console.warn(`[Auth Cleanup] device token lookup failed for ${uid}:`, err?.message || err);
+    return false;
+  }
+}
+
+/**
  * Cleans up user-related state upon user account deletion. Wired as a real
  * Auth blocking trigger (beforeUserDeleted) in index.ts — previously dead
  * code that never ran.
+ *
+ * SEC-02: erasure now covers the customer profile and its subcollections,
+ * the retained user profile's subcollections, and the account's device tokens.
+ * Order documents are deliberately retained for tax/accounting and live in the
+ * top-level `orders` collection, which this never touches. Every step is
+ * independently guarded: a partial failure is logged and the remaining deletes
+ * still run.
  */
 export async function onUserDeletedCleanup(uid: string): Promise<boolean> {
   if (!uid) return false;
 
-  try {
-    // Belt-and-braces: deletion destroys Auth tokens, but revoke anyway in
-    // case this ever runs pre-deletion.
-    try {
-      const { auth } = await import("../../core/firebase");
-      await auth.revokeRefreshTokens(uid);
-    } catch {
-      // User already gone — the point of this trigger.
-    }
+  let ok = true;
 
+  // Belt-and-braces: deletion destroys Auth tokens, but revoke anyway in
+  // case this ever runs pre-deletion.
+  try {
+    const { auth } = await import("../../core/firebase");
+    await auth.revokeRefreshTokens(uid);
+  } catch {
+    // User already gone — the point of this trigger.
+  }
+
+  try {
     const batch = db.batch();
 
     // 1. Delete active cart
@@ -71,8 +160,8 @@ export async function onUserDeletedCleanup(uid: string): Promise<boolean> {
     batch.delete(db.collection("admins").doc(uid));
 
     // 3. Mark user document deleted AND strip PII (phone/email/name/
-    // addresses). Order history keeps customerId for accounting; the person
-    // must not remain identifiable in the profile doc.
+    // addresses/fcmTokens). Order history keeps customerId for accounting; the
+    // person must not remain identifiable in the profile doc.
     const userRef = db.collection("users").doc(uid);
     batch.set(
       userRef,
@@ -83,6 +172,7 @@ export async function onUserDeletedCleanup(uid: string): Promise<boolean> {
         email: admin.firestore.FieldValue.delete(),
         name: "Deleted User",
         addresses: [],
+        fcmTokens: admin.firestore.FieldValue.delete(),
         role: "customer",
         branchIds: [],
         cityIds: [],
@@ -92,9 +182,30 @@ export async function onUserDeletedCleanup(uid: string): Promise<boolean> {
     );
 
     await batch.commit();
-    return true;
-  } catch (err) {
+  } catch (err: any) {
+    ok = false;
     console.warn(`[Auth Cleanup] Error cleaning up deleted user ${uid}:`, (err as any)?.message || err);
-    return false;
   }
+
+  // 4. Device tokens: stop push delivery to the deleted account.
+  if (!(await deleteDeviceTokensForUser(uid))) ok = false;
+
+  // 5. Customer profile + its PII (addresses live in subcollections too).
+  try {
+    await purgeDocumentTree(db.collection("customers").doc(uid));
+  } catch (err: any) {
+    ok = false;
+    console.warn(
+      `[Auth Cleanup] Error deleting customer profile ${uid}:`,
+      (err as any)?.message || err
+    );
+  }
+
+  // 6. The retained user profile keeps its subcollections nowhere — purge
+  // addresses/notifications while keeping the sanitized parent doc.
+  if (!(await purgeSubcollections(db.collection("users").doc(uid), `users/${uid}`))) {
+    ok = false;
+  }
+
+  return ok;
 }
