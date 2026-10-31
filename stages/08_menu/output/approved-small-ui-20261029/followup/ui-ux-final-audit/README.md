@@ -159,6 +159,32 @@ Delivery worktree `launch/delivery-ui-20261028` is **clean** and pushed to
 The root workspace repo also has a docs commit for this work. Its other dirty
 files are pre-existing work from other sessions and were not touched.
 
+## Petpooja sandbox — round 3 submitted (31 October 2026)
+
+The 28 October review asked for three payload corrections. The builder already
+had them (`total` includes `tax_total`, `collect_cash = total` for COD,
+`gst_liability: "restaurant"` with no delivery/packing GST). A dry run confirmed
+the numbers before sending.
+
+All five scenarios were resubmitted to `.../V1/save_order` for outlet
+Burgonomics DEMO [135148], mapping code `31z58ciw0h`. Every request returned
+HTTP 200 and “Your order is saved.”
+
+| Case | Reference | Total incl. GST | GST |
+|---|---|---:|---:|
+| Items + Tax | `bgx_items_tax_1793423643684` | 598.50 | 28.50 |
+| Addons + Tax | `bgx_addons_tax_1793423647086` | 419.00 | 19.00 |
+| Variation + Tax | `bgx_variation_tax_1793423647558` | 283.50 | 13.50 |
+| Discount + Tax | `bgx_discount_tax_1793423647838` | 252.00 | 12.00 |
+| Addon + Variation + Tax | `bgx_addon_variation_tax_1793423648138` | 312.95 | 13.95 |
+
+Log: `petpooja-submit-round3.log`; reply draft: `petpooja-reply-round3.eml.txt`.
+The draft has **not** been sent — no mail client was reachable in the
+debug-enabled browser. Petpooja still has to confirm the orders and issue
+production credentials; nothing here proves live KOT or 86-ing.
+
+
+
 ## Evidence files
 
 - `route-results.json` — full per-sample data (latest run)

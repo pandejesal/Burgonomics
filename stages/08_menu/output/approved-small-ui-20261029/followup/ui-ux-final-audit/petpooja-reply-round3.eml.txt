@@ -1,0 +1,33 @@
+To: Ajay Solanki <ajay.solanki@petpooja.com>; Shivam Tiwari <shivam.tiwari1@petpooja.com>;
+    Jatan Vala <jatan.vala@petpooja.com>; Malvi Vaghela <malvi.vaghela@petpooja.com>
+Subject: Re: Burgonomics [135148] — Sandbox test cases resubmitted with corrected totals
+
+Hi Ajay, Shivam,
+
+Thank you for the 28 October corrections. All three are now applied in the
+payload builder:
+
+1. `total` includes `tax_total` (e.g. 570.00 + 28.50 = 598.50).
+2. `collect_cash` equals the order total for COD.
+3. GST liability is attributed to the restaurant — `gst_liability: "restaurant"`,
+   `restaurant_liable_amt` on both tax rows, and no separate delivery/packing GST.
+
+We resubmitted all five required scenarios for Burgonomics DEMO [135148],
+mapping code `31z58ciw0h`. Every request returned HTTP 200 with
+"Your order is saved."
+
+| Case | Client order reference | Total incl. GST (INR) | GST (INR) |
+|---|---|---:|---:|
+| Items + Tax | bgx_items_tax_1793423643684 | 598.50 | 28.50 |
+| Item with Addons + Tax | bgx_addons_tax_1793423647086 | 419.00 | 19.00 |
+| Item with Variation + Tax | bgx_variation_tax_1793423647558 | 283.50 | 13.50 |
+| Item with Discount + Tax | bgx_discount_tax_1793423647838 | 252.00 | 12.00 |
+| Item with Addon and Variation + Tax | bgx_addon_variation_tax_1793423648138 | 312.95 | 13.95 |
+
+The orders should be visible in your Order Listing. Please review the structure
+and totals and confirm whether they now meet your requirements. Once confirmed,
+we are ready to proceed to production credentials and the live rollout.
+
+Thank you,
+Jesal Pande
+Burgonomics
