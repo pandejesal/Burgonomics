@@ -1468,6 +1468,21 @@ export function __setPaymentsFetchForTests(
 }
 
 /**
+ * Test seam for the refund POST: unit tests inject a failing stub so the
+ * gateway-failure path (claim release) is exercised without the network.
+ */
+let refundPostOverride:
+  | ((paymentId: string, payload: Record<string, any>, key: string) => Promise<any>)
+  | null = null;
+
+/** Test-only: stub/unstub the live Razorpay refund POST. */
+export function __setRefundPostForTests(
+  fn: ((paymentId: string, payload: Record<string, any>, key: string) => Promise<any>) | null
+): void {
+  refundPostOverride = fn;
+}
+
+/**
  * Fetches the live Razorpay payment and binds it to the server-priced order.
  * Fail-closed: order binding, paise amount, captured status, and currency must
  * ALL match. Any mismatch writes a payment_discrepancies doc for ops review
@@ -2046,10 +2061,19 @@ export async function autoRefund(
       { merge: true }
     );
     // The post-gateway record write re-reads the ledger fresh inside its own
-    // transaction, so no claim-time ledger snapshot is needed here.
-    return { existingTotal };
+    // transaction, so no claim-time ledger snapshot is needed here. The prior
+    // status is returned so a gateway failure can release the claim WITHOUT
+    // erasing a "partially_refunded" state.
+    return {
+      existingTotal,
+      priorRefundStatus: typeof data.refundStatus === "string" ? data.refundStatus : null,
+    };
   });
   if ((claimed as any).replay) return (claimed as any).replay;
+  const priorRefundStatus = (claimed as any).priorRefundStatus as
+    | string
+    | null
+    | undefined;
 
   const refundPayload: any = {
     reverse_all: true, // Automatically reverses split transfer proportionally from branch
@@ -2080,12 +2104,21 @@ export async function autoRefund(
       // Razorpay dedupes retries with the same key server-side — a
       // lost-response retry replays the ORIGINAL refund instead of posting
       // a second one. A retry with a DIFFERENT body is rejected outright.
-      getRazorpayClient();
-      refundResult = await postRefundWithIdempotency(
-        razorpayPaymentId,
-        refundPayload,
-        `refund_${orderId}_${requestedPaise ?? "full"}`
-      );
+      const idempotencyKey = `refund_${orderId}_${requestedPaise ?? "full"}`;
+      if (refundPostOverride) {
+        refundResult = await refundPostOverride(
+          razorpayPaymentId,
+          refundPayload,
+          idempotencyKey
+        );
+      } else {
+        getRazorpayClient();
+        refundResult = await postRefundWithIdempotency(
+          razorpayPaymentId,
+          refundPayload,
+          idempotencyKey
+        );
+      }
     } catch (err: any) {
       await captureErrorSnapshot({
         source: "payments",
@@ -2094,6 +2127,30 @@ export async function autoRefund(
         orderId,
         razorpayPaymentId,
       });
+      // Release the claim lease so a retry is not wedged behind
+      // REFUND_IN_PROGRESS for the full 10-minute TTL (same pattern as
+      // executeRouteSplit). Safe because the gateway POST above used a STABLE
+      // idempotency key (`refund_{orderId}_{paise|full}`): a retry after a
+      // lost response replays the original refund instead of posting a second
+      // one. Restore the pre-claim status so a "partially_refunded" order keeps
+      // its history. If the release write fails, the original 502 still wins.
+      try {
+        await orderRef.set(
+          {
+            refundStatus: priorRefundStatus
+              ? priorRefundStatus
+              : admin.firestore.FieldValue.delete(),
+            refundClaimedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (releaseErr: any) {
+        console.warn(
+          `[Payments] refund claim release failed for order ${orderId} (retry will wait for the lease TTL):`,
+          releaseErr?.message || releaseErr
+        );
+      }
       const failed: any = new Error(`Refund failed: ${err.message}`);
       failed.statusCode = 502;
       failed.code = "REFUND_GATEWAY_FAILED";

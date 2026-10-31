@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // undefined, and JSON-serializable.
 const { mockDb, savedDocs, control } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
-  const control = { failCustomerReadId: "" };
+  const control = { failCustomerReadId: "", failOrderWriteAt: 0, orderWrites: 0 };
   const docRef = (colName: string, docId: string) => ({
     id: docId,
     path: `${colName}/${docId}`,
@@ -21,6 +21,12 @@ const { mockDb, savedDocs, control } = vi.hoisted(() => {
       };
     }),
     set: vi.fn(async (data: any, options?: any) => {
+      if (colName === "orders") {
+        control.orderWrites++;
+        if (control.failOrderWriteAt && control.orderWrites === control.failOrderWriteAt) {
+          throw new Error("order write unavailable");
+        }
+      }
       const p = `${colName}/${docId}`;
       savedDocs[p] =
         options?.merge && savedDocs[p] ? { ...savedDocs[p], ...data } : data;
@@ -69,7 +75,7 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { autoRefund } from "../src/modules/payments/razorpay.service";
+import { autoRefund, __setRefundPostForTests } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
 
 describe("Loop 64: refund record writes are Firestore-serializable", () => {
@@ -225,5 +231,69 @@ describe("PAY-03: redeemed Grill Coins on refund", () => {
     expect(res.status).toBe("processed");
     expect(savedDocs["orders/ord_c1"].refundStatus).toBe("refunded");
     expect(savedDocs["customers/c1"].loyaltyPoints).toBe(50);
+  });
+});
+
+describe("PAY-02: refund claim release on gateway failure", () => {
+  let prevMock: boolean;
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    control.failCustomerReadId = "";
+    control.failOrderWriteAt = 0;
+    control.orderWrites = 0;
+    prevMock = config.mock.paymentGateway;
+    config.mock.paymentGateway = false; // live path, refund POST stubbed
+    savedDocs["orders/ord_f1"] = {
+      payment: { razorpayPaymentId: "pay_f1" },
+      pricing: { grandTotal: 500 },
+    };
+  });
+
+  afterEach(() => {
+    __setRefundPostForTests(null);
+    config.mock.paymentGateway = prevMock;
+  });
+
+  it("releases the claim so a retry is not wedged for 10 minutes", async () => {
+    __setRefundPostForTests(async () => {
+      throw new Error("gateway timeout");
+    });
+    await expect(
+      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1" })
+    ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
+    // "MOCK_DELETE" is the FieldValue.delete() sentinel in this rig.
+    expect(savedDocs["orders/ord_f1"].refundClaimedAt).toBe("MOCK_DELETE");
+    expect(savedDocs["orders/ord_f1"].refundStatus).toBe("MOCK_DELETE");
+  });
+
+  it("restores a prior partially_refunded status instead of erasing it", async () => {
+    savedDocs["orders/ord_f1"] = {
+      payment: { razorpayPaymentId: "pay_f1" },
+      pricing: { grandTotal: 500 },
+      refundedTotalPaise: 10000,
+      refundStatus: "partially_refunded",
+    };
+    __setRefundPostForTests(async () => {
+      throw new Error("gateway refused");
+    });
+    await expect(
+      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1", amountRupees: 200 })
+    ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
+    expect(savedDocs["orders/ord_f1"].refundStatus).toBe("partially_refunded");
+    expect(savedDocs["orders/ord_f1"].refundClaimedAt).toBe("MOCK_DELETE");
+  });
+
+  it("still throws the original 502 when releasing the claim fails", async () => {
+    // Write 1 = claim, write 2 = release. Fail the release.
+    control.failOrderWriteAt = 2;
+    __setRefundPostForTests(async () => {
+      throw new Error("gateway timeout");
+    });
+    await expect(
+      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1" })
+    ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
+    // Release failed: the lease marker is still the numeric claim timestamp.
+    expect(typeof savedDocs["orders/ord_f1"].refundClaimedAt).toBe("number");
   });
 });
