@@ -185,6 +185,31 @@ production credentials; nothing here proves live KOT or 86-ing.
 
 
 
+## Dashboard verification (31 October 2026)
+
+Read directly from the logged-in dashboards:
+
+- **Petpooja** — all five round-3 orders are present in Order Listing for
+  `5439 - Burgonomics DEMO [135148]` with the expected totals (598.50, 419.00,
+  283.50, 252.00, 312.95), status “Waiting For Acceptance”. Vendor confirmation
+  is the only outstanding step.
+- **Razorpay** — the live webhook is already registered and enabled:
+  `https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/payments/webhook`
+  (51 events, added 29 Oct). A stale Netlify webhook is also enabled. The account
+  is **10% activated and in Test Mode**; live keys cannot be generated until the
+  website/app and KYC are approved. Test key: `rzp_test_…` (23 chars).
+- **Borzo** — logged in, ₹0 balance. The “Get API token” action is **disabled**:
+  Borzo requires registering on their test server and sending at least two test
+  orders before they issue a real API token. No token or webhook secret exists
+  yet.
+- **Backend** — `GET /api/health` returns `{"status":"healthy"}`.
+
+So the remaining payment/partner work is gated by account processes, not by
+missing code: Razorpay activation, Borzo test-server onboarding, Petpooja vendor
+confirmation.
+
+
+
 ## Evidence files
 
 - `route-results.json` — full per-sample data (latest run)
