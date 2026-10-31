@@ -702,6 +702,78 @@ describe("handlePetpoojaWebhook — documented client-ref callback (orderID only
   });
 });
 
+describe("handlePetpoojaWebhook — caller-controlled parked fields (POS-03c)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+    savedDocs["orders/ord_refuse"] = {
+      id: "ord_refuse",
+      branchId: "branch_t1",
+      status: { code: "CONFIRMED", label: "Order confirmed", kind: "upcoming", terminal: false },
+    };
+  });
+
+  const parkKeys = () =>
+    Object.keys(savedDocs).filter((p) => p.startsWith("unmatched_petpooja_orders/"));
+
+  const expectBounded = (value: any, max = 200) => {
+    expect(typeof value).toBe("string");
+    expect(value.length).toBeLessThanOrEqual(max);
+  };
+
+  it("bounds the unknown-order park and its doc id", async () => {
+    const longRef = `unknown_${"z".repeat(3000)}`;
+    await handlePetpoojaWebhook({
+      order_id: longRef,
+      orderID: `PP-${"y".repeat(3000)}`,
+      restID: "31z58ciw0h",
+      status: `s`.repeat(3000),
+    });
+    const keys = parkKeys();
+    expect(keys).toHaveLength(1);
+    expect(keys[0].length).toBeLessThanOrEqual("unmatched_petpooja_orders/upo_".length + 200);
+    const park = savedDocs[keys[0]];
+    expectBounded(park.orderId);
+    expectBounded(park.callbackOrderId);
+    expectBounded(park.rawStatus);
+    expectBounded(park.restId);
+  });
+
+  it("bounds the refused-untrusted park and its doc id", async () => {
+    await handlePetpoojaWebhook(
+      {
+        order_id: "ord_refuse",
+        orderID: `PP-${"y".repeat(3000)}`,
+        status: `s`.repeat(3000),
+      },
+      { authenticated: false }
+    );
+    const keys = parkKeys();
+    expect(keys).toHaveLength(1);
+    const park = savedDocs[keys[0]];
+    expect(park.reason).toBeUndefined; // refused park has no reason field
+    expectBounded(park.orderId);
+    expectBounded(park.callbackOrderId);
+    expectBounded(park.rawStatus);
+    expect(park.restId).toBeNull();
+  });
+
+  it("bounds the store-status event fields and doc id", async () => {
+    const longRestId = `R${"r".repeat(3000)}`;
+    await handlePetpoojaWebhook({ restID: longRestId, status: `s`.repeat(3000) });
+    const keys = Object.keys(savedDocs).filter((p) =>
+      p.startsWith("petpooja_store_status_events/")
+    );
+    expect(keys).toHaveLength(1);
+    expect(keys[0].length).toBeLessThanOrEqual(
+      "petpooja_store_status_events/ss_".length + 200
+    );
+    const event = savedDocs[keys[0]];
+    expectBounded(event.restId);
+    expectBounded(event.rawStatus);
+  });
+});
+
 describe("handlePetpoojaWebhook — untrusted terminal status (POS-03)", () => {
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];

@@ -844,14 +844,18 @@ export async function handlePetpoojaWebhook(
   // ping, so it must not be swallowed by the store-status branch below. (A real
   // order event also carries restID + status, which is that branch's shape.)
   if (!orderId && !posOrderId && isStoreStatusPayload(payload)) {
-    const restId = String(
+    const restIdClaim = String(
       payload.rest_id ?? payload.restId ?? payload.restID ?? payload.restaurantid
     );
+    // Caller-controlled: look up with the exact claim (a padded id must not
+    // collide with a real outlet) but store a bounded copy and doc id.
+    const restId =
+      boundedParkedString(restIdClaim, PARKED_REF_MAX_CHARS) || "(absent)";
     const rawStatus = payload.status ?? payload.store_status ?? payload.storeStatus;
-    const branchId = await resolveBranchIdForRestId(restId);
+    const branchId = await resolveBranchIdForRestId(restIdClaim);
     console.log(
       `[Petpooja Webhook] Store-status ping restID=${restId} status=${JSON.stringify(
-        rawStatus
+        boundedParkedString(rawStatus ?? null, PARKED_STATUS_MAX_CHARS)
       )} ${branchId ? `branch=${branchId}` : "branch=UNLINKED"}`
     );
     // Recorded, not applied. Petpooja's status encoding for this webhook is
@@ -865,7 +869,7 @@ export async function handlePetpoojaWebhook(
           {
             restId,
             branchId: branchId ?? null,
-            rawStatus: rawStatus ?? null,
+            rawStatus: boundedParkedString(rawStatus ?? null, PARKED_STATUS_MAX_CHARS),
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
@@ -971,7 +975,10 @@ export async function handlePetpoojaWebhook(
   }
 
   if (!orderDoc) {
-    const refKey = orderId || callbackOrderId || posOrderId;
+    const refKeyRaw = orderId || callbackOrderId || posOrderId;
+    // Caller-controlled reference: bound the log, the parked fields and the
+    // deterministic doc id so an oversized id cannot fail or abuse the write.
+    const refKey = boundedParkedString(refKeyRaw, PARKED_REF_MAX_CHARS) || "unknown";
     console.warn(
       `[Petpooja Webhook] Order ${refKey} not resolved${
         parkReason ? ` (${parkReason})` : ""
@@ -983,12 +990,21 @@ export async function handlePetpoojaWebhook(
         .doc(`upo_${refKey}`)
         .set(
           {
-            orderId: orderId ?? null,
+            orderId: boundedParkedString(orderId ?? null, PARKED_REF_MAX_CHARS),
             // Never label a client ref as a POS id in the review queue.
-            posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
-            callbackOrderId: callbackOrderId || null,
-            rawStatus: payload.status || payload.order_status || null,
-            restId: restIdRaw || null,
+            posOrderId: boundedParkedString(
+              (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+              PARKED_REF_MAX_CHARS
+            ),
+            callbackOrderId: boundedParkedString(
+              callbackOrderId || null,
+              PARKED_REF_MAX_CHARS
+            ),
+            rawStatus: boundedParkedString(
+              payload.status || payload.order_status || null,
+              PARKED_STATUS_MAX_CHARS
+            ),
+            restId: boundedParkedString(restIdRaw || null, PARKED_REF_MAX_CHARS),
             status: "needs_review",
             reason: parkReason,
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1025,24 +1041,40 @@ export async function handlePetpoojaWebhook(
     const claimedBranch = restIdRaw ? await resolveBranchIdForRestId(restIdRaw) : null;
     const orderBranch = String(((orderDoc.data() || {}) as Record<string, any>).branchId ?? "");
     if (!claimedBranch || !orderBranch || orderBranch !== claimedBranch) {
+      // Caller-controlled strings: bound the log, the parked fields and the
+      // doc id (the full resolvedOrderId is still used for real writes below).
+      const parkedOrderId =
+        boundedParkedString(resolvedOrderId, PARKED_REF_MAX_CHARS) || "unknown";
       console.warn(
-        `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} refused: restID ${restIdRaw || "absent"} resolves to ${
-          claimedBranch || "UNLINKED"
-        }, order belongs to ${orderBranch || "none"}`
+        `[Petpooja Webhook] untrusted callback for order ${parkedOrderId} refused: restID ${boundedParkedString(
+          restIdRaw || "absent",
+          PARKED_REF_MAX_CHARS
+        )} resolves to ${claimedBranch || "UNLINKED"}, order belongs to ${
+          orderBranch || "none"
+        }`
       );
       try {
         await db
           .collection("unmatched_petpooja_orders")
-          .doc(`upo_${resolvedOrderId}`)
+          .doc(`upo_${parkedOrderId}`)
           .set(
             {
-              orderId: resolvedOrderId,
+              orderId: parkedOrderId,
               // Same rule as the primary park: a client ref is never labelled a
               // POS id in the review queue.
-              posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
-              callbackOrderId: callbackOrderId || null,
-              rawStatus: payload.status || payload.order_status || null,
-              restId: restIdRaw || null,
+              posOrderId: boundedParkedString(
+                (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+                PARKED_REF_MAX_CHARS
+              ),
+              callbackOrderId: boundedParkedString(
+                callbackOrderId || null,
+                PARKED_REF_MAX_CHARS
+              ),
+              rawStatus: boundedParkedString(
+                payload.status || payload.order_status || null,
+                PARKED_STATUS_MAX_CHARS
+              ),
+              restId: boundedParkedString(restIdRaw || null, PARKED_REF_MAX_CHARS),
               status: "needs_review",
               receivedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
@@ -1050,7 +1082,7 @@ export async function handlePetpoojaWebhook(
           );
       } catch (err) {
         console.warn(
-          `[Petpooja Webhook] Failed to park refused untrusted order ${resolvedOrderId}:`,
+          `[Petpooja Webhook] Failed to park refused untrusted order ${parkedOrderId}:`,
           (err as any)?.message || err
         );
       }
@@ -1069,7 +1101,10 @@ export async function handlePetpoojaWebhook(
   // non-terminal status changes still apply below.
   if (untrusted && (canonicalStatus === "cancelled" || canonicalStatus === "delivered")) {
     console.warn(
-      `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} carried terminal status "${String(
+      `[Petpooja Webhook] untrusted callback for order ${boundedParkedString(
+        resolvedOrderId,
+        PARKED_REF_MAX_CHARS
+      )} carried terminal status "${String(
         boundedParkedString(rawStatus, PARKED_STATUS_MAX_CHARS)
       )}" (${canonicalStatus}) — parked, order untouched`
     );
@@ -1095,7 +1130,10 @@ export async function handlePetpoojaWebhook(
         );
     } catch (err) {
       console.warn(
-        `[Petpooja Webhook] Failed to park untrusted terminal event for order ${resolvedOrderId}:`,
+        `[Petpooja Webhook] Failed to park untrusted terminal event for order ${boundedParkedString(
+          resolvedOrderId,
+          PARKED_REF_MAX_CHARS
+        )}:`,
         (err as any)?.message || err
       );
     }
@@ -1126,7 +1164,10 @@ export async function handlePetpoojaWebhook(
           : 0;
     if (lastId === eventId && lastMs > 0 && Date.now() - lastMs < EVENT_FRESHNESS_MS) {
       console.warn(
-        `[Petpooja Webhook] Replay of event ${eventId} for order ${orderId} inside freshness window — ignored`
+        `[Petpooja Webhook] Replay of event ${boundedParkedString(
+          eventId,
+          PARKED_REF_MAX_CHARS
+        )} for order ${boundedParkedString(orderId, PARKED_REF_MAX_CHARS)} inside freshness window — ignored`
       );
       return;
     }
@@ -1152,7 +1193,9 @@ export async function handlePetpoojaWebhook(
     orderData.deliveryStatus === "delivered";
   if (terminalNow) {
     console.warn(
-      `[Petpooja Webhook] Ignoring kitchen status "${String(rawStatus)}" for TERMINAL order ${orderId} ` +
+      `[Petpooja Webhook] Ignoring kitchen status "${String(
+        boundedParkedString(rawStatus, PARKED_STATUS_MAX_CHARS)
+      )}" for TERMINAL order ${boundedParkedString(orderId, PARKED_REF_MAX_CHARS)} ` +
         `(current: ${currentCode || currentKind || "unknown"}) — no rewind, no refund side effects`
     );
     return;
