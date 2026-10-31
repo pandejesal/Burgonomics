@@ -178,16 +178,37 @@ function lineUnitPrice(item: any): number {
   return Number(item?.basePrice ?? item?.price ?? item?.unitPrice ?? 0) || 0;
 }
 
+export interface PosAddonRow {
+  posId: string;
+  posGroupId: number;
+  groupName: string;
+  name: string;
+  price: number;
+}
+
+export interface PosCatalogLine {
+  /** The unit price the POS line must carry (catalog-derived). */
+  unitPrice: number;
+  /** Present when the line selects a catalog variation option (M3). */
+  variation?: { posItemId: string; posVariationId: string; name: string };
+  addons: PosAddonRow[];
+}
+
 /**
- * POS-11: the catalog prices for the order's lines, in order, or a structural
- * refusal. The order document's price is CLIENT-WRITTEN and now flows into the
- * POS `total` through the restaurant-due calculation, so it must never be the
- * money: each line is priced from `products/{id}`, exactly like the engine.
+ * POS-11 + M3: the POS lines for an order, in order, resolved from the
+ * CATALOG, or a structural refusal.
  *
- * A line whose product cannot be read (missing, no numeric price, or a failed
- * catalog read) parks the order — there is no fallback to the client's price.
+ * - Price: `products/{id}.price` plus the CATALOG prices of the selected
+ *   options (PAY-16), never the order document's number.
+ * - Add-on: POS id and group id come from the catalog option/group, never from
+ *   the client's modifier.
+ * - Variation: the catalog variation option supplies posItemId (the line `id`),
+ *   posVariationId, the option name and its absolute price.
+ *
+ * Anything unresolvable parks the order (structural): no fabricated ids, no
+ * client price.
  */
-async function resolveCatalogLinePrices(order: any): Promise<number[]> {
+async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
   const items = Array.isArray(order?.items) ? order.items : [];
   if (items.length === 0) return [];
 
@@ -236,7 +257,7 @@ async function resolveCatalogLinePrices(order: any): Promise<number[]> {
   }
 
   const gaps: PetpoojaStructuralGap[] = [];
-  const prices = items.map((item: any, index: number) => {
+  const lines = items.map((item: any, index: number): PosCatalogLine => {
     const key = keyOf(item);
     const catalogPrice = priceByKey.get(key);
     if (catalogPrice === undefined) {
@@ -244,12 +265,105 @@ async function resolveCatalogLinePrices(order: any): Promise<number[]> {
         field: `OrderItem.details[${index}].price`,
         reason: `item "${item?.name ?? "(unnamed)"}" has no catalog price (product "${key || "(no id)"}") — refusing to relay the order document's price`,
       });
-      return 0;
+      return { unitPrice: 0, addons: [] };
     }
-    return applyCatalogBasePrice(item, catalogPrice, optionsByKey.get(key));
+
+    const customizations = optionsByKey.get(key);
+    // option id -> { option, group } across every group on the product.
+    const optionIndex = new Map<string, { option: any; group: any }>();
+    if (Array.isArray(customizations)) {
+      for (const group of customizations) {
+        for (const option of Array.isArray(group?.options) ? group.options : []) {
+          const id = String(option?.id ?? "").trim();
+          if (id) optionIndex.set(id, { option, group });
+        }
+      }
+    }
+
+    const selections: Array<{ id: string; name: string; kind: "customization" | "modifier" }> = [];
+    if (Array.isArray(item?.customizations)) {
+      for (const c of item.customizations) {
+        selections.push({
+          id: String((c as any)?.id ?? (c as any)?.optionId ?? "").trim(),
+          name: String((c as any)?.name ?? ""),
+          kind: "customization",
+        });
+      }
+    }
+    if (Array.isArray(item?.modifiers)) {
+      for (const m of item.modifiers) {
+        selections.push({
+          id: String((m as any)?.id ?? (m as any)?.optionId ?? "").trim(),
+          name: String((m as any)?.name ?? ""),
+          kind: "modifier",
+        });
+      }
+    }
+
+    let variation: PosCatalogLine["variation"];
+    const addons: PosAddonRow[] = [];
+    let unitPrice = catalogPrice;
+
+    for (const selection of selections) {
+      const match = selection.id ? optionIndex.get(selection.id) : undefined;
+      if (!match) {
+        gaps.push({
+          field: `OrderItem.details[${index}].options`,
+          reason: `${selection.kind} "${selection.name || selection.id || "(unnamed)"}" is not in the product's catalog option data`,
+        });
+        continue;
+      }
+      const { option, group } = match;
+      if (group?.kind === "variation") {
+        const posItemId = String(option?.posItemId ?? option?.id ?? "").trim();
+        const posVariationId = String(option?.posVariationId ?? "").trim();
+        if (!posItemId || !posVariationId) {
+          gaps.push({
+            field: `OrderItem.details[${index}].variation_id`,
+            reason: `variation "${option?.name ?? selection.name}" has no verified POS variation id in the catalog`,
+          });
+          continue;
+        }
+        const absolute = Number(option?.absolutePrice);
+        variation = {
+          posItemId,
+          posVariationId,
+          name: String(option?.name ?? selection.name ?? ""),
+        };
+        // The variation's absolute price is the line base (not base + delta).
+        if (Number.isFinite(absolute) && absolute >= 0) unitPrice = absolute;
+      } else {
+        const posGroupId = Number(group?.posGroupId);
+        const posId = String(option?.id ?? "").trim();
+        if (!posId || !Number.isInteger(posGroupId) || posGroupId <= 0) {
+          gaps.push({
+            field: `OrderItem.details[${index}].AddonItem.details[]`,
+            reason: `add-on "${option?.name ?? selection.name}" has no verified POS addon/group id in the catalog`,
+          });
+          continue;
+        }
+        const price = Number(option?.price);
+        const addonPrice = Number.isFinite(price) && price >= 0 ? price : 0;
+        addons.push({
+          posId,
+          posGroupId,
+          groupName: String(group?.name ?? "Addons"),
+          name: String(option?.name ?? selection.name ?? ""),
+          price: addonPrice,
+        });
+        unitPrice += addonPrice;
+      }
+    }
+
+    return {
+      unitPrice: Math.round(Math.max(0, unitPrice) * 100) / 100,
+      ...(variation ? { variation } : {}),
+      addons,
+    };
   });
+
   if (gaps.length > 0) throw new PetpoojaStructuralError(gaps);
-  return prices;
+  return lines;
 }
 
 /** Canonical order type for KOT/pricing purposes. */
@@ -408,11 +522,11 @@ export function formatPetpoojaOrderPayload(
    */
   kotDeliveryFee?: number,
   /**
-   * POS-11: server-resolved unit price per line (index-aligned), from the SAME
-   * catalog source the pricing engine uses. The push path ALWAYS supplies it;
-   * `undefined` only for direct/fixture callers that have no catalog.
+   * M3: catalog-resolved POS lines (price, add-on ids/group ids, variation
+   * identity). The push path ALWAYS supplies them; undefined only for
+   * direct/fixture callers that have no catalog.
    */
-  catalogLinePrices?: number[]
+  catalogLines?: PosCatalogLine[]
 ) {
   const fulfillment = (order.fulfillmentType || order.orderType || "DELIVERY").toUpperCase();
   // Official V2.1.0 order_type is a letter code: H (home delivery),
@@ -435,8 +549,8 @@ export function formatPetpoojaOrderPayload(
   // POS-11: every money figure below comes from the SERVER catalog line price
   // (`catalogLinePrices`), never from the price written on the order document.
   const lineUnit = (item: any, index: number): number => {
-    if (!catalogLinePrices) return lineUnitPrice(item);
-    const resolved = Number(catalogLinePrices[index]);
+    if (!catalogLines) return lineUnitPrice(item);
+    const resolved = Number(catalogLines[index]?.unitPrice);
     if (!Number.isFinite(resolved) || resolved < 0) {
       throw new PetpoojaStructuralError([
         {
@@ -465,7 +579,12 @@ export function formatPetpoojaOrderPayload(
     // POS-11: catalog-derived unit price, not the order document's price.
     const unit = lineUnit(item, itemIndex);
     const qty = Number(item.quantity) || 1;
-    const itemPosId = linePetpoojaItemId(item, firestoreBranchId);
+    // M3: when the caller resolved catalog lines, the POS ids, variation and
+    // add-on rows come from the CATALOG — never from the client's modifier.
+    const catalogLine = catalogLines ? (catalogLines[itemIndex] as PosCatalogLine) : undefined;
+    const itemPosId = catalogLine
+      ? catalogLine.variation?.posItemId || linePetpoojaItemId(item, firestoreBranchId)
+      : linePetpoojaItemId(item, firestoreBranchId);
     if (itemPosId === "") {
       structuralGaps.push({
         field: `OrderItem.details[${itemIndex}].id`,
@@ -476,50 +595,76 @@ export function formatPetpoojaOrderPayload(
     // R4b: NEVER fabricate an id. An add-on goes out only with the POS's own
     // addon id and numeric group id; the old `mod.id || "addon"` +
     // `Number(...) || 0` fallbacks invented both.
+    // M3: with a resolved catalog line, the ids/group/price ADD come from the
+    // catalog option; the client's modifier is only the selection key.
     const rawAddons = item.modifiers || item.selectedAddons || [];
-    const addons = rawAddons.map((mod: any) => {
-      const addonId = firstPosId([mod?.petpoojaItemId, mod?.petpoojaAddonId, mod?.petpoojaOptionId]);
-      const groupIdRaw = mod?.petpoojaGroupId ?? mod?.petpoojaGroup_id ?? mod?.posGroupId;
-      const groupId = Number(groupIdRaw);
-      const groupVerified =
-        groupIdRaw !== undefined &&
-        groupIdRaw !== null &&
-        groupIdRaw !== "" &&
-        Number.isInteger(groupId) &&
-        groupId > 0;
-      if (!addonId) {
-        structuralGaps.push({
-          field: `OrderItem.details[${itemIndex}].AddonItem.details[].id`,
-          reason: `add-on "${mod?.name ?? "(unnamed)"}" has no verified Petpooja addon id`,
+    const addons = catalogLine
+      ? catalogLine.addons.map((addon) => ({
+          id: addon.posId,
+          name: addon.name,
+          group_name: addon.groupName,
+          price: money(addon.price),
+          // The vendor sample types group_id as an integer, not a string.
+          group_id: addon.posGroupId,
+          quantity: "1",
+        }))
+      : rawAddons.map((mod: any) => {
+          const addonId = firstPosId([mod?.petpoojaItemId, mod?.petpoojaAddonId, mod?.petpoojaOptionId]);
+          const groupIdRaw = mod?.petpoojaGroupId ?? mod?.petpoojaGroup_id ?? mod?.posGroupId;
+          const groupId = Number(groupIdRaw);
+          const groupVerified =
+            groupIdRaw !== undefined &&
+            groupIdRaw !== null &&
+            groupIdRaw !== "" &&
+            Number.isInteger(groupId) &&
+            groupId > 0;
+          if (!addonId) {
+            structuralGaps.push({
+              field: `OrderItem.details[${itemIndex}].AddonItem.details[].id`,
+              reason: `add-on "${mod?.name ?? "(unnamed)"}" has no verified Petpooja addon id`,
+            });
+          }
+          if (!groupVerified) {
+            structuralGaps.push({
+              field: `OrderItem.details[${itemIndex}].AddonItem.details[].group_id`,
+              reason: `add-on "${mod?.name ?? "(unnamed)"}" has no verified Petpooja group id`,
+            });
+          }
+          return {
+            id: addonId,
+            name: mod.name,
+            group_name: mod.groupName || "Addons",
+            // CartModifier carries `priceDelta`; `price` is the legacy spelling.
+            price: money(mod.price ?? mod.priceDelta ?? 0),
+            // The vendor sample types group_id as an integer, not a string.
+            group_id: groupVerified ? groupId : 0,
+            quantity: "1",
+          };
         });
-      }
-      if (!groupVerified) {
-        structuralGaps.push({
-          field: `OrderItem.details[${itemIndex}].AddonItem.details[].group_id`,
-          reason: `add-on "${mod?.name ?? "(unnamed)"}" has no verified Petpooja group id`,
-        });
-      }
-      return {
-        id: addonId,
-        name: mod.name,
-        group_name: mod.groupName || "Addons",
-        // CartModifier carries `priceDelta`; `price` is the legacy spelling.
-        price: money(mod.price ?? mod.priceDelta ?? 0),
-        // The vendor sample types group_id as an integer, not a string.
-        group_id: groupVerified ? groupId : 0,
-        quantity: "1",
-      };
-    });
 
-    // R4b: a variation without a verified POS id cannot be matched by the POS;
-    // sending the local name/id would print the wrong dish.
-    const variationId = firstPosId([item.petpoojaVariationId, item.posVariationId]);
-    const variationName = item.petpoojaVariationName || item.variationName || "";
-    if (variationName && !variationId) {
-      structuralGaps.push({
-        field: `OrderItem.details[${itemIndex}].variation_id`,
-        reason: `item "${item?.name ?? "(unnamed)"}" carries variation "${variationName}" without a verified Petpooja variation id`,
-      });
+    // M3: a variation comes from the catalog. Without a resolved catalog line,
+    // keep the legacy behaviour (verified explicit POS fields only).
+    let variationId: string;
+    let variationName: string;
+    let lineName: string;
+    if (catalogLine) {
+      variationId = catalogLine.variation?.posVariationId || "";
+      variationName = catalogLine.variation?.name || "";
+      lineName = catalogLine.variation
+        ? `${item.name} (${catalogLine.variation.name})`
+        : item.name;
+    } else {
+      // R4b: a variation without a verified POS id cannot be matched by the POS;
+      // sending the local name/id would print the wrong dish.
+      variationId = firstPosId([item.petpoojaVariationId, item.posVariationId]);
+      variationName = item.petpoojaVariationName || item.variationName || "";
+      if (variationName && !variationId) {
+        structuralGaps.push({
+          field: `OrderItem.details[${itemIndex}].variation_id`,
+          reason: `item "${item?.name ?? "(unnamed)"}" carries variation "${variationName}" without a verified Petpooja variation id`,
+        });
+      }
+      lineName = item.name;
     }
 
     // Each line's included GST, split evenly (exactly, in paise) across the
@@ -531,7 +676,7 @@ export function formatPetpoojaOrderPayload(
 
     return {
       id: itemPosId,
-      name: item.name,
+      name: lineName,
       // Owner decision 2026-10-31 (pricing-contract.md R4): menu prices are
       // GST-INCLUSIVE. `price`/`final_price` below stay the inclusive menu
       // price and `item_tax` carries each line's share of the INCLUDED tax.
@@ -1095,9 +1240,10 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       branchId,
       deliveryBinding
     );
-    // POS-11: price every POS line from the catalog, and park instead of
-    // relaying the order document's (client-written) price.
-    const catalogLinePrices = await resolveCatalogLinePrices(pricedOrder);
+    // POS-11 + M3: price every POS line from the catalog and take the add-on /
+    // variation POS ids from it too; park instead of relaying the order
+    // document's (client-written) price or modifier ids.
+    const catalogLines = await resolveCatalogLines(pricedOrder);
     const payload = formatPetpoojaOrderPayload(
       pricedOrder,
       branchData,
@@ -1105,7 +1251,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       branchId,
       orderId,
       deliveryBinding.fee,
-      catalogLinePrices
+      catalogLines
     );
 
     // Debug visibility: missing contact or zero totals push a broken KOT that

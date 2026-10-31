@@ -202,7 +202,13 @@ describe("PAY-16 KOT option prices come from the catalog", () => {
       price: 200,
       inStock: true,
       customizations: [
-        { id: "g1", name: "Add-ons", options: [{ id: "opt_cheese", name: "Cheese", price: 30 }] },
+        {
+          id: "g1",
+          name: "Add-ons",
+          kind: "addon",
+          posGroupId: 7,
+          options: [{ id: "opt_cheese", name: "Cheese", price: 30, isAvailable: true }],
+        },
       ],
     };
     seedOrder("ord_option_price", [
@@ -213,22 +219,20 @@ describe("PAY-16 KOT option prices come from the catalog", () => {
         productId: "prod_optioned",
         price: 200,
         quantity: 1,
-        modifiers: [
-          {
-            id: "opt_cheese",
-            name: "Cheese",
-            priceDelta: 0,
-            // R4b: a relayed add-on needs the POS's own ids.
-            petpoojaItemId: "201",
-            petpoojaGroupId: 7,
-          },
-        ],
+        // M3: the client only names the selection; ids/price come from the
+        // catalog option (no client POS ids are trusted any more).
+        modifiers: [{ id: "opt_cheese", name: "Cheese", priceDelta: 0 }],
       },
     ]);
     expect(await pushOrderToPetpooja("ord_option_price")).toBe(true);
     const info = payload().orderinfo.OrderInfo;
     expect(info.OrderItem.details[0].price).toBe("230.00");
     expect(info.OrderItem.details[0].final_price).toBe("230.00");
+    expect(info.OrderItem.details[0].AddonItem.details[0]).toMatchObject({
+      id: "opt_cheese",
+      group_id: 7,
+      price: "30.00",
+    });
   });
 
   it("parks the order when a selected option is not on the menu", async () => {
