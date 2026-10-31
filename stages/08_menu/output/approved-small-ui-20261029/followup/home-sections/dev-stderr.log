@@ -1,0 +1,179 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:14:37). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/checkout.tsx" will not be code-split and will increase your bundle size:
+- CheckoutPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/payment.tsx" will not be code-split and will increase your bundle size:
+- PaymentPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/search.tsx" will not be code-split and will increase your bundle size:
+- SearchPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/cart.tsx" will not be code-split and will increase your bundle size:
+- CartPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/support.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/menu.index.tsx" will not be code-split and will increase your bundle size:
+- MenuPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/order-confirmation.$orderId.tsx" will not be code-split and will increase your bundle size:
+- OrderConfirmationPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/orders.index.tsx" will not be code-split and will increase your bundle size:
+- OrderHistoryPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.index.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.addresses.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.favorites.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.settings.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/menu.product.$productId.tsx" will not be code-split and will increase your bundle size:
+- ProductPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/orders.$orderId.track.tsx" will not be code-split and will increase your bundle size:
+- TrackOrderPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [2m[console.error] [22m[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/cart.tsx" will not be code-split and will increase your bundle size:
+- CartPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[Razorpay] No publishable key configured (VITE_RAZORPAY_KEY_ID). Payments will fail closed until a key is set.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/checkout.tsx" will not be code-split and will increase your bundle size:
+- CheckoutPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/payment.tsx" will not be code-split and will increase your bundle size:
+- PaymentPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/search.tsx" will not be code-split and will increase your bundle size:
+- SearchPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/support.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/menu.index.tsx" will not be code-split and will increase your bundle size:
+- MenuPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/order-confirmation.$orderId.tsx" will not be code-split and will increase your bundle size:
+- OrderConfirmationPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/orders.index.tsx" will not be code-split and will increase your bundle size:
+- OrderHistoryPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.index.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.addresses.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.favorites.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.settings.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/menu.product.$productId.tsx" will not be code-split and will increase your bundle size:
+- ProductPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:37 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/orders.$orderId.track.tsx" will not be code-split and will increase your bundle size:
+- TrackOrderPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:31:38 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mYou have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled
+[2m7:40:11 am[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [2m[console.error] [22m[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/cart.tsx" will not be code-split and will increase your bundle size:
+- CartPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[Razorpay] No publishable key configured (VITE_RAZORPAY_KEY_ID). Payments will fail closed until a key is set.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/checkout.tsx" will not be code-split and will increase your bundle size:
+- CheckoutPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/payment.tsx" will not be code-split and will increase your bundle size:
+- PaymentPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/search.tsx" will not be code-split and will increase your bundle size:
+- SearchPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/support.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/menu.index.tsx" will not be code-split and will increase your bundle size:
+- MenuPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/order-confirmation.$orderId.tsx" will not be code-split and will increase your bundle size:
+- OrderConfirmationPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/orders.index.tsx" will not be code-split and will increase your bundle size:
+- OrderHistoryPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.index.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.addresses.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.favorites.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.settings.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/menu.product.$productId.tsx" will not be code-split and will increase your bundle size:
+- ProductPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:11 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/orders.$orderId.track.tsx" will not be code-split and will increase your bundle size:
+- TrackOrderPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [2m[console.error] [22m[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/cart.tsx" will not be code-split and will increase your bundle size:
+- CartPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[Razorpay] No publishable key configured (VITE_RAZORPAY_KEY_ID). Payments will fail closed until a key is set.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/checkout.tsx" will not be code-split and will increase your bundle size:
+- CheckoutPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/payment.tsx" will not be code-split and will increase your bundle size:
+- PaymentPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/search.tsx" will not be code-split and will increase your bundle size:
+- SearchPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/support.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/menu.index.tsx" will not be code-split and will increase your bundle size:
+- MenuPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/order-confirmation.$orderId.tsx" will not be code-split and will increase your bundle size:
+- OrderConfirmationPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/orders.index.tsx" will not be code-split and will increase your bundle size:
+- OrderHistoryPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.index.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.addresses.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.favorites.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/profile.settings.tsx" will not be code-split and will increase your bundle size:
+- Page
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/menu.product.$productId.tsx" will not be code-split and will increase your bundle size:
+- ProductPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:13 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22m[tanstack-router] These exports from "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028/src/routes/orders.$orderId.track.tsx" will not be code-split and will increase your bundle size:
+- TrackOrderPage
+For the best optimization, these items should either have their export statements removed, or be imported from another location that is not a route file.
+[2m7:40:14 am[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mYou have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled

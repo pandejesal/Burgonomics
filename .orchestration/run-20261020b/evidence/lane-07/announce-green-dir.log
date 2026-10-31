@@ -1,0 +1,696 @@
+﻿
+> burgonomics@1.0.0 test:rules
+> node scripts/test-rules.mjs
+
+[36m[1mi  emulators:[22m[39m Starting emulators: firestore
+[36m[1mi  firestore:[22m[39m Firestore Emulator logging to [1mfirestore-debug.log[22m
+[32m[1m+  firestore:[22m[39m Firestore Emulator was started in standard edition.
+[32m[1m+  firestore:[22m[39m Firestore Emulator UI websocket is running on 9150.
+[36m[1mi [22m[39m Running script: [1mnpx vitest run tests/rules --reporter=verbose --hookTimeout=120000 --fileParallelism=false[22m
+
+ RUN  v5.0.1 C:/Users/DELL/Desktop/Burgonomics/burgonomics-foundation-core
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 1. [ANON-DENY] Anonymous request to read orders is DENIED 2042ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 2. [ANON-DENY] Anonymous request to read customer profile is DENIED 507ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 3. [ANON-DENY] Anonymous request to read admin profile is DENIED 332ms
+node.exe : stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 4. 
+[ANON-DENY] Anonymous request to write payment audit is DENIED
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (stderr | tests/...audit is DENIED:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[2026-10-21T12:51:43.819Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69ee8 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L627, false for 'update' @ L627
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 4. [ANON-DENY] Anonymous request to write payment audit is DENIED 383ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 5. [BRANCHES-ANON-DENY] Anonymous request to read branches is DENIED (hardened: was public) 358ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 5b. [BRANCHES-SIGNEDIN-ALLOW] Any signed-in user can read branches (customer app never reads branches/*; partner hooks are signed-in) 355ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 6. [CUSTOMER-READ-OWN] Customer can read their own order 317ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 7. [CUSTOMER-CROSS-READ-DENY] Customer cannot read another customer's order 331ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 8. [CUSTOMER-LOYALTY-READ] Customer can read their own global loyalty points 239ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 9. 
+[CUSTOMER-LOYALTY-MUTATION-DENY] Customer cannot directly modify loyalty points
+[2026-10-21T12:51:45.755Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69ef4 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L136:24 for 'update' @ L136, Property role is undefined on object. for 'update' @ L136
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 9. [CUSTOMER-LOYALTY-MUTATION-DENY] Customer cannot directly modify loyalty points 332ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 10. [CUSTOMER-CREATE-ORDER] Customer can create pending order for self (pins the real ordersService.createOrder payload: BOTH customerId+userId, initial PLACED status meta) 361ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 11. [BRANCH-OWNS-READ] Branch Owner of branch_01 can read orders at branch_01 371ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 12. [BRANCH-CROSS-READ-DENY] Branch Owner of branch_02 CANNOT read orders at branch_01 320ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 13. [BRANCH-STATUS-UPDATE] Branch Owner of branch_01 can update order status at branch_01 276ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 14. 
+[BRANCH-MUTATE-TOTALS-DENY] Branch Owner cannot tamper with order totals or pricing
+[2026-10-21T12:51:47.413Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69efe 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, Property role is undefined on object. for 'update' @ L272
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 14. [BRANCH-MUTATE-TOTALS-DENY] Branch Owner cannot tamper with order totals or pricing 330ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 15. [BRAND-CREATE-UPCOMING] Brand Owner CAN create upcoming branches (Q10) 329ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 16. 
+[BRANCH-CREATE-UPCOMING-DENY] Branch Owner CANNOT create upcoming branches (Q10)
+[2026-10-21T12:51:48.063Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f02 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L325:24 for 'create' @ L325, evaluation error at L326:24 for 'update' @ L326, Property role is 
+undefined on object. for 'create' @ L325
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 16. [BRANCH-CREATE-UPCOMING-DENY] Branch Owner CANNOT create upcoming branches (Q10) 321ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 17. [CHAT-PAIR-ALLOW] Branch Owner 1 and Brand Owner CAN message in their pair 390ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 18. [CHAT-CROSS-DENY] Branch Owner 2 CANNOT access messages for Branch 1 pair 250ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 19. [TICKET-STAFF-MASK-ALLOW] Branch staff CAN advance workflow fields (incl dotted assignedTo.tier) 386ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 20. 
+[TICKET-MONEY-DENY] Branch staff CANNOT write money-action fields directly
+[2026-10-21T12:51:49.330Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f0c 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 20. [TICKET-MONEY-DENY] Branch staff CANNOT write money-action fields directly 240ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 21. [WEBHOOKLOG-ADMIN-ALLOW] Brand Owner CAN read petpooja webhook logs 280ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 22. [WEBHOOKLOG-ANON-DENY] Anonymous request to read petpooja webhook logs is DENIED 272ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 23. 
+[OTP-BYPASS-DENY] Branch staff CANNOT flip a delivery order straight to DELIVERED
+[2026-10-21T12:51:50.204Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f12 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, Property role is undefined on object. for 'update' @ L272
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 23. [OTP-BYPASS-DENY] Branch staff CANNOT flip a delivery order straight to DELIVERED 322ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 24. [TAKEAWAY-DELIVER-ALLOW] Branch staff CAN complete a takeaway order directly 308ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 25. [BROADCAST-ADMIN-ALLOW] Brand Owner CAN read broadcast history 236ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 26. 
+[BROADCAST-WRITE-DENY] Branch staff CANNOT write broadcast history directly
+[2026-10-21T12:51:50.984Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f18 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L815, false for 'update' @ L815
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 26. [BROADCAST-WRITE-DENY] Branch staff CANNOT write broadcast history directly 234ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 27. [CUSTOMER-WHATSAPP-OPTIN-ALLOW] Customer can toggle their own whatsappOptIn preference 187ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 28. 
+[CUSTOMER-ORDER-FIELD-DENY] Customer cannot write money fields on their own order
+[2026-10-21T12:51:51.402Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f1c 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, Property role is undefined on object. for 'update' @ L272
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 28. [CUSTOMER-ORDER-FIELD-DENY] Customer cannot write money fields on their own order 231ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 29. 
+[ORDERS-CREATE-VICTIM-ID-DENY] Customer cannot birth an order stamped to a victim in BOTH identity fields
+[2026-10-21T12:51:51.704Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f1e 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 29. [ORDERS-CREATE-VICTIM-ID-DENY] Customer cannot birth an order stamped to a victim in BOTH identity fields 302ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 30. 
+[ORDERS-CREATE-SPLIT-IDENTITY-DENY] Customer cannot pair own customerId with a victim userId (old `||` lanes both 
+closed)
+[2026-10-21T12:51:52.003Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f20 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 30. [ORDERS-CREATE-SPLIT-IDENTITY-DENY] Customer cannot pair own customerId with a victim userId (old `||` lanes both closed) 299ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 31. 
+[ORDERS-CREATE-PRIVILEGED-KEYS-DENY] Customer create cannot carry server-owned keys at birth 
+(OTP/refund/pricing/dispatch)
+[2026-10-21T12:51:52.238Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f22 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 31. [ORDERS-CREATE-PRIVILEGED-KEYS-DENY] Customer create cannot carry server-owned keys at birth (OTP/refund/pricing/dispatch) 234ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 32. 
+[ORDERS-CREATE-PLANTED-STATUS-DENY] Customer create cannot be born DELIVERED/terminal
+[2026-10-21T12:51:52.428Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f24 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 32. [ORDERS-CREATE-PLANTED-STATUS-DENY] Customer create cannot be born DELIVERED/terminal 189ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 33. 
+[ORDERS-CREATE-PLANTED-PAID-DENY] Customer create cannot be born paid ('paid' or POS 'completed')
+[2026-10-21T12:51:52.651Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f26 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 33. 
+[ORDERS-CREATE-PLANTED-PAID-DENY] Customer create cannot be born paid ('paid' or POS 'completed')
+[2026-10-21T12:51:52.684Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f27 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 33. [ORDERS-CREATE-PLANTED-PAID-DENY] Customer create cannot be born paid ('paid' or POS 'completed') 256ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 34. [ORDERS-CREATE-WALKIN-ALLOW] Branch staff CAN birth a POS walk-in order (customerId 'cust_walkin' + staff userId + own branch, born completed) 199ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 35. 
+[ORDERS-CREATE-WALKIN-NONSTAFF-DENY] A customer cannot use the walk-in lane
+[2026-10-21T12:51:53.134Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f2b 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L246:24 for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, Property role is 
+undefined on object. for 'create' @ L246
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 35. [ORDERS-CREATE-WALKIN-NONSTAFF-DENY] A customer cannot use the walk-in lane 250ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 36. 
+[ORDERS-CREATE-WALKIN-CROSS-BRANCH-DENY] Branch staff cannot create walk-in orders stamped to someone else's branch
+[2026-10-21T12:51:53.418Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f2d 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L246:24 for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, Property role is 
+undefined on object. for 'create' @ L246
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 36. [ORDERS-CREATE-WALKIN-CROSS-BRANCH-DENY] Branch staff cannot create walk-in orders stamped to someone else's branch 284ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 37. 
+[ORDERS-CREATE-WALKIN-PRIVILEGED-KEYS-DENY] Walk-in lane cannot plant delivery OTP at birth either
+[2026-10-21T12:51:53.660Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f2f 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 37. [ORDERS-CREATE-WALKIN-PRIVILEGED-KEYS-DENY] Walk-in lane cannot plant delivery OTP at birth either 242ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 38. 
+[USER-ORDERS-SUBCOLLECTION-DENY] users/{uid}/orders is server-only ΓÇö owner cannot create shadow orders
+[2026-10-21T12:51:53.846Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f31 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L212, false for 'update' @ L212
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 38. [USER-ORDERS-SUBCOLLECTION-DENY] users/{uid}/orders is server-only ΓÇö owner cannot create shadow orders 186ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 39. [CUSTOMERS-CREATE-ALLOW] Customer can create their own clean profile doc 201ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 40. 
+[CUSTOMERS-CREATE-ESCALATION-DENY] Customer cannot birth their profile with role/claim/PII escalation fields
+[2026-10-21T12:51:54.237Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f35 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L130, evaluation error at L136:24 for 'update' @ L136, false for 'create' @ L130
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 40. 
+[CUSTOMERS-CREATE-ESCALATION-DENY] Customer cannot birth their profile with role/claim/PII escalation fields
+[2026-10-21T12:51:54.299Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f36 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L130, evaluation error at L136:24 for 'update' @ L136, Property role is undefined on object. for 
+'update' @ L136
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 40. [CUSTOMERS-CREATE-ESCALATION-DENY] Customer cannot birth their profile with role/claim/PII escalation fields 252ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 41. 
+[CUSTOMERS-UPDATE-ESCALATION-DENY] Customer update cannot write escalation/PII projection fields
+[2026-10-21T12:51:54.463Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f38 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L136:24 for 'update' @ L136, Property role is undefined on object. for 'update' @ L136
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 41. 
+[CUSTOMERS-UPDATE-ESCALATION-DENY] Customer update cannot write escalation/PII projection fields
+[2026-10-21T12:51:54.486Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f39 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L136:24 for 'update' @ L136, Property role is undefined on object. for 'update' @ L136
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 41. 
+[CUSTOMERS-UPDATE-ESCALATION-DENY] Customer update cannot write escalation/PII projection fields
+[2026-10-21T12:51:54.506Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f3a 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L136:24 for 'update' @ L136, Property role is undefined on object. for 'update' @ L136
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 41. [CUSTOMERS-UPDATE-ESCALATION-DENY] Customer update cannot write escalation/PII projection fields 207ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 42. [CUSTOMERS-CLEAN-UPDATE-ALLOW] Customer can update their own non-privileged profile fields 164ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 43. [CHATS-REPLY-ALLOW] Participant can update reply metadata on their thread 204ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 44. 
+[CHATS-PARTICIPANT-REWRITE-DENY] Participant cannot rewrite thread membership (participantIds/participantNames)
+[2026-10-21T12:51:55.080Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f40 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L702:24 for 'update' @ L702, Property role is undefined on object. for 'update' @ L702
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 44. 
+[CHATS-PARTICIPANT-REWRITE-DENY] Participant cannot rewrite thread membership (participantIds/participantNames)
+[2026-10-21T12:51:55.104Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f41 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L702:24 for 'update' @ L702, Property role is undefined on object. for 'update' @ L702
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 44. [CHATS-PARTICIPANT-REWRITE-DENY] Participant cannot rewrite thread membership (participantIds/participantNames) 230ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 45. [PRODUCTS-COMBO-CREATE-ALLOW] Branch staff can create a combo product with price (pins createComboMeal payload) 205ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 46. 
+[PRODUCTS-CREATE-DENYLIST-DENY] Branch staff cannot plant costPrice / discount fields / fabricated petpoojaItemId at 
+birth
+[2026-10-21T12:51:55.591Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f45 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L350:24 for 'create' @ L350, evaluation error at L356:24 for 'update' @ L356, Property role is 
+undefined on object. for 'create' @ L350
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 46. 
+[PRODUCTS-CREATE-DENYLIST-DENY] Branch staff cannot plant costPrice / discount fields / fabricated petpoojaItemId at 
+birth
+[2026-10-21T12:51:55.642Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f46 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L350:24 for 'create' @ L350, evaluation error at L356:24 for 'update' @ L356, Property role is 
+undefined on object. for 'create' @ L350
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 46. 
+[PRODUCTS-CREATE-DENYLIST-DENY] Branch staff cannot plant costPrice / discount fields / fabricated petpoojaItemId at 
+birth
+[2026-10-21T12:51:55.683Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f47 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L350:24 for 'create' @ L350, evaluation error at L356:24 for 'update' @ L356, Property role is 
+undefined on object. for 'create' @ L350
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 46. [PRODUCTS-CREATE-DENYLIST-DENY] Branch staff cannot plant costPrice / discount fields / fabricated petpoojaItemId at birth 374ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 47. [PRODUCTS-BRAND-CREATE-ALLOW] Brand owner catalog creates are unrestricted 204ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 48. [TICKETS-CREATE-CLEAN-ALLOW] Authenticated user can create a clean ticket (status 'open') 210ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 49. 
+[TICKETS-CREATE-PRIORITY-DENY] Client create cannot self-set priority or assignedTo (server-stamped via POST 
+/tickets/create)
+[2026-10-21T12:51:56.400Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f4d 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L564, evaluation error at L580:24 for 'update' @ L580, false for 'create' @ L564
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 49. 
+[TICKETS-CREATE-PRIORITY-DENY] Client create cannot self-set priority or assignedTo (server-stamped via POST 
+/tickets/create)
+[2026-10-21T12:51:56.427Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f4e 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L596, evaluation error at L608:24 for 'update' @ L608, false for 'create' @ L596
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 49. [TICKETS-CREATE-PRIORITY-DENY] Client create cannot self-set priority or assignedTo (server-stamped via POST /tickets/create) 329ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 50. [USERS-CREATE-CLEAN-ALLOW] Self can create a clean user profile doc 175ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 51. 
+[USERS-CREATE-PROTECTED-DENY] Self cannot birth protected tenant/trust fields
+[2026-10-21T12:51:56.799Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f52 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'create' @ L176
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 51. 
+[USERS-CREATE-PROTECTED-DENY] Self cannot birth protected tenant/trust fields
+[2026-10-21T12:51:56.829Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f53 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'create' @ L176
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 51. 
+[USERS-CREATE-PROTECTED-DENY] Self cannot birth protected tenant/trust fields
+[2026-10-21T12:51:56.854Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f54 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'create' @ L176
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 51. 
+[USERS-CREATE-PROTECTED-DENY] Self cannot birth protected tenant/trust fields
+[2026-10-21T12:51:56.882Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f55 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'create' @ L176
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 51. 
+[USERS-CREATE-PROTECTED-DENY] Self cannot birth protected tenant/trust fields
+[2026-10-21T12:51:56.924Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f56 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'create' @ L176
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 51. 
+[USERS-CREATE-PROTECTED-DENY] Self cannot birth protected tenant/trust fields
+[2026-10-21T12:51:56.947Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f57 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'create' @ L176
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 51. [USERS-CREATE-PROTECTED-DENY] Self cannot birth protected tenant/trust fields 345ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 52. [USERS-UPDATE-ALLOWED-FIELD-ALLOW] Self can update non-protected profile fields 234ms
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 53. 
+[USERS-UPDATE-PROTECTED-DENY] Self cannot update protected tenant/trust fields
+[2026-10-21T12:51:57.411Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f5b 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, Property role is undefined on object. for 'update' @ L184
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 53. 
+[USERS-UPDATE-PROTECTED-DENY] Self cannot update protected tenant/trust fields
+[2026-10-21T12:51:57.440Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f5c 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, Property role is undefined on object. for 'update' @ L184
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 53. 
+[USERS-UPDATE-PROTECTED-DENY] Self cannot update protected tenant/trust fields
+[2026-10-21T12:51:57.466Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f5d 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, Property role is undefined on object. for 'update' @ L184
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 53. 
+[USERS-UPDATE-PROTECTED-DENY] Self cannot update protected tenant/trust fields
+[2026-10-21T12:51:57.503Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f5e 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, Property role is undefined on object. for 'update' @ L184
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 53. 
+[USERS-UPDATE-PROTECTED-DENY] Self cannot update protected tenant/trust fields
+[2026-10-21T12:51:57.527Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f5f 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, Property role is undefined on object. for 'update' @ L184
+
+stderr | tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 53. 
+[USERS-UPDATE-PROTECTED-DENY] Self cannot update protected tenant/trust fields
+[2026-10-21T12:51:57.556Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x3fc69f60 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, Property role is undefined on object. for 'update' @ L184
+
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 53. [USERS-UPDATE-PROTECTED-DENY] Self cannot update protected tenant/trust fields 374ms
+ Γ£ô tests/rules/firestore.rules.test.ts > Firestore Security Rules ΓÇö CRM Hierarchy & RBAC > 54. [USERS-BRAND-ASSIGNMENT-PATH-ALLOW] Authorized brand authority retains tenant/trust field assignment path 222ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 1. [ANNOUNCE-CROSS-BRANCH-CREATE-DENY] a branch operator cannot publish under another branch
+[2026-10-21T12:52:01.453Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157eddd 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L496:24 for 'create' @ L496, false for 'update' @ L499, Property role is undefined on object. for 
+'create' @ L496
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 1. [ANNOUNCE-CROSS-BRANCH-CREATE-DENY] a branch operator cannot publish under another branch 832ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 2. [ANNOUNCE-CROSS-BRANCH-UPDATE-DENY] a branch operator cannot rewrite another branch's record
+[2026-10-21T12:52:01.764Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157eddf 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L499
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 2. [ANNOUNCE-CROSS-BRANCH-UPDATE-DENY] a branch operator cannot rewrite another branch's record 305ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 3. [ANNOUNCE-CROSS-BRANCH-DELETE-DENY] a branch operator cannot erase another branch's record
+[2026-10-21T12:52:01.979Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157ede1 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'delete' @ L499
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 3. [ANNOUNCE-CROSS-BRANCH-DELETE-DENY] a branch operator cannot erase another branch's record 215ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 4. [ANNOUNCE-CUSTOMER-DENY] customers (role claim) still cannot write announcements
+[2026-10-21T12:52:02.186Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157ede3 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L496:24 for 'create' @ L496, false for 'update' @ L499, false for 'create' @ L496
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 4. [ANNOUNCE-CUSTOMER-DENY] customers (role claim) still cannot write announcements 207ms
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 5. [ANNOUNCE-OWN-BRANCH-ALLOW] a branch operator publishes for their own branch 225ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 6. [ANNOUNCE-INNER-PLANT-DENY] a branch operator cannot claim another branch inside their own doc's 
+topic
+[2026-10-21T12:52:02.617Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157ede7 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L496, false for 'update' @ L499
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 6. [ANNOUNCE-INNER-PLANT-DENY] a branch operator cannot claim another branch inside their own doc's topic 206ms
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 7. [ANNOUNCE-TOPIC-BOUND] targetTopic must equal upcoming_<branchId> 196ms
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 8. [ANNOUNCE-BRAND-ANY-BRANCH-ALLOW] brand authority keeps cross-branch operations 221ms
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 9. [ANNOUNCE-READ-PUBLIC] reads stay public for every rule state 235ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 10. [ANNOUNCE-APPEND-ONLY-DENY] no client can update or delete a record
+[2026-10-21T12:52:03.423Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edef 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L499
+
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 10. [ANNOUNCE-APPEND-ONLY-DENY] no client can update or delete a record
+[2026-10-21T12:52:03.448Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edf0 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L499
+
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 10. [ANNOUNCE-APPEND-ONLY-DENY] no client can update or delete a record
+[2026-10-21T12:52:03.504Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edf1 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L499
+
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 10. [ANNOUNCE-APPEND-ONLY-DENY] no client can update or delete a record
+[2026-10-21T12:52:03.516Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edf2 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L499
+
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 10. [ANNOUNCE-APPEND-ONLY-DENY] no client can update or delete a record
+[2026-10-21T12:52:03.528Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edf3 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'delete' @ L499
+
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 10. [ANNOUNCE-APPEND-ONLY-DENY] no client can update or delete a record
+[2026-10-21T12:52:03.544Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edf4 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'delete' @ L499
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 10. [ANNOUNCE-APPEND-ONLY-DENY] no client can update or delete a record 273ms
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 11. [ANNOUNCE-SUPPORT-GLOBAL-ALLOW] support keeps its shipped all-branch write 154ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 12. [ANNOUNCE-REGIONAL-DENY] regional_manager no longer writes cross-city
+[2026-10-21T12:52:03.834Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edf8 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L496:24 for 'create' @ L496, false for 'update' @ L499, false for 'create' @ L496
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 12. [ANNOUNCE-REGIONAL-DENY] regional_manager no longer writes cross-city 135ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 13. [ANNOUNCE-SHAPE-DENY] client payload is pinned to the six keys and text caps
+[2026-10-21T12:52:04.010Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edfa 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L496, false for 'update' @ L499
+
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 13. [ANNOUNCE-SHAPE-DENY] client payload is pinned to the six keys and text caps
+[2026-10-21T12:52:04.031Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edfb 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L496, false for 'update' @ L499
+
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 13. [ANNOUNCE-SHAPE-DENY] client payload is pinned to the six keys and text caps
+[2026-10-21T12:52:04.055Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edfc 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L496, false for 'update' @ L499
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 13. [ANNOUNCE-SHAPE-DENY] client payload is pinned to the six keys and text caps 221ms
+stderr | tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is 
+branch-scoped > 14. [ANNOUNCE-SUBCOLLECTION-DENY] no subcollection escape hatch
+[2026-10-21T12:52:04.188Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1157edfe 
+error. Code: 7 Message: 7 PERMISSION_DENIED: No matching allow statements
+
+ Γ£ô tests/rules/branch-announcements.rules.test.ts > Firestore Security Rules ΓÇö branch_announcements is branch-scoped > 14. [ANNOUNCE-SUBCOLLECTION-DENY] no subcollection escape hatch 133ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 1. [LEASE-CLAIM-INJECT-DENY] brand authority cannot plant a resolutionClaim
+[2026-10-21T12:52:07.260Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd59 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 1. [LEASE-CLAIM-INJECT-DENY] brand authority cannot plant a resolutionClaim 862ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 2. [LEASE-CLAIM-CLEAR-DENY] brand authority cannot clear a live lease
+[2026-10-21T12:52:07.661Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd5c 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 2. [LEASE-CLAIM-CLEAR-DENY] brand authority cannot clear a live lease 396ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 3. [LEASE-MONEY-ACTION-DENY] brand authority cannot fabricate the server's money-audit resolution MAP
+[2026-10-21T12:52:07.900Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd5e 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 3. [LEASE-MONEY-ACTION-DENY] brand authority cannot fabricate the server's money-audit resolution MAP 239ms
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 3b. [LEASE-MONEY-STRING-ALLOW] the client still may record a plain-text resolution 184ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 4. [LEASE-TENANT-RESTAMP-DENY] brand authority cannot re-stamp the ticket's branch or customer
+[2026-10-21T12:52:08.253Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd62 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 4. [LEASE-TENANT-RESTAMP-DENY] brand authority cannot re-stamp the ticket's branch or customer 168ms
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 5. [LEASE-WORKFLOW-ALLOW] brand authority can still advance workflow fields 184ms
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 6. [LEASE-TIMELINE-FALLBACK-ALLOW] the real client fallback payload still passes on both collections 306ms
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 7. [LEASE-BRANCH-OWN-BATCH-ALLOW] branch staff keep their scoped workflow path 280ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 8. [LEASE-BRANCH-CROSS-DENY] a foreign branch operator still cannot touch the ticket
+[2026-10-21T12:52:09.236Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd6a 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, Property role is undefined on object. for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 8. [LEASE-BRANCH-CROSS-DENY] a foreign branch operator still cannot touch the ticket 212ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 9. [LEASE-DENIED-WRITE-LEAVES-NO-CLAIM] a refused injection mutates nothing
+[2026-10-21T12:52:09.435Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd6c 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 9. [LEASE-DENIED-WRITE-LEAVES-NO-CLAIM] a refused injection mutates nothing 304ms
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 10. [LEASE-MASK-CONTRACT] the workflow mask is exactly the client-advance set 287ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 11. [LEASE-DELETEFIELD-DENY] the workflow mask cannot be satisfied by erasure
+[2026-10-21T12:52:10.111Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd72 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 11. [LEASE-DELETEFIELD-DENY] the workflow mask cannot be satisfied by erasure
+[2026-10-21T12:52:10.141Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd73 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 11. [LEASE-DELETEFIELD-DENY] the workflow mask cannot be satisfied by erasure
+[2026-10-21T12:52:10.172Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd74 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 11. [LEASE-DELETEFIELD-DENY] the workflow mask cannot be satisfied by erasure 452ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 12. [LEASE-TERMINAL-STATUS-DENY] a client cannot close the book (status resolved/closed)
+[2026-10-21T12:52:10.454Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd78 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 12. [LEASE-TERMINAL-STATUS-DENY] a client cannot close the book (status resolved/closed)
+[2026-10-21T12:52:10.481Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd79 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 12. [LEASE-TERMINAL-STATUS-DENY] a client cannot close the book (status resolved/closed)
+[2026-10-21T12:52:10.519Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd7a 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 12. [LEASE-TERMINAL-STATUS-DENY] a client cannot close the book (status resolved/closed) 238ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 13. [LEASE-LEGACY-DENY] the same lease is bound on the legacy tickets mirror
+[2026-10-21T12:52:10.707Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd7c 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L608:24 for 'update' @ L608, false for 'update' @ L608
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 13. [LEASE-LEGACY-DENY] the same lease is bound on the legacy tickets mirror
+[2026-10-21T12:52:10.731Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd7d 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L608:24 for 'update' @ L608, false for 'update' @ L608
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 13. [LEASE-LEGACY-DENY] the same lease is bound on the legacy tickets mirror 212ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 14. [LEASE-DUAL-ROLE-DENY] a caller matching BOTH arms is still bounded by the shared mask
+[2026-10-21T12:52:10.889Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd7f 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 14. [LEASE-DUAL-ROLE-DENY] a caller matching BOTH arms is still bounded by the shared mask
+[2026-10-21T12:52:10.922Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd80 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 14. [LEASE-DUAL-ROLE-DENY] a caller matching BOTH arms is still bounded by the shared mask 310ms
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 15. [LEASE-ASSIGNEDTO-SHAPE-DENY] only a well-formed single-tier map passes
+[2026-10-21T12:52:11.196Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd85 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 15. [LEASE-ASSIGNEDTO-SHAPE-DENY] only a well-formed single-tier map passes
+[2026-10-21T12:52:11.232Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd86 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 15. [LEASE-ASSIGNEDTO-SHAPE-DENY] only a well-formed single-tier map passes
+[2026-10-21T12:52:11.262Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd87 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 15. [LEASE-ASSIGNEDTO-SHAPE-DENY] only a well-formed single-tier map passes
+[2026-10-21T12:52:11.306Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd88 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+stderr | tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is 
+server-owned > 15. [LEASE-ASSIGNEDTO-SHAPE-DENY] only a well-formed single-tier map passes
+[2026-10-21T12:52:11.341Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x1a63dd89 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L580:24 for 'update' @ L580, false for 'update' @ L580
+
+ Γ£ô tests/rules/ticket-resolution-lease.rules.test.ts > Firestore Security Rules ΓÇö ticket resolution lease is server-owned > 15. [LEASE-ASSIGNEDTO-SHAPE-DENY] only a well-formed single-tier map passes 299ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 1. [FCM-SELF-APPEND-DENY] owner cannot arrayUnion a foreign token onto their fan-out list
+[2026-10-21T12:52:14.207Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a01e5 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, false for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 1. [FCM-SELF-APPEND-DENY] owner cannot arrayUnion a foreign token onto their fan-out list 615ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 2. [FCM-SELF-REPLACE-DENY] owner cannot replace the list with a foreign token
+[2026-10-21T12:52:14.392Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a01e7 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, false for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 2. [FCM-SELF-REPLACE-DENY] owner cannot replace the list with a foreign token 178ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 3. [FCM-CREATE-PLANT-DENY] self profile creation cannot plant fcmTokens
+[2026-10-21T12:52:14.534Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a01e9 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'create' @ L176
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 3. [FCM-CREATE-PLANT-DENY] self profile creation cannot plant fcmTokens 143ms
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 4. [FCM-LOGOUT-ARRAYREMOVE-ALLOW] owner may arrayRemove their own token with updatedAt (logout fallback payload) 147ms
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 5. [FCM-LOGOUT-STALE-REMOVE-ALLOW] removing an absent token stays a no-op success 162ms
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 6. [FCM-SUBSET-WRITE-ALLOW] owner may write any subset of the stored list 166ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 7. [FCM-CROSS-USER-WRITE-DENY] another signed-in user cannot touch the owner's fan-out list
+[2026-10-21T12:52:15.175Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a01f1 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, false for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 7. [FCM-CROSS-USER-WRITE-DENY] another signed-in user cannot touch the owner's fan-out list 164ms
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 8. [FCM-PROFILE-UPDATE-UNTOUCHED-ALLOW] ordinary profile updates still pass (no over-block) 166ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 9. [FCM-BRAND-FANOUT-DENY] brand authority cannot attach a foreign token either
+[2026-10-21T12:52:15.504Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a01f5 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, false for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 9. [FCM-BRAND-FANOUT-DENY] brand authority cannot attach a foreign token either 183ms
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 10. [FCM-REMOVAL-PERSISTS] an allowed removal leaves exactly the remaining token 229ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 11. [FCM-NON-LIST-DENY] a non-list fcmTokens value is denied by the type guard
+[2026-10-21T12:52:15.875Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a01fb 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, false for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 11. [FCM-NON-LIST-DENY] a non-list fcmTokens value is denied by the type guard 122ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 12. [FCM-SHRINK-PLUS-ROLE-DENY] a shrinking fcmTokens edit cannot smuggle a protected field
+[2026-10-21T12:52:16.008Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a01fd 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, Property role is undefined on object. for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 12. [FCM-SHRINK-PLUS-ROLE-DENY] a shrinking fcmTokens edit cannot smuggle a protected field 133ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 13. [FCM-MERGE-CREATE-PLANT-DENY] setDoc merge on a missing doc cannot plant fcmTokens
+[2026-10-21T12:52:16.128Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a01ff 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L176:24 for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'create' @ 
+L176
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 13. [FCM-MERGE-CREATE-PLANT-DENY] setDoc merge on a missing doc cannot plant fcmTokens 121ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 14. [FCM-DUP-INFLATE-DENY] duplicates cannot grow the list past its stored size
+[2026-10-21T12:52:16.348Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a0201 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, false for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 14. [FCM-DUP-INFLATE-DENY] duplicates cannot grow the list past its stored size 220ms
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 15. [FCM-LEGACY-NO-FIELD-ALLOW] a profile with no fcmTokens key can still log out cleanly 141ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 16. [FCM-MERGE-EXISTING-DENY] setDoc merge over an existing doc cannot append a foreign token
+[2026-10-21T12:52:16.646Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a0205 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L176:24 for 'create' @ L176, evaluation error at L184:24 for 'update' @ L184, false for 'update' @ 
+L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 16. [FCM-MERGE-EXISTING-DENY] setDoc merge over an existing doc cannot append a foreign token 156ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 17. [FCM-READD-AFTER-SHRINK-DENY] a token removed earlier cannot be re-added in a later write
+[2026-10-21T12:52:16.796Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a0207 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, false for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 17. [FCM-READD-AFTER-SHRINK-DENY] a token removed earlier cannot be re-added in a later write 150ms
+stderr | tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is 
+removal-only > 18. [FCM-DELETE-FIELD-ALLOW] deleteField clears the list and cannot be undone by an add
+[2026-10-21T12:52:16.983Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x620a0209 
+error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L184:24 for 'update' @ L184, false for 'update' @ L184
+
+ Γ£ô tests/rules/users-fcm-tokens.rules.test.ts > Firestore Security Rules ΓÇö users/{uid}.fcmTokens is removal-only > 18. [FCM-DELETE-FIELD-ALLOW] deleteField clears the list and cannot be undone by an add 188ms
+
+ Test Files  4 passed (4)
+      Tests  103 passed (103)
+   Start at  18:21:30
+   Duration  46.80s (tests 92%, import 7%, transform 1%)
+
+[32m[1m+ [22m[39m Script exited successfully (code 0)
+[36m[1mi  emulators:[22m[39m Shutting down emulators.
+[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+[33m[1m! [22m[39m Firestore Emulator has exited upon receiving signal: SIGINT
+[36m[1mi  hub:[22m[39m Stopping emulator hub
+[36m[1mi  logging:[22m[39m Stopping Logging Emulator

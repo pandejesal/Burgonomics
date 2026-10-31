@@ -1,0 +1,14 @@
+{"at":"2026-10-23T00:46:10.350Z","kind":"prepared","tasks":12,"primary":"opencode/deepseek-v4.1-flash-free#default","fallback":"opencode/glm-5.3-flash-free#default","concurrency":"root+customer+partner"}
+{"at":"2026-10-23T00:46:11.451Z","kind":"admitted","queue":"customer","lane":8,"task":"customer-payment-truth","model":"opencode/deepseek-v4.1-flash-free#default","messageID":"msg_16638f50c001PBjH7QSGmMCG0Y"}
+{"at":"2026-10-23T00:46:11.568Z","kind":"admitted","queue":"partner","lane":2,"task":"restaurant-dispatch-choice","model":"opencode/deepseek-v4.1-flash-free#default","messageID":"msg_16638f587001w4cWkh8FSzDVOt"}
+{"at":"2026-10-23T00:46:11.684Z","kind":"admitted","queue":"root","lane":4,"task":"dispatch-teardown-binding","model":"opencode/deepseek-v4.1-flash-free#default","messageID":"msg_16638f591001fEsKAUSVppqUA6"}
+{"at":"2026-10-23T00:49:20.921Z","kind":"free_limit_fallback","queue":"customer","task":"customer-payment-truth","from":"opencode/deepseek-v4.1-flash-free#default","to":"opencode/glm-5.3-flash-free#default"}
+{"at":"2026-10-23T00:49:21.058Z","kind":"admitted","queue":"customer","lane":8,"task":"customer-payment-truth","model":"opencode/glm-5.3-flash-free#default","messageID":"msg_1663bda5a001a4ilNqy8fD1fxQ"}
+{"at":"2026-10-23T00:49:24.203Z","kind":"observed","queue":"customer","lane":8,"task":"customer-payment-truth","phase":"blocked","actualModels":["opencode/glm-5.3-flash-free"],"error":{"type":"provider.free-limit","status":429}}
+{"at":"2026-10-23T00:49:27.568Z","kind":"free_limit_fallback","queue":"partner","task":"restaurant-dispatch-choice","from":"opencode/deepseek-v4.1-flash-free#default","to":"opencode/glm-5.3-flash-free#default"}
+{"at":"2026-10-23T00:49:27.682Z","kind":"admitted","queue":"partner","lane":2,"task":"restaurant-dispatch-choice","model":"opencode/glm-5.3-flash-free#default","messageID":"msg_1663bf450001RXSRmVDUxHYC1q"}
+{"at":"2026-10-23T00:49:30.850Z","kind":"observed","queue":"partner","lane":2,"task":"restaurant-dispatch-choice","phase":"blocked","actualModels":["opencode/glm-5.3-flash-free"],"error":{"type":"provider.free-limit","status":429}}
+{"at":"2026-10-23T00:50:08.982Z","kind":"free_limit_fallback","queue":"root","task":"dispatch-teardown-binding","from":"opencode/deepseek-v4.1-flash-free#default","to":"opencode/glm-5.3-flash-free#default"}
+{"at":"2026-10-23T00:50:09.090Z","kind":"admitted","queue":"root","lane":4,"task":"dispatch-teardown-binding","model":"opencode/glm-5.3-flash-free#default","messageID":"msg_1663c9609001MmaAuDwWfmmv2A"}
+{"at":"2026-10-23T00:50:12.232Z","kind":"observed","queue":"root","lane":4,"task":"dispatch-teardown-binding","phase":"blocked","actualModels":["opencode/glm-5.3-flash-free"],"error":{"type":"provider.free-limit","status":429}}
+{"at":"2026-10-23T00:50:12.241Z","kind":"finished","admissions":9,"halted":"free_quota:dispatch-teardown-binding"}

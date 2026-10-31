@@ -6,6 +6,20 @@
 > **Authoritative Backend Alignment:** `references/backend_upgrade_spec.md`, `references/order_flow.md`  
 > **Design System Constraints:** Strict 60-30-10 Palette (`_config/design_system.md`), WCAG 2.2 AA Accessibility  
 
+> **Launch precedence, 28–29 October 2026:** the approved requirements and
+> [design-system override](../_config/design_system.md)
+> replace conflicting historical examples below: white/light and black/dark,
+> self-hosted Inter, green primary with sparse orange, one System/Light/Dark
+> preference, four image-flipping Home shortcuts, continuous full Menu, empty-Cart
+> reorder and one order-level Cart cooking note. Inter remains the interface face;
+> the owner's MonstroSolid display face may appear on **one ceremonial heading**
+> (Home Awards & Recognition) at 28px+, never on body, prices, buttons or
+> instructions. Green may be used as a section **field** (awards panel) with white
+> text at ≥ 8:1, while the app canvas stays white/black. Preserve legitimate current
+> customization/ordering flows; do not remove them merely because an older
+> example says “no modifiers”. Historical “production release” wording and token
+> tables are not current build, installed-app or launch-acceptance evidence.
+
 ---
 
 ## 1. 🎯 Executive Overview & Product Vision
@@ -13,7 +27,7 @@
 Burgonomics is a 100% Pure Vegetarian QSR (Quick Service Restaurant) mobile application inspired by the clean, high-conversion, food-first interface of **La Pino'z Pizza**, adapted into Burgonomics' signature **Forest Green & Vibrant Orange** visual identity.
 
 The application serves three distinct fulfillment modes:
-1. **🛵 Delivery**: Real-time address validation, nearest outlet auto-routing, dynamic delivery fee & free delivery threshold (>₹499), Porter dispatch integration, live driver status tracking.
+1. **🛵 Delivery**: Real-time address validation, nearest outlet auto-routing, dynamic delivery fee & free delivery threshold (>₹499), multi-provider dispatch router (Borzo / Shadowfax live; restaurant in-house riders via `POST /orders/manualDispatch` [`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"`, not customer pickup]; Porter retired, dormant behind `PORTER_ENABLED="true"`), live driver status tracking.
 2. **🛍️ Takeaway**: Store pickup with dynamic counter ETA, outlet directions, 4-digit pickup security PIN, and ready-for-pickup notifications.
 3. **🍽️ Dine-In**: Frictionless in-store ordering with zero table selection complexity, routing orders directly to the store POS/KOT with an in-store order token.
 
@@ -30,6 +44,8 @@ The application serves three distinct fulfillment modes:
 
 ### 2.1 Color Tokens (Strict 60-30-10 Invariant)
 
+> Source of truth: `burgonomics-foundation-core/src/styles.css` (verified 2026-10-14, B01 semantic-token polish). Contrast ratios are WCAG 2.2 relative-luminance values against their stated partner color. **The orange accent is role-split**: a saturated fill value (white label, AA ≥ 4.5:1) and a lighter text value (on-surface orange text, AA). There is no single orange that serves both roles (fill needs L ≤ 0.1833, dark-on-orange text needs L ≥ 0.1887 — an empty window). Decorative Vibrant Orange `#FF6600` remains the brand identity hue for graphics only and is **never** a text color (2.94:1 vs white).
+
 ```css
 /* Light Mode (:root) */
 :root {
@@ -37,22 +53,23 @@ The application serves three distinct fulfillment modes:
   --surface: #FFFFFF;            /* Cards, modals, sheets */
   --surface-elevated: #FFFFFF;   /* Dropdowns, tooltips, popovers */
   --bg-secondary: #F0F3F1;       /* Secondary card background / input fill */
-  
+
   --primary: #0E4825;            /* 30% Brand — Forest Green */
   --primary-hover: #0A371C;
   --primary-foreground: #FFFFFF; /* Crisp white text on green */
-  --primary-text: #0E4825;       /* Green text on light surface */
-  
-  --accent: #FF6600;             /* 10% Accent — Vibrant Orange */
-  --accent-hover: #E55C00;
+  --primary-text: #0E4825;       /* Green text on light surface (10.09:1 vs white) */
+
+  --accent: #C2410C;             /* 10% Accent — CTA fill; white label 5.18:1 (AA) */
+  --accent-hover: #9A3412;       /* Darker hover; white label 7.31:1 */
   --accent-foreground: #FFFFFF;  /* White text on accent */
-  
+  --accent-text: #C2410C;        /* Orange text on light surfaces (4.64–5.18:1) */
+
   --text-primary: #16281D;       /* High-contrast charcoal text */
   --text-secondary: #586B60;     /* Muted sage secondary text */
   --border: #E5EDE7;             /* Subtle dividers and card borders */
   --divider: #E5EDE7;
-  --ring: #FF6600;               /* Focus ring */
-  
+  --ring: #C2410C;               /* Focus ring (4.64–5.18:1 non-text on light) */
+
   --success: #16A34A;            /* 100% Pure Veg badge / status */
   --warning: #F59E0B;            /* Price lock timer / warnings */
   --error: #DC2626;              /* Critical errors / cancellations */
@@ -64,42 +81,57 @@ The application serves three distinct fulfillment modes:
   --surface: #1A1A1A;            /* Dark cards and containers */
   --surface-elevated: #222222;   /* Elevated sheets / modals */
   --bg-secondary: #141414;       /* Dark input fill */
-  
+
   --primary: #0E4825;            /* 30% Brand Forest Green anchor */
   --primary-hover: #145830;
   --primary-foreground: #FFFFFF;
   --primary-text: #4ADE80;       /* WCAG AAA Emerald text on dark surface */
-  
-  --accent: #CC5200;             /* 10% Accent — Deep Orange for dark bg */
-  --accent-hover: #B34700;
+
+  --accent: #C2410C;             /* CTA fill; white label 5.18:1 (was #CC5200, 4.40:1 — sub-AA) */
+  --accent-hover: #B34700;       /* White label 5.50:1 */
   --accent-foreground: #FFFFFF;
-  
+  --accent-text: #FF802B;        /* Orange text on dark surfaces (6.34–7.90:1) */
+
   --text-primary: #F3F5F4;       /* High-contrast near-white text */
   --text-secondary: #A0A0A0;     /* Muted grey secondary text */
   --border: #262626;
   --divider: #262626;
-  --ring: #CC5200;
-  
+  --ring: #CC5200;               /* Focus ring (3.62–4.50:1 non-text; orange identity kept) */
+
   --success: #22C55E;
   --warning: #FBBF24;
   --error: #EF4444;
 }
+
+/* Decorative / identity orange (graphics & gradients only — never text):
+   #FF6600 (2.94:1 vs white), gradient stops #CC5200 / #B34700 / #9A3412 */
 ```
+
+Focus visibility is un-gated: `*:focus-visible` renders a 2px outline + 2px offset on every input modality (no `hover:hover and pointer:fine` gate). Reduced-motion is bounded, not eliminated (120ms, 1 iteration).
 
 ### 2.2 Typography Hierarchy
 
+> Source of truth: `burgonomics-foundation-core/src/styles.css` `.type-*` utilities (verified 2026-10-14). Display face: MonstroSolid (`--font-display`); UI face: Montserrat (`--font-sans`).
+
 | Class | Font Family | Size | Weight | Line Height | Usage |
 |---|---|---|---|---|---|
-| `.type-hero` | MonstroSolid / Outfit | 32px | 800 | 1.2 | Hero promo titles |
-| `.type-display` | MonstroSolid / Outfit | 26px | 800 | 1.25 | Major page headlines |
-| `.type-headline-large` | MonstroSolid / Outfit | 22px | 700 | 1.3 | Section headers |
-| `.type-headline-medium`| MonstroSolid / Outfit | 18px | 700 | 1.35 | Card group headers |
-| `.type-title-large` | Montserrat / Inter | 17px | 700 | 1.4 | Product & combo card titles |
-| `.type-title-medium`| Montserrat / Inter | 15px | 600 | 1.4 | Category tab labels |
-| `.type-body-large` | Montserrat / Inter | 15px | 500 | 1.45 | Lead text / descriptions |
-| `.type-body` | Montserrat / Inter | 14px | 400 | 1.45 | Body text & card subtitles |
-| `.type-label-large` | Montserrat / Inter | 14px | 700 | 1.4 | Buttons & action pills |
-| `.type-caption` | Montserrat / Inter | 12px | 500 | 1.4 | ETA, badges, footnotes |
+| `.type-hero` | MonstroSolid | 36px | 800 | 1.2 | Hero promo titles |
+| `.type-display` | MonstroSolid | 28px | 800 | 1.25 | Major page headlines |
+| `.type-display-large` | MonstroSolid | 28px | 800 | 1.25 | Large page headlines |
+| `.type-display-medium` | MonstroSolid | 22px | 700 | 1.3 | Medium page headlines |
+| `.type-headline-large` | MonstroSolid | 24px | 700 | 1.3 | Section headers |
+| `.type-headline-medium` | MonstroSolid | 20px | 700 | 1.35 | Card group headers |
+| `.type-title-large` | Montserrat | 18px | 700 | 1.4 | Product & combo card titles |
+| `.type-title` | Montserrat | 17px | 700 | 1.4 | Card titles |
+| `.type-title-medium` | Montserrat | 16px | 600 | 1.4 | Category tab labels |
+| `.type-body-large` | Montserrat | 17px | 600 | 1.45 | Lead text / descriptions |
+| `.type-body` | Montserrat | 15px | 500 | 1.45 | Body text & card subtitles |
+| `.type-body-medium` | Montserrat | 15px | 500 | 1.45 | Body text (medium) |
+| `.type-body-sm` | Montserrat | 15px | 400 | 1.45 | Secondary body text |
+| `.type-label-large` | Montserrat | 14px | 600 | 1.4 | Buttons & action pills |
+| `.type-label-medium` | Montserrat | 13px | 500 | 1.4 | Small labels |
+| `.type-caption` | Montserrat | 13px | 400 | 1.45 | ETA, badges, footnotes |
+| `.type-caption-sm` | Montserrat | 13px | 400 | 1.45 | Compact footnotes |
 
 ---
 
@@ -192,6 +224,9 @@ The application serves three distinct fulfillment modes:
   - Active pill: Solid Forest Green (`bg-primary text-white font-bold rounded-full shadow-sm`).
   - Inactive pill: Subdued surface pill with subtle border.
   - Smooth programmatic scroll-to-section on tab click.
+  - The selected category must be centered in the horizontal rail, including the first and last categories (reserve end space). Scroll only the rail, never the page; manual rail dragging must not be reset by unrelated renders.
+  - Horizontal product-list swipes select the adjacent category in either direction. Lock vertical gestures to native page scrolling, ignore cancelled/multi-touch gestures, and prevent a swipe from also activating a product or Add button. URL synchronization must not restore the old category during a selection update.
+  - Address entry must expose a persistent Save action outside scrolling fields, with safe-area padding. Viewport-fixed address controls and dialogs must be portaled outside transformed route-transition ancestors; submission must still target the correct form and retain delivery-pin validation.
 - **Product Card Layout (`MenuProductCard.tsx`)**:
   - Clean two-column card: Left side contains Veg badge, product title, item description, and price; Right side contains rounded food photo (`110px x 110px`) with `"ADD +"` button overlapping the bottom of the image.
   - Direct 1-tap add (No complex customization sheet; items are pre-configured Petpooja products and partner-created combos).
@@ -274,7 +309,7 @@ Clean, structured, single-page accordion/card checkout flow:
   - Step 1: `Order Placed & Confirmed` (POS Acknowledged)
   - Step 2: `Grilling in Kitchen` (Animated burger flame illustration)
   - Step 3:
-    - *For Delivery*: `Out for Delivery with Porter` (Driver name, phone icon, vehicle number)
+    - *For Delivery*: `Out for Delivery` (Rider name, phone icon, vehicle number — Borzo / Shadowfax / in-house rider; historical Porter wording)
     - *For Takeaway*: `Ready for Pickup at Counter` (Prominent 4-Digit Pickup PIN: `7 4 1 9`)
     - *For Dine-In*: `Order Ready at Counter / Dine-In Table`
   - Step 4: `Delivered / Order Enjoyed`

@@ -1,0 +1,92 @@
+{
+  "runId": "run-20261020b",
+  "enabled": false,
+  "rootRepo": "C:/Users/DELL/Desktop/Burgonomics",
+  "mainSessionID": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+  "limits": {
+    "perItemDeliveries": 6,
+    "totalDeliveries": 12,
+    "idleContinuationMs": 900000,
+    "minBackoffMs": 1800000,
+    "maxBackoffMs": 14400000
+  },
+  "items": [
+    {
+      "id": "customer-address-closeout",
+      "title": "Finish the existing customer address persistence packet",
+      "phase": "owner",
+      "ownerSessionID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+      "qaSessionID": "ses_ea5c87a64ffecPa7h3J8Zxpw6h",
+      "rootRepo": "C:/Users/DELL/Desktop/Burgonomics",
+      "packetContext": {
+        "runId": "run-20261020b",
+        "lane": "lane-01",
+        "brief": ".orchestration/run-20261020b/closeout-20261022/lane-01-task.md",
+        "contract": ".orchestration/run-20261020b/CONTRACT.md",
+        "evidenceDir": ".orchestration/run-20261020b/closeout-20261022",
+        "committed": {
+          "customer": "2f47cef1dd9d9b7696898c3c502051df22b7dc2f"
+        },
+        "note": "User three-hour continuation; deadline2026-10-22T03:05:59Z. Exact9pathcustomeraddresspacket, actualDSthenindependentGLM, isolatedgateandlocalcommit. Main grants CUSTOMER heavygate. Preserve all foreignpaths. Originalroot01, no replacementworkers/timers. Root09 independently verifies evidence; Mainaccepts. Do notredo completed typecheck/scroll/Android/rules. On429STOP."
+      }
+    },
+    {
+      "id": "dispatch-boundary-closeout",
+      "title": "Close existing F2/F6/F7 webhook packet including fresh HIGH regressions",
+      "phase": "owner",
+      "ownerSessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+      "qaSessionID": "ses_ea5c878abffemS4Xy9icDiSjo8",
+      "rootRepo": "C:/Users/DELL/Desktop/Burgonomics",
+      "packetContext": {
+        "runId": "run-20261020b",
+        "lane": "lane-04",
+        "brief": ".orchestration/run-20261020b/closeout-20261022/lane-04-webhook-task.md",
+        "contract": ".orchestration/run-20261020b/CONTRACT.md",
+        "evidenceDir": ".orchestration/run-20261020b/closeout-20261022",
+        "committed": {
+          "root": "086b60d5afe492391d222873f259e6ddc7d760ad"
+        },
+        "note": "Explicit Main-managed one admission, originalroot04. Stopnewwork2026-10-22T03:05:59Z. MainfreshDSfoundHIGHstalemapownershipbypassandnonstickycustomer-cancelcontainment; writtenbrief includesexactfixes/REDcontrols andexistingneeds_reviewvocabularydecision. Threeownedpaths only; actualDSthenindependentGLM; oneisolatedgateafterlane07releasesfunctionsslot. No newaudit/ticketleaseredo/Porter/config/payments/authchanges. Mainacceptanceonly, preservebudgetandallforeignwork."
+      }
+    },
+    {
+      "id": "restaurant-dispatch-choice",
+      "title": "Restaurant choice of Borzo/Shadowfax courier or own in-house rider",
+      "phase": "owner",
+      "ownerSessionID": "ses_ea5c8a2daffekU3r3U5bPrJspn",
+      "qaSessionID": "ses_ea5c87669ffeLD1vE6kugwmFVm",
+      "rootRepo": "C:/Users/DELL/Desktop/Burgonomics",
+      "packetContext": {
+        "runId": "run-20261020b",
+        "lane": "lane-02",
+        "brief": ".orchestration/run-20261020b/closeout-20261022/lane-02-delivery-task.md",
+        "contract": ".orchestration/run-20261020b/CONTRACT.md",
+        "evidenceDir": ".orchestration/run-20261020b/closeout-20261022",
+        "committed": {
+          "root": "4b6e4f6",
+          "partner": "6f81fbafa4ba907d8c6cd770a6f332ebd6222af2"
+        },
+        "note": "ExplicitsolewriterhandoffexistingPartner02, deadline2026-10-22T03:05:59Z. PorterCANCELLED, Borzo/Shadowfax+restaurantinhouse. No new-orderPorteraction, realservermanualshape, asyncfailuremustretaininputs/nofalseclose, assignmentnotpickupproof. Inspect/adoptonlynamedoldhook/pagepatchandminimalnewsource/tests, readonlyactualDSchildthenactualGLMchild; isolatedPARTNERgategranted. QAexisting11verifiesonlycode/gateevidence, NOTMac/deviceacceptance. Backendmanualassignmentatomicityisseparateknownlimit. No unrelatedfiles/push/deploy/phoneinstall/secrets/providers. On429STOP."
+      }
+    },
+    {
+      "id": "fcm-recipient-ownership",
+      "title": "Original Firebase session takes over Main unfinished FCM privacy candidate",
+      "phase": "owner",
+      "ownerSessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+      "qaSessionID": "ses_ea5c885c0ffeujhkJzdpAtUFJb",
+      "rootRepo": "C:/Users/DELL/Desktop/Burgonomics",
+      "packetContext": {
+        "runId": "run-20261020b",
+        "lane": "lane-07",
+        "brief": ".orchestration/run-20261020b/closeout-20261022/lane-07-fcm-send-task.md",
+        "contract": ".orchestration/run-20261020b/CONTRACT.md",
+        "evidenceDir": ".orchestration/run-20261020b/closeout-20261022",
+        "committed": {
+          "root": "4b6e4f620fe26c589ecf7c31bc85905df4aaab6f"
+        },
+        "note": "USERcorrection MainONLYdelegates. Existingroot07SOLEWRITERfcmClient.ts+newfcm.recipient-ownership.test.ts+push_notifications.md; no parallelMainimplementation. CandidateMain10/10greenprecededlasttestedits; FINAL11testsNOTVERIFIEDyet. Independentlyinspect/test/reviewviaFRESHactualDSthenDIFFERENTactualGLMread-onlychildren; isolatedgateafter04END/release, localexactcommitonly. Stopnewwork03:05:59Z, on429STOPnoothermodels/retrystorm. Lastnativeattemptmayexhaustglobal12budget; do notexpectanotherwake. Prioracceptedtoken/addressstateskept; QA6notclaimedadmitted."
+      }
+    }
+  ]
+}

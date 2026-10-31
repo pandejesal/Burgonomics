@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-10-15T10:44:30.968Z",
+  "endpoint": "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+  "restID": "31z58ciw0h",
+  "clientOrderID": "bgx_realitems_1792061069183",
+  "cart": [
+    {
+      "id": "30791",
+      "name": "Tandoori Dahi Kebab",
+      "price": 350,
+      "quantity": 1
+    }
+  ],
+  "totals": {
+    "itemTotal": 350,
+    "gst": 17.5,
+    "grandTotal": 367.5
+  },
+  "httpStatus": 200,
+  "response": {
+    "success": "1",
+    "message": "Your order is saved.",
+    "restID": "",
+    "clientOrderID": "",
+    "orderID": "",
+    "code": 200
+  },
+  "ack": true,
+  "petpoojaOrderId": null
+}

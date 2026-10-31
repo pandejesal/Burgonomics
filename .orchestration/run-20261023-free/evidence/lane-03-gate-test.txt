@@ -1,0 +1,16 @@
+=== lane-03 isolated gate @ ea1bc3f + 15-path overlay ===
+command: npx vitest run --no-file-parallelism <6 bundle test files> src/features/menu
+
+ RUN  v5.0.1 C:/Users/DELL/AppData/Local/Temp/opencode/lane03-gate-ea1bc3f
+
+
+ Test Files  12 passed (12)
+      Tests  89 passed (89)
+   Start at  10:10:49
+   Duration  31.21s (environment 60%, import 26%, tests 7%, transform 5%, setup 1%, worker 1%)
+
+     Import  59 modules were evaluated 88 times -+ 6.96s total, 26% of tracked time
+             ~2.29s faster with isolate: false GÇö shared modules are evaluated once per worker instead of once per file
+             learn more: https://vitest.dev/guide/improving-performance#test-isolation
+
+EXIT=0

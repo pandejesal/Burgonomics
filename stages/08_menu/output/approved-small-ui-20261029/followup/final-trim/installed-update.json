@@ -1,0 +1,27 @@
+{
+  "status": "PASS",
+  "device": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "startedAt": "2026-10-29T23:45:10.750959+00:00",
+  "completedAt": "2026-10-29T23:45:21.207224+00:00",
+  "command": "adb -s RZCX51TXRKB install -r <verified staged APK>",
+  "result": "Performing Streamed Install\nSuccess",
+  "beforeSha256": "035f65964391ac73f8ab84a5b8daf5a35dcb7f3147422a937f32a61dbb098f1a",
+  "installedSha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+  "candidateSha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+  "installedBytesMatch": true,
+  "metadata": {
+    "versionCode": "1 minSdk=24 targetSdk=36",
+    "versionName": "1.0.0",
+    "firstInstallTime": "2026-10-27 11:32:45",
+    "lastUpdateTime": "2026-10-30 05:15:20"
+  },
+  "firstInstallTimeUnchanged": true,
+  "uninstallPerformed": false,
+  "dataClearPerformed": false,
+  "downgradePerformed": false,
+  "basketSeededOrRestored": false,
+  "installationPerformed": true,
+  "nativeUiVerified": false,
+  "scope": "Compatible debug update with exact pulled-installed-byte identity; UI checks follow; no claim that private account/loyalty data was inspected"
+}

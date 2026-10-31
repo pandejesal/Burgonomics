@@ -1,0 +1,61 @@
+# Backend (Firebase functions/) CI — R16 backend CI placement repair, 2026-10-13.
+#
+# Why this file exists at the repo root: GitHub Actions only discovers workflows
+# under the repository-root .github/workflows/ directory. The pre-existing
+# functions/.github/workflows/ci.yml is inert in this monorepo (it is never
+# picked up by GitHub, and it targets a "main" branch this repo does not have).
+# This root workflow is the discoverable replacement. The nested legacy file is
+# left in place untouched.
+#
+# Scope: install, typecheck-via-build, and hermetic unit tests for the
+# functions package only. No deploys, no live secrets, no provider wire tests.
+# Provider wire probes (e.g. tests/dispatch.wire.test.ts) are gated behind
+# WIRE_BORZO/WIRE_BORZO_BOOK env flags which are deliberately NOT set here, so
+# `vitest run` skips them in CI.
+#
+# Optional Firestore-rules emulator job: NOT enabled here on purpose.
+# Configuring it safely would require adding firebase-tools /
+# @firebase/rules-unit-testing as new dependencies (charter forbids dependency
+# changes) plus emulator orchestration that cannot be validated by static
+# review alone. If added later, it must be a separate job that runs
+# `firebase emulators:exec --only firestore "npx vitest run <rules-tests>"`
+# from the repo root (emulator ports are already defined in firebase.json)
+# with no production project credentials.
+name: Functions CI
+
+on:
+  push:
+    branches:
+      - master
+      - ui-sweep
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test (functions)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: functions
+
+      - name: Build (tsc)
+        run: npm run build
+        working-directory: functions
+
+      - name: Test (vitest, hermetic)
+        run: npm run test
+        working-directory: functions

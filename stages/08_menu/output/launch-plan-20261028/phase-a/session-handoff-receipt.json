@@ -1,0 +1,16 @@
+{
+  "sentAt": "2026-10-28T10:07:02+05:30",
+  "sessionID": "ses_e7f7d9238ffeeZTT1SvnTZhd2K",
+  "messageID": "msg_180cc1d0c001pqQDI19tl1M8yn",
+  "deliveryRequested": "queue",
+  "resumeRequested": false,
+  "admitted": true,
+  "sourceFile": "SESSION-HANDOFF-20261028.md",
+  "sourceSHA256": "332cf0efd87537448babb23c4c35e34bfb1df5d0b80e7a42ebd8d431e163d1b3",
+  "messageTextSHA256": "332cf0efd87537448babb23c4c35e34bfb1df5d0b80e7a42ebd8d431e163d1b3",
+  "admittedPayloadMatches": true,
+  "inboxVerified": true,
+  "recipientProcessingClaimed": false,
+  "credentialValuesForwarded": false,
+  "inboxDelivery": "queue"
+}

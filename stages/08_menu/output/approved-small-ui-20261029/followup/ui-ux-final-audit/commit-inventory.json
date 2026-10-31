@@ -1,0 +1,796 @@
+{
+  "scope": "User approved review and commit of all changes in this Delivery worktree only; split UI/catalog from existing auth/order/payment/rules hardening; no other repositories or worktrees",
+  "worktree": "C:/Users/DELL/Desktop/Burgonomics/.swarm-worktrees/delivery-launch-ui-20261028",
+  "gitCommonDirectory": "C:/Users/DELL/Desktop/Burgonomics/burgonomics-foundation-core/.git",
+  "branch": "launch/delivery-ui-20261028",
+  "head": "7affdf698576110a64e008a492f2d8380abe2d58",
+  "dirtyPathCount": 189,
+  "paths": [
+    {
+      "status": " M",
+      "path": "android/app/capacitor.build.gradle"
+    },
+    {
+      "status": " M",
+      "path": "android/capacitor.settings.gradle"
+    },
+    {
+      "status": " M",
+      "path": "firestore.rules"
+    },
+    {
+      "status": " M",
+      "path": "index.html"
+    },
+    {
+      "status": "AM",
+      "path": "public/fonts/Inter-OFL.txt"
+    },
+    {
+      "status": "A ",
+      "path": "public/fonts/InterVariable.woff2"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/addresses/components/AddressCard.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/addresses/components/AddressForm.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/auth/components/OTPInputGrid.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/auth/repositories/AuthRepository.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/auth/services/authService.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/auth/state/authStore.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/cart/components/BillBreakdown.test.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/cart/components/BillBreakdown.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/cart/components/CartItemRow.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/cart/components/DeliveryTipSelector.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/cart/components/FloatingCartBar.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/cart/components/PromoInput.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/cart/index.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/checkout/components/AddressSelector.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/checkout/components/FulfillmentDetailsCard.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/checkout/components/OrderTypeToggle.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/checkout/components/PaymentMethodSelector.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/checkout/components/QuickAuthSheet.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/checkout/state/checkoutStore.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/components/BannerCarousel.a11y.test.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/components/BannerCarousel.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/components/BestSellerCard.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/components/BrandHeader.tsx"
+    },
+    {
+      "status": " A",
+      "path": "src/features/home/components/CategoryGrid.shortcuts.test.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/components/CategoryGrid.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/components/ComboCard.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/components/ModeSegmentedSwitch.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/components/SectionHeader.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/models/index.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/repositories/HomeRepository.ts"
+    },
+    {
+      "status": " A",
+      "path": "src/features/home/services/homeService.shortcuts.test.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/services/homeService.ts"
+    },
+    {
+      "status": " A",
+      "path": "src/features/home/state/homeStore.scope.test.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/home/state/homeStore.ts"
+    },
+    {
+      "status": " A",
+      "path": "src/features/home/utils/menuShortcuts.test.ts"
+    },
+    {
+      "status": " A",
+      "path": "src/features/home/utils/menuShortcuts.ts"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/menu/components/CategoryNavRail.test.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/menu/components/CategoryNavRail.tsx"
+    },
+    {
+      "status": "AM",
+      "path": "src/features/menu/components/MenuCategorySection.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/menu/components/MenuProductCard.test.tsx"
+    },
+    {
+      "status": "MM",
+      "path": "src/features/menu/components/MenuProductCard.tsx"
+    },
+    {
+      "status": "MM",
+      "path": "src/features/menu/components/ProductCustomizerModal.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/menu/dietary-labels.polish.test.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/menu/repositories/MenuRepository.ts"
+    },
+    {
+      "status": "A ",
+      "path": "src/features/menu/services/menuService.getProduct.test.ts"
+    },
+    {
+      "status": "MM",
+      "path": "src/features/menu/services/menuService.ts"
+    },
+    {
+      "status": "AM",
+      "path": "src/features/menu/state/menuSnapshot.ts"
+    },
+    {
+      "status": "AM",
+      "path": "src/features/menu/state/menuStore.continuous.test.ts"
+    },
+    {
+      "status": "MM",
+      "path": "src/features/menu/state/menuStore.ts"
+    },
+    {
+      "status": "A ",
+      "path": "src/features/menu/utils/categoryResolve.test.ts"
+    },
+    {
+      "status": "A ",
+      "path": "src/features/menu/utils/categoryResolve.ts"
+    },
+    {
+      "status": "A ",
+      "path": "src/features/menu/utils/sectionSpy.test.ts"
+    },
+    {
+      "status": "A ",
+      "path": "src/features/menu/utils/sectionSpy.ts"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/offers/components/BOGOBanner.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/offers/components/CouponCard.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/offers/components/OfferCard.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/offers/components/OfferTermsSheet.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/orders/components/EstimatedDeliveryCountdown.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/orders/components/FulfillmentPanel.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/orders/components/InvoiceDownloadButton.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/orders/components/OrderHistoryCard.test.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/orders/components/OrderHistoryCard.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/orders/components/OrderSuccessCelebration.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/orders/components/OrderTimeline.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/orders/hooks/useReorderItems.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/orders/repositories/OrderRepository.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/orders/utils/reorderValidation.ts"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/payments/components/PaymentMethodList.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/features/payments/repositories/PaymentRepository.ts"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/profile/components/AddressFormModal.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/profile/components/CompletionRing.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/profile/components/EditProfileForm.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/profile/components/GrillCoinsWalletCard.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/profile/components/ProfileHeader.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/profile/components/ProfileMenuList.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/settings/repositories/SettingsRepository.ts"
+    },
+    {
+      "status": "AM",
+      "path": "src/features/settings/state/settingsStore.theme.test.ts"
+    },
+    {
+      "status": "MM",
+      "path": "src/features/settings/state/settingsStore.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/stores/services/storesService.ts"
+    },
+    {
+      "status": " A",
+      "path": "src/features/stores/state/storeStore.hydration.test.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/stores/state/storeStore.ts"
+    },
+    {
+      "status": " M",
+      "path": "src/features/stores/utils/serviceArea.ts"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/support/components/CreateTicketForm.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/support/components/TicketListAccordion.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/tracking/components/DeliveryStepTracker.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/tracking/components/LiveOrderMap.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/tracking/components/OrderCancellationGrace.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/features/tracking/components/RiderContactCard.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routeTree.gen.ts"
+    },
+    {
+      "status": "MM",
+      "path": "src/routes/__root.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routes/auth.otp.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routes/cart.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routes/checkout.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routes/core-checkout-payment.wave2.test.tsx"
+    },
+    {
+      "status": "AM",
+      "path": "src/routes/delivery-surfaces.polish.test.tsx"
+    },
+    {
+      "status": " A",
+      "path": "src/routes/home.scope.test.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routes/home.tsx"
+    },
+    {
+      "status": "AM",
+      "path": "src/routes/menu.continuous.test.tsx"
+    },
+    {
+      "status": "MM",
+      "path": "src/routes/menu.index.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/routes/order-confirmation.$orderId.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routes/orders.$orderId.index.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/routes/orders.$orderId.track.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/routes/orders.index.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/routes/profile.addresses.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/routes/profile.favorites.tsx"
+    },
+    {
+      "status": "MM",
+      "path": "src/routes/profile.index.tsx"
+    },
+    {
+      "status": "A ",
+      "path": "src/routes/profile.settings.theme.test.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/routes/profile.settings.tsx"
+    },
+    {
+      "status": "MM",
+      "path": "src/routes/search.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routes/splash.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/routes/stores.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/routes/support.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/shared/components/common/AppButton.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/shared/components/common/BrandMascot.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/shared/components/common/OfferCard.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/shared/components/common/ProductCard.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/shared/components/common/TextField.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/shared/components/feedback/ConfigErrorScreen.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/shared/components/feedback/KitchenClosedBanner.tsx"
+    },
+    {
+      "status": "MM",
+      "path": "src/shared/layouts/AppShell.tsx"
+    },
+    {
+      "status": "MM",
+      "path": "src/shared/navigation/BottomTabBar.tsx"
+    },
+    {
+      "status": "M ",
+      "path": "src/shared/navigation/TopBar.tsx"
+    },
+    {
+      "status": " M",
+      "path": "src/shared/platform/mobileBootstrap.ts"
+    },
+    {
+      "status": "MM",
+      "path": "src/styles.css"
+    },
+    {
+      "status": "MM",
+      "path": "tests/home-landing.test.ts"
+    },
+    {
+      "status": " M",
+      "path": "tests/stores-service-honesty.test.tsx"
+    },
+    {
+      "status": "AM",
+      "path": "tests/theme-foundation.contract.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "public/fonts/Montserrat-OFL.txt"
+    },
+    {
+      "status": "??",
+      "path": "public/fonts/MontserratVariable.woff2"
+    },
+    {
+      "status": "??",
+      "path": "public/images/brand/food-connoisseurs-burger-certificate-2026.webp"
+    },
+    {
+      "status": "??",
+      "path": "public/images/brand/food-connoisseurs-ceremony-2026.webp"
+    },
+    {
+      "status": "??",
+      "path": "public/images/brand/food-connoisseurs-qsr-certificate-2026.webp"
+    },
+    {
+      "status": "??",
+      "path": "public/images/brand/food-connoisseurs-team-2026.webp"
+    },
+    {
+      "status": "??",
+      "path": "public/images/brand/times-iconic-burger-2025.webp"
+    },
+    {
+      "status": "??",
+      "path": "public/images/brand/times-iconic-burger-certificate-2025.webp"
+    },
+    {
+      "status": "??",
+      "path": "src/features/auth/components/OTPInputGrid.races.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/cart/components/CartItemRow.ui.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/cart/components/CookingInstructionsSection.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/cart/components/CookingInstructionsSection.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/checkout/components/checkout-readability.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/checkout/state/checkoutStore.notes.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/checkout/utils/orderNotes.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/checkout/utils/orderNotes.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/approvedHomeContent.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/approvedHomeContent.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/CategoryGrid.css"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/CategoryGrid.motion.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/FavoritesRail.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/FavoritesRail.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/HomeAnnouncements.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/HomeAnnouncements.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/HomeReadability.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/UpcomingBranches.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/UpcomingBranches.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/components/martinoz-home.contract.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/services/homeService.merchandising.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/home/services/homeService.noHistory.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/components/MenuCategorySection.compact-grid.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/components/MenuProductCard.compact-grid.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/components/MenuProductCard.review-repairs.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/components/ProductCustomizerModal.review-repairs.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/services/menuService.homeCatalog.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/state/menuStore.review-repairs.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/utils/afterPaint.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/utils/afterPaint.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/utils/customizerSelection.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/menu/utils/dialogA11y.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/orders/components/RecentOrdersRail.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/orders/components/RecentOrdersRail.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/orders/components/ReorderDialogs.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/orders/hooks/useReorderItems.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/features/orders/repositories/OrderRepository.points.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/orders/utils/reorderValidation.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/stores/services/storesService.loading.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/stores/state/storeStore.loading.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/features/stores/utils/serviceArea.visible.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "src/routes/cart.empty-state.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "src/routes/stores.visibility.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "tests/auth.otp-gate.test.tsx"
+    },
+    {
+      "status": "??",
+      "path": "tests/auth.races.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "tests/auth.service.discard.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "tests/search-focus.contract.test.ts"
+    },
+    {
+      "status": "??",
+      "path": "tests/theme-bootstrap.test.ts"
+    }
+  ],
+  "remotes": [
+    {
+      "remote": "no-mistakes",
+      "mode": "fetch",
+      "protocol": "c",
+      "host": null,
+      "repositoryPath": "\\Users\\DELL\\.no-mistakes\\repos\\61ccc4ad073a.git"
+    },
+    {
+      "remote": "no-mistakes",
+      "mode": "push",
+      "protocol": "c",
+      "host": null,
+      "repositoryPath": "\\Users\\DELL\\.no-mistakes\\repos\\61ccc4ad073a.git"
+    },
+    {
+      "remote": "origin",
+      "mode": "fetch",
+      "protocol": "https",
+      "host": "github.com",
+      "repositoryPath": "/pandejesal/Burgonomics-App.git"
+    },
+    {
+      "remote": "origin",
+      "mode": "push",
+      "protocol": "https",
+      "host": "github.com",
+      "repositoryPath": "/pandejesal/Burgonomics-App.git"
+    }
+  ]
+}

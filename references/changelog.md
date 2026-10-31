@@ -2,7 +2,19 @@
 
 > **All notable changes across Burgonomics applications and backend. Format: Keep a Changelog + SemVer.**
 
+> **Retirement note (2026-10-22; code retirement in root `086b60d`, business sign-off date not recorded here).** Porter was later
+> RETIRED as a dispatch partner: dispatch is Borzo / Shadowfax or the restaurant's own in-house rider via
+> `POST /orders/manualDispatch` (`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"` — restaurant-driven delivery, never customer pickup), and Porter stays cold unless `PORTER_ENABLED="true"` (which
+> re-arms FULL dispatch — no history-only mode). The historical entries below are annotated where
+> relevant; original wording is preserved as evidence.
+
 ---
+
+## [Unreleased] — 2026-10-02 (Spec v2.1 — Multi-Provider Dispatch Requirements & Phase 7 Plan)
+
+### Added
+- **Spec Version 2.1** (.swarm/spec.md, 2026-10-02): multi-provider delivery dispatch requirements — FR-021 cheapest-serviceable-wins routing across Borzo/Shadowfax/Porter (parallel quote fan-out bounded by DISPATCH_QUOTE_TIMEOUT_MS default 6000 ms after the branch-radius gate, tie-break borzo > shadowfax > porter, bounded booking failover, fail-closed HTTP 503 when no provider is serviceable, ₹20/10% book-time fare-drift confirmation), FR-022 fail-closed per-provider webhook HMAC verification with unknown/stale/conflicting events parked as needs_review, FR-023 Porter manual-hybrid dispatch lane (POST /dispatch/porter-manual for food-vertical API refusal), FR-024 dispatch mock-flag ban rejecting MOCK_BORZO_DISPATCH/MOCK_SHADOWFAX_DISPATCH/MOCK_PORTER_DISPATCH at production boot, plus Scenario 9, Assumptions A-007/A-008, the In-Scope dispatch bullet, and Success Criteria amendments 1/10/13.
+- **Plan Phase 7 (Multi-Provider Delivery Dispatch)**: tasks 7.1 dispatch router/adapter audit against references/delivery_routing.md, 7.2 fail-closed provider webhook verification and test gaps, 7.3 partner POS manual-hybrid dispatch UI, 7.4 dispatch environment keys and mock-flag ban; the full verification suite task's dependencies extended with 7.1-7.4. *(2026-10-22: Porter has since been retired — see `086b60d`; the opt-in rule now governs 7.1/7.4 and FR-023 records are historical.)*
 
 ## [2.6.2] — 2026-09-10 (Audit Loop 1-12 Complete, 606 Tests Gate)
 
@@ -69,7 +81,7 @@
   - Added bidirectional `normalizePetpoojaStatus` mapping numeric codes (`-1`, `1..3`, `4`, `5`, `10`) and string statuses.
   - Enforced `timingSafeEqual` in `verifyPetpoojaAuth` webhook middleware.
   - Parallelized branch menu sync in `petpooja.scheduler.ts` with chunked `Promise.allSettled` in batches of 4.
-- **Porter 3PL Logistics Integration**:
+- **Porter 3PL Logistics Integration** *(historical — Porter has since been retired, see `086b60d`; these capabilities are dormant behind `PORTER_ENABLED="true"`)*:
   - Upgraded courier dispatch payload with structured nested address and contact details schemas.
   - Implemented `normalizePorterEvent` reconciling Porter standard events (`ASSIGNED`, `IN_TRANSIT`, `DELIVERED`, `CANCELLED`, `ARRIVED_AT_PICKUP`).
   - Added 10-minute quote fee lock TTL (`validForSeconds: 600`, `expiresAt`) in backend and partner app.
@@ -112,9 +124,9 @@
 ## [2.0.0] — 2026-08-24 (Production QSR Architecture & La Pino'z Experience)
 
 ### Added
-- **Firebase Functions v2**: Root `/functions` package in `asia-south1` managing Razorpay Route marketplace splits, Petpooja POS bridge, Porter logistics dispatch, and 3-tier ticketing escalator.
+- **Firebase Functions v2**: Root `/functions` package in `asia-south1` managing Razorpay Route marketplace splits, Petpooja POS bridge, Porter logistics dispatch (historical; Porter later retired via `086b60d`), and 3-tier ticketing escalator.
 - **La Pino'z QSR Mobile Experience**: 3-Way Fulfillment header (Delivery, Takeaway, Dine-In), 1-Tap Quick Add, 3-column Explore Menu grid, Floating Mini-Cart bar, and Animated Order Tracker.
-- **Partner Operations POS App**: Live KOT stream, manual Porter rider booking, 3-tier ticket resolution, and Dev Diagnostics console.
+- **Partner Operations POS App**: Live KOT stream, manual rider booking (dispatch panel; historical "manual Porter rider booking" wording), 3-tier ticket resolution, and Dev Diagnostics console.
 - **Strict 60-30-10 Design System**: Complete design tokens in `:root` and `.dark` with WCAG 2.2 AA / AAA contrast.
 
 ### Fixed

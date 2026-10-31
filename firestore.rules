@@ -1,8 +1,11 @@
-// CANONICAL Firestore rules — deployed by firebase.json at this root.
-// burgonomics-partner/firestore.rules and
-// burgonomics-foundation-core/firestore.rules are byte-identical MIRRORS for
-// the app-local emulators. NEVER edit a mirror: change this file, re-sync
-// both mirrors, and re-run the rules suite (core: node scripts/test-rules.mjs).
+// CANONICAL Firestore rules — the ROOT copy deployed to production by the
+// root firebase.json (firestore config). The copies in
+// burgonomics-foundation-core/firestore.rules (emulator target of the rules
+// suite, scripts/test-rules.mjs) and burgonomics-partner/firestore.rules
+// (reference mirror only — the partner app has no firebase.json deploy
+// target) are byte-identical MIRRORS. NEVER edit a mirror: change this file,
+// re-sync both mirrors, and re-run the rules suite (core:
+// node scripts/test-rules.mjs).
 rules_version = '2';
 
 service cloud.firestore {
@@ -86,16 +89,69 @@ service cloud.firestore {
         && resource.data.orderType == 'delivery';
     }
 
+    // Orders CREATE (both lanes): keys a client must never plant at birth.
+    // OTP proof fields are server-minted by POST /orders/verifyDeliveryOtp;
+    // refund/pricing/dispatch fields resolve server-side (Admin SDK /
+    // functions); petpoojaOrderId is webhook-owned (menuSyncWebhook).
+    function orderCreateForbiddenKeys() {
+      return [
+        'deliveryOtp', 'deliveryOtpHash', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
+        'refund', 'refundStatus', 'refundId', 'refundAmount',
+        'pricing', 'pricingSnapshot', 'petpoojaOrderId', 'dispatchStatus',
+        'routeTransferStatus'
+      ];
+    }
+
+    // Orders UPDATE: financial, identity, dispatch and OTP-proof fields are
+    // server-owned for BOTH brand and branch staff. The previous brand-owner
+    // arm was unmasked, and branch staff could plant refundLedger /
+    // refundedTotalPaise accounting that a later refund claim trusted.
+    function orderServerOwnedKeys() {
+      return [
+        'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
+        'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount',
+        'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
+        'routeTransferStatus',
+        'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil'
+      ];
+    }
+
+    // Orders CREATE (both lanes): the canonical initial status meta only.
+    // Core ordersService.createOrder writes resolveStatus('PLACED') =
+    // {code:'PLACED',label,kind:'upcoming',terminal:false}; partner
+    // ManualOrderCreateModal writes toDeliveryStatusMeta('pending') =
+    // the same {code:'PLACED',…} shape (utils/orderContract.ts PARTNER_TO_DELIVERY).
+    // Planted terminal/in-flight statuses at birth are denied.
+    function orderCreateInitialStatus() {
+      return request.resource.data.status is map
+        && request.resource.data.status.code == 'PLACED'
+        && request.resource.data.status.terminal != true
+        && request.resource.data.status.keys().hasOnly(['code', 'label', 'kind', 'terminal']);
+    }
+
     // =========================================================================
     // CRM: CUSTOMERS & GLOBAL LOYALTY (Brand-wide)
     // =========================================================================
 
     match /customers/{customerId} {
       allow read: if isUser(customerId) || isAdmin();
+      // Escalation denylist aligned with users/{userId} (below). Grep of
+      // both app sources found NO client writer to customers/* (core
+      // loyaltyStore.ts:79 only reads; partner useCustomers/useCustomer only
+      // read; grill-coin adjustments go through server functions), so
+      // blocking claim-like/PII/projection fields at birth breaks no flow —
+      // server writes bypass rules via the Admin SDK.
       allow create: if isUser(customerId)
-        && (!('loyaltyPoints' in request.resource.data) || request.resource.data.loyaltyPoints == 0);
-      allow update: if (isUser(customerId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['loyaltyPoints', 'role', 'isStaff']))
-        || isBrandOwner();
+        && !request.resource.data.keys().hasAny([
+          'loyaltyPoints', 'grillCoins', 'role', 'isStaff', 'isBrandOwner',
+          'isBrandAdmin', 'isSuperAdmin', 'isAdmin', 'isOwner',
+          'phone', 'email', 'createdAt'
+        ]);
+      allow update: if (isUser(customerId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'loyaltyPoints', 'grillCoins', 'role', 'isStaff', 'isBrandOwner',
+        'isBrandAdmin', 'isSuperAdmin', 'isAdmin', 'isOwner',
+        'phone', 'email', 'createdAt'
+      ])) || isBrandOwner();
       allow delete: if false;
 
       match /addresses/{addressId} {
@@ -104,13 +160,45 @@ service cloud.firestore {
       }
     }
 
+    // Lane 07: users/{uid}.fcmTokens is the push fan-out list that
+    // fcmClient.ts/dispatch actually reads. It is REMOVAL-ONLY for EVERY
+    // client role (owner and brand alike): the only writers allowed to ADD a
+    // token are the Admin SDK seams registerToken
+    // (core/deviceTokenRegister.ts) and unregisterToken
+    // (modules/notifications/unregisterToken.ts), which prove device_tokens
+    // ownership and refuse foreign/ownerless bindings. A client-side append
+    // would re-create exactly the foreign-token adoption those seams reject
+    // (HTTP 409) through the SDK instead, so a client can never introduce a
+    // token value that is not already stored on that same doc: the list may
+    // only shrink (or repeat stored values within the stored size bound).
+    // Legit client write: notificationsService.unlinkUserFromDeviceToken
+    // fallback -> fcmTokens: arrayRemove(token) on the caller's OWN doc.
+    function fcmTokensRemovalOnly() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fcmTokens'])
+        || (
+          request.resource.data.get('fcmTokens', []) is list
+          && resource.data.get('fcmTokens', []) is list
+          && request.resource.data.get('fcmTokens', []).hasOnly(resource.data.get('fcmTokens', []))
+          // hasOnly is a subset test that ignores multiplicity, so the explicit
+          // size bound is what stops duplicate-inflation of the fan-out list.
+          && request.resource.data.get('fcmTokens', []).size() <= resource.data.get('fcmTokens', []).size()
+        );
+    }
+
     match /users/{userId} {
       allow read: if isUser(userId) || isAdmin();
       allow create: if isUser(userId)
-        && !request.resource.data.keys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints']);
-      allow update: if isBrandOwner() || (
+        && !request.resource.data.keys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints', 'branchIds', 'cityIds', 'active', 'isDeleted', 'deletedAt'])
+        // First token link is server-stamped by POST /notifications/registerToken.
+        && !request.resource.data.keys().hasAny(['fcmTokens']);
+      // Brand/operator authority is bounded by the SAME fan-out invariant:
+      // attaching a token is server-only for every role, so no client path
+      // (owner or brand) can re-create a foreign-token binding the
+      // registerToken gate refuses. Role/tenant fields stay brand-writable.
+      allow update: if (isBrandOwner() && fcmTokensRemovalOnly()) || (
         isUser(userId)
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints', 'branchIds', 'cityIds', 'active', 'isDeleted', 'deletedAt'])
+        && fcmTokensRemovalOnly()
       );
       allow delete: if false;
 
@@ -128,10 +216,14 @@ service cloud.firestore {
         allow delete: if isUser(userId);
       }
 
+      // Shadow-order subcollection: grep of both app sources + functions/
+      // found NO client or function writer/reader of users/{uid}/orders
+      // (only users/{uid}/notifications is used client-side). Writes are
+      // therefore server-only (Admin SDK bypasses rules); the identity-only
+      // create here was an unused privilege.
       match /orders/{orderId} {
         allow read: if isUser(userId) || isAdmin();
-        allow create: if isUser(userId);
-        allow update, delete: if false;
+        allow create, update, delete: if false;
       }
     }
 
@@ -146,24 +238,61 @@ service cloud.firestore {
         ownsBranch(resource.data.branchId)
       );
 
+      // Loop-hardening: the old identity-only create (`customerId == uid ||
+      // userId == uid`) let any authenticated user birth an order with
+      // arbitrary totals/paymentStatus/status — or stamp a VICTIM's id in
+      // one identity field while owning the other. Two accepted shapes,
+      // both verified against the live client payloads:
+      //  1) Customer app (core ordersService.createOrder, src/features/
+      //     orders/services/ordersService.ts:331-351) stamps BOTH customerId
+      //     AND userId to request.auth.uid.
+      //  2) Partner POS walk-in (partner ManualOrderCreateModal.tsx:144-181)
+      //     stamps the literal 'cust_walkin' customerId; the POS lane stamps
+      //     userId to the staff operator uid. Walk-in creates are gated to
+      //     the operator's own outlet (isBranchOwner + ownsBranch) and never
+      //     carry privileged server-owned keys at birth. Both lanes are
+      //     pinned to the initial PLACED status shape; customer-lane
+      //     paymentStatus stays pending-only (core writes no top-level
+      //     paymentStatus at all — the paid state lives nested in
+      //     `payment.status`, set after server-side gateway verification),
+      //     while the walk-in lane may be born 'completed' (cash tendered at
+      //     the counter) — 'failed' is never a birth state.
       allow create: if isAuthenticated() && (
-        request.resource.data.customerId == request.auth.uid ||
-        request.resource.data.userId == request.auth.uid
+        (
+          request.resource.data.customerId == request.auth.uid &&
+          request.resource.data.userId == request.auth.uid &&
+          orderCreateInitialStatus() &&
+          !request.resource.data.keys().hasAny(orderCreateForbiddenKeys()) &&
+          (
+            !('paymentStatus' in request.resource.data) ||
+            request.resource.data.paymentStatus in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
+          )
+        ) || (
+          request.resource.data.customerId == 'cust_walkin' &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.branchId is string &&
+          request.resource.data.branchId.size() > 0 &&
+          isBranchOwner() &&
+          ownsBranch(request.resource.data.branchId) &&
+          orderCreateInitialStatus() &&
+          !request.resource.data.keys().hasAny(orderCreateForbiddenKeys()) &&
+          (
+            !('paymentStatus' in request.resource.data) ||
+            request.resource.data.paymentStatus in ['pending', 'completed']
+          )
+        )
       );
 
-      allow update: if isBrandOwner() || (
+      allow update: if (
+        isBrandOwner() &&
+        !directDeliveredBypass() &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
+      ) || (
         isBranchOwner() &&
         ownsBranch(resource.data.branchId) &&
         // Loop 12: delivery handover needs OTP proof — never direct.
         !directDeliveredBypass() &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
-          'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount', 'routeTransferStatus',
-          // Loop 7: delivery-OTP proof fields are server-owned (verifyDeliveryOtp
-          // path only) — staff must not clear lockouts/attempts or rewrite the
-          // hash to bypass handover proof via direct client update.
-          'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil'
-        ])
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
       ) || (
         // Customers may cancel their own pre-terminal orders only — canonical
         // cancelled literal-shape plus timestamps, nothing else. Terminal
@@ -177,6 +306,13 @@ service cloud.firestore {
         request.resource.data.status.kind == 'cancelled' &&
         request.resource.data.status.terminal == true &&
         request.resource.data.status.keys().hasOnly(['code', 'label', 'kind', 'terminal'])
+      ) || (
+        // Customer-owned notification preference: boolean opt-in only,
+        // pinned to whatsappOptIn + updatedAt (order-confirmation toggle).
+        isAuthenticated() &&
+        (resource.data.customerId == request.auth.uid || resource.data.userId == request.auth.uid) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whatsappOptIn', 'updatedAt']) &&
+        request.resource.data.whatsappOptIn is bool
       );
 
       allow delete: if false;
@@ -187,7 +323,16 @@ service cloud.firestore {
     // =========================================================================
 
     match /branches/{branchId} {
-      allow read: if true;
+      // Hardened: was `if true`. Grep evidence — the customer app NEVER
+      // reads branches/* (its store directory is stores/*, separately
+      // public); every branches reader is an authenticated partner hook
+      // (useBranches/useTickets/useAnalytics/useBranchMenu). Anonymous
+      // exposure of branch config (petpoojaStoreId, city/coords, hours) is
+      // therefore closed. RESIDUAL RISK (recorded per audit): branch docs
+      // carry Petpooja linkage fields — NEVER store secrets (API keys,
+      // petpooja credentials/tokens, razorpay key secrets) on branches/*
+      // docs; this rule makes them readable by ANY signed-in user.
+      allow read: if isAuthenticated();
       allow create: if isBrandOwner();
       allow update: if isBrandOwner() || (
         ownsBranch(branchId) &&
@@ -202,14 +347,28 @@ service cloud.firestore {
     // Staff may only touch availability fields — never prices or identity.
     match /products/{productId} {
       allow read: if true;
+      // Branch-owner create keeps price/name/description/category fields
+      // writable: the partner combo builder legitimately creates products
+      // client-side (useBranchMenu.createComboMeal, src/features/menu/
+      // hooks/useBranchMenu.ts:259-282 — price/originalPrice/name/
+      // description/categoryId/categoryName/branchId/restId are its payload).
+      // What a branch operator may NOT plant at birth: margin data
+      // (costPrice), discount-manipulation fields (compareAtPrice,
+      // discountPercentage), or a fabricated petpoojaItemId — the combo
+      // builder itself refuses to fabricate one because a fake id in the
+      // shared id space could 86 an unrelated POS item (see its Loop-6
+      // comment). Brand-owner creates are unrestricted (catalog imports).
       allow create: if isBrandOwner() || (
-        isBranchOwner() && ownsBranch(request.resource.data.branchId)
+        isBranchOwner() && ownsBranch(request.resource.data.branchId) &&
+        !request.resource.data.keys().hasAny([
+          'costPrice', 'compareAtPrice', 'discountPercentage', 'petpoojaItemId'
+        ])
       );
       allow update: if isBrandOwner() || (
         isBranchOwner() &&
         ownsBranch(resource.data.branchId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'price', 'compareAtPrice', 'discountPercentage', 'name', 'description',
+          'price', 'costPrice', 'compareAtPrice', 'discountPercentage', 'name', 'description',
           'categoryId', 'categoryName', 'branchId', 'restId', 'petpoojaItemId', 'id'
         ])
       );
@@ -235,6 +394,34 @@ service cloud.firestore {
     }
 
     match /stores/{storeId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    // HOME MERCHANDISING — the customer app queries these anonymously at
+    // boot (homeService getHome); without public read the home bundle is
+    // always empty. Marketing content only; writes stay brand-owned.
+    match /banners/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /categories/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /combos/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /offers/{docId} {
+      allow read: if true;
+      allow write: if isBrandOwner();
+    }
+
+    match /recommendations/{docId} {
       allow read: if true;
       allow write: if isBrandOwner();
     }
@@ -272,13 +459,55 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // Branch launch announcements (partner useBranches broadcastLaunchAlert addDoc)
-    // B3-S1: operator-writable (branch owners broadcast for their outlets),
-    // still closed to customers/anonymous. Reads stay public (announcements).
+    // Branch launch announcements (partner useBranches broadcastLaunchAlert
+    // addDoc — src/hooks/useBranches.ts:156-186). The companion call posts
+    // /notifications/dispatch (partnerFunctionsApi.ts:809), and `upcoming_*`
+    // topics are NOT in the server's subscribable allowlist
+    // (notifications/topics.ts), so today the fan-out 403s for every role —
+    // the doc write is the public-read audit record, and defacement/attribution
+    // of that record is the risk this block bounds.
+    // Writes are therefore: BRANCH-SCOPED (the doc carries a caller-stamped
+    // branchId/targetTopic pair; an operator of branch_02 used to publish,
+    // rewrite or delete for branch_01 — or aim targetTopic at another branch's
+    // subscribers), TOPIC-BOUND (targetTopic == 'upcoming_' + branchId), and
+    // SHAPE-BOUNDED to the exact payload the app sends (title/body caps mirror
+    // BroadcastSchema). Global brand/support operators keep their shipped
+    // all-branch write; regional_manager was city-clamped upstream, never
+    // correct here (UI visibility change is lane 02's call — posted).
+    // APPEND-ONLY: no client update/delete path exists in either app (partner
+    // only addDoc'ed the record), so the record cannot be rewritten into
+    // another branch (or at all) after creation; server moderation goes
+    // through the Admin SDK.
+    // RESIDUAL (accepted, no reader exists in either app today): branchName/
+    // title/body text is caller-chosen, so a global writer could still mislabel
+    // the displayed outlet name; binding it would cost one get() per write.
+    function branchAnnouncementTopicBound() {
+      return request.resource.data.branchId is string
+        && request.resource.data.branchId.size() > 0
+        && request.resource.data.targetTopic is string
+        && request.resource.data.targetTopic == 'upcoming_' + request.resource.data.branchId;
+    }
+
+    function branchAnnouncementShape() {
+      return request.resource.data.keys().hasOnly([
+          'branchId', 'branchName', 'title', 'body', 'targetTopic', 'createdAt'
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.body is string
+        && request.resource.data.body.size() <= 1000;
+    }
+
+    function globalAnnouncementWriter() {
+      return hasRole(['brand_owner', 'developer', 'support']);
+    }
+
     match /branch_announcements/{docId} {
       allow read: if true;
-      allow create: if isStaff();
-      allow update, delete: if isStaff();
+      allow create: if (globalAnnouncementWriter() || ownsBranch(request.resource.data.branchId))
+        && branchAnnouncementTopicBound()
+        && branchAnnouncementShape();
+      allow update, delete: if false;
     }
 
     // =========================================================================
@@ -290,6 +519,48 @@ service cloud.firestore {
     // transitions own every mutation via Admin SDK. Owner writes flow through
     // POST /tickets/* (functions), never through a client update that could
     // escalate/resolve its own ticket.
+    // Ticket outcomes are server-owned. At root commit 0cca973, the note
+    // route writes a string resolution plus terminal status; money actions
+    // write a resolution map including couponCode/refundResult/resolvedBy.
+    // The server's already-resolved check depends on status, not that map.
+    // Both roles and collections share this mask: no field erasure, tenant
+    // re-stamping, terminal-status spoofing, or money-map replacement.
+    // Once resolved/closed, clients cannot reopen, rewrite resolution, or
+    // reassign. Only timeline/updatedAt remain writable for the existing
+    // reply fallback. This field mask does NOT enforce append-only history.
+    // The allowlist also denies resolutionClaim as defence in depth; a
+    // resolution lease is not present in that committed backend revision.
+    function ticketWorkflowUpdateOnly() {
+      return !request.resource.data.diff(resource.data).removedKeys().hasAny([
+          'status', 'resolution', 'assignedTo', 'timeline', 'lastActivityAt', 'updatedAt'
+        ])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'resolution', 'assignedTo', 'timeline', 'lastActivityAt', 'updatedAt'
+        ])
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+          || (request.resource.data.status is string
+              && ['open', 'in_progress', 'escalated'].hasAny([request.resource.data.status]))
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['resolution'])
+          || (resource.data.get('resolution', '') is string
+              && request.resource.data.resolution is string)
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['assignedTo'])
+          || (request.resource.data.assignedTo is map
+              && 'tier' in request.resource.data.assignedTo
+              && request.resource.data.assignedTo.keys().hasOnly(['tier'])
+              && ['branch', 'brand_support', 'developer_team'].hasAny([request.resource.data.assignedTo.tier]))
+        )
+        && (
+          !(resource.data.get('status', '') == 'resolved'
+            || resource.data.get('status', '') == 'closed')
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['timeline', 'updatedAt'])
+        );
+    }
+
     match /support_tickets/{ticketId} {
       allow read: if isBrandOwner() || (
         isBranchOwner() && ownsBranch(resource.data.branchId)
@@ -301,6 +572,10 @@ service cloud.firestore {
       // refundAmount, refundResult, couponCode, amount) at birth; those are
       // server-owned via POST /tickets/* (functions), never through a client
       // write that could escalate/resolve its own ticket.
+      // Hardening: 'priority' and 'assignedTo' removed from the allowlist —
+      // grep found NO client create path (partner useTickets.createTicket
+      // goes through POST /tickets/create via partnerFunctionsApi; the core
+      // app never writes tickets), so the fields are server-stamped only.
       allow create: if isAuthenticated()
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.branchId is string
@@ -308,19 +583,18 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
           'ticketNumber', 'subject', 'description', 'message', 'title',
           'category', 'type', 'branchId', 'orderId', 'customerId', 'customerName',
-          'customerPhone', 'status', 'priority', 'assignedTo', 'targetTier',
+          'customerPhone', 'status', 'targetTier',
           'branchReminderSent', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.status == 'open';
       // Loop 7: staff update field mask — direct client writes may advance
       // workflow (status/resolution/assignedTo/timeline) but money-action and
       // identity fields resolve server-side only (POST /tickets/resolve).
-      allow update: if isBrandOwner() || (
+      // Brand authority now shares the exact same workflow as branch staff —
+      // one helper, two arms; only the mask can differ, and it cannot.
+      allow update: if (isBrandOwner() && ticketWorkflowUpdateOnly()) || (
         isBranchOwner() && ownsBranch(resource.data.branchId) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'resolution', 'assignedTo', 'timeline',
-          'lastActivityAt', 'updatedAt'
-        ])
+        ticketWorkflowUpdateOnly()
       );
       allow delete: if false;
     }
@@ -332,7 +606,8 @@ service cloud.firestore {
         isAuthenticated() && resource.data.customerId == request.auth.uid
       );
       // Loop 7: same create allowlist + staff update mask as support_tickets
-      // (legacy collection, same threat model).
+      // (legacy collection, same threat model). 'priority'/'assignedTo' are
+      // server-stamped only (POST /tickets/create) — see support_tickets note.
       allow create: if isAuthenticated()
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.branchId is string
@@ -340,16 +615,14 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
           'ticketNumber', 'subject', 'description', 'message', 'title',
           'category', 'type', 'branchId', 'orderId', 'customerId', 'customerName',
-          'customerPhone', 'status', 'priority', 'assignedTo', 'targetTier',
+          'customerPhone', 'status', 'targetTier',
           'branchReminderSent', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.status == 'open';
-      allow update: if isBrandOwner() || (
+      // Same helper, legacy mirror — the masks are mechanically identical.
+      allow update: if (isBrandOwner() && ticketWorkflowUpdateOnly()) || (
         isBranchOwner() && ownsBranch(resource.data.branchId) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'resolution', 'assignedTo', 'timeline',
-          'lastActivityAt', 'updatedAt'
-        ])
+        ticketWorkflowUpdateOnly()
       );
       allow delete: if false;
     }
@@ -429,8 +702,23 @@ service cloud.firestore {
       );
       allow create: if isAuthenticated()
         && request.auth.uid in request.resource.data.participantIds;
+      // Field mask (audit): thread metadata is NOT freely updatable —
+      // participantIds/participantNames (membership) and identity fields
+      // may not be REWRITTEN by a participant. The only legit client update
+      // is the reply metadata written by partner chatService.sendMessage
+      // (src/services/chatService.ts:156-160). The ensure-thread merge
+      // (chatService.ts:139-154 / useChats.ts:87-96) writes membership fields
+      // back with values read from the SAME doc, so they are unchanged and
+      // do not appear in diff().affectedKeys(); only an actual membership
+      // rewrite trips the mask. getOrCreateBranchChannel's background
+      // membership refresh on an EXISTING channel is denied and degrades
+      // gracefully (useChats.ts:104-109 catches and warns; the channel
+      // still opens).
       allow update: if isBrandOwner() || (
-        isAuthenticated() && request.auth.uid in resource.data.participantIds
+        isAuthenticated() && request.auth.uid in resource.data.participantIds &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastMessageText', 'lastMessageSender', 'lastMessageAt', 'updatedAt'
+        ])
       );
       allow delete: if false;
     }

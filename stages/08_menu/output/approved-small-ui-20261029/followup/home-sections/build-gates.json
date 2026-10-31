@@ -1,0 +1,20 @@
+﻿{
+    "Started":  "2026-10-30T02:17:49.6296661Z",
+    "SourcePreGates":  0,
+    "TypecheckExit":  0,
+    "UnitExit":  1,
+    "UnitFiles":  null,
+    "UnitTests":  null,
+    "UnitExclusion":  "tests/rules/**",
+    "WebBuild":  null,
+    "MobileBuild":  null,
+    "CapacitorSync":  null,
+    "DebugAssemble":  null,
+    "SourceComparison":  null,
+    "ApkCompatibility":  null,
+    "InstallationPerformed":  false,
+    "StrictRuntimeConsoleGate":  1,
+    "RuntimeLimitation":  "Existing fail-closed Razorpay test/missing-key guard remains unresolved; bounded UI observations do not establish payment or production acceptance",
+    "ProviderAcceptance":  false,
+    "Completed":  null
+}

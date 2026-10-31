@@ -3,12 +3,16 @@ import * as crypto from "crypto";
 
 // B2-S1 worker-guard rig: the pure split/signature suites above never touch
 // Firestore; only the over-transfer worker test below uses this mock.
-const { mockDb, writes } = vi.hoisted(() => {
+const { mockDb, writes, seed } = vi.hoisted(() => {
   const writes: Array<{ ref: string; data: any }> = [];
+  // Mutable per-test knobs: the worker reads the branch account and order
+  // split from these, so the config-error lane can be driven without a
+  // second harness.
+  const seed = { branchAccount: "acc_cap_1xyz", splitPaise: 9000, capturedPaise: 5000 };
   const orderData = () => ({
     branchId: "branch_cap_1",
-    pricing: { grandTotal: 100, split: { branchTransferPaise: 9000 } },
-    payment: { razorpayPaymentId: "pay_cap_1", capturedAmountPaise: 5000 },
+    pricing: { grandTotal: 100, split: { branchTransferPaise: seed.splitPaise } },
+    payment: { razorpayPaymentId: "pay_cap_1", capturedAmountPaise: seed.capturedPaise },
     routeTransferStatus: "pending_retry",
     routeTransferRetryCount: 0,
   });
@@ -27,7 +31,7 @@ const { mockDb, writes } = vi.hoisted(() => {
       doc: (docId: string) => ({
         get: async () =>
           colName === "branches"
-            ? { exists: true, data: () => ({ razorpayAccountId: "acc_cap_1" }) }
+            ? { exists: true, data: () => ({ razorpayAccountId: seed.branchAccount }) }
             : { exists: false, data: () => ({}) },
         set: async (data: any) => {
           writes.push({ ref: `${colName}/${docId}`, data });
@@ -47,7 +51,7 @@ const { mockDb, writes } = vi.hoisted(() => {
         set: (ref: any, data: any) => ref.set(data),
       }),
   };
-  return { mockDb, writes };
+  return { mockDb, writes, seed };
 });
 
 vi.mock("firebase-admin", () => {
@@ -233,7 +237,7 @@ describe("Prompt 16: Razorpay Payments, Route Splits & Webhooks Suite", () => {
         "branch_x",
         { branchTransferPaise: 6000 },
         "order_x",
-        "acc_x",
+        "acc_x1y2z3",
         5000 // captured ceiling
       );
       expect(attempt.ok).toBe(false);
@@ -247,7 +251,7 @@ describe("Prompt 16: Razorpay Payments, Route Splits & Webhooks Suite", () => {
         "branch_x",
         { branchTransferPaise: 4000 },
         "order_x",
-        "acc_x",
+        "acc_x1y2z3",
         5000
       );
       expect(attempt.ok).toBe(true);
@@ -266,6 +270,35 @@ describe("Prompt 16: Razorpay Payments, Route Splits & Webhooks Suite", () => {
       expect(
         writes.some((w) => w.data?.routeTransferStatus === "transferred")
       ).toBe(false);
+    });
+
+    it("worker parks a MALFORMED linked account for manual settlement (no retry spend, never transferred)", async () => {
+      beginMock();
+      // Split is within the captured ceiling, so the over-capture guard does
+      // not preempt; the malformed account id must stop the worker at the
+      // shape guard and land in the manual-settlement lane.
+      seed.splitPaise = 4000;
+      seed.branchAccount = "acc_x";
+      try {
+        const result = await retryPendingRouteTransfersWorker();
+        expect(result.retriedCount).toBe(0);
+        const manual = writes.filter((w) => w.data?.routeTransferNeedsManualSettlement);
+        expect(manual.length).toBeGreaterThan(0);
+        expect(manual[0].data.routeTransferStatus).toBe("failed");
+        expect(String(manual[0].data.routeTransferError)).toMatch(
+          /invalid Razorpay Route account id shape/i
+        );
+        // No retry-budget increment and no fake transfer.
+        expect(writes.some((w) => w.data?.routeTransferRetryCount !== undefined)).toBe(false);
+        expect(writes.some((w) => w.data?.routeTransferStatus === "transferred")).toBe(false);
+        // Claim lease released (same field the manual-settlement flag uses).
+        expect(
+          writes.some((w) => w.data?.routeTransferClaimedAt === "MOCK_DELETE")
+        ).toBe(true);
+      } finally {
+        seed.splitPaise = 9000;
+        seed.branchAccount = "acc_cap_1xyz";
+      }
     });
   });
 });

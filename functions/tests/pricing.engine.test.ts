@@ -4,6 +4,14 @@ const { mockDb } = vi.hoisted(() => {
   const couponDocs: Record<string, any> = {
     WELCOME50: { discount: 50, type: "flat", active: true },
   };
+  // Authoritative catalog. The engine now REFUSES to price a line whose product
+  // it cannot look up (it will not charge the client's request price), so each
+  // fixture id carries its own catalog price and availability.
+  const catalogPrices: Record<string, number> = {
+    prod_200: 200,
+    prod_400: 400,
+    prod_500: 500,
+  };
   const mockDb = {
     collection: (col: string) => ({
       doc: (docId: string) => ({
@@ -13,6 +21,12 @@ const { mockDb } = vi.hoisted(() => {
             return coupon
               ? { exists: true, data: () => coupon }
               : { exists: false, data: () => ({}) };
+          }
+          if (col === "products") {
+            const price = catalogPrices[docId];
+            return price === undefined
+              ? { exists: false, data: () => ({}) }
+              : { exists: true, data: () => ({ price, inStock: true }) };
           }
           return {
             exists: true,
@@ -82,7 +96,7 @@ describe("Pricing Engine", () => {
       items: [
         {
           id: "1",
-          productId: "p1",
+          productId: "prod_200",
           name: "Burger",
           price: 200,
           quantity: 2,
@@ -106,7 +120,7 @@ describe("Pricing Engine", () => {
       items: [
         {
           id: "1",
-          productId: "p1",
+          productId: "prod_500",
           name: "Burger",
           price: 500,
           quantity: 1,
@@ -134,7 +148,7 @@ describe("Pricing Engine", () => {
       items: [
         {
           id: "1",
-          productId: "p1",
+          productId: "prod_400",
           name: "Burger",
           price: 400,
           quantity: 1,
@@ -161,7 +175,7 @@ describe("Pricing Engine", () => {
       items: [
         {
           id: "1",
-          productId: "p1",
+          productId: "prod_400",
           name: "Burger",
           price: 400,
           quantity: 1,
@@ -186,7 +200,7 @@ describe("Pricing Engine", () => {
       items: [
         {
           id: "1",
-          productId: "p1",
+          productId: "prod_200",
           name: "Burger",
           price: 200,
           quantity: 2,
@@ -209,7 +223,7 @@ describe("repriceOrderForVerification (B2-S1 server truth)", () => {
     items: [
       {
         id: "1",
-        productId: "p1",
+        productId: "prod_200",
         name: "Burger",
         price: 200,
         quantity: 2,

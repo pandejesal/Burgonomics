@@ -1,0 +1,164 @@
+{
+  "observedAt": "2026-10-22T01:42:20.519Z",
+  "method": "read-only local session API, last 60 assistant messages per root session",
+  "allowedModels": [
+    "deepseek-v4.1-flash-free",
+    "glm-5.3-flash-free"
+  ],
+  "sessionsInspected": 12,
+  "totalDisallowedRows": 0,
+  "rows": [
+    {
+      "lane": 1,
+      "sessionID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+      "rootSession": true,
+      "model": "deepseek-v4.1-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 16,
+      "recentServingModels": [
+        "deepseek-v4.1-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 2,
+      "sessionID": "ses_ea5c8a2daffekU3r3U5bPrJspn",
+      "rootSession": true,
+      "model": "glm-5.3-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 60,
+      "recentServingModels": [
+        "glm-5.3-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 3,
+      "sessionID": "ses_ea5c8a0adffeoN03VVsv7saRMK",
+      "rootSession": true,
+      "model": "deepseek-v4.1-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 0,
+      "recentServingModels": [],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 4,
+      "sessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+      "rootSession": true,
+      "model": "glm-5.3-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 60,
+      "recentServingModels": [
+        "glm-5.3-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 5,
+      "sessionID": "ses_ea5c88b2fffeMMzjFL6tYZzs5W",
+      "rootSession": true,
+      "model": "glm-5.3-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 44,
+      "recentServingModels": [
+        "glm-5.3-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 6,
+      "sessionID": "ses_ea5c885c0ffeujhkJzdpAtUFJb",
+      "rootSession": true,
+      "model": "glm-5.3-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 0,
+      "recentServingModels": [],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 7,
+      "sessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+      "rootSession": true,
+      "model": "deepseek-v4.1-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 49,
+      "recentServingModels": [
+        "deepseek-v4.1-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 8,
+      "sessionID": "ses_ea5c87df5ffe7Vjpzr9yv5VLpA",
+      "rootSession": true,
+      "model": "deepseek-v4.1-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 51,
+      "recentServingModels": [
+        "deepseek-v4.1-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 9,
+      "sessionID": "ses_ea5c87a64ffecPa7h3J8Zxpw6h",
+      "rootSession": true,
+      "model": "deepseek-v4.1-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 29,
+      "recentServingModels": [
+        "deepseek-v4.1-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 10,
+      "sessionID": "ses_ea5c878abffemS4Xy9icDiSjo8",
+      "rootSession": true,
+      "model": "deepseek-v4.1-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 15,
+      "recentServingModels": [
+        "deepseek-v4.1-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 11,
+      "sessionID": "ses_ea5c87669ffeLD1vE6kugwmFVm",
+      "rootSession": true,
+      "model": "deepseek-v4.1-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 13,
+      "recentServingModels": [
+        "deepseek-v4.1-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    },
+    {
+      "lane": 12,
+      "sessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+      "rootSession": true,
+      "model": "glm-5.3-flash-free",
+      "assistantMessagesInspected": 60,
+      "recentAssistantMessages": 43,
+      "recentServingModels": [
+        "glm-5.3-flash-free"
+      ],
+      "disallowedModelRows": 0,
+      "disallowedDetail": []
+    }
+  ]
+}

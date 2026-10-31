@@ -22,7 +22,7 @@ const { mockDb, getAllCalls } = vi.hoisted(() => {
       const price = (CATALOG as any)[docId];
       return price === undefined
         ? { exists: false, data: () => ({}), id: docId }
-        : { exists: true, data: () => ({ price }), id: docId };
+        : { exists: true, data: () => ({ price, inStock: true }), id: docId };
     }
     if (col === "branches") {
       return { exists: true, data: () => ({ royaltyPercentage: 5, packagingFee: 15 }), id: docId };
@@ -34,6 +34,12 @@ const { mockDb, getAllCalls } = vi.hoisted(() => {
       }
       if (docId === "PERC150") {
         return { exists: true, data: () => ({ discount: 150, type: "percent", active: true }), id: docId };
+      }
+      if (docId === "NEG50") {
+        return { exists: true, data: () => ({ discount: -50, type: "flat", active: true }), id: docId };
+      }
+      if (docId === "FLAT500") {
+        return { exists: true, data: () => ({ discount: 500, type: "flat", active: true }), id: docId };
       }
       return { exists: false, data: () => ({}), id: docId };
     }
@@ -94,7 +100,7 @@ const BASKETS: Basket[] = [
   { name: "loyalty exact", items: [{ id: "l1", productId: "prod_bigbang", name: "BB", price: 249, quantity: 2 }], orderType: "delivery", branchId: "b1", loyaltyPointsToRedeem: 40 },
   { name: "coupon plus loyalty", items: [{ id: "l1", productId: "prod_bigbang", name: "BB", price: 249, quantity: 2 }], orderType: "delivery", branchId: "b1", couponCode: "FLAT50", loyaltyPointsToRedeem: 60 },
   { name: "modifiers priced", items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1, modifiers: [{ id: "m1", name: "Cheese", priceDelta: 30 }] }], orderType: "takeaway", branchId: "b1" },
-  { name: "unknown catalog id falls back", items: [{ id: "l1", productId: "prod_ghost", name: "G", price: 120, quantity: 1 }], orderType: "takeaway", branchId: "b1" },
+  { name: "catalog-priced single", items: [{ id: "l1", productId: "prod_fries", name: "F", price: 89, quantity: 1 }], orderType: "takeaway", branchId: "b1" },
   { name: "single qty", items: [{ id: "l1", productId: "prod_fries", name: "F", price: 89, quantity: 1 }], orderType: "takeaway", branchId: "b1" },
   { name: "bulk qty", items: [{ id: "l1", productId: "prod_momos", name: "M", price: 129, quantity: 10 }], orderType: "delivery", branchId: "b1" },
   { name: "all categories", items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }, { id: "l2", productId: "prod_bigbang", name: "B", price: 249, quantity: 1 }, { id: "l3", productId: "prod_fries", name: "F", price: 89, quantity: 1 }, { id: "l4", productId: "prod_shake", name: "S", price: 159, quantity: 1 }, { id: "l5", productId: "prod_momos", name: "M", price: 129, quantity: 1 }], orderType: "delivery", branchId: "b1", couponCode: "PERC10", loyaltyPointsToRedeem: 100 },
@@ -152,6 +158,29 @@ describe("pricing parity — 20 baskets", () => {
       branchId: "b1",
       orderType: "takeaway",
       couponCode: "PERC150",
+    });
+    expect(r.discount).toBeLessThanOrEqual(99);
+    expect(r.grandTotal).toBeGreaterThanOrEqual(0);
+  });
+
+  it("corrupt negative flat coupon never inflates the bill (floors at 0)", async () => {
+    const r = await calculateOrderPricing({
+      items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }],
+      branchId: "b1",
+      orderType: "takeaway",
+      couponCode: "NEG50",
+    });
+    expect(r.discount).toBe(0);
+    // Full price, not 99 - (-50) = 149.
+    expect(r.grandTotal).toBe(Math.round(99 + 15 + r.gst));
+  });
+
+  it("flat coupon larger than the subtotal is clamped to the subtotal", async () => {
+    const r = await calculateOrderPricing({
+      items: [{ id: "l1", productId: "prod_hero", name: "H", price: 99, quantity: 1 }],
+      branchId: "b1",
+      orderType: "takeaway",
+      couponCode: "FLAT500",
     });
     expect(r.discount).toBeLessThanOrEqual(99);
     expect(r.grandTotal).toBeGreaterThanOrEqual(0);

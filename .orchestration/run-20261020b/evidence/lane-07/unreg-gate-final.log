@@ -1,0 +1,42 @@
+﻿=== FINAL typecheck 2026-10-22T06:07:11.9014808+05:30 ===
+
+> burgonomics-functions@1.0.0 typecheck
+> tsc --noEmit
+
+typecheck exit=0
+=== FINAL test 2026-10-22T06:07:22.1539155+05:30 ===
+
+> burgonomics-functions@1.0.0 test
+> vitest run --maxWorkers=2
+
+node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/AppData/Local/Temp/opencode/lane07-unreg-gate/functions
+
+
+ Test Files  76 passed | 1 skipped (77)
+      Tests  912 passed | 2 skipped (914)
+   Start at  06:07:23
+   Duration  31.03s (import 53%, tests 21%, transform 21%, worker 4%)
+
+    Isolate  77 workers spawned ┬╖ ~419ms startup each (spawn + environment, per file)
+             at least ~15.71s faster with isolate: false ΓÇö reuses workers across files instead of one per file
+
+test exit=0
+=== FINAL build 2026-10-22T06:07:55.0915367+05:30 ===
+
+> burgonomics-functions@1.0.0 build
+> tsc
+
+build exit=0
+GATE FINAL DONE 2026-10-22T06:08:07.8238315+05:30

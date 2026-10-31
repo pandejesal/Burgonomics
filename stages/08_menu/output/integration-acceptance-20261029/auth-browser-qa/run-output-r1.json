@@ -1,0 +1,24 @@
+﻿{
+  "provenance": "Reconstructed from the run-output.json read at 10:57:52Z and the 9PASS/1FAIL stdout. The live harness later overwrote run-output.json; counts, mode and timestamp are from the original file, step details from stdout.",
+  "run": "r1",
+  "mode": "TEST-MODE VERIFIED (Auth/Firestore emulators, demo project)",
+  "pass": 9,
+  "fail": 1,
+  "finishedAt": "2026-10-29T10:57:52.634Z",
+  "durationMs": 114130,
+  "externalRequestCount": 0,
+  "passing": [
+    "emulators: auth 48692 + firestore 48691 up",
+    "seed: synthetic operator + unknown-role user",
+    "vite: delivery 48178 + partner 48179 (overlay transform active)",
+    "browser: chromium launched (isolated context, SW blocked)",
+    "partner: wrong-password-blocked (generic non-enumerating error)",
+    "partner: valid-operator-allowed (http://127.0.0.1:48179/dashboard)",
+    "partner: unknown-role-locked (generic non-enumerating error)",
+    "partner: login screen renders (http://127.0.0.1:48179/login)",
+    "network gate: no external API reached (0 aborted)"
+  ],
+  "failing": [
+    "delivery: flow aborted - TimeoutError waiting for getByText('Welcome to Burgonomics'); navigated to http://127.0.0.1:48178/auth/login"
+  ]
+}

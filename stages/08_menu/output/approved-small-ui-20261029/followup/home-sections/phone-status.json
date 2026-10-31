@@ -1,0 +1,22 @@
+{
+  "status": "PHONE_BASELINE_VERIFIED_WAITING_FULL_GATE",
+  "targetDevice": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "latestLocalDiscovery": { "devices": ["RZCX51TXRKB"] },
+  "adbGetStateOnline": true,
+  "freshBaselineEvidence": "phone-identity-before.json",
+  "lastVerifiedInstalledSha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+  "homeUpdateInstallationPerformed": false,
+  "nativeHomeSectionsVerified": false,
+  "remoteDeviceAllocated": false,
+  "phoneUiControlPaused": true,
+  "dataClearPerformed": false,
+  "basketSeededOrRestored": false,
+  "resumeRequirements": [
+    "Finish the full isolated-threads test gate and build before staging a new artifact.",
+    "Recheck the authorised phone is still online immediately before updating.",
+    "The fresh pulled 78fcda40 baseline matched; rehash the installed APK immediately before install and reconcile any mismatch.",
+    "Verify package, signer, non-downgrade version and bundled assets before install -r only.",
+    "Never uninstall, clear data or restore a guessed basket/account/loyalty state."
+  ]
+}

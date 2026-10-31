@@ -1,0 +1,102 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // The global chatgpt-autoquota plugin rotates both saved ChatGPT accounts,
+  // then falls back from Sol to opencode-go/deepseek-v4.1-flash on quota failure.
+  // Keep the legacy ladder disabled here to avoid its historical worker-model
+  // restrictions. The obsolete project-local account adapter is archived.
+  // Keep this project-local configuration out of production release bundles.
+  "plugins": ["-chatgpt-fallback"],
+  // User-requested development MCPs. Same names override inherited disabled
+  // registrations for this project only; unrelated global MCPs are unchanged.
+  "mcp": {
+    "servers": {
+      "code-review": {
+        "type": "local",
+        "command": ["npx", "-y", "code-review-mcp-server"],
+        "disabled": false,
+        "timeout": { "startup": 120000, "catalog": 60000 }
+      },
+      "context7": {
+        "type": "remote",
+        "url": "https://mcp.context7.com/mcp",
+        "disabled": false
+      },
+      "firebase": {
+        "type": "local",
+        "command": [
+          "node",
+          "C:/Users/DELL/AppData/Roaming/npm/node_modules/firebase-tools/lib/bin/firebase.js",
+          "mcp",
+          "--only",
+          "core,firestore,crashlytics"
+        ],
+        "disabled": false,
+        "timeout": { "startup": 120000, "catalog": 60000 }
+      },
+      "shadcn": {
+        "type": "local",
+        "command": [
+          "node",
+          "C:/Users/DELL/AppData/Local/BurgonomicsDevTools/shadcn-4.23.0/node_modules/shadcn/dist/index.js",
+          "mcp",
+          "--cwd",
+          "C:/Users/DELL/Desktop/Burgonomics/burgonomics-foundation-core"
+        ],
+        "disabled": false,
+        "timeout": { "startup": 120000, "catalog": 60000 }
+      },
+      "vera": {
+        "type": "local",
+        "command": [
+          "C:/Users/DELL/AppData/Roaming/vera/bin/2.2.0/x86_64-pc-windows-msvc/vera.exe",
+          "mcp"
+        ],
+        "disabled": false
+      },
+      "playwright": {
+        "type": "local",
+        "command": [
+          "node",
+          "C:/Users/DELL/AppData/Local/BurgonomicsDevTools/playwright-mcp-0.0.83/node_modules/@playwright/mcp/cli.js",
+          "--browser", "msedge",
+          "--isolated", "--headless", "--no-webmcp",
+          "--output-dir", "C:/Users/DELL/AppData/Local/Temp/opencode/burgonomics-playwright-mcp"
+        ],
+        "disabled": false,
+        "timeout": { "startup": 120000, "catalog": 60000 }
+      },
+      "github": {
+        "type": "remote",
+        "url": "https://api.githubcopilot.com/mcp/readonly",
+        "headers": { "X-MCP-Toolsets": "repos,issues,pull_requests,actions" },
+        "disabled": false,
+        "timeout": { "startup": 120000, "catalog": 60000 }
+      },
+      "mobile": {
+        "type": "local",
+        "command": [
+          "node",
+          "C:/Users/DELL/AppData/Local/BurgonomicsDevTools/mobile-mcp-1.0.14/node_modules/@mobilenext/mobile-mcp/lib/index.js",
+          "--stdio"
+        ],
+        "environment": { "MOBILEMCP_DISABLE_TELEMETRY": "1" },
+        "disabled": false,
+        "timeout": { "startup": 120000, "catalog": 60000 }
+      },
+      // REA reverse-engineering MCP: local source checkout v6.8.0 launched from
+      // rea/scripts/rea.mjs. Registered project-locally on user approval
+      // 2026-10-28; global OpenCode config and the other servers are unchanged.
+      "rea": {
+        "type": "local",
+        "command": ["node", "C:/Users/DELL/Desktop/Burgonomics/rea/scripts/rea.mjs", "mcp"],
+        "environment": { "REA_ADB_PATH": "C:/Users/DELL/AppData/Local/Android/Sdk/platform-tools/adb.exe" },
+        "disabled": false,
+        "timeout": { "startup": 120000, "catalog": 60000 }
+      },
+      "razorpay-docs": {
+        "type": "remote",
+        "url": "https://razorpay.com/docs/mcp"
+      }
+    }
+  }
+}

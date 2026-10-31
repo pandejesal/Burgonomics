@@ -1,0 +1,7 @@
+{"at":"2026-10-23T00:17:09.965Z","kind":"prepared","tasks":12,"primary":"opencode/deepseek-v4.1-flash-free#default","fallback":"opencode/glm-5.3-flash-free#default","concurrency":"root+customer+partner"}
+{"at":"2026-10-23T00:17:10.243Z","kind":"admitted","queue":"root","lane":7,"task":"fcm-recipient-ownership","model":"opencode/deepseek-v4.1-flash-free#default","messageID":"msg_1661e63fa0013aZcQ2LQIwTT55"}
+{"at":"2026-10-23T00:17:10.268Z","kind":"admitted","queue":"partner","lane":2,"task":"restaurant-dispatch-choice","model":"opencode/deepseek-v4.1-flash-free#default","messageID":"msg_1661e6452001fQZvTreQBwAIDh"}
+{"at":"2026-10-23T00:17:10.272Z","kind":"admitted","queue":"customer","lane":8,"task":"customer-payment-truth","model":"opencode/deepseek-v4.1-flash-free#default","messageID":"msg_1661e6458001FxYLt2lQsosom1"}
+{"at":"2026-10-23T00:26:00.767Z","kind":"observed","queue":"partner","lane":2,"task":"restaurant-dispatch-choice","phase":"blocked","actualModels":["opencode/deepseek-v4.1-flash-free"],"error":{"type":"provider.transport"}}
+{"at":"2026-10-23T00:26:16.863Z","kind":"observed","queue":"customer","lane":8,"task":"customer-payment-truth","phase":"blocked","actualModels":["opencode/deepseek-v4.1-flash-free"],"error":{"type":"provider.transport"}}
+{"at":"2026-10-23T00:33:50.651Z","kind":"observed","queue":"root","lane":7,"task":"fcm-recipient-ownership","phase":"reported_complete_unaccepted","actualModels":["opencode/deepseek-v4.1-flash-free"],"error":null}

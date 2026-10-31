@@ -1,0 +1,301 @@
+{
+  "observedAt": "2026-10-22T01:21:30.570Z",
+  "inventoryOnly": true,
+  "rows": [
+    {
+      "lane": 1,
+      "name": "Customer app frontend",
+      "sessionID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792630350679,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792630350679,
+      "claimedCommitCandidates": [
+        "6e25a0cb6a3ae5883e860ea89fa758c17342664b",
+        "2f47cef",
+        "20261020b",
+        "20261022"
+      ],
+      "statedState": "SUPERVISOR_STATE: COMPLETE"
+    },
+    {
+      "lane": 2,
+      "name": "Partner app frontend",
+      "sessionID": "ses_ea5c8a2daffekU3r3U5bPrJspn",
+      "model": {
+        "id": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": true,
+      "latestAssistantAt": 1792631783776,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792631772368,
+      "claimedCommitCandidates": [],
+      "statedState": null
+    },
+    {
+      "lane": 3,
+      "name": "Menu design system a11y",
+      "sessionID": "ses_ea5c8a0adffeoN03VVsv7saRMK",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792542966991,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792542966991,
+      "claimedCommitCandidates": [
+        "2801d17",
+        "530dd20",
+        "29fd0e6",
+        "355ba9f"
+      ],
+      "statedState": "SUPERVISOR_STATE: COMPLETE"
+    },
+    {
+      "lane": 4,
+      "name": "Backend API order webhooks",
+      "sessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+      "model": {
+        "id": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": true,
+      "latestAssistantAt": 1792632072794,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792631913292,
+      "claimedCommitCandidates": [],
+      "statedState": null
+    },
+    {
+      "lane": 5,
+      "name": "Third-party integrations docs",
+      "sessionID": "ses_ea5c88b2fffeMMzjFL6tYZzs5W",
+      "model": {
+        "id": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792543601816,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792543601816,
+      "claimedCommitCandidates": [
+        "5265047",
+        "fee8b16",
+        "b14908e",
+        "20261020b"
+      ],
+      "statedState": "SUPERVISOR_STATE: COMPLETE"
+    },
+    {
+      "lane": 6,
+      "name": "Petpooja POS CRM",
+      "sessionID": "ses_ea5c885c0ffeujhkJzdpAtUFJb",
+      "model": {
+        "id": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792565350053,
+      "error": {
+        "type": "provider.quota",
+        "status": 429
+      },
+      "earliestAdmission": "2026-10-21T07:19:10.053Z",
+      "cooldownActive": false,
+      "lastTextAt": 1792563806446,
+      "claimedCommitCandidates": [],
+      "statedState": null
+    },
+    {
+      "lane": 7,
+      "name": "Firebase database security",
+      "sessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": true,
+      "latestAssistantAt": 1792632080911,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792631742299,
+      "claimedCommitCandidates": [
+        "4b6e4f6"
+      ],
+      "statedState": null
+    },
+    {
+      "lane": 8,
+      "name": "Razorpay payments",
+      "sessionID": "ses_ea5c87df5ffe7Vjpzr9yv5VLpA",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792547828244,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792547828244,
+      "claimedCommitCandidates": [
+        "b9b2d9a",
+        "980ef3e"
+      ],
+      "statedState": "SUPERVISOR_STATE: WAITING_COORDINATION"
+    },
+    {
+      "lane": 9,
+      "name": "Borzo rider dispatch",
+      "sessionID": "ses_ea5c87a64ffecPa7h3J8Zxpw6h",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792630705866,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792630705866,
+      "claimedCommitCandidates": [
+        "6e25a0cb6a3ae5883e860ea89fa758c17342664b",
+        "2f47cef1dd9d9b7696898c3c502051df22b7dc2f",
+        "2f47cef",
+        "20261020b",
+        "20261022"
+      ],
+      "statedState": "SUPERVISOR_STATE: COMPLETE"
+    },
+    {
+      "lane": 10,
+      "name": "Shadowfax rider dispatch",
+      "sessionID": "ses_ea5c878abffemS4Xy9icDiSjo8",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792556203717,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792556203717,
+      "claimedCommitCandidates": [
+        "3c8c7c7",
+        "70a09be"
+      ],
+      "statedState": "SUPERVISOR_STATE: WAITING_OWNER"
+    },
+    {
+      "lane": 11,
+      "name": "Android iOS both apps",
+      "sessionID": "ses_ea5c87669ffeLD1vE6kugwmFVm",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792547862628,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792547862628,
+      "claimedCommitCandidates": [
+        "593a09f",
+        "6719ceb"
+      ],
+      "statedState": "SUPERVISOR_STATE: COMPLETE"
+    },
+    {
+      "lane": 12,
+      "name": "Independent QA release verifier",
+      "sessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+      "model": {
+        "id": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "parentID": null,
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+      "permitted": true,
+      "active": false,
+      "latestAssistantAt": 1792629925188,
+      "error": null,
+      "earliestAdmission": null,
+      "cooldownActive": false,
+      "lastTextAt": 1792629925188,
+      "claimedCommitCandidates": [
+        "4b6e4f620fe",
+        "086b60d",
+        "25dcc369",
+        "56ce2ec8",
+        "6e9e9736",
+        "56ce2ec",
+        "5e1777c"
+      ],
+      "statedState": "SUPERVISOR_STATE: COMPLETE"
+    }
+  ]
+}

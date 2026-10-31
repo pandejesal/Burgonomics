@@ -1,0 +1,23 @@
+{
+  "polledAt": "2026-10-22T04:34:42.021Z",
+  "mode": "apply",
+  "runId": "run-20261020b",
+  "enabled": true,
+  "needsAttention": true,
+  "itemId": "restaurant-dispatch-choice",
+  "phase": "owner",
+  "budget": {
+    "attempts": 1,
+    "attemptsMax": 6,
+    "deliveries": 1,
+    "totalAttempts": 12,
+    "totalAttemptsMax": 12,
+    "totalDeliveries": 12
+  },
+  "decision": "needs_attention",
+  "attention": {
+    "reason": "continuation_cap_reached",
+    "at": "2026-10-22T02:49:41.700Z"
+  },
+  "stateSeen": true
+}

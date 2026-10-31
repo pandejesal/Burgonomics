@@ -19,9 +19,9 @@
 ---
 
 ## 3. Component Architecture & Design Token Enforcement
-- **Strict 60-30-10 Token Usage**: Always use semantic Tailwind classes (`bg-primary`, `bg-surface`, `text-accent`, `text-text-primary`). No hardcoded hex or raw Tailwind colors.
+- **Strict 60-30-10 Token Usage**: Always use semantic Tailwind classes (`bg-primary`, `bg-surface`, `text-accent-text` for customer orange copy, `text-accent-light` for partner orange copy, `text-text-primary`). CTA fill and readable orange text are separate roles; do not use the fill token as dark-surface text. No hardcoded hex or raw Tailwind colors.
 - **Accessibility (WCAG 2.2 AA)**:
-  - All interactive elements must have a minimum touch target of `44px x 44px`.
+  - Project touch-target requirement: `44px x 44px`. WCAG 2.2 AA SC 2.5.8 has a `24px x 24px` floor with specified exceptions; do not mislabel the stronger project target as the AA threshold. Document any compact-control deviation.
   - Color contrast ratio must meet or exceed 4.5:1 for normal text (Dark mode text uses `--primary-text: #4ADE80` on dark surfaces).
   - All icon buttons must provide `aria-label` or `sr-only` descriptive text.
 
@@ -32,3 +32,18 @@
 - Functions must be idempotent: Use `orderId` or `event.id` as deduplication keys.
 - Secret management: Never commit private API keys. Use Firebase Secret Manager (`defineSecret`).
 - Error handling: Graceful error snapshots written to `dev_error_snapshots/{id}` with technical stack traces for developer inspection.
+
+## 5. Cross-Account, Payment and Release Invariants
+- Every user-owned cache, including module-level maps, must be scoped to the current authenticated user. Capture the scope before asynchronous work and recheck it before committing its result into a store; a landed write for user A must never hydrate user B's session.
+- A remote mutation failure must not return ordinary success or silently commit a local-only record. If offline queuing is supported, represent pending sync explicitly and distinguish it from a confirmed server save.
+- Payment response tests must use the actual server wire shape. Normalize only authenticated, identifier-bound success; preserve structured pending/reconciliation outcomes and never mark a captured or verification-pending payment failed to satisfy a UI flow.
+- Paid-order finalization must consume server truth rather than overwrite an existing confirmed order with client payment/status fields. Security rules remain restrictive; do not broaden customer writes to make checkout pass.
+- Payment confirmation must atomically preserve existing delivery OTP hashes and later/terminal order states. Webhook-first and verify-first paths need equivalent safety; suppressed or unmatched captures must not drive new split/KOT/coin effects.
+- Concurrency regression fixtures must model shared state, serialized commits or transaction retries. A passthrough transaction mock establishes a guard test, not evidence of race handling under contention.
+- Release artifacts must require explicit valid signing configuration and reject default debug signing. Missing release keys must block release artifact tasks without blocking debug development. Test the negative gate; do not assume a tool will fail closed.
+- CI workflows belong at each Git repository's root `.github/workflows/`; local YAML inspection is not evidence that a remote workflow ran.
+- Report source inspection, local tests, emulator checks, provider-sandbox runs and physical-device acceptance separately. Windows source review cannot establish an iOS/Xcode build or iPhone runtime result. Never fill team IDs, signing fingerprints or provider credentials with invented values to green a release preflight.
+- Verification refusal is not evidence of no capture: signature, ownership, amount/currency mismatch, missing capture lookup and unknown exceptions must not invite a new payment. A held authorization also needs reconciliation; display the known reference without promising an automatic refund or confirmation.
+- Async search intent must invalidate outstanding result/suggestion tokens when the query or kind changes, is cleared or is reset. An obsolete response must not repopulate cleared results; returning to the same term must not dedupe against an invalidated request.
+- Cold-render tests must include skeleton/empty early returns. Effects that synchronize handler refs must reference a binding initialized on every render path, not a later `const` skipped by the early return.
+- Browser visual acceptance must first verify that actual application styles are applied and reject error-boundary renders. An unstyled page, local fixture, or viewport emulation is not evidence of production or native-platform acceptance.

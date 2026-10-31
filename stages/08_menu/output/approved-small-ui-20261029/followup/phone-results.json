@@ -1,0 +1,128 @@
+{
+  "status": "PASS_BOUNDED_UI_CHECKS",
+  "device": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "installedSha256": "d61afb91dff7483c3307ce67306eb9f29e9ca5c60df1a8e07cdc24fc3fc8cd12",
+  "identityEvidence": "phone-identity-final.json",
+  "designApprovalGranted": false,
+  "releaseReadinessEstablished": false,
+  "liveProviderAcceptance": false,
+  "cases": {
+    "dineInColdLaunch": {
+      "status": "PASS",
+      "selectedModeVisuallyConfirmed": true,
+      "firstBannerTitle": "Big Bang Burgers",
+      "firstTitleLeftPhysicalPx": 96,
+      "largeWordmarkVisible": true,
+      "categoryCardPhysicalPx": [477, 480],
+      "emptyWrapsShortcutAbsent": true,
+      "evidence": "phone-dine-in-cold-top.png"
+    },
+    "deliveryColdLaunch": {
+      "status": "PASS",
+      "selectedModeVisuallyConfirmed": true,
+      "firstBannerTitle": "Big Bang Burgers",
+      "firstTitleLeftPhysicalPx": 96,
+      "largeWordmarkVisible": true,
+      "categoryCardPhysicalPx": [477, 480],
+      "emptyWrapsShortcutAbsent": true,
+      "note": "Top capture caught the intended one-time Sides photo flip; scrolled capture shows the settled image.",
+      "evidence": "phone-delivery-cold-top.png"
+    },
+    "scrolledCategoryClearance": {
+      "status": "PASS_BOTH_MODES",
+      "dineInLowerCardBottomPhysicalPx": 1575,
+      "deliveryLowerCardBottomPhysicalPx": 1572,
+      "navigationTopPhysicalPx": 2082,
+      "evidence": ["phone-dine-in-scrolled-cards.png", "phone-delivery-scrolled-cards.png"],
+      "policy": "Large cards scroll naturally; fitting every row in the first viewport is not the requirement."
+    },
+    "homeFavourites": {
+      "status": "PASS_EXISTING_POPULATED_STATE",
+      "existingSavedEntryVisible": true,
+      "phoneEntriesAddedRemovedOrSeeded": false,
+      "nativeEmptyAndAccountSwitchCases": "NOT_RUN; no phone data/account mutation authorised",
+      "emptyClearAndIsolationCoverage": "Existing unit tests and explicitly isolated browser fixtures",
+      "evidence": "phone-dine-in-scrolled-cards.png"
+    },
+    "emptyCart": {
+      "status": "PASS",
+      "actualCartEmpty": true,
+      "cookingInstructionEditorVisible": false,
+      "cartContentsOrNotesChanged": false,
+      "authenticatedPastReorderAcceptance": "NOT_RUN on phone; no past rail was visible in the existing state, no login/OTP or fabricated history",
+      "draftAndFilledCartCoverage": "Route/store unit tests, not a new phone basket",
+      "evidence": "phone-empty-cart.png"
+    },
+    "awards": {
+      "status": "PASS_LAYOUT_OBSERVATION",
+      "compactPhotoAndSpacingVisible": true,
+      "ceremonyFacesRetained": true,
+      "evidence": "phone-compact-awards.png"
+    },
+    "upcomingBranches": {
+      "status": "PASS",
+      "numericCounterVisible": false,
+      "horizontalPresentation": true,
+      "nonOrderableCopyVisible": true,
+      "pauseChangedControlToResume": true,
+      "evidence": "phone-branches-no-counter.png"
+    },
+    "searchFocus": {
+      "status": "PASS",
+      "roundedWrapperOutlineVisible": true,
+      "innerRectangularOutlineVisible": false,
+      "queryTypedOrHistoryChanged": false,
+      "keyboardAndHistoryExcludedFromEvidence": true,
+      "evidence": "phone-rounded-search-focus.png"
+    },
+    "storeFirstLoad": {
+      "status": "PASS_OBSERVED_FIRST_VISIT",
+      "nearbyAndAllStoresLoaded": true,
+      "falseNoStoresFoundObserved": false,
+      "retryPressed": false,
+      "newLocationPermissionGranted": false,
+      "locationState": "Existing usable position; GPS versus saved/cached provenance was not independently audited",
+      "phoneCoordinatesInjectedOrSimulated": false,
+      "storeSelectionChanged": false,
+      "evidence": "phone-stores-loaded.png"
+    },
+    "nativeRadiusSample": {
+      "status": "PARTIAL_OBSERVATION",
+      "selectionRowsInInspectedHierarchy": 3,
+      "allInspectedRowsHaveDisplayedDistance": true,
+      "allInspectedRowsWithinSevenKm": true,
+      "fullPerStoreBoundaryAcceptanceOnPhone": false,
+      "strongerCoverage": "Pure policy/route tests and isolated browser case hiding 11 out-of-radius outlets",
+      "dataQualityObservation": "An existing recents entry is named Burgonomics DEMO. It was not created, selected or removed by this task; validate published/cached outlet eligibility before a production-readiness claim."
+    }
+  },
+  "qaCorrection": {
+    "initialDineInLabelWasWrong": true,
+    "actualInitialMode": "Takeaway",
+    "initialCaptureCountedAsDineInPass": false,
+    "recovery": "Fresh physical control-centre tap after two no-op reference taps; selected Dine-in was then visually verified after relaunch",
+    "diagnosticEvidence": ["phone-takeaway-top-baseline.png", "phone-mode-tap-check.png", "phone-mode-coordinate-check.png"]
+  },
+  "preserved": {
+    "cartContents": true,
+    "favourites": true,
+    "activeStore": true,
+    "account": true,
+    "appData": true,
+    "grillCoinsAndReelo": "Not operated on"
+  },
+  "privacy": {
+    "rawScreenshotsViewedOrPublished": false,
+    "ownedRawCapturesRemovedAfterSafeCopies": true,
+    "statusAndPersonalNotificationAreasExcluded": true,
+    "homeAddressAndOutletRowsMasked": true,
+    "storeSearchHistoryAndSearchKeyboardExcluded": true,
+    "phoneEvidenceExposedByPreviewServer": false
+  },
+  "prohibitedOperationsPerformed": false,
+  "finalAppScreen": "Home",
+  "sourceCapture": "../../integration-acceptance-20261029/delivery-source-followup-post-phone.json",
+  "sourceFilesCompared": 625,
+  "sourceUnchangedSinceVerifiedBuild": true
+}

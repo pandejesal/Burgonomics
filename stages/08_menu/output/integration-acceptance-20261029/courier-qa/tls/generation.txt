@@ -1,0 +1,3 @@
+Synthetic localhost test key only.
+Generating 2,048 bit RSA key pair and self-signed certificate (SHA256withRSA) with a validity of 30 days
+	for: CN=localhost, OU=LOCAL QA ONLY, O=Synthetic Test Fixture, C=ZZ

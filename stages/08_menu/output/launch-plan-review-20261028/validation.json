@@ -1,0 +1,189 @@
+{
+  "checkedAt": "2026-10-28T11:10:12+05:30",
+  "command": "python -B stages/08_menu/output/launch-plan-review-20261028/validate-review.py",
+  "cwd": "C:\\Users\\DELL\\Desktop\\Burgonomics",
+  "scope": "planning/source/artifact identity only; not application tests/builds/security/native/provider/store acceptance",
+  "markdownFiles": 30,
+  "localLinks": 117,
+  "tables": 44,
+  "selectedSourceEntries": 118,
+  "selectedSourceMatches": 118,
+  "additionalSourceChecks": 14,
+  "proposalArtifactChecks": 24,
+  "observationImageChecks": 6,
+  "scopedGitDiffCheckExit": 0,
+  "repositoryMetadataPreservation": [
+    {
+      "group": "G-ROOT",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "trackedDirtyCount": 99,
+      "statusPathsUnchangedOutsideArtifactDirs": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "trackedDirtyCount": 9,
+      "statusPathsUnchangedOutsideArtifactDirs": true
+    },
+    {
+      "group": "G-PARTNER",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "trackedDirtyCount": 11,
+      "statusPathsUnchangedOutsideArtifactDirs": true
+    }
+  ],
+  "independentReviewBindings": [
+    {
+      "file": "03-DELIVERY-DESIGN.md",
+      "reviewedSHA256": "80885B7B86A11CA12F87A4861F308949FB7E64F8B5D8493996AB8D6749CBFE65",
+      "finalSHA256": "4BE4B612DDAD8CAEE2C86383E1D926387FFD9B2C5EB1A81C6B0271FD71372F18",
+      "changedAfterRecheck": true
+    },
+    {
+      "file": "05-BACKEND-SECURITY.md",
+      "reviewedSHA256": "04F1819712E770AEE443E4EF793AB9A5F0FF5ABC3D073EA2D25535C6C2791D18",
+      "finalSHA256": "04F1819712E770AEE443E4EF793AB9A5F0FF5ABC3D073EA2D25535C6C2791D18",
+      "changedAfterRecheck": false
+    },
+    {
+      "file": "08-SCHEDULE.md",
+      "reviewedSHA256": "2558600E541F43E5197916756A1611877C4DBB7A2C8BE175607BF1DDBADA56AE",
+      "finalSHA256": "BE8BAA452BC355961A9C415CB19535CEB33CC3571BC3D14598DB5117761C0D67",
+      "changedAfterRecheck": true
+    },
+    {
+      "file": "09-ACCEPTANCE-MATRIX.md",
+      "reviewedSHA256": "7BB61E2592A5C47DB96B0E94A69E9A85128BC18248495AB9193D3730E54D4F70",
+      "finalSHA256": "7BB61E2592A5C47DB96B0E94A69E9A85128BC18248495AB9193D3730E54D4F70",
+      "changedAfterRecheck": false
+    }
+  ],
+  "finalMarkdownFingerprints": [
+    {
+      "file": "stages/08_menu/CONTEXT.md",
+      "sha256": "D33888A94A230A4F729F68D2B83BDC3312377B59CC64B90C10062369AF5EE5E7"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/01-DECISIONS-AND-OWNERSHIP.md",
+      "sha256": "EB38F5F71543E6202DBEA3BCEAC00E7A3D35725D1DC0051E877D9455B0B4AC47"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/02-CURRENT-EVIDENCE.md",
+      "sha256": "97B4B2B319375497EFD6F69AAB853244DA99DF1AB687E7EA4DB0653B00BEC1D7"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/03-DELIVERY-DESIGN.md",
+      "sha256": "4BE4B612DDAD8CAEE2C86383E1D926387FFD9B2C5EB1A81C6B0271FD71372F18"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/04-PARTNER-DESIGN.md",
+      "sha256": "09C24226F8E709F0A38685D3B0BDAAA6AA206BC9D5BE1F6B50C736B193A37CE0"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/05-BACKEND-SECURITY.md",
+      "sha256": "04F1819712E770AEE443E4EF793AB9A5F0FF5ABC3D073EA2D25535C6C2791D18"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/06-RELEASE-INFRASTRUCTURE.md",
+      "sha256": "6777DAD789722BAB2DCAB5D6C6A6A5FB4119E6DB50EB62CC0B5CE68FFEC42056"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/07-REELO-FEASIBILITY.md",
+      "sha256": "6A58D09E550E313437C73F442F50E31C15543E6E2559ACCB3B916C3A11C08C09"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/08-SCHEDULE.md",
+      "sha256": "BE8BAA452BC355961A9C415CB19535CEB33CC3571BC3D14598DB5117761C0D67"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/09-ACCEPTANCE-MATRIX.md",
+      "sha256": "7BB61E2592A5C47DB96B0E94A69E9A85128BC18248495AB9193D3730E54D4F70"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/10-SOURCE-FINGERPRINTS.md",
+      "sha256": "3801DC4A8DC025059D2CA2B074FFCF3DC7017AFADACB758C12393D0B065DF5CF"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/11-VALIDATION-AND-NEXT-APPROVAL.md",
+      "sha256": "75AF2A098AE0F83F06B4CCF311287A5DAC4AC918F6DFA15AF144A149C356AC8B"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/ACCOUNT-READINESS.md",
+      "sha256": "8B5451C92612577A4BF0B8D1413B042BB05496E7B9BB8D808C57E3040439DCA1"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/BASELINE-REGISTER.md",
+      "sha256": "84C0453973D5230670CE51BD9D1F06CA24A75546EA3E55E28AAFFD9A59CE4316"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/OWNER-WHATSAPP.md",
+      "sha256": "0748EAB69786641A9843C1955FDC9935BA17FFC48A35BEC8026AE986B889B878"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/PROMPT-RECONCILIATION.md",
+      "sha256": "9C8A541F991FE8592526335C09CBEF7783EB287205E05FA717B9F8D02F7105DD"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/README.md",
+      "sha256": "2EC4EE14330254CA36BE78BD2867342674050E1ABB5E67652D70695EE0F8BC8F"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/SESSION-HANDOFF-20261028.md",
+      "sha256": "332CF0EFD87537448BABB23C4C35E34BFB1DF5D0B80E7A42EBD8D431E163D1B3"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/VALIDATION.md",
+      "sha256": "FC2FE3288FB45944B1D9042DB33CC3E668B952D8C99AFEA27FC7B26AE3E80309"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v1/brand-spec.md",
+      "sha256": "C79C1BBA8C5A3E0BA77B1E4F669D8FE01B38AD70D152ACBAB01310266B9E882C"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v1/DESIGN.md",
+      "sha256": "53B0FDA5B11675A67D4D5BC9935FAF05FE201922E7D4CCFA1567A062D8ACE80F"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v1/README.md",
+      "sha256": "7CE2DC5ECF8A344BF85C1669F5CCC809894BE643386DD6CF8B02AE2E1712EFAA"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/README.md",
+      "sha256": "8DB0A4CA29657C0EDB8BD80C1E8DD035132B4A1C8431C1BD0FCCEE4F08EEFBC0"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-review-20261028/01-FRESH-FACTS.md",
+      "sha256": "9EECC4E404A59364DE1507E3AB5477E5E4F910090992C8236064EFD73207ED02"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-review-20261028/02-MODEL-REVIEWS.md",
+      "sha256": "F95B6532A7669292ADFA49189BD0095C570037D4C118595B6BDEFDE4A6F0F63C"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-review-20261028/03-PLAN-CORRECTIONS.md",
+      "sha256": "7ACB5B694812C90F9EB7A39F94074DB294AC462D82BBD82CD5946BF3F6B31AB2"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-review-20261028/04-SCHEDULE-AND-NEXT-APPROVAL.md",
+      "sha256": "C804881703991FB1CB533898910EF3AB04902FAD00792A2A57C9FFAAFC826DD3"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-review-20261028/05-VALIDATION.md",
+      "sha256": "C824806BEC5CD6A6ECA1DBD4B4BFB2728D4D0EF97992A28586152F3E93201603"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-review-20261028/README.md",
+      "sha256": "00181D44BEA690743FD4EEA6E1E803D44C3070449FC5F4BFFEA2F812FBB8820A"
+    },
+    {
+      "file": "stages/08_menu/output/stage_summary.md",
+      "sha256": "A8D6758964E758ED91EFFC76ED5323292CDFBADE3D8B63AF7DE4C35BC2526F01"
+    }
+  ],
+  "limits": "No complete release manifest or every-unmanifested-byte preservation proof; final two LOW document edits parent-only verified. No app gate executed.",
+  "errors": [],
+  "exit": 0
+}

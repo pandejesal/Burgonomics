@@ -1,0 +1,38 @@
+{
+  "status": "PASS",
+  "url": "http://127.0.0.1:48244/followup/index.html",
+  "loopbackOnly": true,
+  "routes": [
+    {
+      "path": "/followup/index.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/home-light.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/home-dark.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/followup/home-sections/source-scope.json",
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "path": "/followup/home-sections/browser-results.json",
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "path": "/followup/final-trim/burgonomics-delivery-final-trim-debug.apk",
+      "status": 404,
+      "expected": 404
+    }
+  ],
+  "scope": "Inert preview availability and private evidence rejection only"
+}

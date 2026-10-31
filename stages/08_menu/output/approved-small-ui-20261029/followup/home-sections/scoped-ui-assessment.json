@@ -1,0 +1,26 @@
+{
+  "status": "UI_VERIFIED_WITH_EXISTING_PAYMENT_BLOCKER",
+  "strictBrowserGate": "FAIL",
+  "strictBrowserExit": 1,
+  "uiSamplesVerified": 8,
+  "realStoreCatalogProducts": 56,
+  "bestSellerCount": 6,
+  "mealCount": 5,
+  "firstMeal": {
+    "id": "prd_mansi-circle_any-big-bang-burger-meal",
+    "productId": "prd_mansi-circle_any-big-bang-burger-meal",
+    "name": "Any Big Bang Burger Meal",
+    "price": 299
+  },
+  "actualStoreRowsMatched": true,
+  "railFixtures": false,
+  "pageErrors": [],
+  "unresolvedConsoleErrors": [
+    "[burgonomics] FATAL: Production build is using a Razorpay TEST key or has no key configured. Set VITE_RAZORPAY_KEY_ID to a live key before shipping."
+  ],
+  "providerAcceptance": false,
+  "productionReady": false,
+  "phoneAcceptance": false,
+  "evidence": "verified-source/browser-results.json",
+  "scope": "Bounded Home UI/data/navigation observations only; the zero-console-error gate remains failed and is not reclassified as green"
+}

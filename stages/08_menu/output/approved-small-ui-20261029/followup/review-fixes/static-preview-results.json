@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "results": [
+    {
+      "dark": false,
+      "bodyFont": "Montserrat, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "overflow": 0,
+      "activeScripts": 0
+    },
+    {
+      "dark": true,
+      "bodyFont": "Montserrat, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "overflow": 0,
+      "activeScripts": 0
+    }
+  ],
+  "gallery": "http://127.0.0.1:48244/followup/index.html",
+  "privateEvidenceBlocked": true
+}

@@ -37,3 +37,22 @@
 npx tsc --noEmit && npx vitest run
 ```
 - Verify customer search filter performance and responsive table rendering.
+
+## 6. Launch overlay - 2026-10-28 (loyalty deferred)
+
+Read this before executing the historical Process above. The launch decision set is recorded in
+[launch-plan D31-D33](../../stages/08_menu/output/launch-plan-20261028/01-DECISIONS-AND-OWNERSHIP.md)
+and [the Reelo feasibility note](../../stages/08_menu/output/launch-plan-20261028/07-REELO-FEASIBILITY.md).
+
+- The Delivery app ships with **no loyalty balance or redemption UI**. Do not add or expose a
+  Reelo balance, points total, earn promise or redemption control in this release.
+- Existing Firebase Grill Coins balances and coin_transactions history are preserved unchanged.
+  Do not migrate, zero, translate or display them as Reelo points.
+- Reelo remains the CRM/marketing system and already receives Petpooja bills. The app must not
+  post the same bill again; Petpooja is the single bill producer.
+- Hiding UI is not a financial control. New earn/redeem behaviour must be set so a bill cannot
+  credit the customer twice; that configuration is still to be confirmed by the owner.
+- Customer CSV export and marketing sync are **not** authorised launch operations. Data
+  minimisation, consent and retention approval remain outstanding.
+
+This overlay does not rewrite historical Stage 06 verification and does not approve loyalty code.

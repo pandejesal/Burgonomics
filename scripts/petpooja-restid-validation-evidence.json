@@ -1,0 +1,48 @@
+{
+  "generatedAt": "2026-10-16T11:50:02.836Z",
+  "endpoint": "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+  "results": [
+    {
+      "tag": "real",
+      "sentRestID": "31z58ciw0h",
+      "httpStatus": 200,
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_rid_real_1792151399285",
+        "orderID": "",
+        "code": 200
+      },
+      "echoedRestID": "31z58ciw0h"
+    },
+    {
+      "tag": "bogus",
+      "sentRestID": "THIS_RES_ID_DOES_NOT_EXIST_999",
+      "httpStatus": 200,
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "THIS_RES_ID_DOES_NOT_EXIST_999",
+        "clientOrderID": "bgx_rid_bogus_1792151401536",
+        "orderID": "",
+        "code": 200
+      },
+      "echoedRestID": "THIS_RES_ID_DOES_NOT_EXIST_999"
+    },
+    {
+      "tag": "numeric",
+      "sentRestID": "5439",
+      "httpStatus": 200,
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "5439",
+        "clientOrderID": "bgx_rid_numeric_1792151402356",
+        "orderID": "",
+        "code": 200
+      },
+      "echoedRestID": "5439"
+    }
+  ]
+}

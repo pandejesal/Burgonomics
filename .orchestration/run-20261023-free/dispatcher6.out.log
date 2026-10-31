@@ -1,0 +1,4 @@
+{"at":"2026-10-23T04:15:33.183Z","kind":"prepared","tasks":12,"primary":"opencode/deepseek-v4.1-flash-free#default","fallback":"opencode/glm-5.3-flash-free#default","concurrency":"root+customer+partner"}
+{"at":"2026-10-23T04:15:33.223Z","kind":"recovering_active_task","task":"release-infra-closeout"}
+{"at":"2026-10-23T04:16:13.192Z","kind":"recovered","task":"release-infra-closeout","phase":"reported_complete_unaccepted","actualModels":["opencode/deepseek-v4.1-flash-free"],"recoveries":1}
+{"at":"2026-10-23T04:16:13.471Z","kind":"admitted","queue":"serial","lane":3,"task":"customer-menu-a11y-closeout","model":"opencode/deepseek-v4.1-flash-free#default","messageID":"msg_166f9400b0014c0EDXpzbWVzaQ"}

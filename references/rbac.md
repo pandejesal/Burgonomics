@@ -30,8 +30,8 @@
 | `developer` | Partner App | Global (All Branches) | System diagnostics, error snapshot inspection, developer alert channels, claims administration |
 | `regional_manager`| Partner App | Multi-Branch / City | Multi-branch analytics, regional menu synchronization, franchise oversight |
 | `support` | Partner App | Global Tickets | Central dispute management, multi-branch customer support, goodwill coupon dispatch |
-| `branch_owner` | Partner App | Assigned Branches (`branchIds`) | Live KOT stream, manual Porter rider booking, branch combo creation, ticket resolution |
-| `branch_staff` | Partner App | Assigned Branches (`branchIds`) | Live KOT cooking progression (`preparing` → `food_ready`), 86ing stock toggles |
+| `branch_owner` | Partner App | Assigned Branches (`branchIds`) | Live KOT stream, courier dispatch (Borzo / Shadowfax provider booking or the restaurant's own in-house rider via `POST /orders/manualDispatch` [`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"` — restaurant-driven delivery, never customer pickup]; the retired Porter adapter refuses bookings unless explicitly re-armed via `PORTER_ENABLED="true"`), branch combo creation, ticket resolution |
+| `branch_staff` | Partner App | Assigned Branches (`branchIds`) | Live KOT cooking progression (`preparing` → `food_ready`), 86ing stock toggles, in-house rider assignment (`POST /orders/manualDispatch`) |
 | `customer` | Foundation Core | Self (`uid`) | Place orders, track deliveries, raise tickets, manage addresses & Grill Coins |
 
 ---

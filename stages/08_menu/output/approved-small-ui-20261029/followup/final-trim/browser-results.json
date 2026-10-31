@@ -1,0 +1,40 @@
+{
+  "status": "PASS",
+  "samples": [
+    {
+      "theme": "light",
+      "branch": {
+        "subtitleAbsent": true,
+        "visibleControls": 0,
+        "announcementCount": 8,
+        "horizontallyScrollable": true,
+        "trailingBorderPx": "0px",
+        "orderActions": 0
+      },
+      "cart": {
+        "lockPillAbsent": true,
+        "notesEditors": 1,
+        "overflow": 0
+      }
+    },
+    {
+      "theme": "dark",
+      "branch": {
+        "subtitleAbsent": true,
+        "visibleControls": 0,
+        "announcementCount": 8,
+        "horizontallyScrollable": true,
+        "trailingBorderPx": "0px",
+        "orderActions": 0
+      },
+      "cart": {
+        "lockPillAbsent": true,
+        "notesEditors": 1,
+        "overflow": 0
+      }
+    }
+  ],
+  "pageErrors": [],
+  "providerAcceptance": false,
+  "phoneAcceptance": false
+}

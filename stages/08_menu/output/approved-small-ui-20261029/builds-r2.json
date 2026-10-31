@@ -1,0 +1,12 @@
+﻿{
+    "Started":  "2026-10-29T13:38:20.9694003Z",
+    "UnitEvidence":  "136 files passed in full run; failed/timed-out suites re-run separately: 2 files / 27 passed, source unchanged. Not a single clean full-suite invocation.",
+    "WebBuild":  0,
+    "MobileBuild":  0,
+    "CapacitorSync":  0,
+    "DebugAssemble":  0,
+    "ApkCompatibility":  0,
+    "SourceComparison":  0,
+    "InstallationPerformed":  false,
+    "Completed":  "2026-10-29T13:40:19.6359073Z"
+}

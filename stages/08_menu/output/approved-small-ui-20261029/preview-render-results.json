@@ -1,0 +1,107 @@
+{
+  "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028",
+  "mode": "actual UI / read-only store Home and Menu / isolated sample Cart / inert HTML export",
+  "pageErrors": [],
+  "blockedWrites": [],
+  "samples": [
+    {
+      "width": 390,
+      "dark": false,
+      "overflow": 0,
+      "noteFields": 1,
+      "footerGap": 8
+    },
+    {
+      "width": 320,
+      "dark": false,
+      "overflow": 0,
+      "noteFields": 1,
+      "footerGap": 8
+    },
+    {
+      "width": 390,
+      "dark": true,
+      "overflow": 0,
+      "noteFields": 1,
+      "footerGap": 8
+    },
+    {
+      "width": 320,
+      "dark": true,
+      "overflow": 0,
+      "noteFields": 1,
+      "footerGap": 8
+    }
+  ],
+  "locationFixture": "Public outlet position in isolated browser; not device GPS",
+  "homeSelection": {
+    "storeId": "str_005",
+    "source": "actual Home service; no rail fixture",
+    "bestSellers": [
+      {
+        "id": "prd_ganesh-glory_cheese-burst-burger",
+        "name": "Cheese Burst Burger",
+        "price": 199
+      },
+      {
+        "id": "prd_ganesh-glory_super-hero-burger",
+        "name": "Super Hero Burger",
+        "price": 219
+      },
+      {
+        "id": "prd_ganesh-glory_great-indian-burger",
+        "name": "Great Indian Burger",
+        "price": 169
+      },
+      {
+        "id": "prd_ganesh-glory_tandoori-paneer-burger",
+        "name": "Tandoori Paneer Burger",
+        "price": 209
+      },
+      {
+        "id": "prd_ganesh-glory_american-burger",
+        "name": "American Burger",
+        "price": 159
+      },
+      {
+        "id": "prd_ganesh-glory_gochuchang-burger",
+        "name": "Gochuchang Burger",
+        "price": 179
+      }
+    ],
+    "meals": [
+      {
+        "id": "prd_ganesh-glory_any-big-bang-burger-meal",
+        "productId": "prd_ganesh-glory_any-big-bang-burger-meal",
+        "name": "Any Big Bang Burger Meal",
+        "price": 299
+      },
+      {
+        "id": "prd_ganesh-glory_any-classic-burger-meal",
+        "productId": "prd_ganesh-glory_any-classic-burger-meal",
+        "name": "Any Classic Burger Meal",
+        "price": 199
+      },
+      {
+        "id": "prd_ganesh-glory_jr-hero-burger-meal",
+        "productId": "prd_ganesh-glory_jr-hero-burger-meal",
+        "name": "Jr Hero Burger Meal",
+        "price": 149
+      },
+      {
+        "id": "prd_ganesh-glory_make-it-a-meal",
+        "productId": "prd_ganesh-glory_make-it-a-meal",
+        "name": "Make It A Meal",
+        "price": 119
+      },
+      {
+        "id": "prd_ganesh-glory_2-jr-hero-burger",
+        "productId": "prd_ganesh-glory_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "price": 109
+      }
+    ],
+    "rankingVerified": false
+  },
+  "status": "PASS"
+}

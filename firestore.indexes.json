@@ -1,6 +1,48 @@
 {
   "indexes": [
     {
+      "collectionGroup": "categories",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "order",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "banners",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "order",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "offers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "priority",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "orders",
       "queryScope": "COLLECTION",
       "fields": [
@@ -103,16 +145,16 @@
       ]
     },
     {
-      "collectionGroup": "branches",
+      "collectionGroup": "orders",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "active",
+          "fieldPath": "customerId",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "__name__",
-          "order": "ASCENDING"
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
         }
       ]
     },
@@ -121,7 +163,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "customerId",
+          "fieldPath": "userId",
           "order": "ASCENDING"
         },
         {

@@ -1,0 +1,21 @@
+{
+  "status": "PASS",
+  "changedSinceInstalledFinalTrim": [
+    "src/features/home/components/BestSellerCard.tsx",
+    "src/features/home/components/ComboCard.tsx",
+    "src/features/home/components/HomeReadability.test.tsx",
+    "src/features/home/components/martinoz-home.contract.test.tsx",
+    "src/features/home/models/index.ts",
+    "src/features/home/services/homeService.merchandising.test.ts",
+    "src/features/home/services/homeService.noHistory.test.ts",
+    "src/features/home/services/homeService.shortcuts.test.ts",
+    "src/features/home/services/homeService.ts",
+    "src/features/menu/services/menuService.homeCatalog.test.ts",
+    "src/features/menu/services/menuService.ts",
+    "src/routes/home.tsx"
+  ],
+  "capturedInputs": 629,
+  "allOtherCapturedInputsUnchanged": true,
+  "menuUiUnchanged": true,
+  "cartAndBranchTrimSourceUnchanged": true
+}

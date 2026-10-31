@@ -14,8 +14,9 @@ You are **Antigravity**, the primary software engineering agent for Burgonomics.
 
 ## 2. Core Workspace Rules
 1. **Design System & Palette (Strict 60-30-10)**:
-   - Light: `#F5F5F5` Canvas (60%), `#0E4825` Forest Green (30%), `#FF6600` Vibrant Orange (10%).
-   - Dark: `#0A0A0A` Canvas (60%), `#0E4825` Forest Green (30%), `#4ADE80` High-Contrast Text, `#CC5200` Deep Orange (10%).
+   - Light: `#F5F5F5` Canvas (60%), `#0E4825` Forest Green (30%), `#C2410C` CTA Orange (10%; white label 5.18:1).
+   - Dark: `#0A0A0A` Canvas (60%), `#0E4825` Forest Green (30%), `#4ADE80` High-Contrast Text, `#C2410C` CTA Orange fill (white label 5.18:1) + `#FF802B` orange text on dark (6.34–7.90:1).
+   - Orange role-split: fill vs text are separate tokens (no single orange passes both). Decorative `#FF6600` is graphics-only — never text (2.94:1).
    - Zero raw hex / Tailwind colors outside semantic design tokens.
 2. **Data & Security**: Single Firestore backend in `asia-south1` is the source of truth. Firebase Cloud Functions v2 in `/functions` handles sensitive workflows (Razorpay Route splits, Petpooja POS bridge, Porter logistics, Ticket auto-escalator). Validate all data boundaries with Zod. Never commit sensitive credentials.
 3. **Two Separate Apps**:

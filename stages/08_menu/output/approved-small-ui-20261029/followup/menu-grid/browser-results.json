@@ -1,0 +1,468 @@
+{
+  "status": "PASS",
+  "samples": [
+    {
+      "width": 320,
+      "height": 780,
+      "populated": false,
+      "chromeBottom": 140.78125,
+      "occlusionTop": 702,
+      "cards": [
+        {
+          "top": 188.28125,
+          "left": 16,
+          "width": 140,
+          "height": 185,
+          "bottom": 373.28125,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 188.28125,
+          "left": 164,
+          "width": 140,
+          "height": 185,
+          "bottom": 373.28125,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 381.28125,
+          "left": 16,
+          "width": 140,
+          "height": 185,
+          "bottom": 566.28125,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 381.28125,
+          "left": 164,
+          "width": 140,
+          "height": 185,
+          "bottom": 566.28125,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        }
+      ],
+      "overflow": 0,
+      "twoColumns": true
+    },
+    {
+      "width": 320,
+      "height": 780,
+      "populated": true,
+      "chromeBottom": 140.78125,
+      "occlusionTop": 621,
+      "cards": [
+        {
+          "top": 188.28125,
+          "left": 16,
+          "width": 140,
+          "height": 185,
+          "bottom": 373.28125,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 44.00834274291992,
+            "height": 44.00836181640625
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 188.28125,
+          "left": 164,
+          "width": 140,
+          "height": 185,
+          "bottom": 373.28125,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 381.28125,
+          "left": 16,
+          "width": 140,
+          "height": 185,
+          "bottom": 566.28125,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 381.28125,
+          "left": 164,
+          "width": 140,
+          "height": 185,
+          "bottom": 566.28125,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        }
+      ],
+      "overflow": 0,
+      "twoColumns": true
+    },
+    {
+      "width": 360,
+      "height": 780,
+      "populated": false,
+      "chromeBottom": 141.1875,
+      "occlusionTop": 702,
+      "cards": [
+        {
+          "top": 188.6875,
+          "left": 16,
+          "width": 160,
+          "height": 185,
+          "bottom": 373.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 188.6875,
+          "left": 184,
+          "width": 160,
+          "height": 185,
+          "bottom": 373.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 381.6875,
+          "left": 16,
+          "width": 160,
+          "height": 185,
+          "bottom": 566.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 381.6875,
+          "left": 184,
+          "width": 160,
+          "height": 185,
+          "bottom": 566.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        }
+      ],
+      "overflow": 0,
+      "twoColumns": true
+    },
+    {
+      "width": 360,
+      "height": 780,
+      "populated": true,
+      "chromeBottom": 141.1875,
+      "occlusionTop": 624,
+      "cards": [
+        {
+          "top": 188.6875,
+          "left": 16,
+          "width": 160,
+          "height": 185,
+          "bottom": 373.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 44.00284194946289,
+            "height": 44.0028076171875
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 188.6875,
+          "left": 184,
+          "width": 160,
+          "height": 185,
+          "bottom": 373.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 381.6875,
+          "left": 16,
+          "width": 160,
+          "height": 185,
+          "bottom": 566.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 381.6875,
+          "left": 184,
+          "width": 160,
+          "height": 185,
+          "bottom": 566.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        }
+      ],
+      "overflow": 0,
+      "twoColumns": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "populated": false,
+      "chromeBottom": 141.1875,
+      "occlusionTop": 766,
+      "cards": [
+        {
+          "top": 188.6875,
+          "left": 16,
+          "width": 175,
+          "height": 191.5,
+          "bottom": 380.1875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50.25286865234375,
+            "height": 44.2225341796875
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 188.6875,
+          "left": 199,
+          "width": 175,
+          "height": 191.5,
+          "bottom": 380.1875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 388.1875,
+          "left": 16,
+          "width": 175,
+          "height": 191.5,
+          "bottom": 579.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 388.1875,
+          "left": 199,
+          "width": 175,
+          "height": 191.5,
+          "bottom": 579.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        }
+      ],
+      "overflow": 0,
+      "twoColumns": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "populated": true,
+      "chromeBottom": 133.1875,
+      "occlusionTop": 688,
+      "cards": [
+        {
+          "top": 180.6875,
+          "left": 16,
+          "width": 175,
+          "height": 191.5,
+          "bottom": 372.1875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 44,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 180.6875,
+          "left": 199,
+          "width": 175,
+          "height": 191.5,
+          "bottom": 372.1875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 380.1875,
+          "left": 16,
+          "width": 175,
+          "height": 191.5,
+          "bottom": 571.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        },
+        {
+          "top": 380.1875,
+          "left": 199,
+          "width": 175,
+          "height": 191.5,
+          "bottom": 571.6875,
+          "fullCardClear": true,
+          "addTarget": {
+            "width": 50,
+            "height": 44
+          },
+          "titleFontPx": 14,
+          "priceVisible": true,
+          "priceOverlapsFavourite": false,
+          "favouriteHitTargetClear": true
+        }
+      ],
+      "overflow": 0,
+      "twoColumns": true
+    }
+  ],
+  "pageErrors": [],
+  "blockedWrites": [],
+  "phoneStateChanged": false,
+  "providerAcceptance": false,
+  "fixtures": "Public-outlet browser geolocation; explicitly local one-item browser Cart sample",
+  "enlargedText": {
+    "condition": "200% root font at 320px, explicit local compare-price fixture",
+    "columnsReflowToOne": true,
+    "priceOverlapsFavourite": false,
+    "overflow": 0,
+    "priceClipped": false,
+    "cardOverflow": 0
+  }
+}

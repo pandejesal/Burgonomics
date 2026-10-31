@@ -3,36 +3,13 @@ import { auth, db } from "../../core/firebase";
 import * as admin from "firebase-admin";
 import { computeHmacSha256, timingSafeEqual } from "../../core/security";
 
-export const AddressSchema = z.object({
-  id: z.string().optional(),
-  label: z.string().optional(),
-  full: z.string().optional(),
-  fullAddress: z.string().optional(),
-  street: z.string().optional(),
-  area: z.string().optional(),
-  city: z.string().optional(),
-  pincode: z.string().optional(),
-  lat: z.number().optional(),
-  lng: z.number().optional(),
-  isDefault: z.boolean().optional(),
-});
+import { AddressSchema, MigrateGuestSchema, MigratableAddress } from "./guestMigration.schema";
 
-export type MigratableAddress = z.infer<typeof AddressSchema>;
-
-export const MigrateGuestSchema = z.object({
-  guestSessionId: z.string().optional(),
-  anonymousUid: z.string().optional(),
-  permanentUid: z.string().min(1, "Permanent UID is required"),
-  phone: z.string().optional(),
-  email: z.string().optional(),
-  name: z.string().optional(),
-  addresses: z.array(AddressSchema).optional().default([]),
-  // Signed guest-ownership proof (HMAC-SHA256 hex over the session id, see
-  // mintGuestOwnershipProof). Optional during the client rollout (batch 5):
-  // when present it MUST verify; when absent only guest-owned docs relink
-  // (identified users' docs are never stolen — the guest-relink guard below).
-  guestProof: z.string().optional(),
-});
+// FIX2 (C1): the wire/service shape contract is now shared with the route
+// layer via the PURE schema module. Re-exported under the same names so the
+// service typing and existing tests are untouched; the routes their fields
+// carry are validated once, at the boundary, and never silently stripped.
+export { AddressSchema, MigrateGuestSchema, MigratableAddress };
 
 export type MigrateGuestInput = z.infer<typeof MigrateGuestSchema>;
 
@@ -286,36 +263,54 @@ export async function migrateGuestAccount(
     throw new Error("Migration refused: target account does not match the authenticated caller.");
   }
 
-  // Signed guest-ownership proof: when the client presents one it MUST
-  // verify (timing-safe). Absent-proof callers stay allowed during the
-  // batch-5 client rollout, but the guest-relink guard below still confines
-  // them to guest-owned docs only.
-  if (guestProof !== undefined && !verifyGuestOwnershipProof(guestSessionId, guestProof)) {
-    throw new Error("Migration refused: invalid guest-ownership proof.");
-  }
+  // H1 FAIL-CLOSED (orchestrator decision 2026-10-20T03:00Z): a guest-session
+  // relink is reachable ONLY with a VALID signed guest-ownership proof,
+  // verified timing-safe AGAINST that session id - and the refusal runs
+  // BEFORE any read or write. The previous "unproven batch-5 rollout stage"
+  // made a session id (unguessable by design, but not by POSSESSION)
+  // sufficient to relink guest-owned docs; Admin-SDK writes bypass client
+  // Firestore rules and requireRole confirms role only, so those were never
+  // a backstop. Unproven relink is a security regression, not a product
+  // policy: MISSING/invalid/garbage proof => typed 403, session-ID-only
+  // migration no longer exists.
   if (guestSessionId) {
     assertUnguessableSessionId(guestSessionId);
+    if (!verifyGuestOwnershipProof(guestSessionId, guestProof)) {
+      const e = new Error(
+        "Migration refused: a valid signed guest-ownership proof is required for session relink."
+      ) as Error & { code?: string; statusCode?: number };
+      e.code = "MIGRATION_PROOF_REQUIRED";
+      e.statusCode = 403;
+      throw e;
+    }
+  } else if (guestProof !== undefined) {
+    // A proof with no session id verifies against nothing: refuse instead of
+    // silently treating the call as proofless.
+    const e = new Error(
+      "Migration refused: a guest-ownership proof was provided without a guest session id."
+    ) as Error & { code?: string; statusCode?: number };
+    e.code = "MIGRATION_PROOF_REQUIRED";
+    e.statusCode = 403;
+    throw e;
   }
 
-  // Ownership proof for the anonymous-UID path: the source UID must be a real
-  // Firebase ANONYMOUS account in this project. Claiming orders from an
-  // identified (phone/email/password) account via a caller-supplied UID is
-  // an order-hijack — refuse it. (Residual: a shared-device anonymous UID is
-  // unguessable by design; prefer client-side Firebase account linking, which
-  // keeps one UID and needs no migration at all.)
+  // anonymousUid CROSS-ACCOUNT relink FAILS CLOSED (same decision). Looking up
+  // the source UID and observing that it "is anonymous" proves nothing about
+  // caller POSSESSION of that account: Admin-SDK lookups are not
+  // authorization, and unguessability is not an access control. No supported
+  // source-possession token exists in this project yet, so cross-UID relink
+  // stays BLOCKED until one is ratified (e.g. a Firebase account-link
+  // migration flow minted server-side). Same-UID upgrade is NOT a cross-UID
+  // relink and remains unaffected. LEGITIMATE PATH AFFECTED: the batch-5
+  // anonymous->permanent upgrade flow - disclosed here explicitly rather
+  // than silently relinking, per the fail-closed instruction.
   if (anonymousUid && anonymousUid !== permanentUid) {
-    let sourceUser: admin.auth.UserRecord;
-    try {
-      sourceUser = await auth.getUser(anonymousUid);
-    } catch {
-      throw new Error("Anonymous session not found — migration refused.");
-    }
-    const isAnonymous =
-      sourceUser.providerData.length === 0 ||
-      sourceUser.providerData.every((p) => p.providerId === "anonymous");
-    if (!isAnonymous) {
-      throw new Error("Migration refused: source account is not anonymous.");
-    }
+    const e = new Error(
+      "Migration refused: cross-UID relink requires verifiable source ownership - no supported source-proof mechanism exists (BLOCKED)."
+    ) as Error & { code?: string; statusCode?: number };
+    e.code = "MIGRATION_SOURCE_UNOWNED";
+    e.statusCode = 403;
+    throw e;
   }
 
   // OTP-verified phone link (C7): only the ID-token-verified phone_number
@@ -456,17 +451,18 @@ export async function migrateGuestAccount(
   }
 
   // 4. LOYALTY & WALLET BONUS INTEGRITY (50 Grill Coins First Order / Welcome Bonus)
-  // Advisory eligibility read first (cheap early-out), then the atomic
-  // awardWelcomeBonus() create() serializes concurrent callers. The ledger is
-  // keyed by the OTP-VERIFIED phone only — an unverified body phone mints
-  // nothing (falls back to the once-per-UID key, still idempotent).
+  // Advisory eligibility read first (cheap early-out). THE AWARD ITSELF IS
+  // DEFERRED TO STEP 6.5, AFTER the relink batch commits (finding: welcome-
+  // bonus ledger-before-batch loss): the ledger row used to be create()d
+  // HERE, before the batch — any failure between this create() and the batch
+  // commit stranded a "granted" ledger row with NO balance increment, and
+  // every retry then read "already claimed" and could never recover the lost
+  // coins. The ledger is keyed by the OTP-VERIFIED phone only — an unverified
+  // body phone mints nothing (falls back to the once-per-UID key, still
+  // idempotent).
   const WELCOME_BONUS_COINS = 50;
   const eligibility = await verifyBonusEligibility(verifiedPhone ?? undefined, permanentUid);
-
-  if (eligibility.eligible) {
-    bonusCoins = await awardWelcomeBonus(permanentUid, verifiedPhone ?? undefined, WELCOME_BONUS_COINS);
-    welcomeBonusAwarded = bonusCoins > 0;
-  }
+  const welcomeBonusEligible = eligibility.eligible;
 
   // 5. UPDATE PERMANENT USER PROFILE (phone = verified only)
   const userUpdates: Record<string, any> = {
@@ -477,29 +473,7 @@ export async function migrateGuestAccount(
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
-  if (welcomeBonusAwarded) {
-    userUpdates.hasClaimedWelcomeBonus = true;
-  }
-
   ops.push({ kind: "set", ref: permanentUserRef, data: userUpdates, merge: true });
-
-  if (welcomeBonusAwarded) {
-    // Readiness-1: credit the SPENDABLE currency. The old code incremented
-    // users.grillCoins — a write-only dead field nothing reads (pricing
-    // clamp, client display, and debits all use customers.loyaltyPoints),
-    // so bonuses were unspendable. Merge-set increment creates the doc when
-    // missing; the deterministic ledger row (awardWelcomeBonus) plus the
-    // eligibility pre-check keep it once-per-phone.
-    ops.push({
-      kind: "set",
-      ref: db.collection("customers").doc(permanentUid),
-      data: {
-        loyaltyPoints: admin.firestore.FieldValue.increment(WELCOME_BONUS_COINS),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      merge: true,
-    });
-  }
 
   // 6. GUEST CART MIGRATION
   const guestCartId = guestSessionId ? `guest_${guestSessionId}` : anonymousUid ? `anon_${anonymousUid}` : null;
@@ -538,6 +512,87 @@ export async function migrateGuestAccount(
     }
     // eslint-disable-next-line no-await-in-loop
     await batch.commit();
+  }
+
+  // 6.5. WELCOME-BONUS AWARD — AFTER the relink batch, in ONE transaction.
+  // Ledger row + SPENDABLE balance (customers.loyaltyPoints — the field the
+  // pricing clamp, client display, and debits all read; never the dead
+  // users.grillCoins) + claim flag commit together, so no crash window can
+  // strand a "granted" ledger row without the coins. The deterministic ledger
+  // id keeps the award exactly-once: a race loser or retry reads the row and
+  // grants nothing. A failed migration above throws BEFORE this point, so a
+  // guest whose migration never committed is never burned out of the bonus.
+  if (welcomeBonusEligible) {
+    const normalizedPhone = normalizePhoneIN(verifiedPhone ?? undefined);
+    const txId = normalizedPhone
+      ? `welcome_bonus_phone_${normalizedPhone.replace(/\D/g, "")}`
+      : `welcome_bonus_uid_${permanentUid}`;
+    const ledgerRef = db.collection("coin_transactions").doc(txId);
+    const customerRef = db.collection("customers").doc(permanentUid);
+    const ledgerRow = {
+      id: txId,
+      customerId: permanentUid,
+      phone: normalizedPhone,
+      amount: WELCOME_BONUS_COINS,
+      type: "welcome_bonus",
+      description: "Welcome Bonus: First Sign-In Grill Coins",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    const balanceAndFlag = () => ({
+      loyaltyPoints: admin.firestore.FieldValue.increment(WELCOME_BONUS_COINS),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    try {
+      if (db && typeof (db as any).runTransaction === "function") {
+        await (db as any).runTransaction(async (tx: any) => {
+          const ledgerSnap = await tx.get(ledgerRef as any);
+          if (ledgerSnap.exists) {
+            return; // already granted (concurrent winner / prior migration)
+          }
+          // Non-merge set AFTER an absence read: Firestore validates the read
+          // set at commit, so a row created between the read and the commit
+          // forces a retry — where the exists check turns this into a no-op.
+          // create()-grade exactly-once, with balance + flag in the same
+          // atomic unit.
+          tx.set(ledgerRef as any, ledgerRow);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tx.set(customerRef as any, balanceAndFlag() as any, { merge: true });
+          tx.set(
+            permanentUserRef as any,
+            {
+              hasClaimedWelcomeBonus: true,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        });
+        bonusCoins = WELCOME_BONUS_COINS;
+        welcomeBonusAwarded = true;
+      } else {
+        // Datastore shim without runTransaction: same order, best-effort.
+        await ledgerRef.create(ledgerRow);
+        await customerRef.set(balanceAndFlag(), { merge: true });
+        await permanentUserRef.set(
+          {
+            hasClaimedWelcomeBonus: true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        bonusCoins = WELCOME_BONUS_COINS;
+        welcomeBonusAwarded = true;
+      }
+    } catch (err: any) {
+      if (err?.code === 6 || err?.message?.includes("ALREADY_EXISTS")) {
+        // Race loser against a concurrent claim — not an error, no award.
+        console.log(`[Auth] Welcome bonus already granted (${txId}) — skipping duplicate.`);
+        bonusCoins = 0;
+        welcomeBonusAwarded = false;
+      } else {
+        throw err;
+      }
+    }
   }
 
   return {

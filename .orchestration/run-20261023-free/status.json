@@ -1,0 +1,583 @@
+{
+  "runId": "run-20261023-free",
+  "startedAt": "2026-10-23T00:15:00Z",
+  "deadline": "2026-10-23T12:15:00Z",
+  "primary": "opencode/deepseek-v4.1-flash-free#default",
+  "fallback": "opencode/glm-5.3-flash-free#default",
+  "admissions": 23,
+  "acceptedAutomatically": false,
+  "halted": null,
+  "workers": {
+    "serial": {
+      "state": "idle_all_packets_closed",
+      "current": null
+    }
+  },
+  "tasks": {
+    "fcm-recipient-ownership": {
+      "lane": 7,
+      "sessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+      "repos": [
+        "root"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T00:17:10.118Z",
+          "phase": "reported_complete_unaccepted",
+          "messageID": "msg_1661e63fa0013aZcQ2LQIwTT55",
+          "error": null,
+          "finishedAt": "2026-10-23T00:33:50.649Z"
+        }
+      ],
+      "currentModel": "opencode/deepseek-v4.1-flash-free#default",
+      "messageID": "msg_1662d7290001MrMS19bNPUNea2",
+      "actualModels": [
+        "opencode/deepseek-v4.1-flash-free"
+      ],
+      "assistantRows": 22,
+      "report": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261023-free\\fcm-recipient-ownership.report.md",
+      "finishedAt": "2026-10-23T00:33:50.650Z",
+      "acceptance": {
+        "commit": "636b90d",
+        "repo": "root",
+        "paths": 4,
+        "gate": "typecheck 0; 952 passed/2 skipped; build 0",
+        "reviewGap": "closed by Antigravity gemini-3.8-flash-high APPROVE (conversation 9ad12c48-796d-4ae2-9bcc-bf4a474cadac)",
+        "antigravityReview": {
+          "verdict": "APPROVE",
+          "model": "gemini-3.8-flash-high",
+          "conversation": "9ad12c48-796d-4ae2-9bcc-bf4a474cadac"
+        }
+      }
+    },
+    "dispatch-teardown-binding": {
+      "lane": 4,
+      "sessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+      "repos": [
+        "root"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T02:36:13.008Z",
+          "phase": "reported_complete_unaccepted",
+          "messageID": "msg_1669db15f001R6DPcKImx9qUNk",
+          "error": null,
+          "finishedAt": "2026-10-23T03:07:51.490Z"
+        }
+      ],
+      "actualModels": [
+        "opencode/deepseek-v4.1-flash-free"
+      ],
+      "assistantRows": 116,
+      "lastError": {
+        "type": "provider.free-limit",
+        "status": 429
+      },
+      "previousAttempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T00:46:11.324Z",
+          "phase": "blocked",
+          "messageID": "msg_16638f591001fEsKAUSVppqUA6",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T00:50:08.980Z"
+        },
+        {
+          "model": "opencode/glm-5.3-flash-free#default",
+          "admittedAt": "2026-10-23T00:50:09.018Z",
+          "phase": "blocked",
+          "messageID": "msg_1663c9609001MmaAuDwWfmmv2A",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T00:50:12.231Z"
+        },
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T02:19:17.286Z",
+          "phase": "blocked",
+          "messageID": "msg_1668e31c1001erRlhfuXA1YOlT",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T02:19:22.892Z"
+        },
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T02:22:22.939Z",
+          "phase": "blocked",
+          "messageID": "msg_1669106ec001hyrKAAXcCZb2PW",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T02:22:28.800Z"
+        },
+        {
+          "model": "opencode/glm-5.3-flash-free#default",
+          "admittedAt": "2026-10-23T02:23:28.858Z",
+          "phase": "blocked",
+          "messageID": "msg_166920869001mrH7dLZfS2osi6",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T02:23:32.875Z"
+        }
+      ],
+      "retryNote": "Concurrent 3-worker retry hit 429. Switched to one heavy free worker at a time with a 4-minute cooldown retry.",
+      "currentModel": "opencode/deepseek-v4.1-flash-free#default",
+      "messageID": "msg_166ba579c0017ZLJS2izzgmUiY",
+      "report": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261023-free\\dispatch-teardown-binding.report.md",
+      "finishedAt": "2026-10-23T03:07:51.491Z",
+      "acceptance": {
+        "commit": "20c4600",
+        "repo": "root",
+        "paths": 3,
+        "gate": "959 passed/2 skipped; build 0",
+        "review": "2x GLM APPROVE + Antigravity gemini-3.8-flash-high APPROVE",
+        "conversation": "9cc0834b-16ea-44fd-afb2-d42b012f27e2"
+      }
+    },
+    "release-infra-closeout": {
+      "lane": 11,
+      "sessionID": "ses_ea5c87669ffeLD1vE6kugwmFVm",
+      "repos": [
+        "root"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T03:35:58.487Z",
+          "phase": "admission_reserved",
+          "messageID": "msg_166d46727001Jyh7n0lrNxLMrO"
+        }
+      ],
+      "currentModel": "opencode/deepseek-v4.1-flash-free#default",
+      "messageID": "msg_166f90029001iUumjSnEFAi7Ki",
+      "actualModels": [
+        "opencode/deepseek-v4.1-flash-free"
+      ],
+      "assistantRows": 49,
+      "report": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261023-free\\release-infra-closeout.report.md",
+      "recoveries": 1,
+      "finishedAt": "2026-10-23T04:16:13.188Z",
+      "acceptance": {
+        "commit": "2b3824d",
+        "repo": "root",
+        "paths": 7,
+        "gate": "22/22 focused; preflight red/green",
+        "review": "GLM APPROVE + Antigravity gemini-3.8-flash-high APPROVE",
+        "conversation": "6009bdba-fe61-4270-98ae-6d41d31c884c"
+      }
+    },
+    "references-porter-drift": {
+      "lane": 5,
+      "sessionID": "ses_ea5c88b2fffeMMzjFL6tYZzs5W",
+      "repos": [
+        "root"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [],
+      "delegateSessionID": "ses_e98da4fd8ffeQhqhsBwB3iFc4w",
+      "delegateModel": "google/antigravity-gemini-3.8-flash-high",
+      "delegatedAt": "2026-10-23T05:05:22.089Z",
+      "acceptance": {
+        "commit": "3f38a76",
+        "codeGuardCommit": "870c548",
+        "repo": "root",
+        "paths": 12,
+        "gate": "docs-only; Porter guard 36/36 focused + 6/6 e2e + full 969 passed/2 skipped; build 0",
+        "review": "big-pickle APPROVE_WITH_CHANGES -> findings closed"
+      },
+      "finishedAt": "2026-10-23T05:28:21.547Z"
+    },
+    "shadowfax-fail-closed-verification": {
+      "lane": 10,
+      "sessionID": "ses_ea5c878abffemS4Xy9icDiSjo8",
+      "repos": [
+        "root"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [],
+      "delegateSessionID": "ses_e98da4fd1ffeWwWiElrLj6OlGY",
+      "delegateModel": "google/antigravity-gemini-3.8-flash-high",
+      "delegatedAt": "2026-10-23T05:05:22.089Z",
+      "acceptance": {
+        "commit": "b6c9269",
+        "repo": "root",
+        "paths": 1,
+        "gate": "90/90 focused; tsc 0",
+        "truth": "LOCAL CODE VERIFIED",
+        "review": "Main read; no reviewer child per brief"
+      },
+      "finishedAt": "2026-10-23T05:28:21.547Z"
+    },
+    "petpooja-zero-fabrication": {
+      "lane": 6,
+      "sessionID": "ses_ea5c885c0ffeujhkJzdpAtUFJb",
+      "repos": [
+        "root",
+        "partner"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [],
+      "actualModels": [
+        "google/antigravity-gemini-3.8-flash-high"
+      ],
+      "acceptance": {
+        "partnerCommit": "7374d3e",
+        "rootCommit": "ed3bca0",
+        "repos": [
+          "partner",
+          "root"
+        ],
+        "paths": 4,
+        "gate": "partner focused 11/11; partner full 649 passed/3 skipped; partner build 0; functions focused 7/7",
+        "review": "independent Google Antigravity gemini-3.8-flash-low APPROVE, no findings",
+        "reviewSession": "ses_e98de2368ffeSSsPnqKlsbnDwL"
+      },
+      "finishedAt": "2026-10-23T05:05:22.089Z"
+    },
+    "customer-payment-truth": {
+      "lane": 8,
+      "sessionID": "ses_ea5c87df5ffe7Vjpzr9yv5VLpA",
+      "repos": [
+        "customer"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T00:46:11.201Z",
+          "phase": "blocked",
+          "messageID": "msg_16638f50c001PBjH7QSGmMCG0Y",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T00:49:20.919Z"
+        },
+        {
+          "model": "opencode/glm-5.3-flash-free#default",
+          "admittedAt": "2026-10-23T00:49:20.970Z",
+          "phase": "blocked",
+          "messageID": "msg_1663bda5a001a4ilNqy8fD1fxQ",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T00:49:24.202Z"
+        }
+      ],
+      "actualModels": [
+        "opencode/glm-5.3-flash-free"
+      ],
+      "assistantRows": 1,
+      "previousAttempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T00:17:10.135Z",
+          "phase": "blocked",
+          "messageID": "msg_1661e6458001FxYLt2lQsosom1",
+          "error": {
+            "type": "provider.transport"
+          },
+          "finishedAt": "2026-10-23T00:26:16.862Z"
+        }
+      ],
+      "retryNote": "One bounded retry after transient provider.transport (getaddrinfo ENOTFOUND opencode.ai / ECONNRESET); no quota reset.",
+      "currentModel": "opencode/glm-5.3-flash-free#default",
+      "messageID": "msg_1663bda83001iYnbpnxrlZOcAk",
+      "lastError": {
+        "type": "provider.free-limit",
+        "status": 429
+      },
+      "finishedAt": "2026-10-23T00:49:24.202Z",
+      "blockedReason": null,
+      "acceptance": {
+        "commit": "98c8dc4",
+        "repo": "customer",
+        "paths": 8,
+        "blobsMatchManifest": true,
+        "review": "DS APPROVE_WITH_CHANGES then APPROVE; GLM VERIFIED",
+        "gate": "93 files/695 tests passed; build passed",
+        "residual": "root Phase B 8/8 focused tests, review child 429, no root commit"
+      }
+    },
+    "customer-address-server-truth": {
+      "lane": 1,
+      "sessionID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+      "repos": [
+        "customer"
+      ],
+      "phase": "reported_complete_unaccepted",
+      "attempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T03:07:51.571Z",
+          "phase": "reported_complete_unaccepted",
+          "messageID": "msg_166baa99b001QdTAQkdt6dWZkK",
+          "error": null,
+          "finishedAt": "2026-10-23T03:29:42.058Z"
+        }
+      ],
+      "actualModels": [
+        "opencode/deepseek-v4.1-flash-free"
+      ],
+      "assistantRows": 69,
+      "lastError": {
+        "type": "provider.free-limit",
+        "status": 429
+      },
+      "previousAttempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T02:19:17.298Z",
+          "phase": "blocked",
+          "messageID": "msg_1668e3238001J2vCCk3mbe5TpQ",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T02:19:23.353Z"
+        },
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T02:22:23.404Z",
+          "phase": "blocked",
+          "messageID": "msg_1669108b5001GwWZkOo5VcbSUr",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T02:22:29.611Z"
+        },
+        {
+          "model": "opencode/glm-5.3-flash-free#default",
+          "admittedAt": "2026-10-23T02:23:29.658Z",
+          "phase": "blocked",
+          "messageID": "msg_166920b8a001q0jkOEOOlw58E4",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T02:23:33.538Z"
+        }
+      ],
+      "retryNote": "Concurrent 3-worker retry hit 429. Switched to one heavy free worker at a time with a 4-minute cooldown retry.",
+      "currentModel": "opencode/deepseek-v4.1-flash-free#default",
+      "messageID": "msg_166ce66e1001SeDjfgIPRmoGgE",
+      "report": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261023-free\\customer-address-server-truth.report.md",
+      "finishedAt": "2026-10-23T03:29:42.058Z"
+    },
+    "customer-menu-a11y-closeout": {
+      "lane": 3,
+      "sessionID": "ses_ea5c8a0adffeoN03VVsv7saRMK",
+      "repos": [
+        "customer"
+      ],
+      "attempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T04:16:13.299Z",
+          "phase": "admission_reserved",
+          "messageID": "msg_166f9400b0014c0EDXpzbWVzaQ"
+        }
+      ],
+      "currentModel": "opencode/deepseek-v4.1-flash-free#default",
+      "messageID": "msg_166f9400b0014c0EDXpzbWVzaQ",
+      "phase": "main_verified_local",
+      "actualModels": [
+        "opencode/deepseek-v4.1-flash-free"
+      ],
+      "report": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261023-free\\customer-menu-a11y-closeout.report.md",
+      "finishedAt": "2026-10-23T04:58:33.103Z",
+      "acceptance": {
+        "commit": "7affdf6",
+        "repo": "customer",
+        "paths": 15,
+        "blobsMatchManifest": true,
+        "gate": "tsc 0; 12 files/89 tests passed (bundle 6/41); build 0",
+        "red": "5 files/21 tests failed at ea1bc3f with tests only",
+        "review": "GLM APPROVE_WITH_NOTES, no blocker/major; notes prettier-only, left unapplied to keep reviewed=committed blobs",
+        "reviewSession": "ses_e98eed815ffeBkrSwhVsiM4mKM"
+      }
+    },
+    "restaurant-dispatch-choice": {
+      "lane": 2,
+      "sessionID": "ses_ea5c8a2daffekU3r3U5bPrJspn",
+      "repos": [
+        "partner"
+      ],
+      "phase": "reported_complete_unaccepted",
+      "attempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T03:29:42.127Z",
+          "phase": "reported_complete_unaccepted",
+          "messageID": "msg_166cea8ff001LYxCDMqkqdMDBK",
+          "error": null,
+          "finishedAt": "2026-10-23T03:35:58.278Z"
+        }
+      ],
+      "actualModels": [
+        "opencode/deepseek-v4.1-flash-free"
+      ],
+      "assistantRows": 13,
+      "previousAttempts": [
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T00:17:10.125Z",
+          "phase": "blocked",
+          "messageID": "msg_1661e6452001fQZvTreQBwAIDh",
+          "error": {
+            "type": "provider.transport"
+          },
+          "finishedAt": "2026-10-23T00:26:00.765Z"
+        },
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T00:46:11.206Z",
+          "phase": "blocked",
+          "messageID": "msg_16638f587001w4cWkh8FSzDVOt",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T00:49:27.567Z"
+        },
+        {
+          "model": "opencode/glm-5.3-flash-free#default",
+          "admittedAt": "2026-10-23T00:49:27.616Z",
+          "phase": "blocked",
+          "messageID": "msg_1663bf450001RXSRmVDUxHYC1q",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T00:49:30.848Z"
+        },
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T02:19:17.279Z",
+          "phase": "blocked",
+          "messageID": "msg_1668e31b7001uG7y74Qs0YKxe4",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T02:19:36.756Z"
+        },
+        {
+          "model": "opencode/deepseek-v4.1-flash-free#default",
+          "admittedAt": "2026-10-23T02:22:36.794Z",
+          "phase": "blocked",
+          "messageID": "msg_166913d09001xcLYfUVDLqEKfv",
+          "error": {
+            "type": "provider.free-limit",
+            "status": 429
+          },
+          "finishedAt": "2026-10-23T02:22:40.399Z"
+        }
+      ],
+      "retryNote": "Concurrent 3-worker retry hit 429. Switched to one heavy free worker at a time with a 4-minute cooldown retry.",
+      "lastError": {
+        "type": "provider.free-limit",
+        "status": 429
+      },
+      "currentModel": "opencode/deepseek-v4.1-flash-free#default",
+      "messageID": "msg_166d436e70016wlcFqDV0U4Gde",
+      "report": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261023-free\\restaurant-dispatch-choice.report.md",
+      "finishedAt": "2026-10-23T03:35:58.278Z"
+    },
+    "qa-reconciled-commits": {
+      "lane": 9,
+      "sessionID": "ses_ea5c87a64ffecPa7h3J8Zxpw6h",
+      "repos": [
+        "root"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [],
+      "acceptance": {
+        "commit": "91fd901",
+        "repo": "root",
+        "paths": 1,
+        "gate": "13/13 accepted commits PASS; staged clean across 3 repos; no push evidence",
+        "review": "Gemini 3.8 Flash high independent QA"
+      },
+      "finishedAt": "2026-10-23T05:54:22.157Z"
+    },
+    "qa-release-readiness": {
+      "lane": 12,
+      "sessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+      "repos": [
+        "root"
+      ],
+      "phase": "main_verified_local",
+      "attempts": [],
+      "acceptance": {
+        "commit": "0bc8cec",
+        "repo": "root",
+        "paths": 1,
+        "gate": "205-line production handoff; functions 969/2, customer 104/820, partner 649/3",
+        "review": "big-pickle APPROVE_WITH_CHANGES -> fixes applied"
+      },
+      "finishedAt": "2026-10-23T05:54:22.157Z"
+    }
+  },
+  "freeQuota": {
+    "error": "FreeUsageLimitError",
+    "status": 429,
+    "retryAfterMs": 83390000,
+    "observedAt": "2026-10-23T00:49Z",
+    "estimatedReset": "2026-10-24T00:00Z",
+    "note": "No GPT fallback, no counter reset.",
+    "retryRequestedAt": "2026-10-23T02:19:10.420Z",
+    "serialRetryAt": "2026-10-23T02:36:05.682Z",
+    "workaround": "Serial single worker + auto-compaction + independent free rungs big-pickle and mimo-v2.6-flash-free (live-probed OK); OpenRouter key 401; Google/Vercel not used."
+  },
+  "freePool": [
+    "google/antigravity-gemini-3.8-flash-high",
+    "google/antigravity-gemini-3.8-flash-low",
+    "opencode/big-pickle",
+    "opencode/mimo-v2.6-flash-free"
+  ],
+  "antigravity": {
+    "directOpenCode": [
+      "google/antigravity-gemini-3.8-flash-high",
+      "google/antigravity-gemini-3.8-flash-medium",
+      "google/antigravity-gemini-3.8-flash-low"
+    ],
+    "probe": "antigravity-gemini-3.8-flash-low replied OK in an OpenCode session; cost 0",
+    "cli": "agy 1.4.5 available as secondary read-only reviewer",
+    "reviews": [
+      "636b90d",
+      "20c4600",
+      "2b3824d"
+    ],
+    "directSubagentProbe": {
+      "sessionID": "ses_e98f3062fffeVqdu3Sv9rV7f3t",
+      "model": "google/antigravity-gemini-3.8-flash-low",
+      "result": "OK",
+      "parent": "ses_ec0542be0ffemk4j2yKN0lXQnI"
+    },
+    "directOpenCodeModels": [
+      "google/antigravity-gemini-3.8-flash-high",
+      "google/antigravity-gemini-3.8-flash-medium",
+      "google/antigravity-gemini-3.8-flash-low"
+    ],
+    "note": "Fixed -low/-medium/-high ids work directly; base id with default variant returns 404."
+  },
+  "updatedAt": "2026-10-23T05:54:22.157Z"
+}

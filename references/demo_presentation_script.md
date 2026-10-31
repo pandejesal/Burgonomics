@@ -48,7 +48,7 @@
 ### Slide 4 — Technical Architecture
 **Talk:** "Clean monorepo structure, single Firestore database, Firebase Functions v2 in `asia-south1`."
 - Dual mobile apps: Customer (`burgonomics-foundation-core`) and Partner POS (`burgonomics-partner`)
-- Direct integration bridges: Petpooja POS (hourly sync & instant 86ing), Porter logistics, Razorpay Route marketplace splits.
+- Direct integration bridges: Petpooja POS (hourly sync & instant 86ing), multi-provider dispatch (Borzo / Shadowfax live; restaurant in-house riders via `POST /orders/manualDispatch` [`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"`, not customer pickup]; Porter retired behind `PORTER_ENABLED="true"` with no history-only mode), Razorpay Route marketplace splits.
 
 ---
 

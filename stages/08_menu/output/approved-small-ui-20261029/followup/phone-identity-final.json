@@ -1,0 +1,15 @@
+﻿{
+    "device":  "RZCX51TXRKB",
+    "package":  "com.burgonomics",
+    "installedSha256":  "d61afb91dff7483c3307ce67306eb9f29e9ca5c60df1a8e07cdc24fc3fc8cd12",
+    "expectedHashMatches":  true,
+    "metadata":  [
+                     "versionCode=1 minSdk=24 targetSdk=36",
+                     "versionName=1.0.0",
+                     "lastUpdateTime=2026-10-29 22:34:02",
+                     "firstInstallTime=2026-10-27 11:32:45"
+                 ],
+    "observedAt":  "2026-10-29T17:23:46.9771154Z",
+    "reinstallationDuringQa":  false,
+    "dataClearDuringQa":  false
+}

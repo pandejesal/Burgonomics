@@ -1,0 +1,181 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/Desktop/Burgonomics/functions
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts (24 tests | 8 failed) 122ms
+   Γ¥» F6 ΓÇö customer-cancelled / returned deliveries are manual review, not auto-rebook (5)
+     ├ù routes CANCELLED_BY_CUSTOMER to the existing needs_review state: no needsRebook, no carrier trigger, no rebook FCM, customer status lifecycle preserved 36ms
+     ├ù routes RETURNED_TO_SELLER to needs_review without auto-rebook (returned cause in rebookTrigger) 5ms
+     ├ù mixed-case/spaced CANCELLED_BY_CUSTOMER still takes the manual-review path (normalization must not bypass the cause branch) 4ms
+   Γ¥» F6-sticky ΓÇö containment survives subsequent events on the same booking (4)
+     ├ù customer-cancel first: a later NO_RIDERS_FOUND on the same booking must NOT re-arm the auto-rebook worker 4ms
+     ├ù returned first: a later generic carrier cancel on the same booking stays contained 4ms
+   Γ¥» F7-order-side ΓÇö the order's CURRENT binding must veto a superseded map row (stale-map HIGH) (5)
+     ├ù stale map after a Borzo->Shadowfax rebook: late BORZO DELIVERED parks HIGH, the live shadowfax booking is untouched, no FCM 3ms
+     ├ù stale map after a same-provider rebook: late BORZO event for the OLD booking id parks HIGH (id mismatch) 3ms
+     ├ù parks HIGH when a map row resolves an order with NO binding metadata at all (absent evidence is not license to guess) 5ms
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 8 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/dispatch.webhook-boundary.fresh.test.ts > F6 ΓÇö customer-cancelled / returned deliveries are manual 
+review, not auto-rebook > routes CANCELLED_BY_CUSTOMER to the existing needs_review state: no needsRebook, no carrier 
+trigger, no rebook FCM, customer status lifecycle preserved
+AssertionError: expected 'customer_cancelled' to be 'needs_review' // Object.is equality
+
+Expected: "needs_review"
+Received: "customer_cancelled"
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts:266:34
+    264|     // Existing needs_review dispatch state (porter's poller, the NOT_ΓÇª
+    265|     // rebook guard and DR9 already speak it) ΓÇö NOT a new mirror vocabΓÇª
+    266|     expect(order.deliveryStatus).toBe("needs_review");
+       |                                  ^
+    267|     expect(order.delivery?.status).toBe("needs_review");
+    268|     // Explicit cause: existing rebookTrigger field + existing reason ΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/8]ΓÄ»
+
+ FAIL  tests/dispatch.webhook-boundary.fresh.test.ts > F6 ΓÇö customer-cancelled / returned deliveries are manual 
+review, not auto-rebook > routes RETURNED_TO_SELLER to needs_review without auto-rebook (returned cause in 
+rebookTrigger)
+AssertionError: expected 'returned_to_seller' to be 'needs_review' // Object.is equality
+
+Expected: "needs_review"
+Received: "returned_to_seller"
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts:308:34
+    306|     expect(order.needsRebook).toBe(false);
+    307|     expect(order.rebookTrigger).toBe("returned_to_seller");
+    308|     expect(order.deliveryStatus).toBe("needs_review");
+       |                                  ^
+    309|     expect(order.delivery?.status).toBe("needs_review");
+    310|     expect(order.status).toBe("ready"); // lifecycle preserved
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/8]ΓÄ»
+
+ FAIL  tests/dispatch.webhook-boundary.fresh.test.ts > F6 ΓÇö customer-cancelled / returned deliveries are manual 
+review, not auto-rebook > mixed-case/spaced CANCELLED_BY_CUSTOMER still takes the manual-review path (normalization 
+must not bypass the cause branch)
+AssertionError: expected 'customer_cancelled' to be 'needs_review' // Object.is equality
+
+Expected: "needs_review"
+Received: "customer_cancelled"
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts:333:34
+    331|     expect(order.needsRebook).toBe(false);
+    332|     expect(order.rebookTrigger).toBe("customer_cancelled");
+    333|     expect(order.deliveryStatus).toBe("needs_review");
+       |                                  ^
+    334|     expect(
+    335|       fcmSpy.mock.calls.filter((c: any[]) => c[0]?.data?.type === "disΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[3/8]ΓÄ»
+
+ FAIL  tests/dispatch.webhook-boundary.fresh.test.ts > F6-sticky ΓÇö containment survives subsequent events on the 
+same booking > customer-cancel first: a later NO_RIDERS_FOUND on the same booking must NOT re-arm the auto-rebook 
+worker
+AssertionError: expected 'customer_cancelled' to be 'needs_review' // Object.is equality
+
+Expected: "needs_review"
+Received: "customer_cancelled"
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts:404:51
+    402|
+    403|     await sfxWebhook({ sfx_order_id: "SFX-ST1", order_status: "CANCELLΓÇª
+    404|     expect(docOf("ord_sticky_cc").deliveryStatus).toBe("needs_review")ΓÇª
+       |                                                   ^
+    405|
+    406|     await sfxWebhook({ sfx_order_id: "SFX-ST1", order_status: "NO_RIDEΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[4/8]ΓÄ»
+
+ FAIL  tests/dispatch.webhook-boundary.fresh.test.ts > F6-sticky ΓÇö containment survives subsequent events on the 
+same booking > returned first: a later generic carrier cancel on the same booking stays contained
+AssertionError: expected 'returned_to_seller' to be 'needs_review' // Object.is equality
+
+Expected: "needs_review"
+Received: "returned_to_seller"
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts:440:52
+    438|
+    439|     await sfxWebhook({ sfx_order_id: "SFX-ST3", order_status: "RETURNEΓÇª
+    440|     expect(docOf("ord_sticky_ret").deliveryStatus).toBe("needs_review"ΓÇª
+       |                                                    ^
+    441|     const cmAfterFirst = fcmSpy.mock.calls.filter(
+    442|       (c: any[]) => c[0]?.data?.type === "dispatch_manual_review"
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[5/8]ΓÄ»
+
+ FAIL  tests/dispatch.webhook-boundary.fresh.test.ts > F7-order-side ΓÇö the order's CURRENT binding must veto a 
+superseded map row (stale-map HIGH) > stale map after a Borzo->Shadowfax rebook: late BORZO DELIVERED parks HIGH, the 
+live shadowfax booking is untouched, no FCM
+AssertionError: expected 'delivered' to be 'dispatched' // Object.is equality
+
+Expected: "dispatched"
+Received: "delivered"
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts:757:34
+    755|     // Zero mutation: the dead old-booking callback must not deliver tΓÇª
+    756|     const order = docOf("ord_rebook_p");
+    757|     expect(order.deliveryStatus).toBe("dispatched");
+       |                                  ^
+    758|     expect(order.deliveryStatus).not.toBe("delivered");
+    759|     expect(order.deliveredAt).toBeFalsy();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[6/8]ΓÄ»
+
+ FAIL  tests/dispatch.webhook-boundary.fresh.test.ts > F7-order-side ΓÇö the order's CURRENT binding must veto a 
+superseded map row (stale-map HIGH) > stale map after a same-provider rebook: late BORZO event for the OLD booking id 
+parks HIGH (id mismatch)
+AssertionError: expected 'delivered' to be 'dispatched' // Object.is equality
+
+Expected: "dispatched"
+Received: "delivered"
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts:791:34
+    789|
+    790|     const order = docOf("ord_rebook_id");
+    791|     expect(order.deliveryStatus).toBe(before.deliveryStatus);
+       |                                  ^
+    792|     expect(order.deliveryStatus).not.toBe("delivered");
+    793|     expect(order.deliveredAt).toBeFalsy();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[7/8]ΓÄ»
+
+ FAIL  tests/dispatch.webhook-boundary.fresh.test.ts > F7-order-side ΓÇö the order's CURRENT binding must veto a 
+superseded map row (stale-map HIGH) > parks HIGH when a map row resolves an order with NO binding metadata at all 
+(absent evidence is not license to guess)
+AssertionError: expected 'delivered' to be 'dispatched' // Object.is equality
+
+Expected: "dispatched"
+Received: "delivered"
+
+ Γ¥» tests/dispatch.webhook-boundary.fresh.test.ts:814:34
+    812|
+    813|     const order = docOf("ord_naked");
+    814|     expect(order.deliveryStatus).toBe(before.deliveryStatus);
+       |                                  ^
+    815|     expect(order.deliveryStatus).not.toBe("delivered");
+    816|     expect(order.deliveredAt).toBeFalsy();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[8/8]ΓÄ»
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 16 passed (24)
+   Start at  06:15:20
+   Duration  1.12s (transform 64%, tests 18%, import 16%, worker 2%)
+
+RED-2 subject: pristine committed 086b60d5 source + FINAL test file (functions/tests/dispatch.webhook-boundary.fresh.test.ts at group f7-order-side). Result: 13 failed / 11 passed (24). Fails = original packet's defects (F2 rewind pins, F7 read-side mismatch parks) PLUS the two HIGH findings (F6 needs_review decision, F6-sticky containment, F7-order-side stale-map). Distinguished from RED-1 (frozen v1 packet 442e70d5: 8 failed / 16 passed — F2/F7 read-side pins pass, only the two HIGH finding groups fail). Worktree Temp/opencode/lane04-red2-wt, test copy only, source untouched.
+
+LABELED CORRECTION (DS final review, finding 9): this file records the ROUND-1 pre-delta run (24 tests | 8 failed | 16 passed, test bytes 115652A2). The FINAL test file (055DEB3E) re-runs RED with one added hint-path numeric control; final RED figures live in closeout-lane04-webhook-evidence.md. Do not read the 8/24 figure as the final control count.

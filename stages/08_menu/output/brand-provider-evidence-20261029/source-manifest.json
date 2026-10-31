@@ -1,0 +1,187 @@
+{
+  "pdf": {
+    "file": "Burgonomics Franchise PPT (6).pdf",
+    "sha256": "5cc429e1465fbe9b9a2cc41c4e2a8c2735f8ff53a3403b4b0ce8c397448cf528"
+  },
+  "assets": [
+    {
+      "file": "times-iconic-burger-2025.webp",
+      "slide": 6,
+      "xref": 84,
+      "width": 641,
+      "height": 397,
+      "bytes": 40630,
+      "sha256": "cdbc889a8b2265b4ef130ddfca62d052b2acafbf1dd3aa9f2c8d92cd6753aec3",
+      "location": "public/images/brand"
+    },
+    {
+      "file": "times-iconic-burger-certificate-2025.webp",
+      "slide": 6,
+      "xref": 85,
+      "width": 450,
+      "height": 527,
+      "bytes": 21734,
+      "sha256": "83464e38a3836c348513470eb71e1d1e1854bdba6e87817841d0fca8f3eee813",
+      "location": "public/images/brand"
+    },
+    {
+      "file": "food-connoisseurs-ceremony-2026.webp",
+      "slide": 7,
+      "xref": 121,
+      "width": 452,
+      "height": 217,
+      "bytes": 22324,
+      "sha256": "2795c79fde7e5e98d184dd79f922eb6582571a76f590dc705d285b165b0f048f",
+      "location": "public/images/brand"
+    },
+    {
+      "file": "food-connoisseurs-team-2026.webp",
+      "slide": 7,
+      "xref": 124,
+      "width": 452,
+      "height": 217,
+      "bytes": 20278,
+      "sha256": "c9ee976db1505c55b2fb0e91fcae896439279831d2775a5a76e701c97e4d9578",
+      "location": "public/images/brand"
+    },
+    {
+      "file": "food-connoisseurs-qsr-certificate-2026.webp",
+      "slide": 7,
+      "xref": 125,
+      "width": 384,
+      "height": 493,
+      "bytes": 26380,
+      "sha256": "c9881383731e1a0e3abf8169dd95c7812724c9a6e80dadeebbad5e12c39b1100",
+      "location": "public/images/brand"
+    },
+    {
+      "file": "food-connoisseurs-burger-certificate-2026.webp",
+      "slide": 7,
+      "xref": 126,
+      "width": 384,
+      "height": 493,
+      "bytes": 25708,
+      "sha256": "ac3dc89d429855c93f723eddb14ffa023f545966e5d06912b0367ba23900dfd7",
+      "location": "public/images/brand"
+    },
+    {
+      "file": "franchise-slide-06.webp",
+      "slide": 6,
+      "width": 1613,
+      "height": 908,
+      "bytes": 86482,
+      "sha256": "08c9aa2cce4a7fc6d4bee2ea1ef17d93d655b1cd3aacd0876cf839ec648d7555",
+      "location": "evidence/assets"
+    },
+    {
+      "file": "franchise-slide-07.webp",
+      "slide": 7,
+      "width": 1613,
+      "height": 908,
+      "bytes": 124358,
+      "sha256": "c5be969116c1300344a1b36b16fbc820ca52c69c79a161b569913fd4fa6dfddf",
+      "location": "evidence/assets"
+    },
+    {
+      "file": "franchise-slide-08.webp",
+      "slide": 8,
+      "width": 1613,
+      "height": 908,
+      "bytes": 172258,
+      "sha256": "bba27ad33fedae13f0a7f9fa35fe5e324a357877c425974289b1325dbad340bd",
+      "location": "evidence/assets"
+    }
+  ],
+  "website": [
+    {
+      "url": "https://burgonomics.com/locations",
+      "status": 200,
+      "sha256": "c4642e93858b98fd8fba4250c0e703c993512959ec44b580b9e3200cab710748"
+    },
+    {
+      "url": "https://burgonomics.com/assets/index-BBpIItNN.js",
+      "status": 200,
+      "file": "website-bundle-0.js",
+      "bytes": 290179,
+      "sha256": "18d2458520921bee8bb87ba0d784920006a1031c69f745ca091c81a043657f68"
+    }
+  ],
+  "localLocations": {
+    "source": "C:\\Users\\DELL\\Desktop\\BURGONOMICS WEBSITE\\burgonomics final ebsite - Copy\\src\\components\\Locations\\locationsData.js",
+    "sha256": "9a01dc89df1b5793eec2f86d2a2856dd572c013ed0db81e074412aa61df2c851",
+    "upcoming": [
+      {
+        "id": "gor-dhod-road",
+        "name": "Gor Dhod Road",
+        "address": "Gor Dhod Road",
+        "openingDate": "October 2026",
+        "city": "Surat",
+        "state": "Gujarat",
+        "status": "upcoming"
+      },
+      {
+        "id": "vallabh-vidhyanagar",
+        "name": "Vallabh Vidhyanagar",
+        "address": "Vallabh Vidhyanagar – 388120",
+        "openingDate": "October 2026",
+        "city": "Anand",
+        "state": "Gujarat",
+        "status": "upcoming"
+      },
+      {
+        "id": "hinjawadi-phase-2",
+        "name": "Hinjawadi Phase 2",
+        "address": "VJ Happiness Street, Hinjawadi Phase 2 – 411057",
+        "openingDate": "October 2026",
+        "city": "Pune",
+        "state": "Maharashtra",
+        "status": "upcoming"
+      },
+      {
+        "id": "patan",
+        "name": "Patan",
+        "address": "Patan",
+        "openingDate": "October 2026",
+        "city": "Patan",
+        "state": "Gujarat",
+        "status": "upcoming"
+      },
+      {
+        "id": "tin-batti",
+        "name": "Tin Batti",
+        "address": "Seaface Road, near Taxi Stand, Tin Batti – 396210",
+        "openingDate": "TBA",
+        "city": "Daman",
+        "state": "Dadra and Nagar Haveli and Daman and Diu",
+        "status": "upcoming"
+      },
+      {
+        "id": "chandra-park",
+        "name": "Chandra Park",
+        "address": "Chandra Park 2 Corner, near Big Bazar, opposite Reliance Mall, 150 Feet Ring Road – 360005",
+        "openingDate": "TBA",
+        "city": "Rajkot",
+        "state": "Gujarat",
+        "status": "upcoming"
+      },
+      {
+        "id": "ghatlodiya",
+        "name": "Ghatlodiya",
+        "address": "S One Commercial, Maharana Pratap Road, Chanakyapuri – 380061",
+        "openingDate": "TBA",
+        "city": "Ahmedabad",
+        "state": "Gujarat",
+        "status": "upcoming"
+      },
+      {
+        "id": "mehsana",
+        "name": "Mehsana",
+        "address": "Radhanpur Road, opposite Ravi Shopping, near Dwarkapuri Flats – 384002",
+        "openingDate": "TBA",
+        "city": "Mehsana",
+        "state": "Gujarat",
+        "status": "upcoming"
+      }
+    ]
+  }
+}

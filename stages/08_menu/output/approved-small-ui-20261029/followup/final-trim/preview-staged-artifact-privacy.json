@@ -1,0 +1,23 @@
+{
+  "status": "PASS",
+  "checkedAt": "2026-10-29T23:28:30.862367+00:00",
+  "url": "http://127.0.0.1:48244/followup/index.html",
+  "stagedApkExists": true,
+  "routes": [
+    {
+      "path": "/followup/index.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/followup/final-trim/burgonomics-delivery-final-trim-debug.apk",
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "path": "/followup/final-trim/apk-compatibility.json",
+      "status": 404,
+      "expected": 404
+    }
+  ]
+}

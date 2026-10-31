@@ -1,0 +1,38 @@
+{
+  "location": {
+    "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics"
+  },
+  "servers": [
+    {
+      "name": "code-review",
+      "status": {
+        "status": "connected"
+      }
+    },
+    {
+      "name": "context7",
+      "status": {
+        "status": "connected"
+      },
+      "integrationID": "mcp_54d03abee7d4e11b"
+    },
+    {
+      "name": "firebase",
+      "status": {
+        "status": "connected"
+      }
+    },
+    {
+      "name": "shadcn",
+      "status": {
+        "status": "connected"
+      }
+    },
+    {
+      "name": "vera",
+      "status": {
+        "status": "connected"
+      }
+    }
+  ]
+}

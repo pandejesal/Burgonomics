@@ -1,0 +1,105 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/Desktop/Burgonomics/stages/08_menu/output/integration-acceptance-20261029/firebase-qa/temp-rules-suite
+
+stderr | ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 10. [LEASE-MASK-CONTRACT] the workflow mask is exactly the client-advance set
+[2026-10-29T09:35:35.122Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x4882038a error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L592:24 for 'update' @ L592, Property role is undefined on object. for 'update' @ L592
+
+stderr | ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 14. [LEASE-DUAL-ROLE-DENY] a caller matching BOTH arms is still bounded by the shared mask
+[2026-10-29T09:37:21.888Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x48820392 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L592:24 for 'update' @ L592, false for 'update' @ L592
+
+stderr | ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 14. [LEASE-DUAL-ROLE-DENY] a caller matching BOTH arms is still bounded by the shared mask
+[2026-10-29T09:37:22.787Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x48820393 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L592:24 for 'update' @ L592, false for 'update' @ L592
+
+ ❯ ticket-resolution-lease.rules.test.ts (26 tests | 8 failed) 386290ms
+   ❯ Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned (26)
+     × 6. [LEASE-TIMELINE-FALLBACK-ALLOW] the real client fallback payload still passes on both collections 23018ms
+     × 7. [LEASE-BRANCH-OWN-BATCH-ALLOW] branch staff keep their scoped workflow path 15467ms
+     × 8. [LEASE-BRANCH-CROSS-DENY] a foreign branch operator still cannot touch the ticket 21932ms
+     × 9. [LEASE-DENIED-WRITE-LEAVES-NO-CLAIM] a refused injection mutates nothing 76274ms
+     × 10. [LEASE-MASK-CONTRACT] the workflow mask is exactly the client-advance set 112106ms
+     × 11. [LEASE-DELETEFIELD-DENY] the workflow mask cannot be satisfied by erasure 3193ms
+     × 12. [LEASE-TERMINAL-STATUS-DENY] a client cannot close the book (status resolved/closed) 2782ms
+     × 14. [LEASE-DUAL-ROLE-DENY] a caller matching BOTH arms is still bounded by the shared mask 8937ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 6. [LEASE-TIMELINE-FALLBACK-ALLOW] the real client fallback payload still passes on both collections
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ ticket-resolution-lease.rules.test.ts:243:3
+    241|   });
+    242|
+    243|   it("6. [LEASE-TIMELINE-FALLBACK-ALLOW] the real client fallback payl…
+       |   ^
+    244|     if (!emulatorAvailable) return context.skip();
+    245|     const brandDb = testEnv!.authenticatedContext("brand_owner_1").fir…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 7. [LEASE-BRANCH-OWN-BATCH-ALLOW] branch staff keep their scoped workflow path
+ FAIL  ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 8. [LEASE-BRANCH-CROSS-DENY] a foreign branch operator still cannot touch the ticket
+ FAIL  ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 11. [LEASE-DELETEFIELD-DENY] the workflow mask cannot be satisfied by erasure
+ FAIL  ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 12. [LEASE-TERMINAL-STATUS-DENY] a client cannot close the book (status resolved/closed)
+Error: {"error":{"code":409,"message":"Transaction lock timeout.","status":"ABORTED"}}
+ ❯ RulesTestEnvironmentImpl.clearFirestore ../../../../../../burgonomics-foundation-core/node_modules/@firebase/rules-unit-testing/src/impl/test_environment.ts:119:13
+ ❯ ticket-resolution-lease.rules.test.ts:106:5
+    104|     }
+    105|
+    106|     await testEnv.clearFirestore();
+       |     ^
+    107|
+    108|     await testEnv.withSecurityRulesDisabled(async (ctx) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 9. [LEASE-DENIED-WRITE-LEAVES-NO-CLAIM] a refused injection mutates nothing
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ ticket-resolution-lease.rules.test.ts:287:3
+    285|   });
+    286|
+    287|   it("9. [LEASE-DENIED-WRITE-LEAVES-NO-CLAIM] a refused injection muta…
+       |   ^
+    288|     if (!emulatorAvailable) return context.skip();
+    289|     const brandDb = testEnv!.authenticatedContext("brand_owner_1").fir…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 10. [LEASE-MASK-CONTRACT] the workflow mask is exactly the client-advance set
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ ticket-resolution-lease.rules.test.ts:311:3
+    309|   });
+    310|
+    311|   it("10. [LEASE-MASK-CONTRACT] the workflow mask is exactly the clien…
+       |   ^
+    312|     if (!emulatorAvailable) return context.skip();
+    313|     const brandDb = testEnv!.authenticatedContext("brand_owner_1").fir…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  ticket-resolution-lease.rules.test.ts > Firestore Security Rules — ticket audit state (lease + terminal lock) stays server-owned > 14. [LEASE-DUAL-ROLE-DENY] a caller matching BOTH arms is still bounded by the shared mask
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ ticket-resolution-lease.rules.test.ts:431:3
+    429|   });
+    430|
+    431|   it("14. [LEASE-DUAL-ROLE-DENY] a caller matching BOTH arms is still …
+       |   ^
+    432|     if (!emulatorAvailable) return context.skip();
+    433|     // admins doc role branch_owner (branch_01) while the ID token car…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+
+ Test Files  1 failed | 3 passed (4)
+      Tests  8 failed | 105 passed (113)
+   Start at  14:59:46
+   Duration  574.09s (tests 96%, import 3%)
+

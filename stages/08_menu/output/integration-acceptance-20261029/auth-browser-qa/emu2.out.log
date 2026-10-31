@@ -1,0 +1,14 @@
+[2026-10-29T10:48:51.702Z] ----------------------------------------------------------------------
+[2026-10-29T10:48:51.717Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\DELL\Desktop\Burgonomics\.swarm-worktrees\delivery-launch-ui-20261028\node_modules\firebase-tools\lib\bin\firebase.js emulators:start --only auth --project demo-burgonomics-auth-qa --config C:\Users\DELL\Desktop\Burgonomics\stages\08_menu\output\integration-acceptance-20261029\auth-browser-qa\firebase.json --debug
+[2026-10-29T10:48:51.721Z] CLI Version:   15.30.2
+[2026-10-29T10:48:51.724Z] Platform:      win32
+[2026-10-29T10:48:51.732Z] Node Version:  v24.18.0
+[2026-10-29T10:48:51.734Z] Detected Agent: opencode
+[2026-10-29T10:48:51.735Z] Time:          Thu Oct 29 2026 16:18:51 GMT+0530 (India Standard Time)
+[2026-10-29T10:48:51.736Z] ----------------------------------------------------------------------
+
+i  emulators: Starting emulators: auth {"metadata":{"emulator":{"name":"hub"},"message":"Starting emulators: auth"}}
+i  emulators: Detected demo project ID "demo-burgonomics-auth-qa", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail. {"metadata":{"emulator":{"name":"hub"},"message":"Detected demo project ID \"demo-burgonomics-auth-qa\", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail."}}
+[2026-10-29T10:48:57.364Z] [logging] Logging Emulator only supports listening on one address (127.0.0.1). Not listening on ::1
+[2026-10-29T10:48:57.365Z] assigned listening specs for emulators {"user":{"auth":[{"address":"127.0.0.1","family":"IPv4","port":48692}],"hub":[{"address":"127.0.0.1","family":"IPv4","port":4400},{"address":"::1","family":"IPv6","port":4400}],"logging":[{"address":"127.0.0.1","family":"IPv4","port":4500}]},"metadata":{"message":"assigned listening specs for emulators"}}
+[2026-10-29T10:48:57.386Z] Write emulator hub locator at C:\Users\DELL\AppData\Local\Temp\hub-demo-burgonomics-auth-qa.json

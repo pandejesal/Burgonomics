@@ -1,0 +1,268 @@
+{
+  "status": "PASS",
+  "samples": [
+    {
+      "mode": "Dine-in",
+      "width": 360,
+      "scrollLeft": 0,
+      "firstHeadline": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "cards": [
+        {
+          "name": "Burgers",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Sides",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Shakes & Drinks",
+          "top": 571.25,
+          "bottom": 685.25,
+          "width": 114,
+          "height": 114
+        }
+      ],
+      "navTop": 702,
+      "wrapsVisible": false,
+      "basketPosition": "relative",
+      "overflow": 0
+    },
+    {
+      "mode": "Delivery",
+      "width": 360,
+      "scrollLeft": 0,
+      "firstHeadline": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "cards": [
+        {
+          "name": "Burgers",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Sides",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Shakes & Drinks",
+          "top": 571.25,
+          "bottom": 685.25,
+          "width": 114,
+          "height": 114
+        }
+      ],
+      "navTop": 702,
+      "wrapsVisible": false,
+      "basketPosition": "relative",
+      "overflow": 0
+    },
+    {
+      "mode": "Dine-in",
+      "width": 320,
+      "scrollLeft": 0,
+      "firstHeadline": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "cards": [
+        {
+          "name": "Burgers",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Sides",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Shakes & Drinks",
+          "top": 571.25,
+          "bottom": 685.25,
+          "width": 114,
+          "height": 114
+        }
+      ],
+      "navTop": 702,
+      "wrapsVisible": false,
+      "basketPosition": "relative",
+      "overflow": 0
+    },
+    {
+      "mode": "Delivery",
+      "width": 320,
+      "scrollLeft": 0,
+      "firstHeadline": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "cards": [
+        {
+          "name": "Burgers",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Sides",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Shakes & Drinks",
+          "top": 571.25,
+          "bottom": 685.25,
+          "width": 114,
+          "height": 114
+        }
+      ],
+      "navTop": 702,
+      "wrapsVisible": false,
+      "basketPosition": "relative",
+      "overflow": 0
+    }
+  ],
+  "fonts": {
+    "brand": {
+      "family": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "weight": "400"
+    },
+    "heading": {
+      "family": "MonstroSolid, Montserrat, ui-sans-serif, system-ui, sans-serif",
+      "weight": "400"
+    },
+    "subhead": {
+      "family": "Montserrat, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "weight": "700"
+    },
+    "content": {
+      "family": "Montserrat, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "weight": "400"
+    },
+    "displayLoaded": true,
+    "regularLoaded": true,
+    "boldLoaded": true
+  },
+  "branchSamples": [
+    {
+      "width": 320,
+      "dark": false,
+      "count": 8,
+      "horizontal": true,
+      "slideWidth": 288,
+      "railWidth": 288,
+      "textFits": true,
+      "hasOrderActions": false,
+      "targets": [
+        {
+          "width": 44,
+          "height": 44
+        },
+        {
+          "width": 44,
+          "height": 44
+        },
+        {
+          "width": 44,
+          "height": 44
+        }
+      ],
+      "overflow": 0
+    },
+    {
+      "width": 320,
+      "dark": true,
+      "count": 8,
+      "horizontal": true,
+      "slideWidth": 288,
+      "railWidth": 288,
+      "textFits": true,
+      "hasOrderActions": false,
+      "targets": [
+        {
+          "width": 44,
+          "height": 44
+        },
+        {
+          "width": 44,
+          "height": 44
+        },
+        {
+          "width": 44,
+          "height": 44
+        }
+      ],
+      "overflow": 0
+    },
+    {
+      "width": 390,
+      "dark": false,
+      "count": 8,
+      "horizontal": true,
+      "slideWidth": 358,
+      "railWidth": 358,
+      "textFits": true,
+      "hasOrderActions": false,
+      "targets": [
+        {
+          "width": 44,
+          "height": 44
+        },
+        {
+          "width": 44,
+          "height": 44
+        },
+        {
+          "width": 44,
+          "height": 44
+        }
+      ],
+      "overflow": 0
+    },
+    {
+      "width": 390,
+      "dark": true,
+      "count": 8,
+      "horizontal": true,
+      "slideWidth": 358,
+      "railWidth": 358,
+      "textFits": true,
+      "hasOrderActions": false,
+      "targets": [
+        {
+          "width": 44,
+          "height": 44
+        },
+        {
+          "width": 44,
+          "height": 44
+        },
+        {
+          "width": 44,
+          "height": 44
+        }
+      ],
+      "overflow": 0
+    }
+  ],
+  "rotationObserved": true,
+  "failures": [],
+  "errors": [],
+  "physicalDeviceAcceptance": false
+}

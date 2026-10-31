@@ -1,0 +1,796 @@
+{
+  "generatedAt": "2026-10-16T16:39:37.352Z",
+  "hosts": [
+    [
+      "order",
+      "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1"
+    ],
+    [
+      "menu",
+      "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1"
+    ]
+  ],
+  "auth": [
+    {
+      "kind": "auth",
+      "label": "correct body creds",
+      "status": 200,
+      "body": "{\"success\":\"1\",\"message\":\"Your order is saved.\",\"restID\":\"31z58ciw0h\",\"clientOrderID\":\"bgx_route_correct_body_creds_1792168724577\",\"orderID\":\"\",\"code\":200}"
+    },
+    {
+      "kind": "auth",
+      "label": "bogus body creds",
+      "status": 200,
+      "body": "{\"success\":\"0\",\"message\":\"Invalid client credentials.\",\"errorCode\":\"GN_105\",\"validation_errors\":\"\"}"
+    },
+    {
+      "kind": "auth",
+      "label": "no creds anywhere",
+      "status": 200,
+      "body": "{\"success\":\"0\",\"message\":\"Invalid client credentials.\",\"errorCode\":\"GN_105\",\"validation_errors\":\"\"}"
+    },
+    {
+      "kind": "auth",
+      "label": "header-only creds",
+      "status": 200,
+      "body": "{\"success\":\"0\",\"message\":\"Invalid client credentials.\",\"errorCode\":\"GN_105\",\"validation_errors\":\"\"}"
+    }
+  ],
+  "routeRows": [
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "update_order_status",
+      "status": 200,
+      "cls": "EXISTS",
+      "body": "{\"success\":\"1\",\"message\":\"Order status updated successfully.\",\"restID\":\"31z58ciw0h\",\"clientOrderID\":\"\",\"orderID\":\"\",\"status\":\"\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "cancel_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "order_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "get_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "order_details",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "order_list",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "get_orders",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "acknowledge_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "save_order_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "update_store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "get_store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "update_item_stock",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "mapped_restaurant_menus",
+      "status": 200,
+      "cls": "EXISTS",
+      "body": "{\"success\":\"0\",\"message\":\"unable to fetch Object from s3 bucket\",\"validation_errors\":\"\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "updateStoreStatus",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "update_store",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "storeStatus",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "update_store_availability",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "set_store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "store",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "update_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "order_update_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "order_status_update",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "cancel",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "order_cancel",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "orders",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "push_menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "menu_push",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "get_menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "get_menu_items",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "rider_info",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "rider",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "rider_info_webhook",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "health",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "ping",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "order_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "get_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "order_details",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "order_list",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "get_orders",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "get_store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "get_menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "order",
+      "method": "GET",
+      "path": "menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "update_order_status",
+      "status": 200,
+      "cls": "EXISTS",
+      "body": "{\"success\":\"1\",\"message\":\"Order status updated successfully.\",\"restID\":\"31z58ciw0h\",\"clientOrderID\":\"\",\"orderID\":\"\",\"status\":\"\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "cancel_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "order_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "get_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "order_details",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "order_list",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "get_orders",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "acknowledge_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "save_order_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "update_store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "get_store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "update_item_stock",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "mapped_restaurant_menus",
+      "status": 200,
+      "cls": "EXISTS",
+      "body": "{\"success\":\"0\",\"message\":\"unable to fetch Object from s3 bucket\",\"validation_errors\":\"\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "updateStoreStatus",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "update_store",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "storeStatus",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "update_store_availability",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "set_store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "store",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "update_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "order_update_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "order_status_update",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "cancel",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "order_cancel",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "orders",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "push_menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "menu_push",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "get_menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "get_menu_items",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "rider_info",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "rider",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "rider_info_webhook",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "health",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "ping",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "order_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "get_order",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "order_details",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "order_list",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "get_orders",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "get_store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "store_status",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "get_menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    },
+    {
+      "host": "menu",
+      "method": "GET",
+      "path": "menu",
+      "status": 403,
+      "cls": "NO_ROUTE",
+      "body": "{\"message\":\"Missing Authentication Token\"}"
+    }
+  ],
+  "existing": [
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "update_order_status",
+      "status": 200,
+      "cls": "EXISTS",
+      "body": "{\"success\":\"1\",\"message\":\"Order status updated successfully.\",\"restID\":\"31z58ciw0h\",\"clientOrderID\":\"\",\"orderID\":\"\",\"status\":\"\"}"
+    },
+    {
+      "host": "order",
+      "method": "POST",
+      "path": "mapped_restaurant_menus",
+      "status": 200,
+      "cls": "EXISTS",
+      "body": "{\"success\":\"0\",\"message\":\"unable to fetch Object from s3 bucket\",\"validation_errors\":\"\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "update_order_status",
+      "status": 200,
+      "cls": "EXISTS",
+      "body": "{\"success\":\"1\",\"message\":\"Order status updated successfully.\",\"restID\":\"31z58ciw0h\",\"clientOrderID\":\"\",\"orderID\":\"\",\"status\":\"\"}"
+    },
+    {
+      "host": "menu",
+      "method": "POST",
+      "path": "mapped_restaurant_menus",
+      "status": 200,
+      "cls": "EXISTS",
+      "body": "{\"success\":\"0\",\"message\":\"unable to fetch Object from s3 bucket\",\"validation_errors\":\"\"}"
+    }
+  ],
+  "verdict": "routed paths beyond save_order: order POST /update_order_status, order POST /mapped_restaurant_menus, menu POST /update_order_status, menu POST /mapped_restaurant_menus"
+}

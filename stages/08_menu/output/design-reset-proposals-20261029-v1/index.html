@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Burgonomics — proposed screens, not approved</title>
+  <link rel="stylesheet" href="./proposal.css">
+  <script src="./proposal.js" defer></script>
+</head>
+<body data-theme="light">
+  <header class="review-bar">
+    <div class="review-identity"><strong>Burgonomics</strong><span>Design reset / v1</span></div>
+    <nav aria-label="Proposed screens" class="review-navigation">
+      <button data-screen="home" aria-current="page">01 Home</button>
+      <button data-screen="menu">02 Menu + Cart</button>
+      <button data-screen="partner">03 Partner</button>
+    </nav>
+    <div class="theme-control" role="group" aria-label="Proposal colour scheme">
+      <button data-theme-choice="light" aria-pressed="true">Light</button>
+      <button data-theme-choice="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+  <main>
+    <section class="proposal-board" data-board="home" aria-labelledby="home-board-title">
+      <div class="board-heading"><span class="proposal-label">PROPOSED · NOT APPROVED OR SHIPPED</span><h1 id="home-board-title">Delivery / Home</h1><p>Food first. Four clear entrances. Space to breathe.</p></div>
+      <div class="capture capture-home" id="capture-home">
+        <div class="capture-label">01 / Delivery Home <span>Proposed · not approved</span></div>
+        <div class="phone app-frame" id="home-proposal"></div>
+      </div>
+      <p class="board-footnote">Actual Burgonomics photographs and approved announcements. Bestseller selection is proposed, not a verified sales ranking. Wraps is not invented.</p>
+    </section>
+    <section class="proposal-board" data-board="menu" aria-labelledby="menu-board-title" hidden>
+      <div class="board-heading"><span class="proposal-label">PROPOSED · NOT APPROVED OR SHIPPED</span><h1 id="menu-board-title">Delivery / Menu &amp; Cart</h1><p>One continuous menu. One cooking note. One clear checkout action.</p></div>
+      <div class="capture capture-menu" id="capture-menu">
+        <div class="capture-label">02 / Menu &amp; Cart <span>Proposed · illustrative basket</span></div>
+        <div class="phone-pair"><div class="phone app-frame" id="menu-proposal"></div><div class="phone app-frame" id="cart-proposal"></div></div>
+      </div>
+      <p class="board-footnote">Menu names/prices are a public-preview snapshot. Adjacent sections demonstrate continuous scrolling; the full catalogue is retained after approval. The basket, tax and total are illustrative, not a live quote.</p>
+    </section>
+    <section class="proposal-board" data-board="partner" aria-labelledby="partner-board-title" hidden>
+      <div class="board-heading wide"><span class="proposal-label">PROPOSED · NOT APPROVED OR SHIPPED</span><h1 id="partner-board-title">Partner / Kitchen &amp; Orders</h1><p>Tickets are the workspace. Payment, POS and dispatch are separate states.</p></div>
+      <div class="capture capture-partner" id="capture-partner">
+        <div class="capture-label">03 / Partner operational view <span>Proposed · all tickets and statuses are synthetic</span></div>
+        <div class="partner-shell app-frame" id="partner-proposal"></div>
+      </div>
+      <p class="board-footnote">Visual and information-architecture proposal only. Invite-only access and existing operational workflows remain server-controlled. No live orders, retries, printer actions or dispatch calls are connected.</p>
+    </section>
+  </main>
+  <div class="preview-toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

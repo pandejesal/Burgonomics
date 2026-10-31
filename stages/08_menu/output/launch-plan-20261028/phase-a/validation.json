@@ -1,0 +1,39 @@
+{
+  "checkedAt": "2026-10-28T09:54:08+05:30",
+  "scope": "Phase A artifacts only; no application/package/provider/native/store gate",
+  "markdownFiles": 22,
+  "relativeLinks": 81,
+  "tables": 34,
+  "artifactFingerprintChecks": 24,
+  "sourceEntries": 118,
+  "sourceMatches": 118,
+  "pythonHelpersParsed": 4,
+  "mockupJavaScriptSyntaxExit": 0,
+  "renderRevision": "v0-r1",
+  "reviewRenders": 11,
+  "reviewBoards": 2,
+  "contrastChecks": 28,
+  "repositoryMetadataPreservation": [
+    {
+      "group": "G-ROOT",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "statusPathsUnchangedOutsideOwnedArtifactDirectories": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "statusPathsUnchangedOutsideOwnedArtifactDirectories": true
+    },
+    {
+      "group": "G-PARTNER",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "statusPathsUnchangedOutsideOwnedArtifactDirectories": true
+    }
+  ],
+  "limits": "Status-path equality does not prove every unmanifested byte is unchanged; no ownership or release baseline inferred. Earlier render retained as superseded.",
+  "errors": [],
+  "exit": 0
+}

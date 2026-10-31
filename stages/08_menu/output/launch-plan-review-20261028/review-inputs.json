@@ -1,0 +1,34 @@
+{
+  "capturedAt": "2026-10-28T10:40:09+05:30",
+  "files": [
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/01-DECISIONS-AND-OWNERSHIP.md",
+      "sha256": "8CFD6A18E26C43B65929B20B4BC1154597BAC7E35C218ADD6FDFA6F57E514E6B"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/03-DELIVERY-DESIGN.md",
+      "sha256": "7A60CA2B67C007DB5D3004BD28BA48FD61AFF3EB8FFBFCF0FF327A3A9E7B9297"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/05-BACKEND-SECURITY.md",
+      "sha256": "4E23C746DC52654ECE07649CABB18953B4B44FFE52C3019FB5F12C411C62E907"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/06-RELEASE-INFRASTRUCTURE.md",
+      "sha256": "6777DAD789722BAB2DCAB5D6C6A6A5FB4119E6DB50EB62CC0B5CE68FFEC42056"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/07-REELO-FEASIBILITY.md",
+      "sha256": "6A58D09E550E313437C73F442F50E31C15543E6E2559ACCB3B916C3A11C08C09"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/08-SCHEDULE.md",
+      "sha256": "74A3391190308B7444147C4C2D45622DBE13C70AE1C033661854661576E516E6"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/09-ACCEPTANCE-MATRIX.md",
+      "sha256": "D49C8006D54D9B19B77082A893955B9C0678CD0B07CAB2CEB01EA3311C3F6ED4"
+    }
+  ],
+  "scope": "document bytes before accepting review corrections; source byte baseline in fresh-observations.json"
+}

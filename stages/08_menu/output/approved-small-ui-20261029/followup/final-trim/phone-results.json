@@ -1,0 +1,23 @@
+{
+  "status": "REQUESTED_REMOVALS_VERIFIED_NATIVE_GESTURES_INCOMPLETE",
+  "device": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "installedSha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+  "cartPriceLockPillAbsent": true,
+  "branchSubtitleAbsent": true,
+  "branchControlStripAbsent": true,
+  "branchTrailingDividerAbsent": true,
+  "nativeRotationAccepted": false,
+  "nativeSwipeAccepted": false,
+  "rotationAttempt": "Second capture shows Menu rather than the same branch screen; not a passing rotation test.",
+  "swipeAttempt": "Device refused MotionEvent during subsequent navigation; not a passing gesture test or evidence of an application regression.",
+  "evidence": ["phone-cart-final-trim.png", "phone-branches-auto-a.png"],
+  "invalidForRotationAcceptance": ["phone-branches-auto-b.png"],
+  "realBasketObservedAfterUpdate": true,
+  "basketModifiedByAgent": false,
+  "privateAccountOrLoyaltyDataInspected": false,
+  "screenshotsRedactedBeforeViewing": true,
+  "ownerReportedSelfChecks": true,
+  "ownerRequestedMissingHomeSectionsNext": true,
+  "providerOrProductionAcceptance": false
+}

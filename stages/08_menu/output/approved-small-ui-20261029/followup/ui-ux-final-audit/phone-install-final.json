@@ -1,0 +1,23 @@
+{
+  "status": "INSTALLED_AND_VERIFIED",
+  "device": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "startedAt": "2026-10-30T05:33:48.485625+00:00",
+  "completedAt": "2026-10-30T05:33:57.359596+00:00",
+  "command": "adb install -r only",
+  "beforeSha256": "c0448c3234c031cd9a25b68b96f799d5f26ec25533b9660353f1cee19d36499b",
+  "installedSha256": "33615bd9e26797f4ddde61fa6f91c9bec5efcacf4047de445976301d5453a576",
+  "candidateSha256": "33615bd9e26797f4ddde61fa6f91c9bec5efcacf4047de445976301d5453a576",
+  "metadata": {
+    "versionCode": "1 minSdk=24 targetSdk=36",
+    "versionName": "1.0.0",
+    "firstInstallTime": "2026-10-27 11:32:45",
+    "lastUpdateTime": "2026-10-30 11:03:55"
+  },
+  "firstInstallTimeUnchanged": true,
+  "uninstallPerformed": false,
+  "dataClearPerformed": false,
+  "downgradePerformed": false,
+  "basketSeededOrRestored": false,
+  "phoneUiVerified": false
+}

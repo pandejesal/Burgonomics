@@ -1,0 +1,19 @@
+{
+  "kind": "QA TEST-MODE (development bundle, NOT release-representative)",
+  "candidate": {
+    "sha256": "760a170ede644150086d89ab40e070bf3b7c7a486cf10ceffb5551f26e36eef3",
+    "package": "com.burgonomics",
+    "versionCode": 1,
+    "versionName": "1.0.0",
+    "signers": [
+      "8f3f90a62057409a48d7fc2a750798ec2e209b889ab377ba692204c94a069a48"
+    ],
+    "debuggable": true,
+    "signatureVerified": true
+  },
+  "stagedApk": "C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\approved-small-ui-20261029\\followup\\ui-ux-final-audit\\burgonomics-testmode-debug.apk",
+  "stagedSha256": "760a170ede644150086d89ab40e070bf3b7c7a486cf10ceffb5551f26e36eef3",
+  "bundledWebFilesCompared": 179,
+  "razorpayTestKeyEmbedded": true,
+  "releaseStyleArtifact": "33615bd9e26797f4ddde61fa6f91c9bec5efcacf4047de445976301d5453a576"
+}

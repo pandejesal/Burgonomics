@@ -1,0 +1,104 @@
+{
+  "status": "PASS",
+  "samples": [
+    {
+      "theme": "light",
+      "width": 320,
+      "heading": "Best sellers",
+      "firstProduct": "Cheese Burst Burger",
+      "cards": 6,
+      "pricePresent": true,
+      "sectionBottom": 613.25,
+      "navTop": 766,
+      "overflow": 0,
+      "activeScripts": 0
+    },
+    {
+      "theme": "light",
+      "width": 320,
+      "heading": "Make it a meal",
+      "firstProduct": "Any Big Bang Burger Meal",
+      "cards": 5,
+      "pricePresent": true,
+      "sectionBottom": 617.03125,
+      "navTop": 766,
+      "overflow": 0,
+      "activeScripts": 0
+    },
+    {
+      "theme": "light",
+      "width": 390,
+      "heading": "Best sellers",
+      "firstProduct": "Cheese Burst Burger",
+      "cards": 6,
+      "pricePresent": true,
+      "sectionBottom": 613.25,
+      "navTop": 766,
+      "overflow": 0,
+      "activeScripts": 0
+    },
+    {
+      "theme": "light",
+      "width": 390,
+      "heading": "Make it a meal",
+      "firstProduct": "Any Big Bang Burger Meal",
+      "cards": 5,
+      "pricePresent": true,
+      "sectionBottom": 617.03125,
+      "navTop": 766,
+      "overflow": 0,
+      "activeScripts": 0
+    },
+    {
+      "theme": "dark",
+      "width": 320,
+      "heading": "Best sellers",
+      "firstProduct": "Cheese Burst Burger",
+      "cards": 6,
+      "pricePresent": true,
+      "sectionBottom": 613.25,
+      "navTop": 766,
+      "overflow": 0,
+      "activeScripts": 0
+    },
+    {
+      "theme": "dark",
+      "width": 320,
+      "heading": "Make it a meal",
+      "firstProduct": "Any Big Bang Burger Meal",
+      "cards": 5,
+      "pricePresent": true,
+      "sectionBottom": 617.03125,
+      "navTop": 766,
+      "overflow": 0,
+      "activeScripts": 0
+    },
+    {
+      "theme": "dark",
+      "width": 390,
+      "heading": "Best sellers",
+      "firstProduct": "Cheese Burst Burger",
+      "cards": 6,
+      "pricePresent": true,
+      "sectionBottom": 613.25,
+      "navTop": 766,
+      "overflow": 0,
+      "activeScripts": 0
+    },
+    {
+      "theme": "dark",
+      "width": 390,
+      "heading": "Make it a meal",
+      "firstProduct": "Any Big Bang Burger Meal",
+      "cards": 5,
+      "pricePresent": true,
+      "sectionBottom": 617.03125,
+      "navTop": 766,
+      "overflow": 0,
+      "activeScripts": 0
+    }
+  ],
+  "pageErrors": [],
+  "liveRuntimeAcceptance": false,
+  "phoneAcceptance": false
+}

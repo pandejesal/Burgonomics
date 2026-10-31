@@ -1,0 +1,27 @@
+{
+  "compatible": true,
+  "method": "Exact SHA256 identity to independently signed verified immutable APK reports; fresh Java verifier timed out before installation",
+  "before": {
+    "sha256": "afe1012638dd0f15a8ace0c0b0fab9b65c1853da4725be34436f0e1614428a31",
+    "package": "com.burgonomics",
+    "versionCode": 1,
+    "versionName": "1.0.0",
+    "signers": [
+      "8f3f90a62057409a48d7fc2a750798ec2e209b889ab377ba692204c94a069a48"
+    ],
+    "debuggable": true,
+    "signatureVerified": true
+  },
+  "candidate": {
+    "sha256": "49b8c10953e1c8141df21bb551902d028d2bd020150bbc6f74c28255ce2c4cc5",
+    "package": "com.burgonomics",
+    "versionCode": 1,
+    "versionName": "1.0.0",
+    "signers": [
+      "8f3f90a62057409a48d7fc2a750798ec2e209b889ab377ba692204c94a069a48"
+    ],
+    "debuggable": true,
+    "signatureVerified": true
+  },
+  "newAuthRepairsIncluded": false
+}

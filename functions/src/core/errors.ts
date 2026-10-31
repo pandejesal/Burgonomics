@@ -4,7 +4,7 @@ import * as admin from "firebase-admin";
 
 export interface DevErrorSnapshot {
   id?: string;
-  source: "payments" | "petpooja" | "porter" | "tickets" | "notifications" | "auth" | "system";
+  source: "payments" | "petpooja" | "porter" | "dispatch" | "tickets" | "notifications" | "auth" | "system";
   severity: "low" | "medium" | "high" | "p0_critical";
   message: string;
   errorStack?: string;
@@ -52,12 +52,22 @@ export async function captureErrorSnapshot(
       )
     : undefined;
   // Caller-built messages often interpolate raw payment ids
-  // (e.g. "Unmatched captured payment pay_...") — mask those too.
-  const scrubbedMessage = snapshot.message.replace(
-    /\b(pay_[A-Za-z0-9]+)\b/g,
-    (_m, id) => maskIdentifier(id)
-  );
-  const fullSnapshot: DevErrorSnapshot = {
+  // (e.g. "Unmatched captured payment pay_...") — mask those too, along
+  // with any pasted Indian mobile numbers and email addresses (DPDP:
+  // free-text fields routinely carry contact PII into snapshots).
+  const scrubbedMessage = snapshot.message
+    .replace(/\b(pay_[A-Za-z0-9]+)\b/g, (_m, id) => maskIdentifier(id))
+    .replace(/\b(\+91[\s-]?)?[6-9]\d{9}\b/g, (m) =>
+      m.length <= 4 ? "****" : `${m.slice(0, 2)}****${m.slice(-2)}`
+    )
+    .replace(
+      /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+      (m) => {
+        const [local, domain] = m.split("@");
+        return `${(local || "").slice(0, 2)}****@${domain}`;
+      }
+    );
+  const maskedSnapshot: DevErrorSnapshot = {
     ...snapshot,
     message: scrubbedMessage,
     customerId: snapshot.customerId ? maskIdentifier(snapshot.customerId) : undefined,
@@ -72,6 +82,18 @@ export async function captureErrorSnapshot(
     id: snapshotId,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+
+  // Firestore rejects an explicitly-`undefined` field value, so every optional
+  // key has to be OMITTED rather than set to undefined — including any key a
+  // caller passed as `undefined` through the `...snapshot` spread above.
+  // Writing the object as-is made EVERY snapshot insert throw
+  // `Cannot use "undefined" as a Firestore value (found in field "customerId")`.
+  // That throw was swallowed by the catch below, so no `dev_error_snapshots`
+  // row was ever persisted for a Petpooja failure — the "manual review
+  // required" / "KOT push failed" trail ops relies on silently did not exist.
+  const fullSnapshot = Object.fromEntries(
+    Object.entries(maskedSnapshot).filter(([, value]) => value !== undefined)
+  ) as DevErrorSnapshot;
 
   try {
     if (db && typeof db.collection === "function") {
@@ -106,6 +128,11 @@ export const USER_SAFE_ERROR_COPY: Record<string, string> = {
   TICKET_INVALID_INPUT: "Some ticket details look invalid. Please check the form and try again.",
   TICKET_FORBIDDEN: "You do not have permission to perform this ticket action.",
   TICKET_MESSAGE_EMPTY: "Your reply is empty. Please write a message first.",
+  TICKET_ALREADY_RESOLVED: "This ticket is already resolved. Reopen it before resolving again.",
+  TICKET_NOT_PENDING: "This ticket is already resolved.",
+  TICKET_RESOLUTION_IN_PROGRESS: "Another staff member is resolving this ticket right now. Refresh in a minute.",
+  TICKET_RESOLUTION_CLAIM_LOST: "The resolution lease on this ticket moved on (it was taken over after a stall). Refresh and retry.",
+  TICKET_RESOLUTION_RETRY: "The ticket is busy under another write right now. Please retry in a moment.",
   // Notifications
   NOTIFY_BAD_TOKEN: "Push registration failed. Please reopen the app and allow notifications.",
   NOTIFY_SEND_FAILED: "Notification could not be delivered, but your request was saved.",
@@ -163,6 +190,9 @@ async function dispatchDeveloperAlert(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: alertText }),
+        // P2: captureErrorSnapshot awaits this on inline request paths — a
+        // hung Slack webhook must not hold the caller until platform timeout.
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
       console.warn("[Errors] Failed to send Slack alert:", err);
@@ -176,6 +206,7 @@ async function dispatchDeveloperAlert(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: alertText }),
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
       console.warn("[Errors] Failed to send Discord alert:", err);

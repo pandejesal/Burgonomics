@@ -1,0 +1,406 @@
+import { Request, Response, NextFunction } from "express";
+import { auth, db } from "./firebase";
+import { config } from "../config/env";
+import { timingSafeEqual } from "./security";
+import { verifyPetpoojaSignature } from "../modules/petpooja/client";
+import * as admin from "firebase-admin";
+
+export interface AuthenticatedRequest extends Request {
+  user?: admin.auth.DecodedIdToken;
+}
+
+/**
+ * Enforces Firebase ID token authentication with checkRevoked enabled.
+ */
+export async function requireAuth(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized: Missing or invalid Bearer token" });
+    return;
+  }
+
+  const token = authHeader.split("Bearer ")[1].trim();
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized: Empty token provided" });
+    return;
+  }
+
+  try {
+    const decoded = await auth.verifyIdToken(token, true); // checkRevoked = true
+    req.user = decoded;
+    next();
+  } catch (err: any) {
+    res.status(401).json({ error: "Unauthorized: Token verification failed or revoked" });
+  }
+}
+
+/**
+ * Optional authentication middleware: populates req.user if valid token provided, but doesn't block guests.
+ */
+export async function optionalAuth(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split("Bearer ")[1].trim();
+    if (token) {
+      try {
+        const decoded = await auth.verifyIdToken(token, false);
+        req.user = decoded;
+      } catch {
+        // Continue unauthenticated
+      }
+    }
+  }
+  next();
+}
+
+/**
+ * Role-Based Access Control (RBAC) middleware.
+ * Checks if authenticated caller has one of the allowed roles in custom claims or admins collection.
+ */
+export function requireRole(allowedRoles: string[]) {
+  return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ error: "Unauthorized: Authentication required" });
+      return;
+    }
+
+    const userRole = req.user.role as string | undefined;
+    const isBrandAdmin =
+      req.user.isBrandAdmin === true ||
+      userRole === "brand_owner" ||
+      userRole === "developer";
+
+    if (isBrandAdmin) {
+      next();
+      return;
+    }
+
+    if (userRole && allowedRoles.includes(userRole)) {
+      next();
+      return;
+    }
+
+    // Fallback: check admins collection if claims not yet refreshed
+    try {
+      const adminDoc = await db.collection("admins").doc(req.user.uid).get();
+      if (adminDoc.exists) {
+        const adminData = adminDoc.data();
+        const role = adminData?.role as string | undefined;
+        if (
+          role &&
+          (allowedRoles.includes(role) ||
+            role === "brand_owner" ||
+            role === "developer")
+        ) {
+          next();
+          return;
+        }
+      }
+    } catch {
+      // Fallback check failed
+    }
+
+    res.status(403).json({ error: "Forbidden: Insufficient privileges for this operation" });
+  };
+}
+
+/**
+ * Least-privilege caller presented to staff-only services. Services enforce
+ * order.branchId ∈ caller.branchIds unless the caller is a brand admin.
+ * The HTTP routes ALWAYS pass req.user — an omitted caller means "trusted
+ * internal path" (schedulers/tests), never an anonymous request.
+ */
+export interface StaffCaller {
+  uid?: string;
+  role?: string | undefined;
+  branchIds?: string[] | undefined;
+  isBrandAdmin?: boolean | undefined;
+  email?: string | null | undefined;
+}
+
+export function isBrandAdminClaim(caller: StaffCaller | undefined): boolean {
+  return (
+    !!caller &&
+    (caller.isBrandAdmin === true ||
+      caller.role === "brand_owner" ||
+      caller.role === "developer")
+  );
+}
+
+function callerBranchIds(caller: StaffCaller | undefined): string[] {
+  const ids = caller?.branchIds;
+  return Array.isArray(ids) ? ids.filter((b): b is string => typeof b === "string") : [];
+}
+
+/**
+ * Branch-level access for branch-keyed (non-order) actions: menu sync,
+ * stock pushes, branch reads. Brand admins pass any branch; scoped staff
+ * must hold the branch. Anonymous callers are rejected.
+ */
+export function assertBranchAccess(
+  caller: StaffCaller | undefined,
+  branchId: string
+): void {
+  if (!caller || (!caller.uid && !caller.email && !caller.role)) {
+    throw new Error("Unauthorized: staff authentication required");
+  }
+  if (isBrandAdminClaim(caller)) return;
+  if (!branchId || !callerBranchIds(caller).includes(branchId)) {
+    throw new Error("Forbidden: branch is outside your assigned branches");
+  }
+}
+
+/** Effective branch of an order doc. Priority: an explicit authoritative
+ * `branchId` (staff/pos backend writes), else the linked delivery store
+ * resolved through the AUTHORITATIVE stores/{id}.partnerBranchId mapping.
+ *
+ * The customer app writes a NESTED store snapshot (ordersService.ts:393-398
+ * `store: input.store`) and, for orders that rely on it, the previous
+ * storeId-only lookup had nothing to read - those orders denied as
+ * unresolvable. NOTE: the same customer writer also stamps an explicit
+ * `branchId` (ordersService.ts:470) and that field is client-writable, so an
+ * explicit branchId is a client CLAIM, not a server truth; a future
+ * cross-check against the store mapping must be a policy decision (see
+ * resolveOrderBranchId comment below) before it is loosened OR trusted. The nested snapshot's
+ * `store.id` is now accepted as a lookup KEY - after verifying the writer's
+ * shape (object with a string id) - and, critically, we never trust any
+ * claim INSIDE the client-copyable snapshot: `partnerBranchId` must come
+ * back from the authoritative stores doc itself.
+ *
+ * Conflicting (top-level storeId != nested store.id) or malformed references
+ * fail CLOSED (null => deny), preserving the deny semantics for scoped and
+ * global callers alike (assertOrderBranchAccess below does the enforcement).
+ */
+export async function resolveOrderBranchId(
+  order: Record<string, any>
+): Promise<string | null> {
+  // CAUTION: an explicit branchId on the order doc is user-input-shaped (the
+  // customer writer stamps it); it stays the priority per current policy, but
+  // treat it as a claim, not a provenance guarantee.
+  if (typeof order.branchId === "string" && order.branchId) return order.branchId;
+
+  const candidates: string[] = [];
+  if (typeof order.storeId === "string" && order.storeId && order.storeId.length <= 100) {
+    candidates.push(order.storeId);
+  }
+  if (
+    order.store &&
+    typeof order.store === "object" &&
+    !Array.isArray(order.store) &&
+    typeof order.store.id === "string" &&
+    order.store.id &&
+    order.store.id.length <= 100 // cap: a giant client-copied id is garbage, not a lookup key
+  ) {
+    candidates.push(order.store.id);
+  }
+  // Both references present but disagreeing: the order contradicts itself -
+  // fail closed instead of picking whichever suits the caller.
+  if (new Set(candidates).size > 1) {
+    return null;
+  }
+
+  for (const storeId of candidates) {
+    try {
+      const snap = await db.collection("stores").doc(storeId).get();
+      const linked = snap.exists ? (snap.data() as any)?.partnerBranchId : undefined;
+      if (typeof linked === "string" && linked) return linked;
+    } catch {
+      // Unresolvable means deny (null falls through below).
+    }
+  }
+  return null;
+}
+
+/**
+ * Throws when the caller may not act on this order. Brand admins pass any
+ * resolvable order; scoped staff must hold the order's branch. Anonymous
+ * (undefined caller) is rejected — services are never reachable without a
+ * route, and every staff route passes req.user.
+ */
+export async function assertOrderBranchAccess(
+  caller: StaffCaller | undefined,
+  order: Record<string, any>
+): Promise<string> {
+  if (!caller || (!caller.uid && !caller.email && !caller.role)) {
+    throw new Error("Unauthorized: staff authentication required");
+  }
+  const branchId = await resolveOrderBranchId(order);
+  if (!branchId) {
+    throw new Error("Forbidden: order has no resolvable branch — link the outlet first");
+  }
+  if (isBrandAdminClaim(caller)) return branchId;
+  if (!callerBranchIds(caller).includes(branchId)) {
+    throw new Error("Forbidden: order is outside your assigned branches");
+  }
+  return branchId;
+}
+
+/**
+ * Maps staff-service errors to HTTP status codes for routes.
+ */
+export function staffErrorStatus(err: any, fallback: number): number {
+  const msg = String(err?.message || "");
+  if (msg.startsWith("Unauthorized")) return 401;
+  if (msg.startsWith("Forbidden")) return 403;
+  return fallback;
+}
+
+/**
+ * Firebase App Check attestation for app-originated routes.
+ *
+ * Monitor by default: missing/invalid tokens are logged, never rejected, so
+ * enabling clients can never break the apps. Set APP_CHECK_ENFORCEMENT=true
+ * (after enrolling web + registering the reCAPTCHA key) to reject.
+ * NEVER applied to webhook routes — third parties cannot mint App Check tokens.
+ */
+export async function requireAppCheck(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const token = req.headers["x-firebase-appcheck"] as string | undefined;
+  if (!token) {
+    if (config.appCheck.enforcement) {
+      res.status(403).json({ error: "Forbidden: missing App Check token" });
+      return;
+    }
+    next();
+    return;
+  }
+  try {
+    await admin.appCheck().verifyToken(token);
+    next();
+  } catch (err: any) {
+    if (config.appCheck.enforcement) {
+      res.status(403).json({ error: "Forbidden: invalid App Check token" });
+      return;
+    }
+    console.warn("[AppCheck] invalid token (monitor mode):", err?.message || err);
+    next();
+  }
+}
+
+/**
+ * Webhook authentication for Petpooja POS bridge — FAIL-CLOSED (H-M3/C4).
+ *
+ * Single inbound secret: PETPOOJA_APP_KEY only, presented via headers
+ * (x-petpooja-token, content_key, or Bearer authorization). The body.app_key
+ * fallback is REMOVED (caller-controlled bodies must not authenticate), and
+ * our OUTBOUND bearers (access_token/app_secret) are never accepted inbound —
+ * accepting them would let anyone who glimpsed one call webhooks.
+ * No mock bypass: an unset appKey denies everything with 401 (never
+ * next(), never 500).
+ */
+/**
+ * Shape test for the two callbacks Petpooja's own documentation POSTs WITHOUT a
+ * credential header:
+ *   - order status: { restID, orderID, status }   ("Accept" / "Reject" / ...)
+ *   - store status: { restID, status }            (1 / 0)
+ * The vendor's Postman example sends only `Content-Type`, so demanding a header
+ * denied every genuine callback here and the POS order id it carries was lost.
+ * This is a SHAPE test only and claims no integrity: the handler still refuses
+ * anything that does not resolve to a linked branch (and, for an order event, to
+ * an order we are already tracking).
+ */
+function looksLikePetpoojaStatusCallback(body: any): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const restId = body.rest_id ?? body.restId ?? body.restID ?? body.restaurantid;
+  // Status keys are kept identical to isStoreStatusPayload (item86ingSync) so
+  // the two predicates cannot disagree: a body that passes this gate must also
+  // be recognisable downstream, or it would reach the handler and 500 — which
+  // Petpooja reads as a broken webhook and retries or disables.
+  const status = body.status ?? body.store_status ?? body.storeStatus;
+  return Boolean(restId) && status !== undefined && status !== null && status !== "";
+}
+
+export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFunction): void {
+  const inboundSecret = config.petpooja.appKey;
+  if (!inboundSecret) {
+    console.warn("[Petpooja Auth] denied: PETPOOJA_APP_KEY unset — fail-closed 401");
+    res.status(401).json({ error: "Unauthorized: Petpooja webhook not configured" });
+    return;
+  }
+
+  // Signed path (HMAC-SHA256 over the raw bytes, timing-safe, denies on an
+  // empty secret): when the caller presents a signature header it MUST
+  // verify — a bad signature is a forgery attempt, so it 401s instead of
+  // falling back to the static token. Callers without the header keep the
+  // documented app-key token flow below. Signatures are only checked against
+  // the RAW body (express `verify` capture); no raw bytes → no verdict → 401.
+  const signatureHeader = req.headers["x-petpooja-signature"];
+  if (signatureHeader) {
+    const raw = (req as any).rawBody;
+    const rawBody =
+      typeof raw === "string" ? raw : raw ? Buffer.from(raw).toString("utf8") : "";
+    if (rawBody && verifyPetpoojaSignature(rawBody, String(signatureHeader))) {
+      (req as any).petpoojaAuthenticated = true;
+      next();
+      return;
+    }
+    console.warn("[Petpooja Auth] denied: invalid or unverifiable HMAC signature");
+    res.status(401).json({ error: "Unauthorized: Invalid Petpooja webhook signature" });
+    return;
+  }
+
+  const tokenHeader =
+    (req.headers["x-petpooja-token"] as string) ||
+    (req.headers["content_key"] as string) ||
+    (req.headers["content-key"] as string) ||
+    (req.headers["authorization"] as string);
+
+  if (!tokenHeader || typeof tokenHeader !== "string") {
+    // The vendor's documented callbacks carry no credential header at all (the
+    // Postman example sends only Content-Type). Accept them by SHAPE so a real
+    // status update — the only carrier of a POS-assigned order id — is not
+    // thrown away at this gate; the handler then enforces integrity (restID must
+    // resolve to a linked branch, and an order event to a tracked order in that
+    // branch).
+    //
+    // SCOPED TO THE ORDER ROUTE, deliberately: this middleware is shared with
+    // /petpooja/stockWebhook and /petpooja/menu-sync, and those handlers do NOT
+    // implement those integrity checks. An unscoped allowance would have let an
+    // uncredentialed caller 86 arbitrary menu items at any linked outlet and
+    // trigger unbounded catalog-pull fan-out — both worse than the problem this
+    // fixes. Everything without a credential on any other route keeps the
+    // fail-closed 401.
+    const routePath = String(req.path || req.originalUrl || "").split("?")[0];
+    if (
+      routePath.endsWith("/petpooja/webhook") &&
+      looksLikePetpoojaStatusCallback(req.body)
+    ) {
+      // Marked untrusted: the handler must not let an unauthenticated request
+      // write sync state (the POS id / "synced") that the retry worker and the
+      // push dedupe key off.
+      (req as any).petpoojaAuthenticated = false;
+      console.warn(
+        "[Petpooja Auth] accepted an unauthenticated status callback by shape on /petpooja/webhook (vendor sends no credential header) — treated as untrusted; handler integrity checks apply"
+      );
+      next();
+      return;
+    }
+    console.warn("[Petpooja Auth] denied: no credential header presented");
+    res.status(401).json({ error: "Unauthorized: Missing or invalid Petpooja credentials" });
+    return;
+  }
+
+  const token = tokenHeader.startsWith("Bearer ")
+    ? tokenHeader.split("Bearer ")[1].trim()
+    : tokenHeader.trim();
+
+  if (token && timingSafeEqual(token, inboundSecret)) {
+    (req as any).petpoojaAuthenticated = true;
+    next();
+    return;
+  }
+
+  console.warn("[Petpooja Auth] denied: credential header did not match PETPOOJA_APP_KEY");
+  res.status(401).json({ error: "Unauthorized: Invalid Petpooja webhook credentials" });
+}

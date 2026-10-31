@@ -1,0 +1,144 @@
+{
+  "status": "PASS",
+  "samples": [
+    {
+      "mode": "Dine-in",
+      "width": 360,
+      "scrollLeft": 0,
+      "firstHeadline": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "cards": [
+        {
+          "name": "Burgers",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Sides",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Shakes & Drinks",
+          "top": 571.25,
+          "bottom": 685.25,
+          "width": 114,
+          "height": 114
+        }
+      ],
+      "navTop": 702,
+      "wrapsVisible": false,
+      "basketPosition": "relative",
+      "overflow": 0
+    },
+    {
+      "mode": "Delivery",
+      "width": 360,
+      "scrollLeft": 0,
+      "firstHeadline": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "cards": [
+        {
+          "name": "Burgers",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Sides",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Shakes & Drinks",
+          "top": 571.25,
+          "bottom": 685.25,
+          "width": 114,
+          "height": 114
+        }
+      ],
+      "navTop": 702,
+      "wrapsVisible": false,
+      "basketPosition": "relative",
+      "overflow": 0
+    },
+    {
+      "mode": "Dine-in",
+      "width": 320,
+      "scrollLeft": 0,
+      "firstHeadline": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "cards": [
+        {
+          "name": "Burgers",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Sides",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Shakes & Drinks",
+          "top": 571.25,
+          "bottom": 685.25,
+          "width": 114,
+          "height": 114
+        }
+      ],
+      "navTop": 702,
+      "wrapsVisible": false,
+      "basketPosition": "relative",
+      "overflow": 0
+    },
+    {
+      "mode": "Delivery",
+      "width": 320,
+      "scrollLeft": 0,
+      "firstHeadline": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "cards": [
+        {
+          "name": "Burgers",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Sides",
+          "top": 447.25,
+          "bottom": 561.25,
+          "width": 114,
+          "height": 114
+        },
+        {
+          "name": "Shakes & Drinks",
+          "top": 571.25,
+          "bottom": 685.25,
+          "width": 114,
+          "height": 114
+        }
+      ],
+      "navTop": 702,
+      "wrapsVisible": false,
+      "basketPosition": "relative",
+      "overflow": 0
+    }
+  ],
+  "failures": [],
+  "errors": [],
+  "physicalDeviceAcceptance": false
+}

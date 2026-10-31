@@ -1,0 +1,33 @@
+{
+  "status": "PASS",
+  "url": "http://127.0.0.1:48244/followup/index.html",
+  "loopbackOnly": true,
+  "routes": [
+    {
+      "path": "/followup/index.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/home-light.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/home-dark.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/followup/ui-ux-final-audit/burgonomics-final-ui-debug.apk",
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "path": "/followup/ui-ux-final-audit/final-apk-verification.json",
+      "status": 404,
+      "expected": 404
+    }
+  ],
+  "artifactsExcluded": true
+}

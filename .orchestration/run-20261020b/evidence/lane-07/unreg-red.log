@@ -1,0 +1,65 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/Desktop/Burgonomics/functions
+
+ ├ù tests/unregisterToken.test.ts > unregisterDeviceToken > deletes the token doc and scrubs every fan-out list 12ms
+   ΓåÆ db.runTransaction is not a function
+ ├ù tests/unregisterToken.test.ts > unregisterDeviceToken > succeeds silently on unknown tokens (idempotent logout) 2ms
+   ΓåÆ db.runTransaction is not a function
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 1. owner deletes the token doc and scrubs EVERY holder incl. other lists (counted, bounded query) 10ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 2. foreign uid: zero mutation, holders query never runs, constant response 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 3. missing uid: zero mutation even against a registered token 2ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 4. unknown token + own uid listing it: self-scrub ONLY, not counted, no holders query 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 5. unknown token + foreign uid listing it: own-entry self-scrub, owner untouched, constant response 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 6. existence-oracle control: foreign-registered response is byte-identical to unknown-token response 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 7. TOCTOU: concurrent re-register flipping the doc owner inside the transaction blocks delete+scrub 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 8. legacy ownerless doc: fail-closed (no delete by anyone), own list scrubbed, distinct warn 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 9. legacy doc with non-string userId: still fail-closed, own list scrubbed, constant response 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 10. holders cap (20 hit by 25 holders): truncates at 20 and warns about the remainder 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 11. holders query failure AFTER the token delete: logout still succeeds (warn, constant response) 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 12. caller without any users profile + unknown token: silent idempotent success (NOT_FOUND tolerated) 1ms
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 2 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/unregisterToken.test.ts > unregisterDeviceToken > deletes the token doc and scrubs every fan-out list
+TypeError: db.runTransaction is not a function
+ Γ¥» Module.unregisterDeviceToken src/modules/notifications/unregisterToken.ts:66:31
+     64|   // stale pre-read.
+     65|   type Gate = "deleted" | "unknown" | "foreign" | "ownerless";
+     66|   const gate: Gate = await db.runTransaction(async (tx: FirebaseFirestΓÇª
+       |                               ^
+     67|     const snap = await tx.get(tokenRef);
+     68|     if (!snap.exists) return "unknown" as const;
+ Γ¥» tests/unregisterToken.test.ts:92:23
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/2]ΓÄ»
+
+ FAIL  tests/unregisterToken.test.ts > unregisterDeviceToken > succeeds silently on unknown tokens (idempotent logout)
+TypeError: db.runTransaction is not a function
+ Γ¥» Module.unregisterDeviceToken src/modules/notifications/unregisterToken.ts:66:31
+     64|   // stale pre-read.
+     65|   type Gate = "deleted" | "unknown" | "foreign" | "ownerless";
+     66|   const gate: Gate = await db.runTransaction(async (tx: FirebaseFirestΓÇª
+       |                               ^
+     67|     const snap = await tx.get(tokenRef);
+     68|     if (!snap.exists) return "unknown" as const;
+ Γ¥» tests/unregisterToken.test.ts:101:23
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/2]ΓÄ»
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 failed | 12 passed (14)
+   Start at  05:40:30
+   Duration  787ms (transform 57%, import 28%, tests 8%, worker 6%)
+

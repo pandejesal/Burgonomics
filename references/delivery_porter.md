@@ -1,6 +1,15 @@
-# BURGONOMICS — Porter Logistics Integration (Layer 3 Constraint)
+# BURGONOMICS — Porter Logistics Integration (RETIRED — historical record)
 
-> **Reference Specification**: Real-time delivery fare estimation, serviceability pre-check, Partner POS manual courier dispatch, webhook tracking, and cancellation recovery.
+> **RETIRED INTEGRATION (2026-10-22; code retirement in root `086b60d`, business sign-off date not recorded here).** Porter is cancelled as a
+> dispatch partner. Dispatch is **Borzo**, **Shadowfax** (see `delivery_routing.md`), or the
+> restaurant's **own rider** via `POST /orders/manualDispatch`
+> (`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"` - a restaurant-driven
+> delivery, never customer pickup). Everything below describes the RETIRED contract: the code
+> paths (quote API, webhook HMAC verification, paste lane, reconciliation) are still real and
+> shared with the dispatch router, but they are **cold** unless an operator explicitly sets
+> `PORTER_ENABLED=`**`"true"`**, which re-arms FULL dispatch (new quotes, paid booking, rebooking)
+> - there is **no history-only mode**. Do not read any section below as an active provider
+> requirement, credential to configure, or product action.
 
 ---
 
@@ -17,7 +26,8 @@
 
 ---
 
-## 1. Real-Time Quotes at Checkout
+## 1. Real-Time Quotes at Checkout (Historical Spec)
+> *Historical note: In active operations, quotes run via the multi-provider router (`delivery_routing.md`) across Borzo and Shadowfax. Porter only participates if explicitly re-armed via `PORTER_ENABLED="true"`.*
 - When a customer inputs or selects a delivery address with GPS coordinates, `getPorterQuote` Cloud Function performs the **D3 two-stage check**: (a) branch-radius pre-check from Firestore; (b) if in radius, call Porter API (`api.porter.in/v1/orders/quote`) as the authoritative fare + coverage verdict (D4).
 - Follows **D1**: a failed/absent live quote returns `not_serviced` or `transient_failure` (D2) — never an estimated static price.
 - Customer pays the exact live bike delivery fee (or ₹0 if order qualifies for Free Delivery > ₹499).
@@ -25,14 +35,16 @@
 
 ---
 
-## 2. Partner POS "Book Porter Rider" Screen
+## 2. Partner POS "Book Porter Rider" Screen (Historical Spec)
+> *Historical note: In active operations, Partner POS displays the multi-provider dispatch panel (`delivery_routing.md`) or the manual in-house rider assignment. Porter booking is dormant unless `PORTER_ENABLED="true"` is set.*
 - **Manual Trigger**: Rather than auto-dispatching immediately on checkout, the Branch Manager triggers Porter dispatch when the order reaches `ready` or is 5 mins from packing.
 - The Partner app provides a dedicated **"Book Porter Rider"** panel showing live quote, pickup details, and single-click dispatch button.
 - On dispatch, Porter returns `porterOrderId` and tracking URL, saved to `orders/{orderId}.porter`.
 
 ---
 
-## 3. Webhook Tracking & Driver Updates
+## 3. Webhook Tracking & Driver Updates (Compatibility Record)
+> *Historical note: Normalized dispatch webhooks for Borzo and Shadowfax run via `/dispatch/webhooks/*`. The dedicated `/porter/webhook` endpoint remains active for HMAC-verified historical callbacks and manual paste reconciliation.*
 - `porterWebhook` Cloud Function verifies HMAC signature and processes driver milestone events:
   - `DRIVER_ASSIGNED`: Updates rider name and phone.
   - `IN_TRANSIT`: Advances order to `out_for_delivery`.
@@ -40,8 +52,9 @@
 
 ---
 
-## 4. Cancellation Handling & Rebook
+## 4. Cancellation Handling & Rebook (Historical Spec)
+> *Historical note: Active cancel/rebook handling is governed by `delivery_routing.md` with multi-provider failover. Porter rebooking requires `PORTER_ENABLED="true"`.*
 - If a Porter driver cancels or no driver is found within 5 minutes:
   - Partner POS plays an urgent audio notification and displays an alert card.
   - 1-Click Rebook button re-requests a new Porter rider.
-  - Fallback option: "Switch to In-House Delivery" allows branch staff to deliver locally.
+  - Fallback option: "Switch to In-House Delivery" allows branch staff to assign the restaurant's own rider via `POST /orders/manualDispatch` (`deliveryStatus: "dispatched"`, `dispatchType: "manual_branch_terminal"` — restaurant-driven delivery, never customer pickup).

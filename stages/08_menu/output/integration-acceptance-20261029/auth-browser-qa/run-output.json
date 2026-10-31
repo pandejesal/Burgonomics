@@ -1,0 +1,60 @@
+{
+  "mode": "TEST-MODE VERIFIED (Auth/Firestore emulators, demo project)",
+  "project": "demo-burgonomics-auth-qa",
+  "steps": [
+    {
+      "name": "emulators: auth 48692 + firestore 48691 up",
+      "status": "PASS",
+      "detail": "demo-burgonomics-auth-qa (loopback)"
+    },
+    {
+      "name": "seed: synthetic operator + unknown-role user",
+      "status": "PASS",
+      "detail": "emulator-only identities"
+    },
+    {
+      "name": "vite: delivery 48178 + partner 48179",
+      "status": "PASS",
+      "detail": "overlay transform active"
+    },
+    {
+      "name": "browser: chromium launched",
+      "status": "PASS",
+      "detail": "isolated context, serviceWorkers blocked"
+    },
+    {
+      "name": "delivery: flow aborted",
+      "status": "FAIL",
+      "detail": "TimeoutError: locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('Welcome to Burgonomics').first() to be visible\u001b[22m\n"
+    },
+    {
+      "name": "network gate: no external API reached",
+      "status": "PASS",
+      "detail": "0 external request(s) aborted before network"
+    }
+  ],
+  "pass": 5,
+  "fail": 1,
+  "notRun": [
+    "delivery duplicate Continue / repeated code-entry count",
+    "resend cooldown timing",
+    "account deletion UI (no such UI asserted)",
+    "native/Capacitor phone path",
+    "live Firebase / SMS / vendor availability"
+  ],
+  "screenshots": [
+    "delivery-99-failure.jpeg"
+  ],
+  "externalRequestsBlocked": [],
+  "externalRequestCount": 0,
+  "sourceLineCounts": {
+    "delivery:src/core/config/firebase.ts": "134 lines",
+    "delivery:src/features/auth/services/authService.ts": "324 lines",
+    "delivery:src/features/auth/state/authStore.ts": "579 lines",
+    "delivery:src/features/auth/components/PhoneLoginForm.tsx": "144 lines",
+    "partner:src/config/firebase.ts": "97 lines",
+    "partner:src/stores/authStore.ts": "396 lines"
+  },
+  "durationMs": 121924,
+  "finishedAt": "2026-10-29T11:07:58.506Z"
+}

@@ -86,4 +86,16 @@ export function getOtpHmacSecret(): string {
   return dedicated;
 }
 
+/**
+ * Fail-closed document-id guard for webhook-derived identifiers. Firestore
+ * doc ids containing `/` (or empty ids) throw or path-escape at write time —
+ * a crafted `notes.orderId` / `request_id` would 500-retry-storm or fork
+ * orphan docs. Callers reject (never coerce) on false.
+ */
+const SAFE_DOC_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isSafeDocId(value: unknown): value is string {
+  return typeof value === "string" && SAFE_DOC_ID.test(value);
+}
+
 

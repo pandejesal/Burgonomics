@@ -1,0 +1,34 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/AppData/Local/Temp/opencode/lane07-fcm-green/functions
+
+stdout | tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps transport pruning to the filtered token, never to a withheld token
+[FCM Prune] Removed 1 dead token(s)
+
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > sends a token whose current device-token owner is the recipient 6ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > withholds a token rebound to B even when A's stale profile still lists it 2ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > filters foreign, unknown and ownerless tokens while delivering to a proven owner 1ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > fails closed on an ownership lookup failure rather than sending unverified tokens 1ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > does not report success for a critical message with no owned destination 3ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > bounds a stalled ledger read and never sends the unverified destination 8ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > does not treat an explicitly empty recipient as an unbound broadcast 1ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > preserves the trusted server's explicit generic multicast contract when UID is omitted 1ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps transport pruning to the filtered token, never to a withheld token 2ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > verifies and sends each real FCM chunk without exceeding 500 targets 2ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > keeps a withheld customer's message in A's inbox without pushing it to B 3ms
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  06:34:51
+   Duration  412ms (transform 63%, import 17%, tests 16%, worker 3%)
+

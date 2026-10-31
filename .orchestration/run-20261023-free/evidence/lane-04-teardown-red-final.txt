@@ -1,0 +1,147 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/AppData/Local/Temp/opencode/lane04-teardown-red/functions
+
+ Γ¥» tests/dispatch.teardown-binding.test.ts (7 tests | 6 failed) 117ms
+   Γ¥» teardown retires the active binding (router side) (3)
+     ├ù dispatchCancel clears dispatchProvider/dispatchOrderId and keeps the dead booking as released history 14ms
+     ├ù a failed rebook retires the previous dead binding instead of leaving it as the order's owner 8ms
+   Γ¥» late callbacks from a released booking park HIGH with zero mutation (webhook side) (4)
+     ├ù a late DELIVERED from the cancelled booking does not deliver the released order 11ms
+     ├ù a late carrier cancel from the released booking cannot re-arm the staff-cancelled auto-rebook path 4ms
+     ├ù POSITIVE: the current LIVE booking still resolves; a rebook writes a fresh binding and keeps released history 2ms
+     ├ù the Porter manual-paste handover also retires the dead binding (no stale owner while staff paste) 71ms
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 6 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/dispatch.teardown-binding.test.ts > teardown retires the active binding (router side) > dispatchCancel 
+clears dispatchProvider/dispatchOrderId and keeps the dead booking as released history
+AssertionError: expected 'borzo' to be null
+
+- Expected:
+null
+
++ Received:
+"borzo"
+
+ Γ¥» tests/dispatch.teardown-binding.test.ts:233:34
+    231|     expect(doc.rebookTrigger).toBe("staff_cancelled");
+    232|     // The dead booking no longer owns the orderΓÇª
+    233|     expect(doc.dispatchProvider).toBeNull();
+       |                                  ^
+    234|     expect(doc.dispatchOrderId).toBeNull();
+    235|     expect(doc.porterOrderId).toBeNull();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/6]ΓÄ»
+
+ FAIL  tests/dispatch.teardown-binding.test.ts > teardown retires the active binding (router side) > a failed rebook 
+retires the previous dead binding instead of leaving it as the order's owner
+AssertionError: expected 'borzo' to be null
+
+- Expected:
+null
+
++ Received:
+"borzo"
+
+ Γ¥» tests/dispatch.teardown-binding.test.ts:277:34
+    275|     expect(doc.rebookTrigger).toBe("carrier_cancelled");
+    276|     // Binding retired + recorded with the teardown cause.
+    277|     expect(doc.dispatchProvider).toBeNull();
+       |                                  ^
+    278|     expect(doc.dispatchOrderId).toBeNull();
+    279|     expect(doc.dispatchReleasedBindings).toHaveLength(1);
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/6]ΓÄ»
+
+ FAIL  tests/dispatch.teardown-binding.test.ts > late callbacks from a released booking park HIGH with zero mutation 
+(webhook side) > a late DELIVERED from the cancelled booking does not deliver the released order
+AssertionError: expected 'delivered' to be 'rider_cancelled' // Object.is equality
+
+Expected: "rider_cancelled"
+Received: "delivered"
+
+ Γ¥» tests/dispatch.teardown-binding.test.ts:318:32
+    316|
+    317|     const doc = docOf("ord_rel_delivered");
+    318|     expect(doc.deliveryStatus).toBe("rider_cancelled"); // not deliverΓÇª
+       |                                ^
+    319|     expect(doc.deliveredAt).toBeFalsy();
+    320|     expect(doc.dispatchWebhookProvider).toBeUndefined();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[3/6]ΓÄ»
+
+ FAIL  tests/dispatch.teardown-binding.test.ts > late callbacks from a released booking park HIGH with zero mutation 
+(webhook side) > a late carrier cancel from the released booking cannot re-arm the staff-cancelled auto-rebook path
+AssertionError: expected 'carrier_cancelled' to be 'staff_cancelled' // Object.is equality
+
+Expected: "staff_cancelled"
+Received: "carrier_cancelled"
+
+ Γ¥» tests/dispatch.teardown-binding.test.ts:355:31
+    353|     // Worker-safety: a carrier trigger would make autoRebookDispatchWΓÇª
+    354|     // re-dispatch a booking staff already released.
+    355|     expect(doc.rebookTrigger).toBe("staff_cancelled");
+       |                               ^
+    356|     expect(doc.needsRebook).toBe(true);
+    357|     expect(doc.deliveryStatus).toBe("rider_cancelled");
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[4/6]ΓÄ»
+
+ FAIL  tests/dispatch.teardown-binding.test.ts > late callbacks from a released booking park HIGH with zero mutation 
+(webhook side) > POSITIVE: the current LIVE booking still resolves; a rebook writes a fresh binding and keeps released 
+history
+AssertionError: expected 'borzo' to be null
+
+- Expected:
+null
+
++ Received:
+"borzo"
+
+ Γ¥» tests/dispatch.teardown-binding.test.ts:376:52
+    374|     seedMap("BRZ-OLD-1", "ord_rel_live", "borzo");
+    375|     await dispatchCancel({ orderId: "ord_rel_live", staffName: "Ops" }ΓÇª
+    376|     expect(docOf("ord_rel_live").dispatchProvider).toBeNull();
+       |                                                    ^
+    377|
+    378|     // Staff rebook through the guarded endpoint: mock providers book ΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[5/6]ΓÄ»
+
+ FAIL  tests/dispatch.teardown-binding.test.ts > late callbacks from a released booking park HIGH with zero mutation 
+(webhook side) > the Porter manual-paste handover also retires the dead binding (no stale owner while staff paste)
+AssertionError: expected 'borzo' to be null
+
+- Expected:
+null
+
++ Received:
+"borzo"
+
+ Γ¥» tests/dispatch.teardown-binding.test.ts:439:34
+    437|     expect(doc.needsRebook).toBe(false);
+    438|     expect(doc.rebookTrigger).toBeNull();
+    439|     expect(doc.dispatchProvider).toBeNull();
+       |                                  ^
+    440|     expect(doc.dispatchOrderId).toBeNull();
+    441|     expect(doc.dispatchReleasedBindings).toHaveLength(1);
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[6/6]ΓÄ»
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 1 passed (7)
+   Start at  08:28:19
+   Duration  965ms (transform 65%, tests 17%, import 15%, worker 2%)
+

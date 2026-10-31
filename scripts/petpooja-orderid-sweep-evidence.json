@@ -1,0 +1,191 @@
+{
+  "generatedAt": "2026-10-16T16:28:43.113Z",
+  "endpoint": "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+  "restID": "31z58ciw0h",
+  "results": [
+    {
+      "id": "V0-control",
+      "label": "baseline: orderID set, H, ONLINE, details-wrapped",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v0_1792168112643",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V1-no-orderID",
+      "label": "Order.orderID key omitted entirely",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V2-empty-orderID",
+      "label": "Order.orderID = \"\" (let the POS assign one)",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V3-udid",
+      "label": "udid + device_type present",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v3_1792168112644",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V4-cod",
+      "label": "payment_type COD",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v4_1792168112645",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V5-dinein",
+      "label": "order_type D + table_no + no_of_persons",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v5_1792168112645",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V6-parcel",
+      "label": "order_type P",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v6_1792168112645",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V7-bare",
+      "label": "OrderItem/Tax/Discount as BARE ARRAYS (OpenAPI typing)",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v7_1792168112645",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V8-no-discount",
+      "label": "Discount member omitted",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v8_1792168112646",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V9-no-tax",
+      "label": "Tax member omitted",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v9_1792168112646",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V10-advanced",
+      "label": "advanced_order Y + preorder tomorrow",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v10_1792168112646",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V11-enabled-delivery",
+      "label": "enable_delivery 1",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v11_1792168112647",
+        "orderID": "",
+        "code": 200
+      }
+    },
+    {
+      "id": "V12-charges",
+      "label": "delivery 40 + packing 20 + service 10",
+      "httpStatus": 200,
+      "orderID": "",
+      "response": {
+        "success": "1",
+        "message": "Your order is saved.",
+        "restID": "31z58ciw0h",
+        "clientOrderID": "bgx_sweep_v12_1792168112647",
+        "orderID": "",
+        "code": 200
+      }
+    }
+  ],
+  "hit": null,
+  "verdict": "no variant returned an orderID — the order is not being registered, and no request shape changes that"
+}

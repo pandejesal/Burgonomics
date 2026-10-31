@@ -1,0 +1,38 @@
+{
+  "status": "PASS",
+  "url": "http://127.0.0.1:48244/followup/index.html",
+  "loopbackOnly": true,
+  "scope": "Inert actual-DOM preview only; no customer sessions or provider acceptance",
+  "routes": [
+    {
+      "path": "/followup/index.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/home-light.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/cart-dark.html",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "path": "/followup/final-trim/unit-final.log",
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "path": "/verify-current-update.py",
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "path": "/followup/final-trim/",
+      "status": 404,
+      "expected": 404
+    }
+  ]
+}

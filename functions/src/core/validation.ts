@@ -28,30 +28,81 @@ const pricingLineItemSchema = z.object({
     .optional(),
 });
 
+// PAYMENTS_CONTRACT_SPEC §1: `orderType` stays canonical; `fulfillment` is a
+// backward-compatible alias with two legacy spellings mapped onto the canonical
+// enum ("pickup" -> takeaway, "dine-in" -> dinein).
+const canonicalOrderType = z.enum(["delivery", "takeaway", "dinein"]);
+const fulfillmentAlias = z.enum(["delivery", "takeaway", "dinein", "pickup", "dine-in"]);
+
+/** Maps the wire shapes ({orderType} | legacy {fulfillment}) to the canonical enum. */
+export function normalizeOrderType(input: {
+  orderType?: "delivery" | "takeaway" | "dinein";
+  fulfillment?: "delivery" | "takeaway" | "dinein" | "pickup" | "dine-in";
+}): "delivery" | "takeaway" | "dinein" {
+  if (input.orderType) return input.orderType;
+  switch (input.fulfillment) {
+    case "pickup":
+      return "takeaway";
+    case "dine-in":
+      return "dinein";
+    default:
+      // Schema-guaranteed: delivery | takeaway | dinein.
+      return input.fulfillment as "delivery" | "takeaway" | "dinein";
+  }
+}
+
 export const createPaymentOrderSchema = z
   .object({
     items: z.array(pricingLineItemSchema).min(1).max(100),
     branchId: z.string().min(1).optional(),
     storeId: z.string().min(1).optional(),
-    orderType: z.enum(["delivery", "takeaway", "dinein"]),
+    orderType: canonicalOrderType.optional(),
+    fulfillment: fulfillmentAlias.optional(),
     deliveryFee: optionalNonNegative,
     packagingFee: optionalNonNegative,
     couponCode: z.string().trim().max(64).optional(),
     loyaltyPointsToRedeem: z.number().int().min(0).max(100000).optional(),
+    // Kept for shape compatibility ONLY — the route binds customerId from the
+    // verified token (or "guest"); a body customerId is never honoured.
     customerId: z.string().optional(),
-    orderId: z.string().optional(),
+    // REQUIRED (PAYMENTS_CONTRACT_SPEC §1): the server verifies the internal
+    // orders/{orderId} doc exists AND is unpaid AND owned by the caller
+    // BEFORE minting a payable gateway order. No internal id, no checkout.
+    orderId: nonEmptyString,
     idempotencyKey: z.string().min(8).max(128).optional(),
   })
   .refine((d) => d.branchId || d.storeId, {
     message: "branchId or storeId is required",
+  })
+  .refine((d) => !!d.orderType || !!d.fulfillment, {
+    message: "orderType (or fulfillment alias) is required",
   });
 
-export const verifyPaymentSchema = z.object({
-  orderId: nonEmptyString,
-  razorpayOrderId: nonEmptyString,
-  razorpayPaymentId: nonEmptyString,
-  razorpaySignature: nonEmptyString,
-});
+// PAYMENTS_CONTRACT_SPEC §2: canonical wire names, plus the legacy
+// checkout-shim body { paymentId, orderId, signature, method } where the lone
+// orderId is the GATEWAY order id (the internal order id resolves server-side
+// through the payment-intent record keyed by razorpayOrderId). `method` is
+// accepted and ignored — old clients always sent it.
+export const verifyPaymentSchema = z
+  .object({
+    orderId: nonEmptyString,
+    razorpayOrderId: nonEmptyString,
+    razorpayPaymentId: nonEmptyString,
+    // Empty is ALLOWED through validation on purpose: a missing/blank
+    // signature is an auth failure, not a malformed body, and must answer
+    // 401 INVALID_SIGNATURE from the HMAC layer (verifyRazorpaySignature
+    // refuses any falsy signature before touching an order) instead of a
+    // generic 400 validation error.
+    razorpaySignature: z.string(),
+  })
+  .or(
+    z.object({
+      paymentId: nonEmptyString,
+      orderId: nonEmptyString,
+      signature: z.string(),
+      method: z.string().max(32).optional(),
+    })
+  );
 
 export const refundSchema = z.object({
   orderId: nonEmptyString,
@@ -89,6 +140,14 @@ export const pushStockSchema = z.object({
   inStock: z.boolean(),
 });
 
+// MT-01: Petpooja sandbox test relay. scenarioId is bounded (not enum'd) so
+// new sandbox scenarios can ship without a schema change — the runner itself
+// rejects unknown ids with the valid catalog in the error message.
+export const petpoojaTestRunnerSchema = z.object({
+  scenarioId: z.string().min(1),
+  branchId: z.string().optional(),
+});
+
 export const porterBookSchema = z.object({
   orderId: nonEmptyString,
   staffName: z.string().max(128).optional(),
@@ -109,6 +168,53 @@ export const porterQuoteSchema = z.object({
   dropLng: optionalLongitude,
   customerName: z.string().max(120).optional(),
   customerPhone: z.string().max(32).optional(),
+});
+
+// ---- Multi-provider dispatch (references/delivery_routing.md) ----
+
+const latitude = z.number().finite().min(-90).max(90);
+const longitude = z.number().finite().min(-180).max(180);
+
+// Pre-order quote: coordinates are REQUIRED — the radius gate cannot run on
+// undefined, and a missing drop lat/lng would fan out providers with a
+// garbage point.
+export const dispatchQuoteSchema = z.object({
+  pickupLat: latitude,
+  pickupLng: longitude,
+  dropLat: latitude,
+  dropLng: longitude,
+  customerName: z.string().max(120).optional(),
+  customerPhone: z.string().max(32).optional(),
+  orderId: z.string().max(64).optional(),
+});
+
+export const dispatchBookSchema = z.object({
+  orderId: nonEmptyString,
+  staffName: z.string().max(128).optional(),
+  // Staff-confirmed fare from the quote card — gates the DR7 delta check.
+  quotedFare: z.number().finite().min(0).max(100000).optional(),
+  confirmFare: z.boolean().optional(),
+  preferredProvider: z.enum(["borzo", "shadowfax", "porter"]).optional(),
+});
+
+export const dispatchRebookSchema = z.object({
+  orderId: nonEmptyString,
+  staffName: z.string().max(128).optional(),
+  quotedFare: z.number().finite().min(0).max(100000).optional(),
+  confirmFare: z.boolean().optional(),
+  preferredProvider: z.enum(["borzo", "shadowfax", "porter"]).optional(),
+});
+
+export const dispatchPorterManualSchema = z.object({
+  orderId: nonEmptyString,
+  porterOrderId: z.string().min(1).max(64),
+  trackingUrl: z.string().max(512).optional(),
+  staffName: z.string().max(128).optional(),
+});
+
+export const dispatchCancelSchema = z.object({
+  orderId: nonEmptyString,
+  staffName: z.string().max(128).optional(),
 });
 
 export const verifyDeliveryOtpSchema = z.object({
@@ -139,6 +245,20 @@ export const orderBumpSchema = z.object({
     "ready_for_pickup",
   ]),
   cancellationReason: z.string().trim().min(1).max(500).optional(),
+  /**
+   * Optimistic-concurrency precondition (partner KDS/detail send the
+   * status.code their screen is showing). When present the server only applies
+   * the bump if it still matches — a stale screen or a delayed double-tap can
+   * no longer overwrite a newer status written by another staff member.
+   */
+  expectedStatus: z.string().trim().max(64).optional(),
+  timelineEvent: z
+    .object({
+      title: z.string().trim().min(1).max(120),
+      actor: z.string().trim().min(1).max(120).optional(),
+      description: z.string().trim().min(1).max(500).optional(),
+    })
+    .optional(),
 });
 
 export const adjustCoinsSchema = z.object({
@@ -203,6 +323,11 @@ export const escalateTicketSchema = z.object({
   escalatedByName: z.string().trim().min(1).max(120).optional(),
 });
 
+export const resolveNoteSchema = z.object({
+  ticketId: nonEmptyString,
+  resolution: z.string().trim().min(1).max(2000),
+});
+
 // MOP-S1 (B5-S1 follow-up): mark-read intake. Empty body marks the whole
 // unread inbox; explicit ids mark only those (capped at 200, service-side).
 export const markReadSchema = z.object({
@@ -256,12 +381,15 @@ export const revokeRoleSchema = z.object({
   targetUid: z.string().min(1).max(128),
 });
 
-// Auth: migrate guest
-export const migrateGuestSchema = z.object({
-  permanentUid: z.string().min(1).max(128),
-  phone: z.string().max(20).optional(),
-  email: z.string().email().max(254).optional(),
-});
+// Auth: migrate guest. FIX2 (C1): this route schema previously kept only
+// {permanentUid, phone, email} and validateBody REPLACED req.body with that
+// subset - the service never saw guestSessionId/anonymousUid/name/addresses/
+// guestProof and the endpoint silently migrated NOTHING while still answering
+// success:true. The route now binds the SERVICE's own bounded schema
+// (modules/auth/guestMigration.schema.ts, pure zod) so every accepted field
+// reaches the service, with caps and .strict() making oversized/unknown
+// payloads a loud 400 instead of a truncated relink.
+export { MigrateGuestSchema as migrateGuestSchema } from "../modules/auth/guestMigration.schema";
 
 // Auth: verify bonus eligibility
 export const verifyBonusSchema = z.object({

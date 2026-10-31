@@ -1,0 +1,18 @@
+[36m[1mi  emulators:[22m[39m Starting emulators: auth
+[36m[1mi  emulators:[22m[39m Detected demo project ID "demo-burgonomics-auth-qa", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+[33m[1m!  emulators:[22m[39m The Emulator UI is not starting because none of the running emulators have a UI component.
+
+[90m┌─────────────────────────────────────────────────────────────┐[39m
+[90m│[39m [32m✔[39m  [1mAll emulators ready! It is now safe to connect your app.[22m [90m│[39m
+[90m└─────────────────────────────────────────────────────────────┘[39m
+
+[90m┌────────────────[39m[90m┬─────────────────┐[39m
+[90m│[39m[33m Emulator       [39m[90m│[39m[33m Host:Port       [39m[90m│[39m
+[90m├────────────────[39m[90m┼─────────────────┤[39m
+[90m│[39m Authentication [90m│[39m 127.0.0.1:48692 [90m│[39m
+[90m└────────────────[39m[90m┴─────────────────┘[39m
+[90m  Emulator Hub host: 127.0.0.1 port: 4400[39m
+[90m  Other reserved ports:[39m 4500
+
+Issues? Report them at [4m[1mhttps://github.com/firebase/firebase-tools/issues[22m[24m and attach the *-debug.log files.
+ 

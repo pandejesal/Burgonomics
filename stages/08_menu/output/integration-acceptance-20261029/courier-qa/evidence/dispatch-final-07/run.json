@@ -1,0 +1,423 @@
+{
+  "runLabel": "dispatch-final-07",
+  "mode": "final",
+  "scope": "dispatch",
+  "projectId": "demo-burgonomics-qa-20261028",
+  "startedAt": "2026-10-29T09:21:43.798Z",
+  "command": [
+    "C:\\Program Files\\nodejs\\node.exe",
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\run-tests.cjs",
+    "--snapshot",
+    "dispatch-current-01",
+    "--scope",
+    "dispatch",
+    "--mode",
+    "final",
+    "--expected",
+    ".\\dispatch-current-01.expected.json",
+    "--run",
+    "dispatch-final-07"
+  ],
+  "snapshotLabel": "dispatch-current-01",
+  "snapshotManifestSha256": "07b49dc931b7ae15e97b31f40edaf0d5a7e7908b33ea8ea0169c6c124913b88b",
+  "entryHashes": [
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/dispatch.router.ts",
+      "sha256": "794f8ae61ff3cd2cae1156332721e0383f943b60700f093a17b77d4daacf4d49",
+      "bytes": 97482,
+      "sourceMtimeMs": 1793222327064.3535
+    },
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/types.ts",
+      "sha256": "e23999e87159a34fb748d7a2c0e0e7bc837858f5266f86ea2d62f18040c9f5c3",
+      "bytes": 8199,
+      "sourceMtimeMs": 1793222327075.8784
+    },
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/providers/shared.ts",
+      "sha256": "371d1dda0b6618f2720d94d5b55b25d91040a69104fbdc3239bec42395526601",
+      "bytes": 12118,
+      "sourceMtimeMs": 1793222327073.8777
+    },
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/providers/borzo.adapter.ts",
+      "sha256": "472490fe64fc3cb9e0de214ff39c2fa7ce0d68515830acf201ce8941766b255c",
+      "bytes": 29535,
+      "sourceMtimeMs": 1793222327069.877
+    },
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/providers/shadowfax.adapter.ts",
+      "sha256": "96cf79151715eecd9d9f2d198a2c69e3dd8c6c8a53ec9a983230a26774b37fcd",
+      "bytes": 28526,
+      "sourceMtimeMs": 1793222327071.8813
+    }
+  ],
+  "sourceAcceptance": false,
+  "results": [
+    {
+      "name": "infrastructure/native-fetch-loopback-recorder-and-network-refusal",
+      "status": "PASS",
+      "durationMs": 264,
+      "evidence": {
+        "actualWireRequests": 1,
+        "nativeFetch": true,
+        "tlsVerification": "synthetic localhost certificate trusted by child only",
+        "externalDestinationAndShared8080": "refused before connect"
+      }
+    },
+    {
+      "name": "infrastructure/real-sdk-concurrent-transactions-and-read-before-write-control",
+      "status": "PASS",
+      "durationMs": 10036,
+      "evidence": {
+        "counterAfterConcurrentIncrements": 2,
+        "invalidReadAfterWriteRejected": true,
+        "noPartialWriteFromRejectedTransaction": true
+      }
+    },
+    {
+      "name": "infrastructure/real-grpc-commit-fault-after-durable-state-and-restore",
+      "status": "PASS",
+      "durationMs": 230,
+      "evidence": {
+        "realCommitRpcsDenied": 2,
+        "readsAvailableDuringFault": true,
+        "initialDurableStatePreserved": true,
+        "restoredWriteConfirmedByIndependentSdk": true
+      }
+    },
+    {
+      "name": "Borzo/empty-200-never-releases-binding-or-repeats-wire",
+      "status": "PASS",
+      "durationMs": 565,
+      "evidence": {
+        "firstError": "PROVIDER_CANCEL_AMBIGUOUS",
+        "secondError": "PROVIDER_CANCEL_REVIEW_REQUIRED",
+        "bindingAfter": "1250032",
+        "deliveryStatusAfter": "dispatched",
+        "intentState": "ambiguous",
+        "wireRequests": 1
+      }
+    },
+    {
+      "name": "Borzo/non-json-200-never-releases-binding-or-repeats-wire",
+      "status": "PASS",
+      "durationMs": 355,
+      "evidence": {
+        "firstError": "PROVIDER_CANCEL_AMBIGUOUS",
+        "secondError": "PROVIDER_CANCEL_REVIEW_REQUIRED",
+        "bindingAfter": "1250032",
+        "deliveryStatusAfter": "dispatched",
+        "intentState": "ambiguous",
+        "wireRequests": 1
+      }
+    },
+    {
+      "name": "Borzo/incomplete-200-never-releases-binding-or-repeats-wire",
+      "status": "PASS",
+      "durationMs": 362,
+      "evidence": {
+        "firstError": "PROVIDER_CANCEL_AMBIGUOUS",
+        "secondError": "PROVIDER_CANCEL_REVIEW_REQUIRED",
+        "bindingAfter": "1250032",
+        "deliveryStatusAfter": "dispatched",
+        "intentState": "ambiguous",
+        "wireRequests": 1
+      }
+    },
+    {
+      "name": "Borzo/wrong-id-200-never-releases-binding-or-repeats-wire",
+      "status": "PASS",
+      "durationMs": 346,
+      "evidence": {
+        "firstError": "PROVIDER_CANCEL_AMBIGUOUS",
+        "secondError": "PROVIDER_CANCEL_REVIEW_REQUIRED",
+        "bindingAfter": "1250032",
+        "deliveryStatusAfter": "dispatched",
+        "intentState": "ambiguous",
+        "wireRequests": 1
+      }
+    },
+    {
+      "name": "Borzo/active-200-never-releases-binding-or-repeats-wire",
+      "status": "PASS",
+      "durationMs": 374,
+      "evidence": {
+        "firstError": "PROVIDER_CANCEL_AMBIGUOUS",
+        "secondError": "PROVIDER_CANCEL_REVIEW_REQUIRED",
+        "bindingAfter": "1250032",
+        "deliveryStatusAfter": "dispatched",
+        "intentState": "ambiguous",
+        "wireRequests": 1
+      }
+    },
+    {
+      "name": "dispatch/concurrent-cancels-one-real-wire-and-one-release",
+      "status": "PASS",
+      "durationMs": 3086,
+      "evidence": {
+        "outcomes": [
+          {
+            "ok": true,
+            "value": {
+              "success": true,
+              "orderId": "qa-concurrent-cancel",
+              "provider": "borzo",
+              "providerOrderId": "1250032",
+              "providerCancel": "confirmed",
+              "message": "Booking cancelled with borzo."
+            }
+          },
+          {
+            "ok": false,
+            "error": {
+              "code": "PROVIDER_CANCEL_IN_PROGRESS",
+              "message": "A borzo cancellation for this booking is already in progress — no second provider call was made.",
+              "requiresManualReview": true
+            }
+          }
+        ],
+        "wireRequests": 1,
+        "releasedBindingRecords": 1
+      }
+    },
+    {
+      "name": "dispatch/late-cancel-after-signed-callback-and-real-rebook-preserves-replacement",
+      "status": "PASS",
+      "durationMs": 653,
+      "evidence": {
+        "signedCallbackExecuted": true,
+        "actualDispatchRebookExecuted": true,
+        "replacementIdBefore": "1250999",
+        "replacementIdAfter": "1250999",
+        "replacementVersion": 2,
+        "lateError": "PROVIDER_CANCEL_BINDING_SUPERSEDED",
+        "paths": [
+          "/api/business/1.8/cancel-order",
+          "/api/business/1.8/calculate-order",
+          "/api/business/1.8/create-order"
+        ]
+      }
+    },
+    {
+      "name": "HTTP/helper-cross-origin-302-does-not-forward-sentinel",
+      "status": "PASS",
+      "durationMs": 8,
+      "evidence": {
+        "originalRequests": 1,
+        "crossOriginTargetRequests": 0,
+        "sentinelSeenOnlyByOriginalRecorder": true,
+        "error": "borzo request failed: fetch failed"
+      }
+    },
+    {
+      "name": "HTTP/helper-cross-origin-307-does-not-forward-sentinel",
+      "status": "PASS",
+      "durationMs": 19,
+      "evidence": {
+        "originalRequests": 1,
+        "crossOriginTargetRequests": 0,
+        "sentinelSeenOnlyByOriginalRecorder": true,
+        "error": "borzo request failed: fetch failed"
+      }
+    },
+    {
+      "name": "Shadowfax/200-ACK-keeps-live-binding-and-blocks-repeat",
+      "status": "PASS",
+      "durationMs": 297,
+      "evidence": {
+        "firstError": "PROVIDER_CANCEL_ACKNOWLEDGED_UNCONFIRMED",
+        "repeatError": "PROVIDER_CANCEL_REVIEW_REQUIRED",
+        "liveBindingRetained": "QA-SFX-OLD",
+        "durableState": "acknowledged",
+        "wireRequests": 1,
+        "statusLookupCalls": 0
+      }
+    },
+    {
+      "name": "Shadowfax/204-ACK-keeps-live-binding-and-blocks-repeat",
+      "status": "PASS",
+      "durationMs": 284,
+      "evidence": {
+        "firstError": "PROVIDER_CANCEL_ACKNOWLEDGED_UNCONFIRMED",
+        "repeatError": "PROVIDER_CANCEL_REVIEW_REQUIRED",
+        "liveBindingRetained": "QA-SFX-OLD",
+        "durableState": "acknowledged",
+        "wireRequests": 1,
+        "statusLookupCalls": 0
+      }
+    },
+    {
+      "name": "dispatch/held-transactional-callback-commit-serializes-and-preserves-replacement",
+      "status": "PASS",
+      "durationMs": 4003,
+      "evidence": {
+        "heldCommit": {
+          "rpcSequence": 124,
+          "transactionBytes": 9,
+          "originalFrameSha256": "b2e1d16c038e3754365e8ef71c3113737b67345583482a308bcaba3c6c9155c3",
+          "writes": [
+            {
+              "document": "projects/demo-burgonomics-qa-20261028/databases/(default)/documents/orders/qa-callback-commit-race",
+              "fields": [
+                "dispatchWebhookEvent",
+                "dispatchWebhookProvider",
+                "deliveryStatus",
+                "dispatchStatus",
+                "dispatchProviderCancel",
+                "dispatchProviderCancelSource",
+                "dispatchProviderCancelBinding",
+                "dispatchProviderCancelError",
+                "dispatchReviewRequired",
+                "dispatchReviewReason",
+                "needsRebook",
+                "rebookTrigger",
+                "riderCancellationReason",
+                "cancelledBy",
+                "dispatchCancelIntent",
+                "dispatchReleasedBindings",
+                "dispatchProvider",
+                "dispatchOrderId",
+                "porterOrderId",
+                "borzoOrderId",
+                "shadowfaxOrderId",
+                "delivery"
+              ]
+            }
+          ]
+        },
+        "cancelSettledWhileCommitHeld": false,
+        "cancelOutcome": {
+          "ok": true,
+          "value": {
+            "success": true,
+            "orderId": "qa-callback-commit-race",
+            "provider": "borzo",
+            "providerOrderId": "1250032",
+            "providerCancel": "confirmed",
+            "message": "Booking cancelled with borzo."
+          }
+        },
+        "callbackOutcome": {
+          "ok": true
+        },
+        "replacementId": "1250999",
+        "replacementVersion": 2,
+        "wirePaths": [
+          "/api/business/1.8/cancel-order",
+          "/api/business/1.8/calculate-order",
+          "/api/business/1.8/create-order"
+        ]
+      }
+    },
+    {
+      "name": "dispatch/foreign-branch-caller-refused-before-provider-wire",
+      "status": "PASS",
+      "durationMs": 44,
+      "evidence": {
+        "error": "Forbidden: order is outside your assigned branches",
+        "wireRequests": 0,
+        "callerBranchIds": [
+          "qa-synthetic-branch"
+        ]
+      }
+    },
+    {
+      "name": "Borzo/quote-native-wire-success-honours-test-token",
+      "status": "PASS",
+      "durationMs": 11,
+      "evidence": {
+        "winner": "borzo",
+        "fare": 50,
+        "source": "borzo_api_live",
+        "wireRequests": 1
+      }
+    },
+    {
+      "name": "Borzo/book-native-wire-binds-and-writes-order-map",
+      "status": "PASS",
+      "durationMs": 223,
+      "evidence": {
+        "responseKeys": [
+          "provider",
+          "providerOrderId",
+          "riderName",
+          "riderPhone",
+          "riderVehicleNumber",
+          "trackingUrl",
+          "status",
+          "source",
+          "attempts",
+          "failover",
+          "reused",
+          "orderId"
+        ],
+        "provider": "borzo",
+        "providerOrderId": "1250032",
+        "bindingVersion": 1,
+        "wirePaths": [
+          "/api/business/1.8/calculate-order",
+          "/api/business/1.8/create-order"
+        ]
+      }
+    },
+    {
+      "name": "Borzo/book-ambiguous-2xx-without-id-never-fails-over",
+      "status": "PASS",
+      "durationMs": 178,
+      "evidence": {
+        "error": "Borzo create-order returned no order id (response shape differs from spec) - do not retry blindly; reconcile by client_order_id",
+        "createOrderWireRequests": 1,
+        "boundProviderId": null
+      }
+    },
+    {
+      "name": "Borzo/book-connection-drop-after-send-never-books-second-provider",
+      "status": "PASS",
+      "durationMs": 194,
+      "evidence": {
+        "error": "All delivery providers failed to accept this booking — retry, or assign an in-house rider.",
+        "createOrderWireRequests": 1,
+        "boundProviderId": null,
+        "secondProviderCalls": 0
+      }
+    },
+    {
+      "name": "dispatch/readiness-reports-test-host-violations-but-is-inert-by-default",
+      "status": "PASS",
+      "durationMs": 3,
+      "evidence": {
+        "borzoHost": "127.0.0.1:48385",
+        "borzoTestHost": false,
+        "violations": [
+          "borzo: host '127.0.0.1:48385' is not the TEST host 'robotapitest-in.borzodelivery.com' — refusing to send test traffic to a live host"
+        ],
+        "entrypointRefused": false
+      }
+    }
+  ],
+  "limitations": [
+    "Local real SDK/emulator and native TLS fetch only; never provider, deployment or production evidence.",
+    "No application files changed. Copied TypeScript executes via transpileModule; this is not a full package typecheck/build or Functions HTTP routing test.",
+    "Core Firebase initialization is replaced with the actual isolated Firestore SDK. Auth token verification, FCM, developer alerts are inert explicit boundaries; no payment module executes.",
+    "Commit-fault proxy produces non-retryable gRPC code 7 after the durable claim, not a packet-loss/timing or emulator restart/crash test.",
+    "Admin SDK bypasses Firestore Security Rules; authorization/rules coverage is not claimed.",
+    "Single-process concurrency crosses real SDK transaction RPCs; not multi-Functions-host latency/load testing.",
+    "Local emulator does not enforce production composite-index requirements.",
+    "Observed runtime is Node 24.18.0; package declares Node 22. No installed Node 22 runtime was selected."
+  ],
+  "harnessHashes": {
+    "snapshot.cjs": "3c26771b572ccf5ba7295048cc58d96147daebd719b8a8a0cd77d2e100b6afb4",
+    "infrastructure.cjs": "78286d41f623320477ed940ede6a2082b820fb9fcc29ef1e239a653fbb8aa723",
+    "run-tests.cjs": "59f405cfd0c283bdbc4b898fd48479a80055a448acd231a055e925bd8c145a43"
+  },
+  "cleanupComplete": true,
+  "finishedAt": "2026-10-29T09:22:18.420Z",
+  "exitCode": 0,
+  "scopedChecksPassed": true
+}

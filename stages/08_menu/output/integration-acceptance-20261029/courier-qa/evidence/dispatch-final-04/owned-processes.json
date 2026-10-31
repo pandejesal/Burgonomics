@@ -1,0 +1,38 @@
+{
+  "projectId": "demo-burgonomics-qa-20261028",
+  "nodePid": 14204,
+  "emulatorPid": 15500,
+  "ports": {
+    "firestore": 48381,
+    "websocket": 48382,
+    "webchannel": 48383,
+    "proxy": 48384,
+    "vendor": 48385,
+    "target": 48386
+  },
+  "javaCommand": [
+    "C:\\Program Files\\Android\\Android Studio\\jbr\\bin\\java.exe",
+    "-Djava.io.tmpdir=C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\runtime",
+    "-Duser.home=C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\runtime",
+    "-jar",
+    "C:\\Users\\DELL\\.cache\\firebase\\emulators\\cloud-firestore-emulator-v1.22.0.jar",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "48381",
+    "--websocket_port",
+    "48382",
+    "--webchannel_port",
+    "48383",
+    "--project_id",
+    "demo-burgonomics-qa-20261028",
+    "--single_project_mode",
+    "--single_project_mode_error"
+  ],
+  "cleanupComplete": true,
+  "emulatorExit": {
+    "code": null,
+    "signal": "SIGTERM"
+  },
+  "startupFailed": "Owned emulator readiness deadline exceeded"
+}

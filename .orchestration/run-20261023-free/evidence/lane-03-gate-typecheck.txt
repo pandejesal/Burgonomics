@@ -1,0 +1,3 @@
+=== lane-03 isolated gate @ ea1bc3f + 15-path overlay ===
+command: npx tsc --noEmit
+EXIT=0

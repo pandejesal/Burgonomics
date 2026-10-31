@@ -1,0 +1,46 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/AppData/Local/Temp/opencode/lane07-fcm-green/functions
+
+stdout | tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps transport pruning to the filtered token, never to a withheld token
+[FCM Prune] Removed 1 dead token(s)
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts (11 tests | 1 failed) 45ms
+   Γ¥» recipient-bound FCM never trusts a stale profile token list (11)
+     ├ù maps transport pruning to the filtered token, never to a withheld token 12ms
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 1 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps 
+transport pruning to the filtered token, never to a withheld token
+AssertionError: expected 'unit_user_b' to be 'unit_user_a' // Object.is equality
+
+Expected: "unit_user_a"
+Received: "unit_user_b"
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:188:30
+    186|     // Exactly one profile write, addressed to the recipient A.
+    187|     expect(h.updates).toHaveLength(1);
+    188|     expect(h.updates[0].uid).toBe(A);
+       |                              ^
+    189|     expect(h.updates[0].payload).toEqual({ fcmTokens: { remove: ["unitΓÇª
+    190|     expect(h.profiles.get(A)).toEqual([]);
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/1]ΓÄ»
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 passed (11)
+   Start at  06:39:12
+   Duration  500ms (transform 57%, import 22%, tests 17%, worker 3%)
+

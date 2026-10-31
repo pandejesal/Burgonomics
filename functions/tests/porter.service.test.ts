@@ -1,9 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// Porter is retired (opt-in). This suite exercises Porter booking, so it
+// declares the capability explicitly; hoisted so config sees it at import time.
+vi.hoisted(() => {
+  process.env.PORTER_ENABLED = "true";
+});
+
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
   const defaultOrder = () => ({
     branchId: "branch_ahmedabad_1",
+    // The real field real orders carry (client OrderStoreSnapshot.phone).
+    store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
     branchName: "Burgonomics CG Road",
     branchCoordinates: { lat: 23.0131, lng: 72.5085 },
     deliveryAddress: {
@@ -106,6 +114,8 @@ import {
   normalizePorterEvent,
   bookPorterRider,
   rebookPorterRider,
+  resolveDropAddress,
+  resolvePickupContactPhone,
   cancelPorterBooking,
   handlePorterWebhook,
   generateDeliveryOtp,
@@ -172,6 +182,121 @@ describe("Porter Logistics Service", () => {
       });
 
       expect(quote.estimatedFare).toBe(40);
+    });
+
+    it("refuses a direct quote before any provider call when Porter is retired", async () => {
+      const previousEnabled = config.porter.enabled;
+      const previousFetch = globalThis.fetch;
+      const fetchSpy = vi.fn();
+      config.porter.enabled = false;
+      globalThis.fetch = fetchSpy as any;
+      try {
+        await expect(
+          getDeliveryQuote({
+            pickupLat: 23.0131,
+            pickupLng: 72.5085,
+            dropLat: 23.0338,
+            dropLng: 72.5262,
+          })
+        ).rejects.toMatchObject({ statusCode: 409, code: "PORTER_RETIRED" });
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        config.porter.enabled = previousEnabled;
+        globalThis.fetch = previousFetch;
+      }
+    });
+  });
+
+  describe("getDeliveryQuote - live money truth (provider guard)", () => {
+    let prevLiveMock = false;
+    let prevApiKey = "";
+    let prevCustomerId = "";
+    let originalFetch: any;
+
+    const coords = {
+      pickupLat: 23.0131,
+      pickupLng: 72.5085,
+      dropLat: 23.0338,
+      dropLng: 72.5262,
+    };
+
+    const okJson = (body: any) =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }) as any;
+
+    beforeEach(() => {
+      prevLiveMock = config.mock.porterDispatch;
+      prevApiKey = config.porter.apiKey;
+      prevCustomerId = config.porter.customerId;
+      config.mock.porterDispatch = false; // exercise the LIVE branch
+      config.porter.apiKey = "test_porter_key_vitest_only";
+      config.porter.customerId = "test_porter_customer_vitest_only";
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      config.mock.porterDispatch = prevLiveMock;
+      config.porter.apiKey = prevApiKey;
+      config.porter.customerId = prevCustomerId;
+      globalThis.fetch = originalFetch;
+    });
+
+    it("fails closed instead of inventing a live fare when the provider omits it", async () => {
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ distance: 5, eta: 4 })
+      );
+      await expect(getDeliveryQuote(coords)).rejects.toMatchObject({
+        statusCode: 503,
+      });
+    });
+
+    it("fails closed when the provider fare is not a finite number", async () => {
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ fare: "N/A", distance: 5 })
+      );
+      await expect(getDeliveryQuote(coords)).rejects.toMatchObject({
+        statusCode: 503,
+      });
+    });
+
+    it("returns the provider's finite fare unaltered and labels it porter_api_live", async () => {
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ fare: 57.5, distance: 5, eta: 4, quote_id: "Q-TEST-1" })
+      );
+      const quote = await getDeliveryQuote(coords);
+      expect(quote.estimatedFare).toBe(57.5);
+      expect(quote.source).toBe("porter_api_live");
+      expect(quote.estimatedDistanceKm).toBe(5);
+      expect(quote.estimatedPickupMinutes).toBe(4);
+      // Provider data, so it must NOT be labelled as our estimate.
+      expect(quote.etaEstimated).toBe(false);
+      expect(quote.quoteId).toBe("Q-TEST-1");
+    });
+
+    it("flags the ETA as estimated when the live response carries none", async () => {
+      // fare is present (so the quote is usable) but eta is missing: the old
+      // shape returned a local 8 labelled porter_api_live with nothing to
+      // distinguish it from Porter's own number.
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ fare: 57.5, distance: 5, quote_id: "Q-TEST-2" })
+      );
+      const quote = await getDeliveryQuote(coords);
+      expect(quote.etaEstimated).toBe(true);
+      expect(Number.isFinite(quote.estimatedPickupMinutes)).toBe(true);
+    });
+
+    it("never propagates a non-numeric provider distance into a numeric field", async () => {
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ fare: 57.5, distance: "N/A" })
+      );
+      const quote = await getDeliveryQuote(coords);
+      expect(typeof quote.estimatedDistanceKm).toBe("number");
+      expect(Number.isFinite(quote.estimatedDistanceKm)).toBe(true);
+      expect(quote.estimatedDistanceKm).toBeGreaterThan(0);
     });
   });
 
@@ -339,6 +464,34 @@ describe("Porter Logistics Service", () => {
       expect(savedDocs["orders/order_otp_103"]?.deliveryVerifiedBy).toBe("customer_otp");
     });
 
+    it("burns the OTP (hash + legacy plaintext) on success — no replay after handover", async () => {
+      savedDocs["orders/order_otp_burn_hash"] = {
+        id: "order_otp_burn_hash",
+        deliveryOtpHash: computeHmacSha256("2468", TEST_OTP_SECRET),
+        status: "out_for_delivery",
+      };
+      savedDocs["orders/order_otp_burn_legacy"] = {
+        id: "order_otp_burn_legacy",
+        deliveryOtp: "1357",
+        status: "out_for_delivery",
+      };
+
+      await verifyDeliveryOtp({ orderId: "order_otp_burn_hash", otp: "2468" });
+      await verifyDeliveryOtp({ orderId: "order_otp_burn_legacy", otp: "1357" });
+
+      // The secret no longer outlives the handover on either order shape.
+      expect(savedDocs["orders/order_otp_burn_hash"]?.deliveryOtpHash).toBeNull();
+      expect(savedDocs["orders/order_otp_burn_legacy"]?.deliveryOtp).toBeNull();
+
+      // Replaying the same OTP on the delivered order now fails closed.
+      await expect(
+        verifyDeliveryOtp({ orderId: "order_otp_burn_hash", otp: "2468" })
+      ).rejects.toThrow(/No delivery OTP found/);
+      await expect(
+        verifyDeliveryOtp({ orderId: "order_otp_burn_legacy", otp: "1357" })
+      ).rejects.toThrow(/No delivery OTP found/);
+    });
+
     it("denies OTP verification and dispatch for staff outside the order branch", async () => {
       savedDocs["orders/order_branch_a"] = {
         id: "order_branch_a",
@@ -426,6 +579,7 @@ describe("Porter Logistics Service", () => {
   describe("book/rebook idempotency + GPS fail-closed (B2-S1)", () => {
     const gpsOrder = (overrides: Record<string, any> = {}) => ({
       branchId: "branch_ahmedabad_1",
+      store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
       orderType: "delivery",
       customerPhone: "+91 99999 88888",
       customerName: "Aarav Shah",
@@ -496,6 +650,60 @@ describe("Porter Logistics Service", () => {
       expect(savedDocs["orders/order_nogps_1"].deliveryStatus).toBeUndefined();
     });
 
+    it("resolves the pickup contact phone from the store snapshot, never a literal", () => {
+      // `store.phone` is the field real orders carry (client OrderStoreSnapshot);
+      // `branchPhone` never existed in the data model.
+      expect(
+        resolvePickupContactPhone({
+          store: { phone: "+91 98250 12345" },
+          branchPhone: "+91 90000 00000",
+          customerPhone: "+91 99999 88888",
+        })
+      ).toBe("+91 98250 12345");
+      expect(resolvePickupContactPhone({ branchPhone: "+91 90000 00000" })).toBe("+91 90000 00000");
+      // The customer bridge was removed on review: a pickup contact must never
+      // resolve to a different person's number.
+      expect(resolvePickupContactPhone({ customerPhone: "+91 99999 88888" })).toBeUndefined();
+      expect(resolvePickupContactPhone({})).toBeUndefined();
+      expect(resolvePickupContactPhone(undefined)).toBeUndefined();
+      // The old live payload ended this chain in a hardcoded stranger's number.
+      expect(resolvePickupContactPhone({})).not.toBe("+919876543210");
+    });
+
+    it("never invents a locality for the delivery address (finding 6 class, drop side)", () => {
+      // A real order carries the required OrderAddressSnapshot locality fields.
+      expect(
+        resolveDropAddress({
+          house: "102",
+          full: "102, Shivalik Highstreet, Vastrapur",
+          city: "Surat",
+          state: "Gujarat",
+          pincode: "395007",
+        })
+      ).toEqual({
+        house: "102",
+        street: "102, Shivalik Highstreet, Vastrapur",
+        city: "Surat",
+        state: "Gujarat",
+        pincode: "395007",
+      });
+
+      // Absent locality stays EMPTY: the old payload labelled a drop pin in any
+      // city as "Ahmedabad"/"Gujarat"/"380015" and shipped the wrong locality to
+      // the provider. The real lat/lng pin still carries the position.
+      const bare = resolveDropAddress({ full: "Some street" });
+      expect(bare.street).toBe("Some street");
+      expect(bare.house).toBe("");
+      expect(bare.city).toBe("");
+      expect(bare.state).toBe("");
+      expect(bare.pincode).toBe("");
+
+      // The "Customer Delivery Address" placeholder is gone too.
+      expect(resolveDropAddress(undefined).street).toBe("");
+      expect(Object.values(resolveDropAddress(undefined))).not.toContain("Ahmedabad");
+      expect(Object.values(resolveDropAddress(undefined))).not.toContain("380015");
+    });
+
     it("rebook is refused when the order is not rebookable", async () => {
       // Default mock order: no needsRebook, no cancelled/failed status.
       const err: any = await rebookPorterRider("order_rebook_nope", "Store Manager").then(
@@ -515,6 +723,88 @@ describe("Porter Logistics Service", () => {
       expect(res.porterOrderId).toBeDefined();
       expect(res.status).toBe("dispatched");
       expect(savedDocs["orders/order_rebook_ok"].deliveryStatus).toBe("dispatched");
+    });
+  });
+
+  // DR-CONTRACT parity with the Borzo adapter (dispatch.provider-contract
+  // .test.ts:529): a 2xx create-order with NO usable order id is an AMBIGUOUS
+  // booking, not a retryable failure — the delivery may already exist, so a
+  // blind staff retry could book a SECOND real rider. The live Porter branch
+  // (porter.service.ts:553-611) had no coverage at all before this.
+  describe("live Porter booking truth (no-mock, ambiguous create-order)", () => {
+    let prevLiveMock = false;
+    let prevApiKey = "";
+    let originalFetch: any;
+
+    const okJson = (body: any) =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+      }) as any;
+
+    const liveOrder = () => ({
+      branchId: "branch_ahmedabad_1",
+      store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
+      orderType: "delivery",
+      customerPhone: "+91 99999 88888",
+      customerName: "Aarav Shah",
+      branchCoordinates: { lat: 23.0131, lng: 72.5085 },
+      deliveryAddress: {
+        full: "102, Shivalik Highstreet, Vastrapur",
+        lat: 23.0338,
+        lng: 72.5262,
+      },
+    });
+
+    beforeEach(() => {
+      prevLiveMock = config.mock.porterDispatch;
+      prevApiKey = config.porter.apiKey;
+      config.mock.porterDispatch = false; // exercise the LIVE create-order branch
+      config.porter.apiKey = "test_porter_key_vitest_only";
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      config.mock.porterDispatch = prevLiveMock;
+      config.porter.apiKey = prevApiKey;
+      globalThis.fetch = originalFetch;
+    });
+
+    it("parks an accepted-but-id-less booking as needs_reconciliation, never dispatched", async () => {
+      savedDocs["orders/order_ambig_1"] = liveOrder();
+      // 2xx with an empty body: the create-order may have already succeeded
+      // provider-side, so this must NOT read as a plain dispatch_failed.
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) => okJson({}));
+
+      const err: any = await bookPorterRider("order_ambig_1", "Store Manager").then(
+        () => null,
+        (e) => e
+      );
+
+      expect(err?.code).toBe("PROVIDER_BOOK_AMBIGUOUS");
+      expect(err?.statusCode).toBe(502);
+      const doc = savedDocs["orders/order_ambig_1"];
+      expect(doc.porterDispatchStatus).toBe("needs_reconciliation");
+      expect(doc.porterDispatchError).toMatch(/no order id/i);
+      // Never persisted as a live dispatch, and no invented id.
+      expect(doc.porterOrderId).toBeUndefined();
+      expect(doc.deliveryStatus).toBeUndefined();
+    });
+
+    it("a live 2xx WITH an order id still dispatches (positive control)", async () => {
+      savedDocs["orders/order_live_ok_1"] = liveOrder();
+      globalThis.fetch = vi.fn(async (_url: any, _init: any) =>
+        okJson({ order_id: "PRTR-LIVE-777", driver_details: { name: "Real Rider" } })
+      );
+
+      const res = await bookPorterRider("order_live_ok_1", "Store Manager");
+      expect(res.porterOrderId).toBe("PRTR-LIVE-777");
+      expect(res.status).toBe("dispatched");
+      const doc = savedDocs["orders/order_live_ok_1"];
+      expect(doc.porterOrderId).toBe("PRTR-LIVE-777");
+      expect(doc.deliveryStatus).toBe("dispatched");
+      expect(doc.porterDispatchStatus).not.toBe("needs_reconciliation");
     });
   });
 

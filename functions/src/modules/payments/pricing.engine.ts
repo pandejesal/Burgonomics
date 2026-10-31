@@ -115,6 +115,16 @@ export async function calculateOrderPricing(
   // (db.getAll) instead of N sequential gets; degrades to sequential on
   // Firestore shims without getAll, and to client prices on read failure.
   const catalogPrices = new Map<string, number>();
+  // Availability is captured from the SAME snapshot as the price. Until now the
+  // cart was the ONLY availability gate and it is client-side: a line added
+  // before an 86, or from a stale menu, was still priced and charged. Reading
+  // it here costs no extra query and refuses to trust client cart state.
+  const catalogAvailability = new Map<string, unknown>();
+  // True when any line was priced from client input instead of the catalog.
+  // Surfaced on the result so callers can tell a clean total from a degraded
+  // one; before this it was declared and never set, so the documented signal
+  // did not exist.
+  let pricingDegraded = false;
   const wantedIds = [...new Set(input.items.map((i) => i.productId || i.id).filter(Boolean))];
   // True only when reads themselves threw (outage) — distinct from docs that
   // merely lack a price field (data shape, keeps per-item fallback).
@@ -128,6 +138,7 @@ export async function calculateOrderPricing(
           const data = snap.data();
           if (snap.exists && typeof data?.price === "number") {
             catalogPrices.set(snap.id, data.price);
+            catalogAvailability.set(snap.id, data?.inStock);
           }
         }
       } else {
@@ -137,6 +148,7 @@ export async function calculateOrderPricing(
             const data = snap.data();
             if (snap.exists && typeof data?.price === "number") {
               catalogPrices.set(id as string, data.price);
+              catalogAvailability.set(id as string, data?.inStock);
             }
           } catch {
             catalogReadFailed = true;
@@ -172,9 +184,37 @@ export async function calculateOrderPricing(
 
   for (const item of input.items) {
     let unitPrice = computeItemUnitPrice(item);
-    const catalogPrice = catalogPrices.get(item.productId || item.id);
+    const itemKey = item.productId || item.id;
+    const catalogPrice = catalogPrices.get(itemKey);
     if (catalogPrice !== undefined) {
+      // Money-time ELIGIBILITY. Fail CLOSED: only an explicit boolean true is
+      // sellable, so a doc that predates the availability field cannot be sold
+      // on an assumption. Without this, a line that went 86 after it entered
+      // the cart was still priced and charged, because the cart is a
+      // client-side gate and the server never looked.
+      if (catalogAvailability.get(itemKey) !== true) {
+        const unavailable: any = new Error(
+          `${String((item as any)?.name || "An item")} is no longer available — please review your cart.`
+        );
+        unavailable.statusCode = 409;
+        unavailable.code = "ITEM_UNAVAILABLE";
+        throw unavailable;
+      }
       unitPrice = applyCatalogBasePrice(item, catalogPrice);
+    } else {
+      // FAIL CLOSED on an unverifiable price. The catalog is the only
+      // authoritative price source, so charging the price the CLIENT sent for a
+      // product we cannot look up lets an arbitrary request value set the
+      // amount. A deleted, foreign or mistyped product is refused instead of
+      // silently priced, because "we could not verify it" is not a licence to
+      // charge it. Rejecting here is why pricingDegraded no longer has to carry
+      // this case on its own.
+      const unverified: any = new Error(
+        `${String((item as any)?.name || "An item")} could not be verified against the menu — please refresh your cart and try again.`
+      );
+      unverified.statusCode = 409;
+      unverified.code = "ITEM_PRICE_UNVERIFIED";
+      throw unverified;
     }
 
     const qty = Math.max(1, Math.floor(Number(item.quantity) || 1));
@@ -188,9 +228,6 @@ export async function calculateOrderPricing(
   let royaltyPercentage = 5; // Default 5% brand royalty (spec: 95/5 split)
   let packagingFee = input.packagingFee ?? 15; // Default ₹15 packaging
   let couponDoc: any = null;
-  // True when any pricing input fell back to defaults — surfaced on the
-  // result so callers/ops can distinguish a clean price from a degraded one.
-  let pricingDegraded = false;
 
   const couponCode = input.couponCode?.trim().toUpperCase();
   const branchRead: Promise<void> =
@@ -207,7 +244,19 @@ export async function calculateOrderPricing(
             if (branchSnap.exists) {
               const branchData = branchSnap.data();
               if (typeof branchData?.royaltyPercentage === "number") {
-                royaltyPercentage = branchData.royaltyPercentage;
+                const rp = branchData.royaltyPercentage;
+                // Bounds before use: a corrupt rate (>100%, negative, NaN)
+                // would mint a NEGATIVE branch leg (split > 100% of net
+                // food), which attemptRouteTransfer then refuses forever —
+                // a permanently stuck Route settlement for every order at
+                // this branch. Refuse to price instead (mapped to the same
+                // fail-closed 503 below), exactly like a missing branch doc.
+                if (!Number.isFinite(rp) || rp < 0 || rp > 100) {
+                  throw new Error(
+                    `branch royaltyPercentage ${String(rp)} outside [0,100] for ${input.branchId} — refusing to price (corrupt royalty config would strand the Route split)`
+                  );
+                }
+                royaltyPercentage = rp;
               }
               if (typeof branchData?.packagingFee === "number") {
                 packagingFee = branchData.packagingFee;
@@ -274,6 +323,13 @@ export async function calculateOrderPricing(
       : Promise.resolve();
   await Promise.all([branchRead, couponRead]);
 
+  // No branch to read means the default packaging fee stands. That IS a
+  // fallback, so it must be visible rather than silent — the flag loses its
+  // old meaning (client-priced lines) now that those are refused outright.
+  if (!input.branchId) {
+    pricingDegraded = true;
+  }
+
   // If takeaway or dinein, adjust delivery fee to 0
   const deliveryFee =
     input.orderType === "delivery" ? Math.max(0, Number(input.deliveryFee) || 0) : 0;
@@ -313,7 +369,10 @@ export async function calculateOrderPricing(
                   : (c.discount ?? c.value ?? c.amount ?? 0);
               // respect coupon maxDiscount cap if set
               const capped = c.maxDiscount ? Math.min(raw, c.maxDiscount) : raw;
-              discount = Math.min(capped, foodSubtotal);
+              // P2 clamp: a corrupt negative discount (console edit / bad
+              // import) must never INFLATE the bill — discount floors at 0
+              // and ceilings at the food subtotal.
+              discount = Math.max(0, Math.min(capped, foodSubtotal));
             }
           }
     }

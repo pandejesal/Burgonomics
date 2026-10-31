@@ -1,0 +1,20 @@
+{
+    "checkedAt":  "2026-10-29T09:49:17.0146328Z",
+    "portsChecked":  [
+                         48381,
+                         48382,
+                         48383,
+                         48384,
+                         48385,
+                         48386
+                     ],
+    "listeners":  [
+
+                  ],
+    "javaProcesses":  [
+
+                      ],
+    "ownedRunCleanupComplete":  true,
+    "evidenceRun":  "pos-final-04",
+    "note":  "Independent check after pos-final-04."
+}

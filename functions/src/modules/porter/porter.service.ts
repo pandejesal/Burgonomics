@@ -1,19 +1,27 @@
 import * as crypto from "crypto";
 import { db } from "../../core/firebase";
-import { config } from "../../config/env";
+import { config, assertLiveDispatchContext } from "../../config/env";
+import { extractRiderGps } from "../dispatch/dispatch.webhooks";
+import { ACTIVE_DELIVERY_STATUSES } from "../dispatch/types";
 import {
   timingSafeEqual,
   verifyPorterWebhookSignature,
   computeHmacSha256,
   getOtpHmacSecret,
+  isSafeDocId,
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 import {
+  dropGpsMissingError,
+  pickupGpsMissingError,
+  resolvePickupCoordinates,
+} from "../../core/utils/pickupCoords";
+import {
   calculateHaversineDistanceKm,
   calculatePorterFare,
   estimatePickupMinutes,
-} from "@burgonomics/shared/geo";
+} from "../../core/geo";
 import * as admin from "firebase-admin";
 
 export interface PorterQuoteParams {
@@ -34,14 +42,47 @@ export interface PorterQuoteResult {
   source: string;
   /** True when GPS was missing and fallback coordinates priced the quote. */
   isEstimate?: boolean;
+  /**
+   * True when `estimatedPickupMinutes` is a LOCAL estimate because Porter sent
+   * no ETA. Absent/false means the number is Porter's own.
+   */
+  etaEstimated?: boolean;
   validForSeconds: number;
   expiresAt: number;
+}
+
+/**
+ * Coerce a provider-supplied field to a finite, non-negative number.
+ * Returns null for anything else (missing, "", "N/A", NaN, Infinity, negative)
+ * so a caller can FAIL CLOSED instead of propagating an invented value.
+ */
+function finiteProviderNumber(value: unknown): number | null {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 /**
  * Calculates live Porter delivery fare quote based on pickup & drop GPS with 10-minute fee lock TTL.
  */
 export async function getDeliveryQuote(params: PorterQuoteParams): Promise<PorterQuoteResult> {
+  // Porter is RETIRED (opt-in). The direct /porter/quote route bypassed the
+  // booking guard, so a retired carrier could still be quoted (and billed)
+  // while the customer-facing fan-out treated it as disabled. Fail closed
+  // before any GPS, credential, mock, or provider work.
+  if (!config.porter.enabled) {
+    const retired: any = new Error(
+      "Porter is retired as a delivery partner. Use Borzo, Shadowfax, or assign an in-house rider instead."
+    );
+    retired.statusCode = 409;
+    retired.code = "PORTER_RETIRED";
+    throw retired;
+  }
+
   // Missing/zero GPS silently produced a "live-looking" fare for a fixed
   // Ahmedabad hop — the fee charged at checkout then mismatched the address.
   // Flag it: callers must label estimates and re-quote with real GPS before
@@ -109,11 +150,30 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
 
       if (response.ok) {
         const data = await response.json();
-        const fare = data.fare || calculatePorterFare(data.distance || estimatedDistanceKm);
+        // Money truth: a LIVE quote must carry a finite, non-negative fare from
+        // the provider. The previous `data.fare || calculatePorterFare(...)`
+        // invented a local rate-card fare and returned it labelled
+        // "porter_api_live"; a non-numeric value (e.g. "N/A") also passed
+        // straight through. Both put an unverified number in front of checkout,
+        // and a non-finite fare then made the DR7 fare-confirm comparison see
+        // NaN (so the drift gate silently opened). Fail closed instead - never
+        // invent a live fare.
+        const fare = finiteProviderNumber(data.fare);
+        if (fare === null) {
+          const err: any = new Error(
+            "Porter API returned no usable fare - refusing to invent a live quote"
+          );
+          err.statusCode = 503;
+          throw err;
+        }
+        const providerDistance = finiteProviderNumber(data.distance);
+        const providerEta = finiteProviderNumber(data.eta);
         return {
-          estimatedDistanceKm: data.distance || estimatedDistanceKm,
+          estimatedDistanceKm: providerDistance ?? estimatedDistanceKm,
           estimatedFare: fare,
-          estimatedPickupMinutes: data.eta || estimatePickupMinutes(),
+          estimatedPickupMinutes: providerEta ?? estimatePickupMinutes(),
+          // Provider data vs our local estimate - never silently the same thing.
+          etaEstimated: providerEta === null,
           vehicleType: "2-Wheeler (Bike Express)",
           quoteId: data.quote_id || `QTE-PRTR-${Date.now()}`,
           source: "porter_api_live",
@@ -141,6 +201,8 @@ export async function getDeliveryQuote(params: PorterQuoteParams): Promise<Porte
     estimatedDistanceKm,
     estimatedFare,
     estimatedPickupMinutes: estimatePickupMinutes(),
+    // The rate card is ours end to end, so the ETA is unambiguously local.
+    etaEstimated: true,
     vehicleType: "2-Wheeler (Bike Express)",
     quoteId: `QTE-PRTR-${Math.floor(10000 + Math.random() * 90000)}`,
     source: isEstimate ? "fallback_estimate" : "porter_standard_rate_card",
@@ -199,6 +261,199 @@ function dispatchInProgressError(): Error {
   return retry;
 }
 
+// ---------------------------------------------------------------------------
+// In-house (branch terminal) assignment ownership
+// ---------------------------------------------------------------------------
+
+/**
+ * Persisted marker of an in-house rider assignment made from the branch POS.
+ * Cross-path exclusion keys off THIS marker plus an active delivery status, so
+ * a provider claim can never be layered on top of a live manual assignment.
+ * `dispatch.router.ts` carries the same predicate (importing this module from
+ * the router would invert the provider-adapter dependency).
+ */
+const MANUAL_BRANCH_DISPATCH_TYPE = "manual_branch_terminal";
+
+/** The order is currently owned by an in-house rider (active, no lease). */
+function isManualBranchAssignmentActive(order: any): boolean {
+  return (
+    order?.dispatchType === MANUAL_BRANCH_DISPATCH_TYPE &&
+    (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(order?.deliveryStatus || "")
+  );
+}
+
+/**
+ * Active status + any provider binding means an external dispatch owns the
+ * order. A released binding is nulled by the teardown paths, so those orders
+ * stay assignable in-house.
+ */
+function hasActiveProviderBinding(order: any): boolean {
+  const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(
+    order?.deliveryStatus || ""
+  );
+  if (!active) return false;
+  return Boolean(
+    order?.dispatchProvider ||
+      order?.dispatchOrderId ||
+      order?.porterOrderId ||
+      order?.borzoOrderId ||
+      order?.shadowfaxOrderId
+  );
+}
+
+/** Every provider-order id an order can still present to a webhook/poller. */
+const PROVIDER_ORDER_ID_FIELDS = [
+  "dispatchOrderId",
+  "porterOrderId",
+  "borzoOrderId",
+  "shadowfaxOrderId",
+] as const;
+
+/**
+ * Provider-order ids that were never released. A teardown nulls all of these
+ * (`buildReleasedBindingWrite` in dispatch.router); anything left here is a
+ * binding the providers can still resolve to THIS order, whatever the local
+ * deliveryStatus currently says. `null`/blank is a released/absent binding.
+ */
+function unresolvedProviderOrderIds(order: any): string[] {
+  return PROVIDER_ORDER_ID_FIELDS.filter((field) => {
+    const value = order?.[field];
+    return value !== null && value !== undefined && String(value).trim() !== "";
+  });
+}
+
+/**
+ * Canonical terminal proof: deliveryStatus delivered/cancelled OR the
+ * canonical status object marked terminal/completed. The deliveryStatus
+ * sidecar can still read "confirmed"/"ready" after a finished order, so every
+ * claim path must consult the canonical object too.
+ */
+function porterTerminalStatus(order: any): string | null {
+  const ds = order?.deliveryStatus;
+  if (ds === "delivered" || ds === "cancelled") return ds;
+  if (order?.status?.terminal === true || order?.status?.kind === "completed") {
+    return "completed";
+  }
+  return null;
+}
+
+function isFreshGenericDispatchClaim(order: any): boolean {
+  return (
+    order?.dispatchStatus === "dispatch_pending" &&
+    Date.now() - porterClaimFreshMs(order?.dispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS
+  );
+}
+
+function isFreshPorterDispatchClaim(order: any): boolean {
+  return (
+    order?.porterDispatchStatus === "dispatch_pending" &&
+    Date.now() - porterClaimFreshMs(order?.porterDispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS
+  );
+}
+
+/**
+ * Any pending claim lease, fresh or expired. An expired lease is NOT proof the
+ * remote booking never happened (the crash may have landed after the POST), so
+ * the in-house path refuses both and never "releases" a claim it cannot cancel
+ * at the provider.
+ */
+function hasPendingDispatchClaim(order: any): boolean {
+  return (
+    order?.dispatchStatus === "dispatch_pending" ||
+    order?.porterDispatchStatus === "dispatch_pending"
+  );
+}
+
+function manualAssignmentLockedError(deliveryStatus: string): Error {
+  const err: any = new Error(
+    `This order is already ${deliveryStatus} — dispatch is locked. Use the order timeline for post-delivery actions.`
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_LOCKED";
+  return err;
+}
+
+function manualAssignmentConflictError(message: string): Error {
+  const err: any = new Error(message);
+  err.statusCode = 409;
+  err.code = "DISPATCH_EXISTS";
+  return err;
+}
+
+function manualAssignmentClaimStaleError(): Error {
+  const err: any = new Error(
+    "A dispatch attempt for this order started but never completed. Its remote booking may still be live, so it cannot be assumed cancelled — reconcile it with the provider, then release the dispatch before assigning an in-house rider."
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_CLAIM_STALE";
+  return err;
+}
+
+function manualAssignmentReconciliationError(): Error {
+  const err: any = new Error(
+    "This order has a provider booking awaiting reconciliation — a remote rider may already be on the way. Reconcile the booking before assigning an in-house rider."
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_RECONCILIATION_REQUIRED";
+  return err;
+}
+
+function orderMissingError(orderId: string): Error {
+  const err: any = new Error(`Order ${orderId} not found`);
+  err.statusCode = 404;
+  err.code = "ORDER_NOT_FOUND";
+  return err;
+}
+
+/** Drops undefined values — Firestore rejects them inside any write payload. */
+function definedFields(o: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+}
+
+/**
+ * The phone the courier is given for the pickup: the branch's own number as
+ * snapshotted onto the order at creation (`store.phone` — a required field of the
+ * client's OrderStoreSnapshot), then the legacy `branchPhone` alias. The live
+ * payload used to end this chain in a hardcoded literal, and then in the
+ * CUSTOMER's number — neither is the branch, so a courier with a question rang a
+ * stranger (audit 2026-10-17 findings 4/5). The customer bridge was removed on
+ * review: a pre-snapshot order that has no branch number now sends no pickup
+ * contact instead of a different person's number, so backfill `store.phone` on
+ * any order created before the snapshot existed.
+ */
+export function resolvePickupContactPhone(
+  order: Record<string, any> | undefined
+): string | undefined {
+  const o = order || {};
+  return o.store?.phone || o.branchPhone || undefined;
+}
+
+/**
+ * The delivery address shipped in the Porter payload, taken from the order's real
+ * address snapshot only. `OrderAddressSnapshot.city/state/pincode` are REQUIRED
+ * client fields, so a real order always carries them — the old inline defaults
+ * (Ahmedabad / Gujarat / 380015) invented a locality, so a drop pin in another
+ * city was labelled Ahmedabad on a live booking (audit 2026-10-17, finding 6
+ * class, drop side). An absent field stays empty; the real lat/lng pin still
+ * carries the position.
+ */
+export function resolveDropAddress(drop: Record<string, any> | undefined): {
+  house: string;
+  street: string;
+  city: string;
+  state: string;
+  pincode: string;
+} {
+  const d = drop || {};
+  return {
+    house: d.house || d.flat || d.line1 || "",
+    street: d.street || d.full || d.line2 || d.landmark || "",
+    city: d.city || "",
+    state: d.state || "",
+    pincode: d.pincode || "",
+  };
+}
+
 function storedDispatchSummary(d: any): any {
   return {
     porterOrderId: d.porterOrderId,
@@ -222,9 +477,34 @@ function storedDispatchSummary(d: any): any {
 async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | null> {
   const isDispatched = (d: any): boolean =>
     !!d?.porterOrderId && ["dispatched", "in_transit"].includes(d?.deliveryStatus);
-  const isFreshPending = (d: any): boolean =>
-    d?.porterDispatchStatus === "dispatch_pending" &&
-    Date.now() - porterClaimFreshMs(d?.porterDispatchClaimedAt) < PORTER_DISPATCH_CLAIM_TTL_MS;
+  // Cross-provider guards (multi-provider dispatch layer): the generic router
+  // (/dispatch/book) runs its own claim over the same order doc. A direct
+  // /porter/book tap must never race it or hijack another provider's booking.
+  const crossProvider = (d: any): "busy" | "conflict" | "in_house" | null => {
+    const active = ["dispatched", "in_transit", "driver_allocated"].includes(d?.deliveryStatus);
+    // An in-house rider already owns this order: booking a paid Porter rider
+    // on top of a live manual assignment is two riders for one order.
+    if (active && isManualBranchAssignmentActive(d)) return "in_house";
+    // Another provider owns an active dispatch (porterOrderId absent = not ours).
+    if (active && d?.dispatchOrderId && !d?.porterOrderId) return "conflict";
+    // The router holds a fresh generic claim — same 202 retry contract.
+    if (isFreshGenericDispatchClaim(d)) {
+      return "busy";
+    }
+    return null;
+  };
+  const conflictError = (d: any): Error => {
+    const err: any = new Error(
+      `This order is already dispatched via ${d?.dispatchProvider || "another provider"} — cancel that dispatch before booking Porter.`
+    );
+    err.statusCode = 409;
+    err.code = "DISPATCH_EXISTS";
+    return err;
+  };
+  const inHouseError = (): Error =>
+    manualAssignmentConflictError(
+      "This order is already assigned to an in-house rider — cancel that assignment before booking a Porter rider."
+    );
   const claimWrite = {
     porterDispatchStatus: "dispatch_pending",
     porterDispatchClaimedAt: Date.now(),
@@ -234,15 +514,31 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
     const outcome: any = await (db as any).runTransaction(async (tx: any) => {
       const fresh = await tx.get(orderDoc.ref);
       const d = (fresh.exists ? fresh.data() : undefined) as any;
-      if (!d) return { claimed: true };
+      // Deleted between the caller's pre-read and the claim: fail 404 BEFORE
+      // any provider POST. A booking against a gone document is a paid rider
+      // nobody can reconcile.
+      if (!d) return { missing: true as const };
+      // Canonical terminal lock: deliveryStatus can still read
+      // "confirmed"/"ready" on a finished order, and booking on top of it
+      // would resurrect (and re-pay for) a completed delivery.
+      const terminal = porterTerminalStatus(d);
+      if (terminal) return { terminal };
       if (isDispatched(d)) return { reuse: true, data: d };
+      const cross = crossProvider(d);
+      if (cross === "in_house") return { in_house: true };
+      if (cross === "conflict") return { conflict: true, data: d };
+      if (cross === "busy") return { busy: true };
       // Another tap owns the booking right now — never POST ours. Stale
       // claims (>10 min, owner crashed) are taken over below.
-      if (isFreshPending(d)) return { busy: true };
+      if (isFreshPorterDispatchClaim(d)) return { busy: true };
       tx.set(orderDoc.ref, claimWrite, { merge: true });
       return { claimed: true };
     });
+    if (outcome?.missing) throw orderMissingError(orderDoc.id);
+    if (outcome?.terminal) throw manualAssignmentLockedError(outcome.terminal);
     if (outcome?.reuse) return storedDispatchSummary(outcome.data);
+    if (outcome?.in_house) throw inHouseError();
+    if (outcome?.conflict) throw conflictError(outcome.data);
     if (outcome?.busy) throw dispatchInProgressError();
     return null;
   }
@@ -250,8 +546,14 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
   // Fallback for Firestore shims without transactions (tests): same rules on
   // the already-read order. Concurrent taps are serialized by the caller's
   // per-order pending UI state (partner H-M8 fix); this is the last guard.
+  const terminal = porterTerminalStatus(order);
+  if (terminal) throw manualAssignmentLockedError(terminal);
   if (isDispatched(order)) return storedDispatchSummary(order);
-  if (isFreshPending(order)) throw dispatchInProgressError();
+  const cross = crossProvider(order);
+  if (cross === "in_house") throw inHouseError();
+  if (cross === "conflict") throw conflictError(order);
+  if (cross === "busy") throw dispatchInProgressError();
+  if (isFreshPorterDispatchClaim(order)) throw dispatchInProgressError();
   await orderDoc.ref.set(claimWrite, { merge: true });
   return null;
 }
@@ -270,8 +572,20 @@ export async function bookPorterRider(
   orderId: string,
   staffName?: string,
   caller?: StaffCaller,
-  opts?: { idempotencyKey?: string }
+  opts?: { idempotencyKey?: string; preclaimed?: boolean }
 ) {
+  // Porter is RETIRED (contract cancelled). Direct Porter booking stays blocked
+  // so a stale Partner button can never dispatch a real paid rider from a
+  // carrier we no longer use. Historical orders remain readable/reconcilable,
+  // and the paste-in manual lane is untouched.
+  if (!config.porter.enabled) {
+    const retired: any = new Error(
+      "Porter is retired as a delivery partner. Use Borzo, Shadowfax, or assign an in-house rider instead."
+    );
+    retired.statusCode = 409;
+    retired.code = "PORTER_RETIRED";
+    throw retired;
+  }
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
     const missing: any = new Error(`Order ${orderId} not found`);
@@ -290,40 +604,46 @@ export async function bookPorterRider(
     throw new Error("Customer phone number is missing — edit the order to add it, then retry dispatch.");
   }
   const orderType = order.orderType || order.fulfillment || "delivery";
-  const drop = order.deliveryAddress;
+  const drop = order.deliveryAddress || order.address;
   if (orderType === "delivery" && !(drop?.street || drop?.full || (drop?.lat && drop?.lng))) {
     throw new Error("Delivery address is incomplete — add street or map pin, then retry dispatch.");
   }
   // Fail-closed GPS (B2-S1, H-R19): a textual address without coordinates must
   // never dispatch a rider to fallback defaults — the courier would drive to
   // the wrong pin on a paid booking. Pin the address first (422, retryable).
-  if (orderType === "delivery" && !(drop?.lat && drop?.lng)) {
-    const noGps: any = new Error(
-      "Delivery location is missing map coordinates — pin the customer address on the map, then retry dispatch."
-    );
-    noGps.statusCode = 422;
-    noGps.code = "DISPATCH_GPS_MISSING";
-    throw noGps;
-  }
+  // Unconditional (parity with the dispatch router): NO order type dispatches
+  // against a fabricated drop pin.
+  if (!(drop?.lat && drop?.lng)) throw dropGpsMissingError();
+  // Fail-closed PICKUP GPS (H-R19 parity): never book a courier to a default
+  // store pin. Real coordinates only: order.branchCoordinates (snapshot) →
+  // order.store → branches/{branchId}.coordinates (the canonical branch doc).
+  const pickupCoords = await resolvePickupCoordinates(order);
+  if (!pickupCoords) throw pickupGpsMissingError();
 
   // Per-order idempotency gate: replay + pending claim live here (before any
   // external POST) so neither the mock path nor the live path can double-book.
-  const reuse = await claimPorterDispatch(orderDoc, order);
-  if (reuse) return reuse;
+  // preclaimed = the multi-provider router already holds its own generic claim
+  // and its guards — claiming again here would self-conflict (202).
+  if (!opts?.preclaimed) {
+    const reuse = await claimPorterDispatch(orderDoc, order);
+    if (reuse) return reuse;
+  }
 
-  const pickupLat = order.branchCoordinates?.lat || 23.0131;
-  const pickupLng = order.branchCoordinates?.lng || 72.5085;
-  const dropLat = order.deliveryAddress?.lat || 23.0338;
-  const dropLng = order.deliveryAddress?.lng || 72.5262;
+  const pickupLat = pickupCoords.lat;
+  const pickupLng = pickupCoords.lng;
+  const dropLat = drop.lat;
+  const dropLng = drop.lng;
 
-  const usedFallbackCoords =
-    !(order.branchCoordinates?.lat && order.branchCoordinates?.lng) ||
-    !(order.deliveryAddress?.lat && order.deliveryAddress?.lng);
-  const dispatchGeoSource = usedFallbackCoords ? "fallback_default" : "live_gps";
+  // Every coordinate above is real GPS — no fallback source can exist here.
+  const dispatchGeoSource = "live_gps";
 
   let dispatchResult: any;
 
   if (config.mock.porterDispatch) {
+    // Zero-mock guard (finding 9 / DR11 parity with the dispatch adapters): a
+    // mock rider must never be minted in a declared production process, even if
+    // a runtime flag is flipped.
+    assertLiveDispatchContext("porter book");
     const mockRiders = [
       { name: "Ramesh Patel", phone: "+91 98250 11223", vehicle: "GJ-01-EE-8821" },
       { name: "Sanjay Varma", phone: "+91 97123 44556", vehicle: "GJ-27-AK-1029" },
@@ -346,23 +666,36 @@ export async function bookPorterRider(
       geoSource: dispatchGeoSource,
     };
   } else {
+    // Fail loudly rather than send a pickup with no contact: a live booking needs
+    // the branch's own number (see resolvePickupContactPhone — the customer
+    // bridge is deliberately gone).
+    const pickupContactPhone = resolvePickupContactPhone(order);
+    if (!pickupContactPhone) {
+      throw new Error(
+        "Branch phone number is missing — add it to the branch profile, then retry dispatch."
+      );
+    }
+    const dropAddress = resolveDropAddress(drop);
     try {
       const payload = {
         request_id: `REQ-${orderId}`,
         delivery_instructions: order.deliveryInstructions || "Handle fresh food with care",
         pickup_details: {
           address: {
-            apartment_address: order.branchName || "Burgonomics Branch",
-            street_address1: order.branchAddress || "Store Location",
-            city: order.branchCity || "Ahmedabad",
+            // Real branch data (the order's store snapshot) ahead of the legacy
+            // branch* aliases; the trailing literals are unchanged last-resort
+            // placeholders, reported separately (audit 2026-10-17).
+            apartment_address: order.store?.name || order.branchName || "Burgonomics Branch",
+            street_address1: order.store?.address || order.branchAddress || "Store Location",
+            city: order.store?.city || order.branchCity || "Ahmedabad",
             state: order.branchState || "Gujarat",
             pincode: order.branchPincode || "380015",
             country: "India",
             lat: pickupLat,
             lng: pickupLng,
             contact_details: {
-              name: order.branchName || "Burgonomics Branch Staff",
-              phone_number: order.branchPhone || "+919876543210",
+              name: order.store?.name || order.branchName || "Burgonomics Branch Staff",
+              phone_number: pickupContactPhone,
             },
           },
           lat: pickupLat,
@@ -370,14 +703,11 @@ export async function bookPorterRider(
         },
         drop_details: {
           address: {
-            apartment_address: order.deliveryAddress?.house || order.deliveryAddress?.flat || "",
-            street_address1:
-              order.deliveryAddress?.street ||
-              order.deliveryAddress?.full ||
-              "Customer Delivery Address",
-            city: order.deliveryAddress?.city || "Ahmedabad",
-            state: order.deliveryAddress?.state || "Gujarat",
-            pincode: order.deliveryAddress?.pincode || "380015",
+            apartment_address: dropAddress.house,
+            street_address1: dropAddress.street,
+            city: dropAddress.city,
+            state: dropAddress.state,
+            pincode: dropAddress.pincode,
             country: "India",
             lat: dropLat,
             lng: dropLng,
@@ -417,9 +747,30 @@ export async function bookPorterRider(
 
       const data = await response.json();
 
+      const porterOrderId =
+        typeof data?.order_id === "string" && data.order_id.trim() !== ""
+          ? data.order_id
+          : typeof data?.order_id === "number" && Number.isFinite(data.order_id)
+            ? String(data.order_id)
+            : null;
+      if (porterOrderId === null) {
+        // A 2xx with no usable order id is AMBIGUOUS: the delivery may already
+        // exist. Never persist `dispatched` with a null id, and never let this
+        // look like a plain retryable failure.
+        const err: any = new Error(
+          "Porter create-order returned no order id - the delivery may already exist; do not retry blindly"
+        );
+        err.statusCode = 502;
+        err.code = "PROVIDER_BOOK_AMBIGUOUS";
+        throw err;
+      }
+
       dispatchResult = {
-        porterOrderId: data.order_id,
-        riderName: data.driver_details?.name || data.driver?.name || "Porter Driver",
+        porterOrderId,
+        // No fabricated identity (same class as the Borzo/Shadowfax placeholders):
+        // an empty name keeps the dispatch `pending` until a real driver callback
+        // or the active-order poll fills it in.
+        riderName: data.driver_details?.name || data.driver?.name || "",
         riderPhone: data.driver_details?.phone || data.driver?.phone || "",
         riderVehicleNumber: data.driver_details?.vehicle_number || data.driver?.vehicle_number || "",
         trackingUrl: data.tracking_url || "",
@@ -440,7 +791,10 @@ export async function bookPorterRider(
       try {
         await orderDoc.ref.set(
           {
-            porterDispatchStatus: "dispatch_failed",
+            porterDispatchStatus:
+              err?.code === "PROVIDER_BOOK_AMBIGUOUS"
+                ? "needs_reconciliation"
+                : "dispatch_failed",
             porterDispatchError: err?.message || "Porter booking failed",
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -465,8 +819,31 @@ export async function bookPorterRider(
       riderVehicleNumber: dispatchResult.riderVehicleNumber,
       riderTrackingUrl: dispatchResult.trackingUrl,
       dispatchGeoSource,
-      dispatchedBy: staffName || "Branch Staff",
+      dispatchedBy: staffName || "unattributed",
       dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // `order.delivery` mirror (customer tracking contract): the customer map
+      // reads this path for rider identity + live GPS + tracking link. Real
+      // values only, and a NEW booking clears the previous rider's stale GPS.
+      delivery: definedFields({
+        ...(order.delivery && typeof order.delivery === "object" ? order.delivery : {}),
+        provider: "porter",
+        providerOrderId: String(dispatchResult.porterOrderId),
+        status: dispatchResult.riderName ? "rider_assigned" : "pending",
+        riderName: dispatchResult.riderName ?? null,
+        riderPhone: dispatchResult.riderPhone ?? null,
+        riderVehicleNumber: dispatchResult.riderVehicleNumber ?? null,
+        trackingUrl: dispatchResult.trackingUrl || null,
+        riderLocation: null,
+        riderLocationAt: null,
+        assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }),
+      // A live booking settles any pending rebook request — otherwise the
+      // auto-rebook worker would re-dispatch this order with a SECOND carrier
+      // (double rider) on its next sweep. Mirrors dispatchBook's book write.
+      needsRebook: false,
+      rebookTrigger: null,
+      autoRebookAttempts: 0,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
@@ -543,6 +920,9 @@ export async function cancelPorterBooking(
       porterDispatchStatus: "cancelled_by_store",
       porterProviderCancel: "manual-required",
       needsRebook: true,
+      // Staff-initiated cancel: stomp any stale `carrier_cancelled` trigger so
+      // the auto-rebook worker never re-dispatches a cancel the staff chose.
+      rebookTrigger: "staff_cancelled",
       riderCancellationReason: `Booking cancelled by ${staffName || "Branch Staff"} — confirm cancellation in the Porter dashboard`,
       cancelledBy: staffName || "Branch Staff",
       cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -803,6 +1183,31 @@ export async function handlePorterWebhook(
   }
   if (!orderRef) {
     if (orderId) {
+      // Fail-closed id shape: the echoed request_id hint is attacker-
+      // adjacent input — slashes/empties would throw or path-escape at
+      // doc() time. Park visibly instead of 500-retrying.
+      if (!isSafeDocId(orderId)) {
+        console.warn("[Porter Webhook] unsafe order hint parked:", JSON.stringify(orderId).slice(0, 80));
+        try {
+          await db
+            .collection("unmatched_porter_events")
+            .doc(parkId)
+            .set(
+              {
+                porterOrderId: porterOrderId || null,
+                rawEvent: rawEvent || null,
+                status: "needs_review",
+                reason: "unsafe_order_id",
+                receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+        } catch {
+          /* parking is best-effort; the warn above is the trail */
+        }
+        await markProcessed();
+        return;
+      }
       orderRef = db.collection("orders").doc(orderId);
     } else {
       const q = await db.collection("orders").where("porterOrderId", "==", porterOrderId).limit(1).get();
@@ -886,23 +1291,117 @@ export async function handlePorterWebhook(
     return;
   }
 
+  // ONE pre-write order read: it feeds the terminal guard AND the
+  // `order.delivery` mirror merge base below.
+  let currentOrder: Record<string, any> = {};
+  try {
+    const current = await orderRef.get();
+    currentOrder = (current.data() || {}) as Record<string, any>;
+  } catch (err: any) {
+    // Fail closed: if we cannot prove the order is not yet delivered, skip
+    // the flip rather than risk rewinding DELIVERED state.
+    console.error(`[Porter Webhook] pre-write order read failed:`, err?.message || err);
+    throw new Error(`Pre-write order read failed: ${err?.message || err}`);
+  }
+
+  // Terminal-state guard: after `delivered`, every event except DELIVERED
+  // itself is ignored. Provider retries replay courier updates out of order
+  // inside the freshness window — a late CANCELLED/IN_TRANSIT would otherwise
+  // resurrect a DELIVERED order (and pay for a second rider).
+  if (event !== "DELIVERED" && currentOrder.deliveryStatus === "delivered") {
+    console.log(`[Porter Webhook] Late ${rawEvent} after delivery ignored (no rewind)`);
+    await markProcessed();
+    return;
+  }
+
+  // `order.delivery` sub-object mirror — the customer tracking map reads
+  // exactly this path for rider identity, live GPS and the tracking link.
+  // Always built from the PRE-WRITE snapshot + this event's fields, so every
+  // write is a complete snapshot (Firestore deep merge and the shallow-merge
+  // test shims converge; a field an earlier event wrote is never dropped).
+  const deliveryMirror = (patch: Record<string, any>): Record<string, any> =>
+    definedFields({
+      ...(currentOrder.delivery && typeof currentOrder.delivery === "object"
+        ? currentOrder.delivery
+        : {}),
+      provider: currentOrder.dispatchProvider || "porter",
+      providerOrderId:
+        currentOrder.porterOrderId != null
+          ? String(currentOrder.porterOrderId)
+          : porterOrderId != null
+          ? String(porterOrderId)
+          : undefined,
+      ...patch,
+    });
+
+  // Real rider GPS only — a callback without a genuine courier position
+  // leaves the mirror untouched (customer map hides the pin, never fakes one).
+  const riderGps = extractRiderGps(payload);
+  // A courier that already left the store must never be rewound to "rider
+  // assigned" by a late/out-of-order ALLOTTED retry.
+  const alreadyMoving =
+    currentOrder.deliveryStatus === "in_transit" ||
+    currentOrder.deliveryStatus === "delivered";
+
+  const firstNonEmpty = (...candidates: any[]): string | undefined =>
+    candidates.find((c) => typeof c === "string" && c.trim());
+
   const updateData: Record<string, any> = {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     porterWebhookEvent: rawEvent,
   };
 
   switch (event) {
-    case "DRIVER_ALLOCATED":
-      updateData.riderName = driverDetails.name || payload.driver_name;
-      updateData.riderPhone = driverDetails.phone || payload.driver_phone;
-      updateData.riderVehicleNumber = driverDetails.vehicle_number || payload.driver_vehicle_number;
-      updateData.riderTrackingUrl = payload.tracking_url || payload.tracking_link;
-      updateData.deliveryStatus = "dispatched";
+    case "DRIVER_ALLOCATED": {
+      const riderName = firstNonEmpty(
+        driverDetails.name,
+        payload.driver_name,
+        payload.rider_name
+      );
+      const riderPhone = firstNonEmpty(
+        driverDetails.phone,
+        payload.driver_phone,
+        payload.rider_contact,
+        payload.rider_phone
+      );
+      const riderVehicleNumber = firstNonEmpty(
+        driverDetails.vehicle_number,
+        payload.driver_vehicle_number,
+        payload.rider_vehicle_number
+      );
+      const trackingUrl = firstNonEmpty(
+        payload.tracking_url,
+        payload.tracking_link,
+        payload.track_url
+      );
+      // Only fields actually present are written — an `undefined` Firestore
+      // value rejects the whole write (the webhook would 500-loop forever).
+      if (riderName) updateData.riderName = riderName;
+      if (riderPhone) updateData.riderPhone = riderPhone;
+      if (riderVehicleNumber) updateData.riderVehicleNumber = riderVehicleNumber;
+      if (trackingUrl) updateData.riderTrackingUrl = trackingUrl;
+      const mirrorPatch: Record<string, any> = {
+        riderName,
+        riderPhone,
+        riderVehicleNumber,
+        trackingUrl,
+      };
+      if (!alreadyMoving) {
+        updateData.deliveryStatus = "dispatched";
+        mirrorPatch.status = "rider_assigned";
+        mirrorPatch.assignedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+      updateData.delivery = deliveryMirror(mirrorPatch);
       break;
+    }
 
     case "ARRIVED_AT_PICKUP":
       updateData.riderArrivedAtStore = true;
       updateData.riderArrivedAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.delivery = deliveryMirror({
+        status: "at_pickup",
+        riderArrivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       break;
 
     case "STARTED_DELIVERY":
@@ -914,6 +1413,7 @@ export async function handlePorterWebhook(
         terminal: false,
       };
       updateData.deliveryStatus = "in_transit";
+      updateData.delivery = deliveryMirror({ status: "in_transit" });
       break;
 
     case "DELIVERED":
@@ -925,6 +1425,10 @@ export async function handlePorterWebhook(
       };
       updateData.deliveryStatus = "delivered";
       updateData.deliveredAt = admin.firestore.FieldValue.serverTimestamp();
+      updateData.delivery = deliveryMirror({
+        status: "delivered",
+        deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       break;
 
     case "RIDER_CANCELLED":
@@ -934,6 +1438,7 @@ export async function handlePorterWebhook(
       // and the status-change trigger (customer push) never fired. Core
       // renders the server label verbatim; partner maps RIDER_CANCELLED into
       // the actionable dispatch bucket (see orderContract).
+      const reason = firstNonEmpty(payload.reason, payload.reason_text) || "Driver cancelled dispatch";
       updateData.status = {
         code: "RIDER_CANCELLED",
         label: "Rider cancelled — rebook required",
@@ -942,9 +1447,26 @@ export async function handlePorterWebhook(
       };
       updateData.deliveryStatus = "rider_cancelled";
       updateData.needsRebook = true;
-      updateData.riderCancellationReason = payload.reason || "Driver cancelled dispatch";
+      // Auto-rebook trigger (mission §3): the scheduled worker re-dispatches
+      // this order with the NEXT provider, never the one that cancelled —
+      // without this stamp a Porter cancel was never auto-rebooked at all.
+      updateData.rebookTrigger = "carrier_cancelled";
+      updateData.riderCancellationReason = reason;
+      updateData.delivery = deliveryMirror({
+        status: "rider_cancelled",
+        riderCancellationReason: reason,
+      });
       break;
     }
+  }
+
+  // Live rider coordinates ride every callback that actually carries them.
+  if (riderGps) {
+    updateData.delivery = {
+      ...(updateData.delivery || deliveryMirror({})),
+      riderLocation: riderGps,
+      riderLocationAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
   }
 
   await orderRef.set(updateData, { merge: true });
@@ -954,8 +1476,7 @@ export async function handlePorterWebhook(
   // order rots. Customer push rides the existing status-change trigger.
   if (event === "RIDER_CANCELLED" || event === "NO_RIDERS_FOUND") {
     try {
-      const snap = await orderRef.get();
-      const branchId = snap.data()?.branchId;
+      const branchId = currentOrder.branchId;
       if (typeof branchId === "string" && branchId) {
         const { dispatchFCM } = await import("../notifications/fcm.service");
         await dispatchFCM({
@@ -985,10 +1506,23 @@ export async function rebookPorterRider(
   caller?: StaffCaller,
   opts?: { idempotencyKey?: string }
 ) {
+  // Porter is RETIRED — rebooking re-arms the same paid carrier call, so it is
+  // refused exactly like a fresh booking. In-house assignment is the fallback.
+  if (!config.porter.enabled) {
+    const retired: any = new Error(
+      "Porter is retired as a delivery partner. Use Borzo, Shadowfax, or assign an in-house rider instead."
+    );
+    retired.statusCode = 409;
+    retired.code = "PORTER_RETIRED";
+    throw retired;
+  }
   const orderSnap = await db.collection("orders").doc(orderId).get();
   const order = (orderSnap.exists ? orderSnap.data() : undefined) as any;
   const rebookable =
     order?.needsRebook === true ||
+    // Failed dispatches whose auto-rebook flag was cleared after exhausting
+    // its attempts (autoRebookDispatchWorker) must stay manually rebookable.
+    order?.dispatchStatus === "dispatch_failed" ||
     ["rider_cancelled", "needs_review", "dispatch_failed"].includes(order?.deliveryStatus);
   if (!rebookable) {
     const err: any = new Error(
@@ -1108,6 +1642,11 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
   const updateData = {
     deliveryOtpAttempts: 0,
     deliveryOtpLockedUntil: null,
+    // P2: burn the OTP after successful verification — the HMAC hash (and any
+    // legacy plaintext copy) must not outlive the handover, otherwise a
+    // delivered order keeps a reusable secret on its document forever.
+    deliveryOtpHash: null,
+    deliveryOtp: null,
     status: {
       code: "DELIVERED",
       label: "Delivered",
@@ -1142,37 +1681,169 @@ export interface ManualBranchDispatchParams {
 
 /**
  * Manual Dispatch from Branch POS Terminal device when Porter 3PL courier is unavailable.
+ *
+ * Cross-path exclusion (in-house vs external): the assignment is decided and
+ * written in ONE transaction that re-reads the order. It refuses a terminal
+ * order, an active external binding, a live manual assignment for a different
+ * rider, and any pending generic/Porter claim lease. An EXPIRED lease is
+ * refused too — the crash that stranded it may have happened AFTER the
+ * provider POST, so it is not evidence the remote booking was cancelled, and
+ * this function never claims a provider-side cancellation it cannot perform.
+ *
+ * Replaying the SAME rider on an already-manual order is idempotent: nothing
+ * is written, so `dispatchedAt` / `updatedAt` are untouched.
  */
 export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
-  const { orderId, riderName, riderPhone, staffName, notes, caller } = params;
-  if (!orderId || !riderName || !riderPhone) {
+  const { orderId, staffName, notes, caller } = params;
+  const riderName = typeof params.riderName === "string" ? params.riderName.trim() : "";
+  const riderPhone = typeof params.riderPhone === "string" ? params.riderPhone.trim() : "";
+
+  if (!orderId) {
     throw new Error("orderId, riderName, and riderPhone are required for manual branch dispatch");
+  }
+  // Blank (or whitespace-only) rider identity would dispatch an anonymous
+  // rider the store cannot hand food to — reject before any read or write.
+  if (!riderName || !riderPhone) {
+    const invalid: any = new Error(
+      "Rider name and phone number are required for manual branch dispatch — blank values are rejected."
+    );
+    invalid.statusCode = 400;
+    invalid.code = "INVALID_RIDER_DETAILS";
+    throw invalid;
   }
 
   const orderDoc = await db.collection("orders").doc(orderId).get();
-  if (!orderDoc.exists) {
-    throw new Error(`Order ${orderId} not found`);
-  }
+  if (!orderDoc.exists) throw orderMissingError(orderId);
+  // Fast pre-check for the common denial; authorization is re-evaluated
+  // against the document as read INSIDE the transaction below.
   if (caller) await assertOrderBranchAccess(caller, orderDoc.data()!);
 
-  const dispatchResult = {
-    dispatchType: "manual_branch_terminal",
-    deliveryStatus: "dispatched",
-    riderName: riderName.trim(),
-    riderPhone: riderPhone.trim(),
+  // No non-transactional path: a check-then-act assignment is exactly the race
+  // (and the stale pre-read) this guard exists to close.
+  if (!db || typeof (db as any).runTransaction !== "function") {
+    const err: any = new Error(
+      "Manual branch dispatch requires transactional storage — refusing to assign a rider without a race-safe re-read."
+    );
+    err.statusCode = 503;
+    err.code = "TRANSACTION_UNAVAILABLE";
+    throw err;
+  }
+
+  // Everything this call can state truthfully. Timestamps are deliberately
+  // NOT here: they are serverTimestamp() sentinels in the write below, which
+  // resolve only after commit and are not safely serializable, so the fresh
+  // response must not echo them as if they were real values.
+  const manualFields = {
+    dispatchType: MANUAL_BRANCH_DISPATCH_TYPE,
+    deliveryStatus: "dispatched" as const,
+    riderName,
+    riderPhone,
     riderVehicleNumber: "Local / In-Store",
-    dispatchedBy: staffName || "Branch Manager",
-    dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
+    dispatchedBy: staffName || "unattributed",
     manualDispatchNotes: notes || "Dispatched via Branch POS Terminal fallback",
+    // An in-house rider settles any pending auto-rebook: leaving needsRebook
+    // set would make the worker book a 3PL rider ALONGSIDE this one (double
+    // rider on one order).
+    needsRebook: false,
+    rebookTrigger: null,
+    autoRebookAttempts: 0,
+  };
+
+  const manualWrite = {
+    ...manualFields,
+    dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
-  await orderDoc.ref.set(dispatchResult, { merge: true });
+  const storedManualSummary = (d: any) => ({
+    success: true,
+    orderId,
+    dispatchType: MANUAL_BRANCH_DISPATCH_TYPE,
+    deliveryStatus: "dispatched" as const,
+    riderName: d.riderName,
+    riderPhone: d.riderPhone,
+    riderVehicleNumber: d.riderVehicleNumber,
+    dispatchedBy: d.dispatchedBy,
+    dispatchedAt: d.dispatchedAt,
+    manualDispatchNotes: d.manualDispatchNotes,
+    needsRebook: d.needsRebook ?? false,
+    rebookTrigger: d.rebookTrigger ?? null,
+    autoRebookAttempts: d.autoRebookAttempts ?? 0,
+    updatedAt: d.updatedAt,
+    reused: true as const,
+  });
 
+  const outcome: any = await (db as any).runTransaction(async (tx: any) => {
+    const fresh = await tx.get(orderDoc.ref);
+    const d = (fresh.exists ? fresh.data() : undefined) as any;
+    if (!d) return { missing: true as const };
+    // Re-authorize on the FRESH document: the pre-read verdict can be stale
+    // (order re-linked to another branch between read and write).
+    if (caller) await assertOrderBranchAccess(caller, d);
+
+    const terminal = porterTerminalStatus(d);
+    if (terminal) return { terminal };
+    // An ACTIVE external binding is a live dispatch: staff must cancel it.
+    if (hasActiveProviderBinding(d)) {
+      return {
+        conflict: `This order is already dispatched via ${
+          d.dispatchProvider || "an external provider"
+        } — cancel that dispatch before assigning an in-house rider.`,
+      };
+    }
+    // BLOCKER (GLM review): an INACTIVE status no longer proves the binding is
+    // gone. A lingering porterOrderId/dispatchOrderId/borzoOrderId/
+    // shadowfaxOrderId can still be resolved by the provider webhook, which
+    // would then overwrite this in-house assignment (or re-arm auto-rebook).
+    // We cannot cancel a remote booking from here, so refuse until it is
+    // reconciled — never write an in-house rider over an unresolved booking.
+    if (unresolvedProviderOrderIds(d).length > 0) return { needsReconciliation: true as const };
+    if (isManualBranchAssignmentActive(d)) {
+      const sameRider =
+        String(d.riderName ?? "").trim() === riderName &&
+        String(d.riderPhone ?? "").trim() === riderPhone;
+      // Idempotent replay: return the stored assignment, write nothing.
+      if (sameRider) return { reuse: d };
+      return {
+        conflict:
+          "This order is already assigned to a different in-house rider — cancel that assignment before assigning another.",
+      };
+    }
+    if (isFreshGenericDispatchClaim(d) || isFreshPorterDispatchClaim(d)) {
+      return { busy: true as const };
+    }
+    // Conservative: an expired lease is not proof of a cancelled remote
+    // booking. Never mutate/clear it here (no fake provider cancellation).
+    if (hasPendingDispatchClaim(d)) return { staleClaim: true as const };
+    if (d.porterDispatchStatus === "needs_reconciliation") {
+      return { needsReconciliation: true as const };
+    }
+
+    tx.set(orderDoc.ref, manualWrite, { merge: true });
+    return { ok: true as const };
+  });
+
+  if (outcome?.missing) throw orderMissingError(orderId);
+  if (outcome?.terminal) throw manualAssignmentLockedError(outcome.terminal);
+  if (outcome?.conflict) throw manualAssignmentConflictError(outcome.conflict);
+  if (outcome?.busy) throw dispatchInProgressError();
+  if (outcome?.staleClaim) throw manualAssignmentClaimStaleError();
+  if (outcome?.needsReconciliation) throw manualAssignmentReconciliationError();
+  if (outcome?.reuse) return storedManualSummary(outcome.reuse);
+  if (!outcome?.ok) {
+    // Fail closed: a future return shape must not silently report success
+    // without the order having been flipped.
+    throw new Error("manualBranchDispatch: unrecognised transaction outcome");
+  }
+
+  // Fresh assignment: only the resolved values are returned. The committed
+  // timestamps are sentinels at this point (no read-back), so echoing them
+  // would assert a resolution that has not happened; a caller that needs them
+  // reads the order (the replay path returns the stored values below).
   return {
     success: true,
     orderId,
-    ...dispatchResult,
+    ...manualFields,
   };
 }
 

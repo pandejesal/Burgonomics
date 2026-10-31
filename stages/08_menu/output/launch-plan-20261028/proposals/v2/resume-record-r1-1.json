@@ -1,0 +1,233 @@
+{
+  "resumedAt": "2026-10-28T12:38:27+05:30",
+  "reason": "User reported server restart and cancelled render; original per-image metrics were not persisted",
+  "scope": "Retain each existing PNG byte-for-byte; bind to current sources only after an exact fresh pixel comparison. Never overwrite an existing PNG.",
+  "existingImages": [
+    {
+      "file": "screenshots-r1/D01-D.png",
+      "sha256": "89864c354c707d8f49fa58a9d8f9fabe61b5804cb94bc92c1570566a67f94a07"
+    },
+    {
+      "file": "screenshots-r1/D01-L.png",
+      "sha256": "86f5a0334b7d9319ab5104135fffb7a7865a210f60416b7a866e4c64e34e5854"
+    },
+    {
+      "file": "screenshots-r1/D02-D.png",
+      "sha256": "b551acd949709bd302a3516bb7e975dc637012efdd9c9fb6d5bafc4a02ded35a"
+    },
+    {
+      "file": "screenshots-r1/D02-L.png",
+      "sha256": "dd3b2834264b7d490a01fd6faee69fd3eda49afdbca09b4ee295ccb10324ad41"
+    },
+    {
+      "file": "screenshots-r1/D03-D.png",
+      "sha256": "f8585184f0aa7a3b0ebcce076bbcf6e84754b4bd0f77f54247125d56da5c4ba7"
+    },
+    {
+      "file": "screenshots-r1/D03-L.png",
+      "sha256": "ce738bf25965e6559a06bfd977c7fb5c273bd76a7cedb62dcca3df0b21f264b0"
+    },
+    {
+      "file": "screenshots-r1/D04-D.png",
+      "sha256": "236982c5e26b0f21f04fb08127deb43e0aa9cce27dc2088f5244955d064c2975"
+    },
+    {
+      "file": "screenshots-r1/D04-L.png",
+      "sha256": "d936709b591241f2a3822006cbefcb330f52f1264c591abf8e4a783a49e2f67a"
+    },
+    {
+      "file": "screenshots-r1/D05-D.png",
+      "sha256": "930c93d87e583c35894083dc1e3ac4b6e6abc85acc408b2b6763f376132653fb"
+    },
+    {
+      "file": "screenshots-r1/D05-L.png",
+      "sha256": "78e08a349731702306408eb214fb87892ff73be7693e037bd30ac8755318e563"
+    },
+    {
+      "file": "screenshots-r1/D06-D.png",
+      "sha256": "257fb162dec2bbec49cc34dff1ba77916afe3d5194f537d2f01b9e9b68b19eb6"
+    },
+    {
+      "file": "screenshots-r1/D06-L.png",
+      "sha256": "65a99f2ca4752e98001d482c4d2ac0d36d14b583aee39aeeb8c7f0c4b1c440ab"
+    },
+    {
+      "file": "screenshots-r1/D07-D.png",
+      "sha256": "a9d1f7f0a3c4f5b4e7a8bc77ead4fdcbee31277b053c7284394a69a255c9fb4b"
+    },
+    {
+      "file": "screenshots-r1/D07-L.png",
+      "sha256": "c0c6cef94b117f533b60b0676775effcdc8d40877fac9cf556215ec1e749bd0c"
+    },
+    {
+      "file": "screenshots-r1/D08-D.png",
+      "sha256": "aab2cbcbc6c89ceebab8981ab715976d4cfc576e2d65a2e33ac49a30e0b1f7fb"
+    },
+    {
+      "file": "screenshots-r1/D08-L.png",
+      "sha256": "bfa8d179ac6cf6c72f659de31c1cd1bc19f7f568780ea9b50cc1a5596d9fb21d"
+    },
+    {
+      "file": "screenshots-r1/D09-D.png",
+      "sha256": "701937bbf41da24cd7c2bca2450921bb4577bdca76533d92803730f00fb3a479"
+    },
+    {
+      "file": "screenshots-r1/D09-L.png",
+      "sha256": "ec320d3acd6b41688148641a17995404701b3659dccfa61c518cf054fd866983"
+    },
+    {
+      "file": "screenshots-r1/D10-D.png",
+      "sha256": "d3a7694886f78f929950342837d7eef5521a7afc427bba30464a00898ef33f1f"
+    },
+    {
+      "file": "screenshots-r1/D10-L.png",
+      "sha256": "4b577175a053c6e1c9ec491db622ca3ce25291d2045085ddadc760a3929163f0"
+    },
+    {
+      "file": "screenshots-r1/D11-D.png",
+      "sha256": "e2d1a2b88ffc8c1dfb59115531e6665156cd072f572a1393e7d2d36ede29a91b"
+    },
+    {
+      "file": "screenshots-r1/D11-L.png",
+      "sha256": "5e3a565eecbb4f9628024f403a316f423dab6e73d680143b0f89f6bda19b1b50"
+    },
+    {
+      "file": "screenshots-r1/D12-D.png",
+      "sha256": "87fd148677efb77e2c67705c710d531417524c8d58d1eb4b13fb5b4dbea7df7a"
+    },
+    {
+      "file": "screenshots-r1/D12-L.png",
+      "sha256": "cd2739f1cc353372d7cb3580fed2b14a816b793cc98fd348cc022b4d16340f7a"
+    },
+    {
+      "file": "screenshots-r1/D13-D.png",
+      "sha256": "35cc4b1087bb6f627d1104f2ad73b2483b45705229b2b08b4ad91577b965fd08"
+    },
+    {
+      "file": "screenshots-r1/D13-L.png",
+      "sha256": "401a7f0da818d7e60611c9246e9966f7f33b4ca1f7a73fa2f6ce3992f68a1e34"
+    },
+    {
+      "file": "screenshots-r1/D14-D.png",
+      "sha256": "b7a9c822610e63ee2a1e8dbb38c3c648eea91978cd10caf1e1a5ea5c3efc8958"
+    },
+    {
+      "file": "screenshots-r1/D14-L.png",
+      "sha256": "d84e6927fad9e680290948dd634c6def808461dc53bf681e5e4d7ab9b9cfe2b6"
+    },
+    {
+      "file": "screenshots-r1/D15-D.png",
+      "sha256": "227ab452704ff7dc06518d59d9e664a02367836995aaa7fa70bd68237ec9c6eb"
+    },
+    {
+      "file": "screenshots-r1/D15-L.png",
+      "sha256": "3e5c8a9b829243c11139d22265bac4d4b002f5ed232b284c23766b421d5e5c50"
+    },
+    {
+      "file": "screenshots-r1/D16-D.png",
+      "sha256": "202b95b99d950a8ce7b8ebdb8440747f7fc18f1b7f97c8f5d74d2864878220ac"
+    },
+    {
+      "file": "screenshots-r1/D16-L.png",
+      "sha256": "5c94541219c94da78952bb3791a00722146a117a545966c7e3f0e97f82798e12"
+    },
+    {
+      "file": "screenshots-r1/D17-D.png",
+      "sha256": "15a6a43283d536008559bef80a9aa8b3ecda241c270f3d29124c71516819acdd"
+    },
+    {
+      "file": "screenshots-r1/D17-L.png",
+      "sha256": "2b244219a9a06c4ccb8519ce2344e862266f2da8ba4f413b5e314972dc6c12ca"
+    },
+    {
+      "file": "screenshots-r1/P01-D.png",
+      "sha256": "09e4f385ca3475fdf28101deb08b4d07f853afd114cfb7bab59091a1df398deb"
+    },
+    {
+      "file": "screenshots-r1/P01-L.png",
+      "sha256": "7727e64c20cbe2ff2fbbeb6d5737ad1d6cc1a189454cf82caa2569a56b31beba"
+    },
+    {
+      "file": "screenshots-r1/P02-D.png",
+      "sha256": "f3078845c09d0b302db5387f1aad544b993c61446b5237d2f78694ee65b8a4f2"
+    },
+    {
+      "file": "screenshots-r1/P02-L.png",
+      "sha256": "6f3d44780fe87620da4385719ca489343d4ca2c33c4ae4b76524c60133e6fcdd"
+    },
+    {
+      "file": "screenshots-r1/P03-D.png",
+      "sha256": "235e0b84a0b8f44843afe4374fa568eeff513a81af80e7aa434a8eec760cc9a4"
+    },
+    {
+      "file": "screenshots-r1/P03-L.png",
+      "sha256": "c4a5c45a1f412e477ce7050428a6f232b9fb1a558d2285680ca95cfa3219e261"
+    },
+    {
+      "file": "screenshots-r1/P04-D.png",
+      "sha256": "c276a5deb4ea627678ddba3fed1fff0673975bc1bff823b670d6263af5099157"
+    },
+    {
+      "file": "screenshots-r1/P04-L.png",
+      "sha256": "a3bcac97cc46fa4d5895c753d52854ed9a4fdb628e3b640a38b8f42d0b661792"
+    },
+    {
+      "file": "screenshots-r1/P05-D.png",
+      "sha256": "84a5f7a50314ce00f7c3ff861f030bf94503691946f6d534e46dc85c783943b4"
+    },
+    {
+      "file": "screenshots-r1/P05-L.png",
+      "sha256": "d2b4c9d7b2896e3c31a2848833e1d72209768d965f98e4525634c15be54a69a0"
+    },
+    {
+      "file": "screenshots-r1/P06-L.png",
+      "sha256": "581caf5d2b7f6a328e355c913ed949d9998811eb5676e76e03079687f00dd9dc"
+    }
+  ],
+  "currentSourceFingerprints": [
+    {
+      "file": "preview.html",
+      "sha256": "b9288e91d4d88e6c6c591f0fc6173e683705ea6063a8961ba000bf68dec6ee01"
+    },
+    {
+      "file": "catalog.js",
+      "sha256": "15a6deeb5ca599aaa42dc412244a521b2965252b9f6e39c6219509844240bf33"
+    },
+    {
+      "file": "mockups.css",
+      "sha256": "f54e3bbb6841dbdf977c0d1d6e5f6f2eba46697c462e1666a8ab2e563eccc9c1"
+    },
+    {
+      "file": "mockups.js",
+      "sha256": "f69c5bfcefa7f30bc20da0d9a513bcc5599bf430a2c612ba7c3ed19054c5f262"
+    },
+    {
+      "file": "render-mockups.py",
+      "sha256": "253ce15b8665bf57841b002231009bdda21dacab6ef60a4b9c634be60d75d4a4"
+    },
+    {
+      "file": "prepare-inputs.py",
+      "sha256": "cf7594f634bd634cdfe94a000e3b55d931195602af413cc48239d2d984781830"
+    },
+    {
+      "file": "DESIGN.md",
+      "sha256": "f0b8a38dea6de5443c94acc597002f0f240ec00b971287180b55defb9ba9fb69"
+    },
+    {
+      "file": "COVERAGE.md",
+      "sha256": "abbc2413367d8d23fda4208114a34195c9758a090573a5c96750f6ad2b0d612f"
+    },
+    {
+      "file": "brand-spec.md",
+      "sha256": "d4486779471c7156217375f925f95502c0f0fd46a8f3adf4844493d7ad9c20e6"
+    },
+    {
+      "file": "asset-manifest.json",
+      "sha256": "8237d765deddaaeb7db75de1b4596a020b3804191ef7db692f5f728f62a12f8e"
+    },
+    {
+      "file": "input-snapshot.json",
+      "sha256": "f89a8cd2d1266933982d08cbabe75266040ef650821629ca70b702958dfa7068"
+    }
+  ]
+}

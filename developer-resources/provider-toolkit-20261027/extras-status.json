@@ -1,0 +1,91 @@
+{
+  "verifiedAtUtc": "2026-10-27T17:57:26.747539+00:00",
+  "packages": [
+    {
+      "name": "@playwright/mcp",
+      "version": "0.0.83",
+      "installation": "C:\\Users\\DELL\\AppData\\Local\\BurgonomicsDevTools\\playwright-mcp-0.0.83",
+      "resolved": "https://registry.npmjs.org/@playwright/mcp/-/mcp-0.0.83.tgz",
+      "integrity": "sha512-oNcl+Ae2/IAjhfPeP46BfIkSakfmprY+aOtkv5MjrQ4lPav4/yNtPhL0iq8SlIM90oApWgBDUxaNKvktazUKOg==",
+      "lockSha256": "0432acbe50ff9bf177afe898ffe442449312c623cc5299cc2f7960655f034baf",
+      "installScriptsEnabled": false
+    },
+    {
+      "name": "@mobilenext/mobile-mcp",
+      "version": "1.0.14",
+      "installation": "C:\\Users\\DELL\\AppData\\Local\\BurgonomicsDevTools\\mobile-mcp-1.0.14",
+      "resolved": "https://registry.npmjs.org/@mobilenext/mobile-mcp/-/mobile-mcp-1.0.14.tgz",
+      "integrity": "sha512-24is1HsOTDEHWX4ULh2BMXEbe3ZTpoSDmDJHn3fgc0vtktssfsQ6Z0Yg6DGNUCH2UgDmt40PFJfO1QZIYbXGiA==",
+      "lockSha256": "04d993466ac0b8c2732be2d52963fdbf7a34f83b7602405a0e95dbd3b85d8ad3",
+      "installScriptsEnabled": false
+    }
+  ],
+  "quotaRotation": {
+    "status": "BLOCKED_NOT_ENABLED",
+    "reason": "No verified authoritative supported remaining-quota telemetry",
+    "accountsUnchanged": true
+  },
+  "tests": {
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0
+  },
+  "status": {
+    "location": {
+      "directory": "C:\\Users\\DELL\\Desktop\\Burgonomics"
+    },
+    "servers": [
+      {
+        "name": "code-review",
+        "status": {
+          "status": "connected"
+        }
+      },
+      {
+        "name": "context7",
+        "status": {
+          "status": "connected"
+        },
+        "integrationID": "mcp_54d03abee7d4e11b"
+      },
+      {
+        "name": "firebase",
+        "status": {
+          "status": "connected"
+        }
+      },
+      {
+        "name": "github",
+        "status": {
+          "status": "needs_auth",
+          "error": "MCP server \"https://api.githubcopilot.com/mcp/readonly\" requires a login before it can register a client"
+        },
+        "integrationID": "mcp_bc51222f4959a7a6"
+      },
+      {
+        "name": "mobile",
+        "status": {
+          "status": "connected"
+        }
+      },
+      {
+        "name": "playwright",
+        "status": {
+          "status": "connected"
+        }
+      },
+      {
+        "name": "shadcn",
+        "status": {
+          "status": "connected"
+        }
+      },
+      {
+        "name": "vera",
+        "status": {
+          "status": "connected"
+        }
+      }
+    ]
+  }
+}

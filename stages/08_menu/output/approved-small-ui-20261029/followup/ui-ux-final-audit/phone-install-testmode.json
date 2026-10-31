@@ -1,0 +1,19 @@
+{
+  "status": "TESTMODE_INSTALLED_AND_VERIFIED",
+  "device": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "startedAt": "2026-10-31T05:23:39.454510+00:00",
+  "completedAt": "2026-10-31T05:23:52.684160+00:00",
+  "beforeSha256": "33615bd9e26797f4ddde61fa6f91c9bec5efcacf4047de445976301d5453a576",
+  "installedSha256": "760a170ede644150086d89ab40e070bf3b7c7a486cf10ceffb5551f26e36eef3",
+  "metadata": {
+    "versionCode": "1 minSdk=24 targetSdk=36",
+    "versionName": "1.0.0",
+    "firstInstallTime": "2026-10-27 11:32:45",
+    "lastUpdateTime": "2026-10-31 10:53:53"
+  },
+  "firstInstallTimeUnchanged": true,
+  "uninstallPerformed": false,
+  "dataClearPerformed": false,
+  "mode": "development bundle with Razorpay test key; not release-representative"
+}

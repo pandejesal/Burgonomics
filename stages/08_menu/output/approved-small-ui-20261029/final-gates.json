@@ -1,0 +1,15 @@
+﻿{
+    "Started":  "2026-10-29T13:17:36.2388998Z",
+    "Typecheck":  0,
+    "TypecheckEvidence":  "native-qa/typecheck-r3.log (same source; no diagnostics)",
+    "Unit":  1,
+    "WebBuild":  null,
+    "MobileBuild":  null,
+    "CapacitorSync":  null,
+    "DebugAssemble":  null,
+    "ApkCompatibility":  null,
+    "SourceComparison":  0,
+    "InstallationPerformed":  false,
+    "Scope":  "Delivery only; rules tests keep existing package exclusion, no provider operations",
+    "Completed":  "2026-10-29T13:35:10.4332517Z"
+}

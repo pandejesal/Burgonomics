@@ -1,0 +1,50 @@
+﻿[
+    {
+        "path":  "src/features/payment/hooks/useRazorpayPayment.ts",
+        "blob":  "7b55f7b09f3c8496e9502fe8f7fc9b4f0b011413",
+        "sha256":  "CA0AE8404E0498189FF4D805C7FC9C87E0775CFEFCC5FC7DE13F1BC48732E4E6",
+        "bytes":  13438
+    },
+    {
+        "path":  "src/features/payment/hooks/useRazorpayPayment.test.tsx",
+        "blob":  "213c4532b8cc6d8e259006cad00fe7e90b82ebd6",
+        "sha256":  "9746F1B8C2043B3117C6891DF161C0FA6AC77F7DD68647A72DEA359A7D264FA9",
+        "bytes":  14065
+    },
+    {
+        "path":  "src/features/payments/repositories/PaymentRepository.ts",
+        "blob":  "4d2cf7e0e9920b4295b78f85d425359ab28cedf0",
+        "sha256":  "FAAB438558F7BCD495D75515FA42250D73795B7C16F443DCA09D0AAB69D952FA",
+        "bytes":  13716
+    },
+    {
+        "path":  "src/features/payments/components/PaymentRecoveryPanel.test.tsx",
+        "blob":  "0832a11ba5f9be661f0094ce537a7ee5ddb70bda",
+        "sha256":  "06C09B29525162F290BC509359FFC5F817E7B6319146D2B48251969315915746",
+        "bytes":  7822
+    },
+    {
+        "path":  "tests/server-payment-truth-guards.test.ts",
+        "blob":  "e8e655686e5304a9d9fddf5d29b5946ec8f3c585",
+        "sha256":  "352BE42EB96598F1DBD2EE479905B804B11ED9A9A372DADB6A97F4A2436F40CF",
+        "bytes":  19717
+    },
+    {
+        "path":  "tests/paid-order-finalization.test.ts",
+        "blob":  "d6208f12de34638957a41505c45915bcb8298d96",
+        "sha256":  "EFCA902BEF8B7EF3DDFA84080B6DC4EC261AF0CFD7D48BD50E27020B32709DFF",
+        "bytes":  21788
+    },
+    {
+        "path":  "tests/payment-response-wire.test.ts",
+        "blob":  "c8f02a47fa82cb0793adcc6c779db5cd1688e46f",
+        "sha256":  "381645BD5C4BFD563AF94048A68E2DF8386E109654932B0D56DA7F208A064988",
+        "bytes":  22403
+    },
+    {
+        "path":  "tests/order-service-auth-isolation.test.ts",
+        "blob":  "ebeb4e9caa0786c642f5fca31988371ed48dda63",
+        "sha256":  "729D1F2F309DC60B5555A038B4FDDC302B31415DD3B61AE903A4834F4CE91F66",
+        "bytes":  13840
+    }
+]
