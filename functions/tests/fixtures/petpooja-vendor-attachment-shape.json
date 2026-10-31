@@ -1,0 +1,51 @@
+{
+  "source": "Petpooja-supplied commented payload.txt; user-provided attachment",
+  "sourceSha256": "4af49d4f6f4313bf71234579aaa0b41b9364a58946ea03597062e28c621144e2",
+  "normalization": "Removed // comments and bare annotation after final_price at source line 132 in memory. Extracted keys/types only; no credentials, contacts, example money or outlet IDs copied.",
+  "shape": {
+    "app_key": "string",
+    "app_secret": "string",
+    "access_token": "string",
+    "orderinfo": {
+      "OrderInfo": {
+        "Restaurant": { "details": {
+          "res_name": "string", "address": "string",
+          "contact_information": "string", "restID": "string"
+        } },
+        "Customer": { "details": {
+          "email": "string", "name": "string", "address": "string",
+          "phone": "string", "latitude": "string", "longitude": "string"
+        } },
+        "Order": { "details": {
+          "orderID": "string", "preorder_date": "string", "preorder_time": "string",
+          "service_charge": "string", "sc_tax_amount": "string",
+          "delivery_charges": "string", "dc_tax_percentage": "string", "dc_tax_amount": "string",
+          "dc_gst_details": [{ "gst_liable": "string", "amount": "string" }],
+          "packing_charges": "string", "pc_tax_amount": "string", "pc_tax_percentage": "string",
+          "pc_gst_details": [{ "gst_liable": "string", "amount": "string" }],
+          "order_type": "string", "ondc_bap": "string", "advanced_order": "string",
+          "urgent_order": "boolean", "urgent_time": "number", "payment_type": "string",
+          "table_no": "string", "no_of_persons": "string", "discount_total": "string",
+          "tax_total": "string", "discount_type": "string", "total": "string",
+          "description": "string", "created_on": "string", "enable_delivery": "number",
+          "min_prep_time": "number", "callback_url": "string", "collect_cash": "string", "otp": "string"
+        } },
+        "OrderItem": { "details": [{
+          "id": "string", "name": "string", "tax_inclusive": "boolean", "gst_liability": "string",
+          "item_tax": [{ "id": "string", "name": "string", "tax_percentage": "string", "amount": "string" }],
+          "item_discount": "string", "price": "string", "final_price": "string",
+          "quantity": "string", "description": "string", "variation_name": "string", "variation_id": "string",
+          "AddonItem": { "details": [{
+            "id": "string", "name": "string", "group_name": "string",
+            "price": "string", "group_id": "number", "quantity": "string"
+          }] }
+        }] },
+        "Tax": { "details": [{
+          "id": "string", "title": "string", "type": "string", "price": "string",
+          "tax": "string", "restaurant_liable_amt": "string"
+        }] }
+      },
+      "udid": "string", "device_type": "string"
+    }
+  }
+}
