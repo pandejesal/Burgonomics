@@ -7,7 +7,7 @@ import {
 
 const { docs, control } = vi.hoisted(() => ({
   docs: {} as Record<string, any>,
-  control: { failColumns: [] as string[] },
+  control: { failColumns: [] as string[], reads: [] as string[] },
 }));
 
 vi.mock("../src/core/firebase", () => ({
@@ -15,6 +15,7 @@ vi.mock("../src/core/firebase", () => ({
     collection: (name: string) => ({
       doc: (id: string) => ({
         get: async () => {
+          control.reads.push(`${name}/${id}`);
           if (control.failColumns.includes(name)) throw new Error("read unavailable");
           const key = `${name}/${id}`;
           return { exists: key in docs, data: () => docs[key] };
@@ -120,6 +121,7 @@ describe("legacy scope shapes and doc fallback (SEC-01b)", () => {
   beforeEach(() => {
     for (const key of Object.keys(docs)) delete docs[key];
     control.failColumns = [];
+    control.reads = [];
     vi.mocked(logger.warn).mockClear();
   });
 
@@ -139,14 +141,17 @@ describe("legacy scope shapes and doc fallback (SEC-01b)", () => {
     expect(ownBranchTopics(caller)).toEqual(["branch_branch_A_orders"]);
   });
 
-  it("falls back to users/{uid} when claims carry no scope", async () => {
-    docs["users/u1"] = { branchId: "branch_A" };
+  it("never reads or trusts a client-writable users/{uid} branch (SEC-01c)", async () => {
+    // firestore.rules does not mask branchId on users/{uid}, so a staffer can
+    // write their own branchId. Topic scope must never be read from there.
+    docs["users/u1"] = { branchId: "branch_B" };
     const caller = await resolveTopicCaller({ uid: "u1", role: "branch_staff" });
-    expect(caller.branchIds).toEqual(["branch_A"]);
-    expect(ownBranchTopics(caller)).toEqual(["branch_branch_A_orders"]);
+    expect(caller.branchIds).toEqual([]);
+    expect(ownBranchTopics(caller)).toEqual([]);
+    expect(control.reads).not.toContain("users/u1");
   });
 
-  it("falls back to admins/{uid} when the user doc has no scope", async () => {
+  it("falls back to admins/{uid} when the claims carry no scope", async () => {
     docs["users/u2"] = { role: "branch_staff" };
     docs["admins/u2"] = { branchIds: "branch_A" };
     const caller = await resolveTopicCaller({ uid: "u2", role: "branch_staff" });
