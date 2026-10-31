@@ -77,6 +77,10 @@ import {
   revokeUserRole,
   APP_USER_ROLES,
 } from "../src/modules/auth/claimsManager";
+import {
+  assignRoleSchema,
+  setClaimsSchema,
+} from "../src/core/validation";
 
 describe("Auth Module — Claims Manager & Privilege Escalation Prevention", () => {
   beforeEach(() => {
@@ -229,8 +233,7 @@ describe("Auth Module — Claims Manager & Privilege Escalation Prevention", () 
     });
   });
 
-  describe("5. In-Function Caller Assert (B3-S1: deny even if the route is miswired)", () => {
-    const brandCaller = { role: "brand_owner", isBrandAdmin: true } as any;
+  describe("5. In-Function Caller Assert (B3-S1: deny even if the route is miswired)", () => {    const brandCaller = { role: "brand_owner", isBrandAdmin: true } as any;
 
     it("denies setUserCustomClaims for every non-brand caller role", async () => {
       for (const role of ["customer", "branch_staff", "branch_owner", "support", "regional_manager", "driver"]) {
@@ -273,6 +276,82 @@ describe("Auth Module — Claims Manager & Privilege Escalation Prevention", () 
       );
       expect(result.success).toBe(true);
       expect(customClaimsRecord["usr_direct_1"].role).toBe("support");
+    });
+  });
+
+  describe("6. City/branch scope survives role edits (SEC-03)", () => {
+    const caller = { role: "brand_owner", isBrandAdmin: true } as const;
+
+    it("keeps cityIds through route validation and the assign flow", async () => {
+      const parsed = assignRoleSchema.parse({
+        targetUid: "usr_rm_01",
+        role: "regional_manager",
+        branchIds: ["branch_surat_01"],
+        cityIds: ["Surat", "Ahmedabad"],
+      });
+      expect(parsed.cityIds).toEqual(["Surat", "Ahmedabad"]);
+
+      const result = await assignUserRole(caller as any, parsed);
+      expect(result.claims.cityIds).toEqual(["Surat", "Ahmedabad"]);
+      expect(customClaimsRecord["usr_rm_01"].cityIds).toEqual(["Surat", "Ahmedabad"]);
+      expect(savedDocs["users/usr_rm_01"].cityIds).toEqual(["Surat", "Ahmedabad"]);
+      expect(savedDocs["admins/usr_rm_01"].cityIds).toEqual(["Surat", "Ahmedabad"]);
+    });
+
+    it("also keeps cityIds on the setClaims route schema", () => {
+      const parsed = setClaimsSchema.parse({
+        targetUid: "usr_support_01",
+        role: "support",
+        cityIds: ["Surat"],
+      });
+      expect(parsed.cityIds).toEqual(["Surat"]);
+    });
+
+    it("preserves stored cityIds and branchIds when the edit omits them", async () => {
+      savedDocs["users/usr_rm_02"] = {
+        role: "regional_manager",
+        branchIds: ["branch_surat_01"],
+        cityIds: ["Surat"],
+      };
+      const result = await assignUserRole(caller as any, {
+        targetUid: "usr_rm_02",
+        role: "regional_manager",
+        branchIds: ["branch_surat_01"],
+      });
+      expect(result.claims.cityIds).toEqual(["Surat"]);
+      expect(customClaimsRecord["usr_rm_02"].cityIds).toEqual(["Surat"]);
+      expect(savedDocs["admins/usr_rm_02"].cityIds).toEqual(["Surat"]);
+    });
+
+    it("preserves branchIds when the edit omits them too", async () => {
+      savedDocs["users/usr_bo_01"] = {
+        role: "branch_owner",
+        branchIds: ["branch_surat_01"],
+        cityIds: ["Surat"],
+      };
+      const result = await assignUserRole(caller as any, {
+        targetUid: "usr_bo_01",
+        role: "branch_owner",
+      });
+      expect(result.claims.branchIds).toEqual(["branch_surat_01"]);
+      expect(result.claims.cityIds).toEqual(["Surat"]);
+    });
+
+    it("still clears with an explicit empty array", async () => {
+      savedDocs["users/usr_rm_03"] = {
+        role: "regional_manager",
+        branchIds: ["branch_surat_01"],
+        cityIds: ["Surat"],
+      };
+      const result = await assignUserRole(caller as any, {
+        targetUid: "usr_rm_03",
+        role: "regional_manager",
+        branchIds: [],
+        cityIds: [],
+      });
+      expect(result.claims.cityIds).toEqual([]);
+      expect(result.claims.branchIds).toEqual([]);
+      expect(customClaimsRecord["usr_rm_03"].cityIds).toEqual([]);
     });
   });
 });

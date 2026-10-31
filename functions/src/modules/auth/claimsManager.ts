@@ -27,8 +27,10 @@ export const ROLE_ALIASES: Record<string, AppUserRole> = {
 export const AssignRoleSchema = z.object({
   targetUid: z.string().min(1, "Target UID is required"),
   role: z.string().min(1, "Role is required"),
-  branchIds: z.array(z.string()).optional().default([]),
-  cityIds: z.array(z.string()).optional().default([]),
+  // Optional, with NO default: an omitted scope must preserve the stored
+  // values. A default of [] here wiped branch/city grants on every role edit.
+  branchIds: z.array(z.string()).optional(),
+  cityIds: z.array(z.string()).optional(),
 });
 
 export type AssignRoleInput = z.infer<typeof AssignRoleSchema>;
@@ -108,6 +110,37 @@ export interface SetClaimsResult {
  * Internal callers (assignUserRole/revokeUserRole) pass through the same
  * already-checked caller; there is no trusted bypass path.
  */
+/**
+ * Existing branch/city scope for a user, used when a role edit OMITS the
+ * field. Reads the current Auth claims first (authoritative), then the
+ * `users/{uid}` mirror written by this module. Never throws: an unreadable
+ * source falls through to the next, then to [].
+ */
+async function loadExistingScope(uid: string): Promise<{ branchIds: string[]; cityIds: string[] }> {
+  const strings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+  try {
+    if (typeof (auth as any).getUser === "function") {
+      const user = await (auth as any).getUser(uid);
+      const claims = user?.customClaims;
+      if (claims && typeof claims === "object") {
+        return { branchIds: strings(claims.branchIds), cityIds: strings(claims.cityIds) };
+      }
+    }
+  } catch {
+    // Fall through to the Firestore mirror.
+  }
+
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    const data = (snap.exists ? snap.data() : undefined) as any;
+    return { branchIds: strings(data?.branchIds), cityIds: strings(data?.cityIds) };
+  } catch {
+    return { branchIds: [], cityIds: [] };
+  }
+}
+
 export async function setUserCustomClaims(
   input: {
     uid?: string;
@@ -127,8 +160,14 @@ export async function setUserCustomClaims(
   }
 
   const validatedRole = validateAndNormalizeRole(input.role);
-  const branchIds = input.branchIds || [];
-  const cityIds = input.cityIds || [];
+  // SEC-03: omitted scope preserves what is stored; an explicit [] clears it
+  // (revocation keeps working because it passes [] explicitly).
+  const scope =
+    input.branchIds !== undefined && input.cityIds !== undefined
+      ? { branchIds: input.branchIds, cityIds: input.cityIds }
+      : await loadExistingScope(targetUid);
+  const branchIds = input.branchIds !== undefined ? input.branchIds : scope.branchIds;
+  const cityIds = input.cityIds !== undefined ? input.cityIds : scope.cityIds;
 
   const claims: CustomClaimsPayload = {
     role: validatedRole,

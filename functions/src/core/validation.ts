@@ -368,6 +368,9 @@ export const setClaimsSchema = z.object({
   targetUid: z.string().min(1).max(128),
   role: z.enum(["brand_owner", "developer", "support", "regional_manager", "branch_owner", "branch_staff"]),
   branchIds: z.array(z.string().min(1).max(128)).max(50).optional(),
+  // SEC-03: without this the route's parsed body stripped cityIds and every
+  // role edit silently wiped a regional manager's/support user's city grants.
+  cityIds: z.array(z.string().min(1).max(128)).max(50).optional(),
 });
 
 // Auth: assign/revoke role
@@ -375,6 +378,7 @@ export const assignRoleSchema = z.object({
   targetUid: z.string().min(1).max(128),
   role: z.enum(["support", "regional_manager", "branch_owner", "branch_staff"]),
   branchIds: z.array(z.string().min(1).max(128)).max(50).optional(),
+  cityIds: z.array(z.string().min(1).max(128)).max(50).optional(),
 });
 
 export const revokeRoleSchema = z.object({
