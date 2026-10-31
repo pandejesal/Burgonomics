@@ -131,6 +131,7 @@ describe("KOT Truth & Relay Semantics (Review Finding 5 & Limitations)", () => {
       petpoojaItemTaxIds: ["3928", "3929"],
       petpoojaTaxInclusive: false,
       petpoojaTaxUnsupported: false,
+      petpoojaGstType: "goods",
     };
   });
 

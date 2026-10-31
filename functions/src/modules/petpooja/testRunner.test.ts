@@ -18,6 +18,13 @@ const { mockDb } = vi.hoisted(() => {
       }),
       doc: (id: string) => ({
         get: async () => {
+          if (col === "products" && /^prod_branch_test_1_\d+$/.test(id)) {
+            return { exists: true, id, data: () => ({
+              branchId: "branch_test_1", petpoojaItemId: id.slice("prod_branch_test_1_".length),
+              petpoojaItemTaxIds: ["3928", "3929"], petpoojaTaxInclusive: false,
+              petpoojaTaxUnsupported: false, petpoojaGstType: "goods",
+            }) };
+          }
           if (id === "branch_a" || id === "branch_b") {
             return { exists: true, id, data: () => ({}) };
           }
@@ -316,6 +323,7 @@ describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-2
           price: 140,
           quantity: 2,
           isVeg: true,
+          gstType: "goods", // Explicit ownership of the synthetic fixture.
           variation: { id: "89058", name: "3Pieces" },
           modifiers: [
             { id: "1150783", name: "Mojito", price: 0, groupId: 135699 },
@@ -356,7 +364,7 @@ describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-2
     }
   });
 
-  it("carries the order callback, COD full collect, and typed scalars per the sample", () => {
+  it("carries the order callback, restaurant-only total and no third-party merchant cash instruction", () => {
     const payload = formatPetpoojaV21Payload(
       vendorShapeOrder(),
       "test_rest_id",
@@ -374,9 +382,9 @@ describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-2
     expect(order.orderID).toBe("bgx_fixture_2");
     expect(order.callback_url).toBe("https://callback.example.test/petpooja/webhook");
     expect(order.payment_type).toBe("COD");
-    // Retained policy: COD collects the FULL total; ONLINE collects 0.
-    expect(order.collect_cash).toBe("385.00");
-    expect(order.total).toBe("385.00");
+    // No merchant rider: exclude courier cost and do not instruct cash collection.
+    expect(order.collect_cash).toBe("0.00");
+    expect(order.total).toBe("335.00");
     expect(order.tax_total).toBe("15.00");
     expect(order).not.toHaveProperty("tax");
     // enable_delivery is a NUMBER (0 = third-party riders, always correct here;

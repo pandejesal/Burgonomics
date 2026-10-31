@@ -166,6 +166,7 @@ describe("Petpooja POS Bridge Service", () => {
       taxIds,
       taxInclusive: false,
       taxUnsupported: false,
+      gstType: "goods", // Explicit ownership of this synthetic fixture, not a default.
     });
 
     // customer data (names/phones/address are fictional placeholders).
@@ -256,7 +257,7 @@ describe("Petpooja POS Bridge Service", () => {
       expect(orderDetails.order_type).toBe("H"); // H = home delivery
       // Petpooja accepts COD / CARD / ONLINE — "Prepaid" is not a valid value.
       expect(orderDetails.payment_type).toBe("ONLINE");
-      expect(orderDetails.total).toBe("527.90");
+      expect(orderDetails.total).toBe("487.90"); // Restaurant due excludes ₹40 courier.
       expect(orderDetails.tax_total).toBe("24.90");
       // The old `tax`/`discount` aliases are not in the vendor sample.
       expect(orderDetails).not.toHaveProperty("tax");
@@ -375,7 +376,7 @@ describe("Petpooja POS Bridge Service", () => {
       expect(line.final_price).not.toBe("747.00");
     });
 
-    it("COD orders collect the FULL total; ONLINE orders collect 0 (retained policy)", () => {
+    it("third-party delivery carries no merchant collect_cash instruction for COD or ONLINE", () => {
       const codPayload = formatPetpoojaOrderPayload(
         vendorShapeOrder({ paymentMethod: "COD" }),
         capturedBranch({ id: "b1", petpoojaStoreId: "PP_1" }),
@@ -386,7 +387,7 @@ describe("Petpooja POS Bridge Service", () => {
       );
       const codOrder = codPayload.orderinfo.OrderInfo.Order.details;
       expect(codOrder.payment_type).toBe("COD");
-      expect(codOrder.collect_cash).toBe("527.90");
+      expect(codOrder.collect_cash).toBe("0.00");
 
       const onlinePayload = formatPetpoojaOrderPayload(
         vendorShapeOrder(),

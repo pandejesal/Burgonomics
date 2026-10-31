@@ -1,5 +1,12 @@
 # Petpooja Save Order API + Sandbox — Reference (Layer 3)
 
+> **Current interpretation: §21 (2026-10-28).** Earlier audit sections are
+> historical records, not a current payload recipe. §21 corrects the earlier
+> uncertainty about add-on pricing, unit `final_price`, discounts, restaurant-only
+> totals, GST liability, `collect_cash` and callback authentication. The offline
+> candidate still has unresolved financial/mapping gaps; a passing shape test is
+> not complete vendor compliance or permission to resubmit/deploy.
+
 > Extracted from the official PDFs supplied by the user (2026-10-06):
 > - `API Guide for Placing Orders on Petpooja POS.pdf` (9 pages)
 > - `Petpooja Sandbox Guide for Integration Testing.pdf` (6 pages)
@@ -1321,3 +1328,184 @@ while `petpooja_sync_logs` stayed empty - failures were recorded only in
   2026-10-17T13:29Z, and also predates the vendorRefusal severity downgrade -
   the deployed build still pages on-call at `high` for a known vendor refusal).
   No deploy is authorised from this lane.
+
+## 20. Vendor attachment reconfirmation and tax serialization — 2026-10-28
+
+The user supplied the actual annotated attachment (`commented payload.txt`,
+SHA-256 `4af49d4f6f4313bf71234579aaa0b41b9364a58946ea03597062e28c621144e2`)
+and Petpooja's email requesting structural corrections and the same five sandbox
+scenarios again. The clean backend `c26effe` already emits the attachment's
+nesting, field names and primitive types. A type-only attachment fixture now
+checks both formatters against every supplied key/type for all five case shapes;
+it does not copy the sample's credentials, contact data, outlet IDs or money.
+
+Independent decimal formatting of the tax components was not conservative:
+an authoritative ₹13.95 GST total became ₹6.97 + ₹6.97 = ₹13.94. Allocate the
+existing GST total in integer paise across item weights and captured tax rates,
+then derive each order-level tax row from the exact serialized item-tax rows.
+Do not independently round each half or recalculate the order's GST rate/base.
+Positive GST with no matched item-tax rows must block rather than silently emit
+untaxed lines beside a taxed order summary.
+
+This is an offline candidate in `.swarm-worktrees/petpooja-vendor-contract-20261028`,
+not an applied root repair or deployment. The existing liability, charge-tax,
+discount and third-party-delivery policies are unchanged. The last recorded menu
+snapshot still does not prove current add-on/variation mappings; obtain a fresh
+vendor push/configuration before resubmitting those cases. A local schema pass
+or API save acknowledgement is not Petpooja integration approval or physical KOT
+proof. Exact rejected request bodies for the five client IDs in the newly supplied
+email were not available in the searched local evidence; do not claim they were
+audited byte-for-byte or that corrected orders have already been resubmitted.
+
+## 21. Full primary-document reading and corrected interpretation — 2026-10-28
+
+Read both vendor PDFs completely (Save Order: 9 pages; Sandbox: 6 pages), both
+local Petpooja references, and the live public V2.1.0 documentation. The public
+page's embedded schema was statically decoded to include the collapsed child
+attributes, request examples and response examples across all ten API sections.
+The old 749-line rendered snapshot alone did not expose those child definitions.
+See `stages/05_orders/output/petpooja-vendor-review-20261028/documentation-review.md`
+for sources, evidence locations, candidate findings and outstanding work.
+
+### 21.1 Requirements already answered by the documents
+
+- **Add-ons and variants:** Save Order PDF p.6 and Apiary `OrderItem.price`
+  define an all-in **unit** price, including selected add-ons and the selected
+  variation price. Add-on detail rows must not add the same price a second time.
+- **Final price:** `final_price = price - item_discount`, also a unit figure;
+  `quantity` remains separate. §18.5's old line-total interpretation is superseded.
+- **Discounts:** PDF pp.3,7 distinguish the order-level `discount_type` /
+  `discount_total` from item discounts. Do not emit a separate `Discount` object.
+  The builders currently use fixed amount (`F`); do not introduce a percentage
+  policy or double-subtract item discounts during this reconciliation.
+- **Restaurant total:** PDF p.3 says `total` must contain **only the amount due
+  to the restaurant**: item final amounts less order discount, plus applicable
+  restaurant-liable GST and packing charges. Apiary explicitly excludes GST
+  retained by the aggregator. Customer grand total is not automatically this
+  amount; third-party courier charges must not be included merely because the
+  customer pays them. Keep customer charging and restaurant settlement distinct.
+- **GST ownership:** Apiary Push Menu `items.gst_type` defines `services` as
+  integrator collection/remittance to government and `goods` as collection then
+  settlement to the restaurant. This is not an undefined field. Reconcile the
+  current authoritative menu/accounting contract before emitting `gst_liability`
+  and `restaurant_liable_amt`; a blanket restaurant-liable default is not justified
+  for a `services` item by the published semantics.
+- **Charge tax configuration:** Push Menu defines `calculatetaxonpacking`,
+  `pc_taxes_id`, `calculatetaxondelivery` and `dc_taxes_id`. Whether the current
+  outlet enables those charges/taxes needs current data, not an invented zero or
+  a generic question about whether such taxes exist.
+- **Delivery:** PDF p.4 and Apiary explicitly define `enable_delivery: 0` for
+  third-party riders and `1` for restaurant self-delivery. These are not competing
+  sample conventions. Apiary restricts `collect_cash` to **COD and merchant
+  self-delivery**; positive `collect_cash` on every COD order is not compliant.
+- **Variation identity:** Consume item-local `variation`, not deprecated
+  top-level `variations`. Apiary requires the variation **item** ID in order-item
+  `id`, and the variation-master ID in `variation_id`. These are distinct values.
+  Its public example maps parent `7765809` → child item `7765862`, master `89058`;
+  these are illustrative public IDs, not sandbox outlet configuration.
+
+### 21.2 Candidate gaps, not vendor-approved policies
+
+The current candidate still copies `pricing.grandTotal` into `Order.total`, emits
+`gst_liability: "restaurant"` and full restaurant liability for every tax row,
+and fills `collect_cash` while setting `enable_delivery: 0`. Menu ingestion
+records `petpoojaGstType`, but the trusted product snapshot/payload path does not
+consume it. The last documented outlet capture says `gst_type: "services"`;
+that is historical data, not a fresh live check. These findings invalidate any
+claim that structure and paise-conservation tests establish financial compliance.
+
+Charge taxes are hard-coded to zero; current menu settings and server pricing
+must be reconciled before that can be claimed correct. The verified parent-item
+snapshot is also not proof of a selected variation-item/master pair or add-on
+membership. A fresh menu push is necessary but not, by itself, proof that all
+selection mappings flow through to the payload.
+
+This reading pass changes documentation/drafts only. It does not change customer
+totals, tax policy, payload code, outlet settings or deployment. The original
+seven-file test-time manifest remains historical evidence; the documentation
+review manifest records the reference-only change separately.
+
+### 21.3 Conflicts and genuine remaining confirmations
+
+- PDF p.8 gives the `qle1yy2ydc.../V1/save_order` host; live Apiary gives
+  `47pfzh5sf2.../V1/save_order`. Ask which is provisioned for this sandbox; do not
+  operate either endpoint just to discover it.
+- Public Apiary still describes/emits `Discount` and types add-on `group_id` as
+  a string, although its example uses a number. The supplied corrected attachment
+  and PDF no-discount-object instruction govern this candidate's wire shape:
+  no `Discount`, numeric `group_id`, Boolean `tax_inclusive`, no legacy duplicates.
+- The public Save Order example has internally inconsistent illustrative tax
+  rates/amounts and mixed `tax_inclusive` spellings. It is not a financial oracle.
+- The `in_stock: "2"` value appears in menu examples without a documented
+  meaning. The authoritative toggle contract is Boolean `inStock`; keep the
+  push-field encoding unresolved until Petpooja confirms it.
+- The documents do not specify an odd-paise allocation convention. Conserving
+  ₹13.95 as ₹6.98 + ₹6.97 fixes local arithmetic, not vendor rounding approval.
+- Sandbox PDF p.2 explicitly supports optional **Client Authorization** and
+  **Headers Configuration**. Earlier blanket claims that callback authentication
+  is not described, or that unauthenticated callbacks are thereby production-safe,
+  are withdrawn. No standardized vendor HMAC algorithm is specified here; confirm
+  and enforce the provisioned authentication instead of inventing a signature.
+- Keep refreshed item/add-on/variation/tax mappings, actual sandbox listing and
+  callback evidence, vendor review and separate production tokens as independent
+  gates. No orders, emails or deployments were sent by this documentation review.
+
+## 22. Verified demo resubmission — 2026-10-28
+
+This runtime checkpoint supersedes §21.2's then-current candidate gaps and
+§21.3's unresolved host/stock statements; it is not production approval.
+
+- The isolated candidate now derives GST ownership from captured `gst_type`,
+  distinguishes restaurant due from customer total, conserves integer-paise tax,
+  and restricts cash collection to COD merchant self-delivery. All 16 changed
+  application/test fingerprints matched the previously passing typecheck,
+  1,356-test and build gates immediately before preparing the live batch.
+- The authenticated **Staging** account configuration explicitly provisioned
+  `https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order`.
+  No exploratory order was used to choose between the conflicting public hosts.
+- The native item editor defines stock2 as **Do Not Track**, stock1 as In Stock,
+  stock0 as Out Of Stock. This observation does not itself repair stock ingestion.
+- With explicit user approval, only required demo item configurations were
+  changed at outlet5439 / `31z58ciw0h`. An inactive parent caused Save Change to
+  disable its API area despite an API-enabled checkbox in the request. Activation
+  plus API-area enablement persisted and was read back. The configured rows are:
+  plain30791 INR350; add-on30674 INR310; variation-only parent30673 → child10657618
+  INR290; combined parent30672 → child10657617 INR270. Both variants use master
+  14178 **Full [8 Pieces]**. Group17259 **Soft Drinks** contains Coke93021 INR10
+  and Diet Coke93023 INR20; the tested assignments require exactly one selection.
+- The user separately authorized a demo menu push to the existing Firebase
+  webhook. The initial Push Menu response was a tax confirmation, not a push.
+  Its normal confirmation was submitted once. The final portal response reported
+  `Burgonomics API Menu trigger failed`, with webhook HTTP503. No retry was made.
+  The response included the exact generated outbound menu: selected items have
+  `gst_type: services`, `tax_inclusive: false`, tax IDs3928/3929 at2.5% each;
+  packing/delivery tax flags0, empty charge-tax IDs, packaging applicability NONE,
+  item/variant packing0. This is authoritative generated-menu evidence despite
+  callback delivery failure, not proof of a successful menu sync to Firebase.
+- Five genuine cases were formatted by the verified compiled **production**
+  builder with metadata snapshots derived from that vendor-generated menu.
+  Parent/child/master and group/option membership, attachment key/type shape,
+  quantity/unit pricing, discounts, paise conservation and ownership were checked
+  before traffic. The stale placeholder script and MT-01 aliases were not run.
+- Each Save Order was submitted **once**, 2026-10-28 13:23:38–41 IST. All returned
+  HTTP200, `success: "1"`, `Your order is saved.`, matching restID/clientOrderID
+  and an empty POS orderID. All five were independently found in Order Listing
+  and their detail views, including real modifier labels and financial amounts:
+
+| Case | Client reference | Restaurant due | GST, vendor-liable |
+|---|---|---:|---:|
+| Items + Tax | `bgx2_items_tax_1793173921627` | 350.00 | 17.50 |
+| Addons + Tax | `bgx2_addons_tax_1793173921628` | 320.00 | 16.00 |
+| Variation + Tax | `bgx2_variation_tax_1793173921629` | 580.00 | 29.00 |
+| Discount + Tax | `bgx2_discount_tax_1793173921630` | 300.00 | 15.00 |
+| Addon + Variation + Tax | `bgx2_addon_variation_tax_1793173921631` | 580.00 | 29.00 |
+
+All remain **Waiting For Acceptance**. No Accept/Cancel/status action was taken.
+The portal's internal listing IDs255258–255262 are not POS IDs returned by the
+Save Order API. No callback lifecycle, physical printing or vendor approval is
+claimed. Our webhook availability, persisted option provenance and full live
+application ingestion/relay path remain separate production gates. Redacted
+requests, receipts, detail evidence and results are retained in
+`stages/05_orders/output/petpooja-vendor-review-20261028/` as
+`sandbox-resubmission-payloads-redacted.json`, `sandbox-resubmission-results.json`
+and `sandbox-menu-mappings-verified.json`. No deployment, merge or email send.

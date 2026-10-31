@@ -188,6 +188,7 @@ describe("app-order builder (orderPush.formatPetpoojaOrderPayload) — vendor sa
           taxIds: ["3928", "3929"],
           taxInclusive: false,
           taxUnsupported: false,
+          gstType: "goods", // Synthetic restaurant-liable fixture.
         },
       ]
     );
@@ -199,7 +200,8 @@ describe("app-order builder (orderPush.formatPetpoojaOrderPayload) — vendor sa
     // Config-derived callback (the same URL the status webhook lives on).
     expect(order_.callback_url).toMatch(/\/petpooja\/webhook$/);
     expect(order_.payment_type).toBe("COD");
-    expect(order_.collect_cash).toBe("364.00"); // retained policy: COD = full total
+    expect(order_.collect_cash).toBe("0.00"); // Not merchant self-delivery.
+    expect(order_.total).toBe("314.00"); // Food + merchant GST + packing, excluding courier.
     expect(order_.enable_delivery).toBe(0);
     expect(order_.dc_tax_percentage).toBe("0");
     expect(order_.pc_tax_percentage).toBe("0");
@@ -231,6 +233,7 @@ describe("sandbox runner builder (testRunner.formatPetpoojaV21Payload) — vendo
   it("emits the sample envelope, unit final_price, callback and synthetic contacts for every scenario", () => {
     for (const scenario of PETPOOJA_TEST_SCENARIOS) {
       const order = buildPetpoojaTestOrder(scenario.id);
+      order.items = order.items.map((item) => ({ ...item, gstType: "goods" }));
       const payload = formatPetpoojaV21Payload(
         order as any,
         "fixture_res",
@@ -247,8 +250,8 @@ describe("sandbox runner builder (testRunner.formatPetpoojaV21Payload) — vendo
       const order_ = payload.orderinfo.OrderInfo.Order.details;
       expect(order_.orderID).toBe(`bgx_${scenario.id}_1111111111`);
       expect(order_.callback_url).toBe(CALLBACK);
-      // Retained policy: COD collects the FULL total.
-      expect(order_.collect_cash).toBe(order_.total);
+      // The synthetic cases do not assign a merchant rider.
+      expect(order_.collect_cash).toBe("0.00");
       expect(order_.enable_delivery).toBe(0);
       // Synthetic contacts are non-empty and unmistakably fictional.
       const customer = payload.orderinfo.OrderInfo.Customer.details;

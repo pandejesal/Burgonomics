@@ -4,6 +4,8 @@ import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
 import * as admin from "firebase-admin";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
+import { allocatePetpoojaTax, sumPetpoojaItemTax } from "./taxAmounts";
+import { petpoojaFinancials, petpoojaGstLiability, restaurantLiableItemTax, type PetpoojaGstLiability } from "./financials";
 
 function getCallbackUrl(): string {
   return (
@@ -167,7 +169,12 @@ function linePetpoojaItemId(item: any, firestoreBranchId?: string): string {
 
 /** Unit price of a line: the app writes `unitPrice`; legacy shapes write price/basePrice. */
 function lineUnitPrice(item: any): number {
-  return Number(item?.basePrice ?? item?.price ?? item?.unitPrice ?? 0) || 0;
+  const allIn = item?.unitPrice ?? item?.price;
+  if (allIn !== undefined && allIn !== null) return Number(allIn);
+  const addons = item?.modifiers ?? item?.selectedAddons ?? [];
+  return Number(item?.basePrice ?? 0) + addons.reduce(
+    (sum: number, addon: any) => sum + Number(addon.price ?? addon.priceDelta ?? 0), 0
+  );
 }
 
 /**
@@ -231,6 +238,8 @@ export interface PetpoojaProductTaxSnapshot {
   taxInclusive: boolean | null;
   /** Catalogue facts the uniform GST order model cannot represent. */
   taxUnsupported: boolean;
+  /** Captured menu ownership: services = integrator; goods = restaurant. */
+  gstType?: string | null;
 }
 
 /**
@@ -288,20 +297,19 @@ export function formatPetpoojaOrderPayload(
   // `item_tax[]` on the line, and a line's share can only be derived once the
   // order's tax total is known.
   const preItems = order.items || [];
-  const preGst = (order.pricing || {}).gst || order.taxAmount || order.tax || 0;
-  const preItemTotal = preItems.reduce(
-    (sum: number, it: any) => sum + lineUnitPrice(it) * (it.quantity || 1),
-    0
+  const preGst = (order.pricing || {}).gst ?? order.taxAmount ?? order.tax ?? 0;
+  const itemGstAmounts = allocatePetpoojaTax(
+    Number(preGst),
+    preItems.map((item: any) => lineUnitPrice(item) * (item.quantity || 1))
   );
   const branchTaxes = outletTaxes(branch);
   // H1 — union of the per-item MATCHED tax rows (the order-level Tax member
   // lists exactly the rows the items actually declare, deduped by id).
   const usedTaxRowMap = new Map<string, { id: string; name: string; rate: number }>();
 
-  const orderItems = (order.items || []).map((item: any) => {
+  const orderItems = (order.items || []).map((item: any, itemIndex: number) => {
     const unit = lineUnitPrice(item);
     const qty = Number(item.quantity) || 1;
-    const lineTotal = unit * qty;
     // ---- STRUCTURAL GATES (fail closed, 2026-10-26) ----
     // Every gap collects a reason; the whole order (not one line) decides.
     if (!firestoreBranchId) {
@@ -327,10 +335,19 @@ export function formatPetpoojaOrderPayload(
     // against the branch's captured catalogue, and every unrepresentable tax
     // shape BLOCKS before the vendor. No metadata-notice-only toleration.
     let itemTaxRows: Array<{ id: string; name: string; tax_percentage: string; amount: string }> = [];
+    let gstLiability: PetpoojaGstLiability | undefined;
     {
       const snapshot = (productTaxSnapshots || []).find(
         (s) => String(s?.petpoojaItemId) === itemPosId
       );
+      try {
+        gstLiability = petpoojaGstLiability(snapshot?.gstType);
+      } catch {
+        gaps.push({
+          field: `OrderItem.details[](${itemPosId}).gst_liability`,
+          reason: "missing or unknown captured item gst_type — refusing to invent GST ownership",
+        });
+      }
       if (!snapshot || !Array.isArray(snapshot.taxIds)) {
         gaps.push({
           field: `OrderItem.details[](${itemPosId}).taxMetadata`,
@@ -386,15 +403,22 @@ export function formatPetpoojaOrderPayload(
             });
           }
         }
-        // AMOUNT distribution: the item's GST share, split across its OWN
-        // matched rows (not every outlet row — H1's "2 matching rows only").
-        itemTaxRows = matched.map((row) => {
-          const lineShare = preItemTotal > 0 ? lineTotal / preItemTotal : 0;
+        if (matched.length === 0 && Number(preGst) > 0) {
+          gaps.push({
+            field: `OrderItem.details[](${itemPosId}).item_tax`,
+            reason: "positive order GST has no matched tax rows for this item — refusing an untaxed line with a taxed summary",
+          });
+        }
+        // Conserve integer paise across both items and their OWN captured rows.
+        // Independent toFixed(gst / 2) lost a paise for GST such as 13.95.
+        const amounts = matched.length > 0
+          ? allocatePetpoojaTax(itemGstAmounts[itemIndex], matched.map((row) => row.rate)) : [];
+        itemTaxRows = matched.map((row, taxIndex) => {
           return {
             id: row.id,
             name: row.name,
             tax_percentage: String(row.rate),
-            amount: money(preItemTotal > 0 ? (Number(preGst) * lineShare) / matched.length : 0),
+            amount: money(amounts[taxIndex]),
           };
         });
       }
@@ -459,7 +483,7 @@ export function formatPetpoojaOrderPayload(
       // from the product snapshot — a tax-inclusive menu shape above BLOCKED
       // the push before this line could ever lie.
       tax_inclusive: false,
-      gst_liability: "restaurant",
+      gst_liability: gstLiability!,
       // The item's OWN declared+matched rows only (H1) — never every outlet row.
       item_tax: itemTaxRows,
       // No per-line discount exists in this order model; order-level discounts
@@ -478,11 +502,21 @@ export function formatPetpoojaOrderPayload(
   });
 
   const pricing = order.pricing || {};
-  const gstAmount = pricing.gst || order.taxAmount || order.tax || 0;
-  const deliveryFee = pricing.deliveryFee || order.deliveryFee || 0;
-  const packagingFee = pricing.packagingFee || order.packagingFee || 0;
-  const discountAmount = pricing.discount || order.discountAmount || 0;
-  const grandTotal = pricing.grandTotal || order.totalAmount || order.total || 0;
+  const gstAmount = pricing.gst ?? order.taxAmount ?? order.tax ?? 0;
+  const deliveryFee = pricing.deliveryFee ?? order.deliveryFee ?? 0;
+  const packagingFee = pricing.packagingFee ?? order.packagingFee ?? 0;
+  const discountAmount = Number(pricing.discount ?? order.discountAmount ?? 0) + Number(pricing.loyaltyDiscount ?? 0);
+  const grandTotal = pricing.grandTotal ?? order.totalAmount ?? order.total ?? 0;
+  let financials: ReturnType<typeof petpoojaFinancials>;
+  try {
+    financials = petpoojaFinancials({
+      items: orderItems, discount: discountAmount, packagingFee, deliveryFee,
+      customerTotal: grandTotal, isDelivery: fulfillment === "DELIVERY",
+      restaurantDelivery: order.dispatchType === "manual_branch_terminal", paymentType,
+    });
+  } catch (error: any) {
+    throw new PetpoojaStructuralError([{ field: "Order.details.total", reason: error.message }]);
+  }
 
   // Normalized (never invented) contact + the clock fields Save Order marks
   // required. Table number rides along whenever the order carries one —
@@ -562,7 +596,6 @@ export function formatPetpoojaOrderPayload(
   };
 
   const noOfPersons = order.guestCount ?? order.noOfPersons ?? 0;
-  const collectCash = paymentType === "COD" ? grandTotal : 0;
   const prepTimeMinutes = Number(
     order.prepTimeMinutes ?? branch?.defaultPrepTimeMinutes ?? 0
   );
@@ -608,20 +641,17 @@ export function formatPetpoojaOrderPayload(
     tax_total: money(gstAmount),
     // Discounts are sent as discount_type + discount_total (spec §8).
     discount_type: "F",
-    total: money(grandTotal),
+    total: financials.total,
     description: order.notes || order.specialInstructions || "",
     created_on: createdOn,
-    // Riders are always third-party (Porter/Borzo/Shadowfax), never ours.
-    // `0` is CORRECT for third-party riders: both the vendor reference and the
-    // current outlet read `enable_delivery` as "the restaurant sends its own
-    // rider", and the sample's `1` is a restaurant-rider example.
-    enable_delivery: 0,
+    // The persisted dispatch type, not the sample, identifies merchant riders.
+    enable_delivery: financials.enable_delivery,
     min_prep_time: Number.isFinite(prepTimeMinutes) && prepTimeMinutes > 0 ? prepTimeMinutes : 0,
     // The POS reads the URL it POSTs order-status updates (Accept / Food Ready
     // / Reject) from Order.details.
     callback_url: getCallbackUrl(),
-    // COD: the rider collects the full order value. ONLINE: nothing to collect.
-    collect_cash: money(collectCash),
+    // Only COD merchant self-delivery supports this collection instruction.
+    collect_cash: financials.collect_cash,
     // Deliberately empty: the delivery OTP is the customer/rider verification
     // secret and must not be printed on a kitchen ticket.
     otp: "",
@@ -638,16 +668,9 @@ export function formatPetpoojaOrderPayload(
     title: t.name,
     type: "P",
     price: String(t.rate),
-    // The sample splits `tax` across liability rows; OUR product decision is
-    // all-restaurant GST liability (a retained business policy — see the
-    // reference's recorded decisions; do NOT flip it to the sample's vendor
-    // split without the vendor's confirmation). `total` includes the delivery
-    // fee, matching our order model; the total-includes-delivery question is
-    // with the vendor, pending clarification — preserved as-is, not guessed.
-    tax: money(orderTaxRows.length > 0 ? gstAmount / orderTaxRows.length : 0),
-    restaurant_liable_amt: money(
-      orderTaxRows.length > 0 ? gstAmount / orderTaxRows.length : 0
-    ),
+    // Summary tax includes both ownership modes; restaurant liability is a subset.
+    tax: money(sumPetpoojaItemTax(orderItems, t.id)),
+    restaurant_liable_amt: money(restaurantLiableItemTax(orderItems, t.id)),
   }));
 
   return {
@@ -744,6 +767,7 @@ export async function resolveTrustedProductSnapshots(
               ? (doc as any).petpoojaTaxInclusive
               : null,
           taxUnsupported: (doc as any).petpoojaTaxUnsupported === true,
+          gstType: typeof (doc as any).petpoojaGstType === "string" ? (doc as any).petpoojaGstType : null,
         });
       } catch (err: any) {
         gaps.push({
