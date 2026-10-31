@@ -3,6 +3,12 @@ import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
 import { interpretPackaging, itemPackingCharge } from "./packaging";
+import {
+  addonGroupIndex,
+  buildItemCustomizations,
+  effectiveItemPrice,
+  hasPricedVariation,
+} from "./menuMapper";
 import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
 
@@ -368,6 +374,9 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // carries the id on each item and the name only in the top-level catalog.
   const categoryNames = buildCategoryNameMap(menuData.categories);
 
+  // M2: top-level add-on groups, indexed once for the per-item join.
+  const addonGroupsById = addonGroupIndex(menuData);
+
   // Firestore batches cap at 500 writes — a >500-SKU catalog in one batch
   // silently drops the tail (H10/M30). Commit in ≤500-item chunks.
   const MENU_SYNC_BATCH_LIMIT = 500;
@@ -425,7 +434,12 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       itemsWithVariationScopedAddons++;
     }
     const rawInStock = (item as any)?.in_stock;
-    const priceKnown = Number.isFinite(Number(item.price)) && Number(item.price) > 0;
+    // M2 (corrected): the effective base price is the lowest active variation
+    // price when the item HAS variations (never keyed on the flag — the
+    // vendor's own sample is flagged "0"), else the item price. It is computed
+    // FIRST so the unchanged resolvePushStock sees a real price.
+    const effectivePrice = effectiveItemPrice(item);
+    const priceKnown = effectivePrice > 0;
     // The flag's documented-as-true spellings, used only for the price-hazard
     // census below. The effective `inStock` is resolved separately because an
     // unrecognised flag (the real push carried "2" on all 166 items) must not
@@ -435,7 +449,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
     const inStock = resolvePushStock(
       item.in_stock,
-      item.price,
+      effectivePrice,
       config.petpooja.unknownStockPolicy
     );
 
@@ -498,13 +512,22 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     const categoryName =
       categoryNames.get(String(categoryId)) || item.itemcategoryname || "Other";
 
+    // M2: add-ons + variations, in the customer/engine shape, with the
+    // vendor's ids. NULL means "write nothing" — a plain item must not blank a
+    // value a partner set on the doc.
+    const customizations = buildItemCustomizations(item, addonGroupsById);
+
     const productPayload = {
       id: productId,
       petpoojaItemId: item.itemid,
       name: item.itemname,
       description: item.itemdescription || item.item_description || "",
-      price: priceKnown ? Number(item.price) : 0,
+      // M2: a variation item is priced by its lowest active variation.
+      price: effectivePrice,
       priceAvailable: priceKnown,
+      // True when the sellable price came from a variation, for operators.
+      priceFromVariation: hasPricedVariation(item),
+      ...(customizations ? { customizations } : {}),
       categoryId,
       categoryName,
       imageUrl:
