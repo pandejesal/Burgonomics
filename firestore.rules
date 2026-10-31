@@ -791,26 +791,24 @@ service cloud.firestore {
 
     // B3-S1 (M14): franchise creates bind customerId==uid (no victim-id
     // stamping / spam-as-someone-else); updates keep the bind immutable.
+    // PII-01 (SEC-02): applicant PII (name, phone, email, budget) is
+    // brand-level data. `isBranchOwner()` includes branch_staff, so any cashier
+    // could read every applicant in the country. Read/update are brand-only;
+    // create stays as it was so an applicant can still submit.
     match /franchise_leads/{leadId} {
-      allow read: if isBrandOwner() || isBranchOwner();
+      allow read: if isBrandOwner();
       allow create: if isAuthenticated()
         && request.resource.data.customerId == request.auth.uid;
-      allow update: if isBrandOwner() || (
-        isAuthenticated() && resource.data.customerId == request.auth.uid
-        && request.resource.data.customerId == request.auth.uid
-      );
+      allow update: if isBrandOwner();
       allow delete: if isBrandOwner();
     }
 
     // Partner app uses 'franchise_inquiries' (useFranchiseLeads) — mirror franchise_leads
     match /franchise_inquiries/{leadId} {
-      allow read: if isBrandOwner() || isBranchOwner();
+      allow read: if isBrandOwner();
       allow create: if isAuthenticated()
         && request.resource.data.customerId == request.auth.uid;
-      allow update: if isBrandOwner() || (
-        isAuthenticated() && resource.data.customerId == request.auth.uid
-        && request.resource.data.customerId == request.auth.uid
-      );
+      allow update: if isBrandOwner();
       allow delete: if isBrandOwner();
     }
 
