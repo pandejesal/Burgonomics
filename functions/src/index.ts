@@ -98,7 +98,8 @@ import {
 import { withSchedulerLock } from "./core/schedulerLock";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
-import { filterSubscribableTopics, topicCallerFromClaims } from "./modules/notifications/topics";
+import { filterSubscribableTopics } from "./modules/notifications/topics";
+import { resolveTopicCaller } from "./modules/notifications/topicCaller";
 import {
   setUserCustomClaims,
   assignUserRole,
@@ -1167,7 +1168,7 @@ app.post(
         body: string;
         data?: Record<string, string>;
       };
-      const caller = topicCallerFromClaims(req.user as any);
+      const caller = await resolveTopicCaller(req.user as any);
       const isBrandAdmin = caller.isBrandAdmin === true;
       if (topic) {
         const clean = filterSubscribableTopics([topic], caller);
@@ -1274,10 +1275,11 @@ app.post("/notifications/subscribe", requireAuth, validateBody(topicSubscription
       res.status(400).json({ error: "token and non-empty topics[] are required" });
       return;
     }
-    const caller = topicCallerFromClaims(req.user as any);
+    const caller = await resolveTopicCaller(req.user as any);
     // Loop 4/120: branch operational topics are staff-only (customers could
     // attach any branch's KOT/ticket pushes to their own token). SEC-01: staff
-    // are also limited to their assigned branchIds.
+    // are also limited to their assigned branchIds (legacy claim shapes and
+    // the users/admins docs are resolved in the route layer).
     const clean = filterSubscribableTopics(topics, caller);
     if (clean.length === 0) {
       res.status(400).json({ error: "no subscribable branch topics" });
@@ -1310,7 +1312,7 @@ app.post("/notifications/unsubscribe", requireAuth, validateBody(topicSubscripti
       res.status(400).json({ error: "token and non-empty topics[] are required" });
       return;
     }
-    const caller = topicCallerFromClaims(req.user as any);
+    const caller = await resolveTopicCaller(req.user as any);
     // Loop 4/120: same staff-only branch-topic filter as subscribe, plus the
     // token-ownership check subscribe already had (unsubscribing someone
     // else's token must 403, not silently detach their kitchen alerts).

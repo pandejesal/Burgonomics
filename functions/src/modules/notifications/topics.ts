@@ -19,17 +19,35 @@ export interface TopicCaller {
 }
 
 /**
+ * Normalizes the legacy claim shapes the partner app still ships: a string[]
+ * `branchIds`, a string-shaped `branchIds`, and a singular `branchId`. Blanks
+ * and duplicates are dropped so a scope can never widen by accident.
+ */
+export function normalizeBranchScope(...sources: unknown[]): string[] {
+  const out: string[] = [];
+  for (const source of sources) {
+    const values = Array.isArray(source) ? source : [source];
+    for (const value of values) {
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (!trimmed || out.includes(trimmed)) continue;
+      out.push(trimmed);
+    }
+  }
+  return out;
+}
+
+/**
  * Builds the topic caller from the authenticated claims already on `req.user`
- * (role / isBrandAdmin / branchIds). No new claim is introduced.
+ * (role / isBrandAdmin / branchIds / legacy branchId). No new claim is
+ * introduced.
  */
 export function topicCallerFromClaims(user: any): TopicCaller {
   const role = typeof user?.role === "string" ? user.role : undefined;
   return {
     role,
     isBrandAdmin: user?.isBrandAdmin === true || role === "brand_owner" || role === "developer",
-    branchIds: Array.isArray(user?.branchIds)
-      ? (user.branchIds as unknown[]).filter((b): b is string => typeof b === "string")
-      : [],
+    branchIds: normalizeBranchScope(user?.branchIds, user?.branchId),
   };
 }
 

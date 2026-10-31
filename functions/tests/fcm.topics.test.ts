@@ -1,8 +1,37 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   filterSubscribableTopics,
+  normalizeBranchScope,
   topicCallerFromClaims,
 } from "../src/modules/notifications/topics";
+
+const { docs, control } = vi.hoisted(() => ({
+  docs: {} as Record<string, any>,
+  control: { failColumns: [] as string[] },
+}));
+
+vi.mock("../src/core/firebase", () => ({
+  db: {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          if (control.failColumns.includes(name)) throw new Error("read unavailable");
+          const key = `${name}/${id}`;
+          return { exists: key in docs, data: () => docs[key] };
+        },
+      }),
+    }),
+  },
+}));
+vi.mock("firebase-functions/logger", () => ({
+  warn: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  log: vi.fn(),
+}));
+
+import * as logger from "firebase-functions/logger";
+import { resolveTopicCaller } from "../src/modules/notifications/topicCaller";
 
 // Loop 4/120: branch operational topics are staff-only — customers must never
 // attach a branch's KOT/ticket pushes to their own token. SEC-01: staff are
@@ -77,5 +106,71 @@ describe("filterSubscribableTopics", () => {
     ).toEqual({ role: "branch_staff", isBrandAdmin: false, branchIds: ["b1"] });
     expect(topicCallerFromClaims({ role: "developer" }).isBrandAdmin).toBe(true);
     expect(topicCallerFromClaims({ role: "customer" }).branchIds).toEqual([]);
+  });
+});
+
+describe("legacy scope shapes and doc fallback (SEC-01b)", () => {
+  const topicsFor = (branch: string) => [
+    `branch_${branch}_orders`,
+    "branch_branch_B_orders",
+  ];
+  const ownBranchTopics = (caller: any) =>
+    filterSubscribableTopics(topicsFor("branch_A"), caller);
+
+  beforeEach(() => {
+    for (const key of Object.keys(docs)) delete docs[key];
+    control.failColumns = [];
+    vi.mocked(logger.warn).mockClear();
+  });
+
+  it("normalizes array, string-shaped plural and singular claims, deduped and trimmed", () => {
+    expect(normalizeBranchScope(["a", " b ", "", "a"])).toEqual(["a", "b"]);
+    expect(normalizeBranchScope("branch_A")).toEqual(["branch_A"]);
+    expect(normalizeBranchScope(undefined, "branch_A", null)).toEqual(["branch_A"]);
+  });
+
+  it.each([
+    ["array plural", { branchIds: ["branch_A"] }],
+    ["string plural", { branchIds: "branch_A" }],
+    ["singular", { branchId: "branch_A" }],
+  ])("keeps the caller's own branch and refuses another (%s)", (_label, claims) => {
+    const caller = topicCallerFromClaims({ role: "branch_staff", ...(claims as any) });
+    expect(caller.branchIds).toEqual(["branch_A"]);
+    expect(ownBranchTopics(caller)).toEqual(["branch_branch_A_orders"]);
+  });
+
+  it("falls back to users/{uid} when claims carry no scope", async () => {
+    docs["users/u1"] = { branchId: "branch_A" };
+    const caller = await resolveTopicCaller({ uid: "u1", role: "branch_staff" });
+    expect(caller.branchIds).toEqual(["branch_A"]);
+    expect(ownBranchTopics(caller)).toEqual(["branch_branch_A_orders"]);
+  });
+
+  it("falls back to admins/{uid} when the user doc has no scope", async () => {
+    docs["users/u2"] = { role: "branch_staff" };
+    docs["admins/u2"] = { branchIds: "branch_A" };
+    const caller = await resolveTopicCaller({ uid: "u2", role: "branch_staff" });
+    expect(caller.branchIds).toEqual(["branch_A"]);
+    expect(ownBranchTopics(caller)).toEqual(["branch_branch_A_orders"]);
+  });
+
+  it("fails closed (no branch topics) when the fallback read fails", async () => {
+    control.failColumns = ["users", "admins"];
+    const caller = await resolveTopicCaller({ uid: "u3", role: "branch_staff" });
+    expect(caller.branchIds).toEqual([]);
+    expect(ownBranchTopics(caller)).toEqual([]);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("never widens scope for customers or when claims already have it", async () => {
+    docs["users/u4"] = { branchId: "branch_A" };
+    const customer = await resolveTopicCaller({ uid: "u4", role: "customer" });
+    expect(customer.branchIds).toEqual([]);
+    const scoped = await resolveTopicCaller({
+      uid: "u5",
+      role: "branch_staff",
+      branchIds: ["branch_B"],
+    });
+    expect(scoped.branchIds).toEqual(["branch_B"]);
   });
 });
