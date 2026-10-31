@@ -240,6 +240,30 @@ this checkout. This is a QA-build limitation, not evidence about Razorpay itself
 
 
 
+## Borzo configuration (31 October 2026)
+
+The Borzo **test** cabinet (`apitest.borzodelivery.com`) was open with an API
+token for client `119542`. Configured in place:
+
+- Callback URL → `https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/dispatch/webhooks/borzo`
+- Callback token → the existing `BORZO_WEBHOOK_SECRET` (HMAC verification stays consistent)
+- `functions/.env`: `BORZO_ENABLED=true`, `BORZO_API_KEY` (40 chars), `BORZO_CUSTOMER_ID=119542`,
+  `BORZO_BASE_URL=https://robotapitest-in.borzodelivery.com`
+
+Found and fixed a name mismatch: the code reads `BORZO_CUSTOMER_ID`, but the env
+only had the stale `BORZO_CLIENT_ID=119393`; the cabinet’s real client id is
+`119542`, now set under the name the adapter uses.
+
+Token verified read-only against the test API: `POST /calculate-order` returned
+**HTTP 200** with `is_successful: true`. (`GET /cities` is not a Borzo method —
+400 `invalid_api_method` — so that probe was discarded.)
+
+These values take effect only after the Cloud Functions are redeployed; no
+deploy was performed. The callback token in the cabinet must match the deployed
+`BORZO_WEBHOOK_SECRET` for inbound status events to verify.
+
+
+
 ## Evidence files
 
 - `route-results.json` — full per-sample data (latest run)
