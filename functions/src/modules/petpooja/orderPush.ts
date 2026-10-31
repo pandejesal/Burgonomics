@@ -495,32 +495,61 @@ export function wasPushDeferredBusy(orderId: string): boolean {
  * and pay-at-store/counter orders (OrderRepository maps `cash` → `cod`), and
  * legacy/caller payloads may still say `cash` directly. Online methods
  * (online/upi/card/netbanking/wallet) get their KOT from the Razorpay capture
- * webhook, so this gate must stay false for them — pushing at creation would
- * ring the kitchen for an order that might never be paid.
+ * webhook, so this gate must stay false for them.
+ *
+ * NOTE: `payment.method` is client-written, so this predicate is a ROUTING
+ * hint, never proof of payment. It must only decide whether a STAFF-accepted
+ * order (see below) gets a KOT — never whether an unpaid order is printed at
+ * creation.
  */
 export function isCashOrPayAtStoreOrder(order: any): boolean {
   const method = String(order?.payment?.method ?? order?.paymentMethod ?? "").toLowerCase();
   return method === "cod" || method === "cash";
 }
 
+/** Statuses a staff member's "Accept KOT (Start Prep)" bump can land in. */
+export const CASH_KOT_ACCEPT_STATUSES = ["CONFIRMED", "PREPARING"] as const;
+
+function statusCodeOf(order: any): string {
+  return String(
+    typeof order?.status === "object" ? order?.status?.code ?? "" : order?.status ?? ""
+  ).toUpperCase();
+}
+
 /**
- * CASH-KOT server entry: push the KOT for a cash / pay-at-store order at
- * creation time.
- *
- * Without this, a non-online order never reaches the capture webhook (the only
- * other server-side KOT path), and the client's own POST /petpooja/pushOrder
- * is rejected for customers (403 — the route requires a staff role) before the
- * order doc is even written. The push is the same idempotent path the webhook
- * and retry worker use, so a redelivered creation event or a retry can never
- * duplicate a KOT.
- *
- * Returns null when the order is not a cash order (nothing to do).
+ * The one transition that may push a cash KOT: PLACED → CONFIRMED/PREPARING
+ * on a cash / pay-at-store order. Both snapshots are required, so an unrelated
+ * update (totals, rider, notes) or a later bump (READY, DELIVERED, CANCELLED)
+ * does nothing.
  */
-export async function pushKotForCashOrderOnCreate(
+export function isCashKotAcceptTransition(before: any, after: any): boolean {
+  return (
+    statusCodeOf(before) === "PLACED" &&
+    (CASH_KOT_ACCEPT_STATUSES as readonly string[]).includes(statusCodeOf(after)) &&
+    isCashOrPayAtStoreOrder(after)
+  );
+}
+
+/**
+ * CASH-KOT server entry: send the KOT for a cash / pay-at-store order when a
+ * STAFF member accepts it (PLACED → CONFIRMED/PREPARING), never at creation.
+ *
+ * Cash orders never reach the Razorpay capture webhook (the online KOT path),
+ * and the client's own POST /petpooja/pushOrder is rejected for customers
+ * (staff-only route). Gatekeeping on staff acceptance is what makes a
+ * client-written "cod" flag safe: the ticket only prints after a staff member
+ * has decided the order is real. The push is the same idempotent path the
+ * webhook and retry worker use, so a redelivered update event cannot duplicate
+ * a KOT.
+ *
+ * Returns null when this is not the accept transition (nothing to do).
+ */
+export async function pushKotForCashOrderOnAccept(
   orderId: string,
-  order: any
+  before: any,
+  after: any
 ): Promise<boolean | null> {
-  if (!isCashOrPayAtStoreOrder(order)) return null;
+  if (!isCashKotAcceptTransition(before, after)) return null;
   return pushOrderToPetpooja(orderId);
 }
 

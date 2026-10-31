@@ -3,7 +3,7 @@ import { db } from "../../core/firebase";
 import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlertMessage } from "./templates";
 import { sendFcmMessage, sendMulticastFcm, writeCustomerInboxDoc } from "./fcmClient";
 import { captureErrorSnapshot } from "../../core/errors";
-import { pushKotForCashOrderOnCreate } from "../petpooja/orderPush";
+import { pushKotForCashOrderOnAccept } from "../petpooja/orderPush";
 
 const REGION = "asia-south1";
 
@@ -23,25 +23,6 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
     const order = snap.data();
     const orderId = event.params.orderId;
     const branchId = order.branchId || order.store?.id;
-
-    // CASH-KOT: cash / pay-at-store orders are never confirmed by the Razorpay
-    // webhook (the only other server-side KOT path), and the client-side
-    // POST /petpooja/pushOrder is rejected for customers (staff-only route).
-    // Without this the kitchen never receives those tickets. Same idempotent
-    // push as the webhook/retry worker, so redelivered events dedupe.
-    try {
-      const pushed = await pushKotForCashOrderOnCreate(orderId, order);
-      if (pushed === false) {
-        console.warn(
-          `[onOrderCreatedTrigger] Cash-order KOT for ${orderId} is pending_retry — POS sync outstanding, retry worker owns it`
-        );
-      }
-    } catch (err: any) {
-      console.warn(
-        `[onOrderCreatedTrigger] Cash-order KOT push failed for ${orderId}:`,
-        err?.message || err
-      );
-    }
 
     if (!branchId) {
       console.warn(`[onOrderCreatedTrigger] Order ${orderId} has no branchId`);
@@ -152,38 +133,38 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
 );
 
 /**
- * Trigger: Fires when an existing order document is updated in Firestore.
- * Applies strict state-delta checks to prevent duplicate push loops.
+ * Order status-change side effects, in order:
+ *   1. customer status notification (unchanged),
+ *   2. CASH-KOT push for a staff-accepted cash / pay-at-store order.
+ *
+ * The KOT push runs LAST, in its own try/catch: a POS rejection or the 15s
+ * POS timeout can never block the customer notification nor fail/reject the
+ * trigger (a rejected Firestore trigger is retried, replaying every effect).
+ *
+ * Exported so the transition gate can be exercised without a trigger harness.
  */
-export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
-  {
-    region: REGION,
-    document: "orders/{orderId}",
-  },
-  async (event) => {
-    const change = event.data;
-    if (!change) return;
+export async function handleOrderStatusChanged(
+  orderId: string,
+  before: any,
+  after: any
+): Promise<void> {
+  const beforeStatusCode =
+    typeof before.status === "object" ? before.status?.code : before.status;
+  const afterStatusCode =
+    typeof after.status === "object" ? after.status?.code : after.status;
 
-    const before = change.before.data();
-    const after = change.after.data();
-    const orderId = event.params.orderId;
+  // Strict state-delta check: Exit if status did not change
+  if (beforeStatusCode === afterStatusCode) {
+    return;
+  }
 
-    const beforeStatusCode =
-      typeof before.status === "object" ? before.status?.code : before.status;
-    const afterStatusCode =
-      typeof after.status === "object" ? after.status?.code : after.status;
+  console.log(
+    `[onOrderStatusChangedTrigger] Order ${orderId} status changed: ${beforeStatusCode} -> ${afterStatusCode}`
+  );
 
-    // Strict state-delta check: Exit if status did not change
-    if (beforeStatusCode === afterStatusCode) {
-      return;
-    }
+  const customerId = after.customerId || after.userId || after.customer?.id;
 
-    console.log(
-      `[onOrderStatusChangedTrigger] Order ${orderId} status changed: ${beforeStatusCode} -> ${afterStatusCode}`
-    );
-
-    const customerId = after.customerId || after.userId || after.customer?.id;
-    if (!customerId) return;
+  if (customerId) {
 
     try {
       // Fetch customer FCM tokens if Firestore db is available
@@ -252,6 +233,45 @@ export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
         errorStack: err?.stack,
       });
     }
+  }
+
+  // CASH-KOT: the staff "Accept KOT (Start Prep)" bump is the gate for cash /
+  // pay-at-store orders (never creation — `payment.method` is client-written,
+  // so a creation push could print an unpaid ticket on demand). Same idempotent
+  // push as the capture webhook/retry worker, so a redelivered update event
+  // finds the dedupe marker and does not ring the kitchen twice.
+  try {
+    const pushed = await pushKotForCashOrderOnAccept(orderId, before, after);
+    if (pushed === false) {
+      console.warn(
+        `[onOrderStatusChangedTrigger] Cash-order KOT for ${orderId} is pending_retry — POS sync outstanding, retry worker owns it`
+      );
+    }
+  } catch (err: any) {
+    console.warn(
+      `[onOrderStatusChangedTrigger] Cash-order KOT push failed for ${orderId}:`,
+      err?.message || err
+    );
+  }
+}
+
+/**
+ * Trigger: Fires when an existing order document is updated in Firestore.
+ * Applies strict state-delta checks to prevent duplicate push loops.
+ */
+export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
+  {
+    region: REGION,
+    document: "orders/{orderId}",
+  },
+  async (event) => {
+    const change = event.data;
+    if (!change) return;
+    await handleOrderStatusChanged(
+      event.params.orderId,
+      change.before.data(),
+      change.after.data()
+    );
   }
 );
 

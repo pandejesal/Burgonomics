@@ -1,15 +1,46 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-// CASH-KOT: a cash / pay-at-store order never reaches the Razorpay capture
-// webhook that pushes online KOTs, and the customer app's own
-// POST /petpooja/pushOrder is rejected for customers (staff-only route).
-// The order-created trigger is therefore the ONLY server path for those
-// tickets. Gate + delegation are unit-tested here; the wiring into the
-// creation trigger is pinned by a narrow source assertion (no trigger
-// harness exists in this repo), and duplicate-safety lives in the existing
-// push claim/dedupe suite (petpooja.kot-race).
+// CASH-KOT: a cash / pay-at-store order must NOT print a KOT when it is
+// created — `payment.method` is client-written, so anyone could mint an
+// unpaid ticket by writing "cod". The gate is STAFF ACCEPTANCE: the first
+// transition out of PLACED into CONFIRMED/PREPARING (the KDS "Accept KOT
+// (Start Prep)" button) through POST /orders/bumpStatus.
+//
+// In-memory Firestore mock with real-ish get/set/transaction semantics (same
+// shape as petpooja.kot-race) so the real pushOrderToPetpooja idempotency
+// markers are exercised.
+const { mockDb, savedDocs } = vi.hoisted(() => {
+  const savedDocs: Record<string, any> = {};
+  const docRef = (col: string, id: string) => {
+    const path = `${col}/${id}`;
+    return {
+      id,
+      path,
+      get: vi.fn(async () => ({
+        exists: Object.prototype.hasOwnProperty.call(savedDocs, path),
+        data: () => savedDocs[path],
+        ref: docRef(col, id),
+      })),
+      set: vi.fn(async (data: any, opts?: any) => {
+        savedDocs[path] =
+          opts?.merge && savedDocs[path] ? { ...savedDocs[path], ...data } : data;
+      }),
+    };
+  };
+  const mockDb: any = {
+    collection: (col: string) => ({ doc: (id: string) => docRef(col, id) }),
+    runTransaction: vi.fn(async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      })
+    ),
+  };
+  return { mockDb, savedDocs };
+});
+
 vi.mock("firebase-admin", () => {
   const FieldValue = {
     serverTimestamp: () => "MOCK_TIMESTAMP",
@@ -17,11 +48,7 @@ vi.mock("firebase-admin", () => {
     arrayUnion: (item: any) => [item],
     delete: () => "MOCK_DELETE",
   };
-  const firestoreFn: any = vi.fn(() => ({
-    collection: () => ({
-      doc: () => ({ get: async () => ({ exists: false, data: () => ({}) }) }),
-    }),
-  }));
+  const firestoreFn: any = vi.fn(() => mockDb);
   firestoreFn.FieldValue = FieldValue;
   return {
     default: {
@@ -41,15 +68,18 @@ vi.mock("firebase-admin", () => {
 
 import {
   isCashOrPayAtStoreOrder,
-  pushKotForCashOrderOnCreate,
+  isCashKotAcceptTransition,
+  pushKotForCashOrderOnAccept,
 } from "../src/modules/petpooja/orderPush";
+import { config } from "../src/config/env";
 
-const cashOrder = { id: "ord_cash_1", payment: { method: "cod" }, branchId: "branch_a" };
-const onlineOrder = { id: "ord_online_1", payment: { method: "upi" }, branchId: "branch_a" };
+const status = (code: string) => ({ code, label: code, kind: "x", terminal: false });
+const cash = (code: string) => ({ id: "ord_cash_1", branchId: "branch_a", payment: { method: "cod" }, status: status(code) });
+const online = (code: string) => ({ id: "ord_online_1", branchId: "branch_a", payment: { method: "upi" }, status: status(code) });
 
-describe("CASH-KOT order-created push", () => {
+describe("CASH-KOT gate", () => {
   it("treats cod (cash-on-delivery / pay-at-store) and legacy cash as cash orders", () => {
-    expect(isCashOrPayAtStoreOrder(cashOrder)).toBe(true);
+    expect(isCashOrPayAtStoreOrder({ payment: { method: "cod" } })).toBe(true);
     expect(isCashOrPayAtStoreOrder({ payment: { method: "CASH" } })).toBe(true);
     expect(isCashOrPayAtStoreOrder({ paymentMethod: "cod" })).toBe(true);
   });
@@ -61,26 +91,146 @@ describe("CASH-KOT order-created push", () => {
     expect(isCashOrPayAtStoreOrder({})).toBe(false);
   });
 
-  it("delegates a cash order to the idempotent POS push", async () => {
-    // The mocked order doc does not exist, so the real pushOrderToPetpooja
-    // runs and refuses — proving the cash path actually reaches it.
-    await expect(pushKotForCashOrderOnCreate("ord_cash_1", cashOrder)).rejects.toThrow(
-      /does not exist/
-    );
+  it("fires only on PLACED -> CONFIRMED/PREPARING", () => {
+    expect(isCashKotAcceptTransition(cash("PLACED"), cash("PREPARING"))).toBe(true);
+    expect(isCashKotAcceptTransition(cash("PLACED"), cash("CONFIRMED"))).toBe(true);
+    // Creation (no status delta), later bumps, and fees/notes updates do nothing.
+    expect(isCashKotAcceptTransition(cash("PLACED"), cash("PLACED"))).toBe(false);
+    expect(isCashKotAcceptTransition(cash("PREPARING"), cash("READY"))).toBe(false);
+    expect(isCashKotAcceptTransition(cash("PLACED"), cash("CANCELLED"))).toBe(false);
+    // Online orders are never this path, even on the same transition.
+    expect(isCashKotAcceptTransition(online("PLACED"), online("PREPARING"))).toBe(false);
   });
 
-  it("does not touch the POS path for an online order", async () => {
-    await expect(pushKotForCashOrderOnCreate("ord_online_1", onlineOrder)).resolves.toBeNull();
-  });
-
-  it("is wired into the order-created trigger", () => {
+  it("the customer create trigger no longer pushes a KOT", () => {
     const source = readFileSync(
       resolve(__dirname, "../src/modules/notifications/triggers.ts"),
       "utf8"
     );
-    const start = source.indexOf("onDocumentCreated(");
-    const end = source.indexOf("onOrderStatusChangedNotificationTrigger");
-    const block = source.slice(start, end);
-    expect(block).toContain("pushKotForCashOrderOnCreate(orderId, order)");
+    const createStart = source.indexOf("onOrderCreatedNotificationTrigger");
+    const updateStart = source.indexOf("handleOrderStatusChanged");
+    expect(createStart).toBeGreaterThan(-1);
+    expect(updateStart).toBeGreaterThan(createStart);
+    expect(source.slice(createStart, updateStart)).not.toContain("pushKotForCashOrder");
+  });
+
+  it("the create rules pin status PLACED, so a customer cannot create past PLACED", () => {
+    const rules = readFileSync(resolve(__dirname, "../../firestore.rules"), "utf8");
+    const start = rules.indexOf("function orderCreateInitialStatus()");
+    expect(start).toBeGreaterThan(-1);
+    const body = rules.slice(start, start + 400);
+    expect(body).toContain("request.resource.data.status.code == 'PLACED'");
+    expect(body).toContain("request.resource.data.status.terminal != true");
+    // BOTH customer and walk-in create arms require it.
+    const createStart = rules.lastIndexOf("match /orders/{orderId}");
+    const createEnd = rules.indexOf("allow update: if (", createStart);
+    const createArm = rules.slice(createStart, createEnd);
+    expect(createArm.match(/orderCreateInitialStatus\(\)/g)).toHaveLength(2);
+  });
+});
+
+describe("CASH-KOT push on staff acceptance", () => {
+  let prevMock: boolean;
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    prevMock = config.mock.petpoojaPos;
+    config.mock.petpoojaPos = false; // live path — the POS POST is stubbed
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    savedDocs["branches/branch_a"] = { petpoojaStoreId: "res_a" };
+    savedDocs["orders/ord_cash_1"] = {
+      id: "ord_cash_1",
+      branchId: "branch_a",
+      customerName: "Test Customer",
+      customerPhone: "+919825000001",
+      items: [{ id: "itm_1", name: "Burger", price: 199, quantity: 1 }],
+      pricing: { grandTotal: 199, gst: 9.95 },
+      payment: { method: "cod", status: "CASH_PENDING" },
+      status: status("PLACED"),
+    };
+  });
+
+  afterEach(() => {
+    config.mock.petpoojaPos = prevMock;
+    vi.unstubAllGlobals();
+  });
+
+  const posAck = () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ success: "1", petpooja_order_id: "pp_ack_1" }),
+  });
+
+  it("pushes exactly once on PLACED -> PREPARING", async () => {
+    fetchMock.mockResolvedValueOnce(posAck());
+
+    const pushed = await pushKotForCashOrderOnAccept(
+      "ord_cash_1",
+      savedDocs["orders/ord_cash_1"],
+      { ...savedDocs["orders/ord_cash_1"], status: status("PREPARING") }
+    );
+
+    expect(pushed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(savedDocs["orders/ord_cash_1"].petpoojaOrderId).toBe("pp_ack_1");
+  });
+
+  it("a redelivered update event does not push a second KOT", async () => {
+    fetchMock.mockResolvedValue(posAck());
+
+    await pushKotForCashOrderOnAccept(
+      "ord_cash_1",
+      savedDocs["orders/ord_cash_1"],
+      { ...savedDocs["orders/ord_cash_1"], status: status("PREPARING") }
+    );
+    const again = await pushKotForCashOrderOnAccept(
+      "ord_cash_1",
+      savedDocs["orders/ord_cash_1"],
+      { ...savedDocs["orders/ord_cash_1"], status: status("PREPARING") }
+    );
+
+    expect(again).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a later transition (PREPARING -> READY) pushes nothing", async () => {
+    const pushed = await pushKotForCashOrderOnAccept(
+      "ord_cash_1",
+      cash("PREPARING"),
+      cash("READY")
+    );
+    expect(pushed).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("an online order moved to PREPARING is never pushed by this path", async () => {
+    const pushed = await pushKotForCashOrderOnAccept(
+      "ord_online_1",
+      online("PLACED"),
+      online("PREPARING")
+    );
+    expect(pushed).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a POS failure resolves (false) and parks the order for the retry worker", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      json: async () => ({ success: "1" }),
+    });
+
+    const pushed = await pushKotForCashOrderOnAccept(
+      "ord_cash_1",
+      savedDocs["orders/ord_cash_1"],
+      { ...savedDocs["orders/ord_cash_1"], status: status("PREPARING") }
+    );
+
+    expect(pushed).toBe(false);
+    expect(savedDocs["orders/ord_cash_1"].petpoojaStatus).toBe("pending_retry");
+    expect(savedDocs["orders/ord_cash_1"].petpoojaOrderId).toBeUndefined();
   });
 });
