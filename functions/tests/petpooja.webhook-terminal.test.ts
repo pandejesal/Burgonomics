@@ -772,6 +772,35 @@ describe("handlePetpoojaWebhook — caller-controlled parked fields (POS-03c)", 
     expectBounded(event.restId);
     expectBounded(event.rawStatus);
   });
+
+  it("keeps truncated park reasons bounded (POS-03d)", async () => {
+    const longRestId = `R${"r".repeat(3000)}`;
+    await handlePetpoojaWebhook({ order_id: "ord_reason", restID: longRestId, status: "5" });
+    const keys = parkKeys();
+    expect(keys).toHaveLength(1);
+    const park = savedDocs[keys[0]];
+    expect(park.reason).toContain("did not resolve to a linked branch");
+    expect(park.reason.length).toBeLessThanOrEqual(300);
+    expect(park.reason).not.toContain("r".repeat(500));
+  });
+
+  it("keeps long refs that differ only after the cap as two parks (POS-03d)", async () => {
+    const prefix = "p".repeat(200);
+    const refA = `${prefix}${"A".repeat(2800)}`;
+    const refB = `${prefix}${"B".repeat(2800)}`;
+    await handlePetpoojaWebhook({ order_id: refA, restID: "31z58ciw0h", status: "5" });
+    await handlePetpoojaWebhook({ order_id: refB, restID: "31z58ciw0h", status: "5" });
+    expect(parkKeys()).toHaveLength(2);
+  });
+
+  it("keeps the plain doc id for a short ref (POS-03d)", async () => {
+    await handlePetpoojaWebhook({
+      order_id: "ord_unknown_short",
+      restID: "31z58ciw0h",
+      status: "5",
+    });
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_unknown_short"]).toBeDefined();
+  });
 });
 
 describe("handlePetpoojaWebhook — untrusted terminal status (POS-03)", () => {

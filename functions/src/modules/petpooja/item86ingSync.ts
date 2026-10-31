@@ -33,6 +33,22 @@ function boundedParkedString(value: unknown, max: number): string | null {
 }
 
 /**
+ * Deterministic doc id for a parked review record. A value that fits keeps the
+ * plain `prefix<value>` id (existing dedupe unchanged); a TRUNCATED value also
+ * gets a short hash of the FULL raw value, so two distinct refs sharing their
+ * first 200 chars produce two records instead of one merge-overwritten event.
+ * The whole id stays within PARKED_REF_MAX_CHARS.
+ */
+function parkedDocId(prefix: "upo_" | "ss_", raw: unknown): string {
+  const text = raw === undefined || raw === null ? "" : typeof raw === "string" ? raw : String(raw);
+  const bounded = boundedParkedString(text, PARKED_REF_MAX_CHARS) || "unknown";
+  if (text.length <= PARKED_REF_MAX_CHARS) return `${prefix}${bounded}`;
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 12);
+  const capped = bounded.slice(0, PARKED_REF_MAX_CHARS - hash.length - 1);
+  return `${prefix}${capped}_${hash}`;
+}
+
+/**
  * Normalizes Petpooja order status codes into canonical Burgonomics order statuses.
  */
 export function normalizePetpoojaStatus(rawStatus: any): string {
@@ -864,7 +880,7 @@ export async function handlePetpoojaWebhook(
     try {
       await db
         .collection("petpooja_store_status_events")
-        .doc(`ss_${restId}`)
+        .doc(parkedDocId("ss_", restIdClaim))
         .set(
           {
             restId,
@@ -908,7 +924,10 @@ export async function handlePetpoojaWebhook(
   // with no restID at all keeps the legacy behaviour below; the store-status
   // shape was already handled above.)
   if (restIdRaw && !scopedBranchId) {
-    parkReason = `restID ${restIdRaw} did not resolve to a linked branch`;
+    parkReason = `restID ${boundedParkedString(
+      restIdRaw,
+      PARKED_REF_MAX_CHARS
+    )} did not resolve to a linked branch`;
   }
 
   const clientCandidates: Array<{
@@ -939,9 +958,10 @@ export async function handlePetpoojaWebhook(
     if (scopedBranchId && docBranch !== scopedBranchId) {
       // Contradictory client ref/outlet: PARK. Falling through to the POS-id
       // path could apply this callback to a different outlet's order.
-      parkReason = `client ref ${candidate.ref} belongs to branch ${
-        docBranch || "none"
-      }, outside callback outlet ${scopedBranchId}`;
+      parkReason = `client ref ${boundedParkedString(
+        candidate.ref,
+        PARKED_REF_MAX_CHARS
+      )} belongs to branch ${docBranch || "none"}, outside callback outlet ${scopedBranchId}`;
       clientMatches.length = 0;
       break;
     }
@@ -954,7 +974,9 @@ export async function handlePetpoojaWebhook(
     );
     if (distinct.size > 1) {
       // Two references naming two different orders is ambiguous — never pick.
-      parkReason = `conflicting client refs ${[...distinct].join(", ")} in one callback`;
+      parkReason = `conflicting client refs ${[...distinct]
+        .map((ref) => boundedParkedString(ref, PARKED_REF_MAX_CHARS))
+        .join(", ")} in one callback`;
     } else {
       orderDoc = clientMatches[0].doc;
       resolvedBy = clientMatches[0].kind;
@@ -987,7 +1009,7 @@ export async function handlePetpoojaWebhook(
     try {
       await db
         .collection("unmatched_petpooja_orders")
-        .doc(`upo_${refKey}`)
+        .doc(parkedDocId("upo_", refKeyRaw))
         .set(
           {
             orderId: boundedParkedString(orderId ?? null, PARKED_REF_MAX_CHARS),
@@ -1056,7 +1078,7 @@ export async function handlePetpoojaWebhook(
       try {
         await db
           .collection("unmatched_petpooja_orders")
-          .doc(`upo_${parkedOrderId}`)
+          .doc(parkedDocId("upo_", resolvedOrderId))
           .set(
             {
               orderId: parkedOrderId,
