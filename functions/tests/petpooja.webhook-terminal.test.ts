@@ -762,4 +762,28 @@ describe("handlePetpoojaWebhook — untrusted terminal status (POS-03)", () => {
     expect(doc.cancellationReason).toBe("kitchen closed");
     expect(refundDocs()).toEqual(["refunds/refund_pos_cancel_ord_pos3_auth"]);
   });
+
+  it("bounds every caller-controlled string in the parked record (POS-03b)", async () => {
+    seedLive("ord_pos3_long");
+    const longStatus = `CANCELLED${"x".repeat(5000)}`;
+    const longOrderID = `PP-${"y".repeat(5000)}`;
+    await handlePetpoojaWebhook(
+      {
+        order_id: "ord_pos3_long",
+        restID: "31z58ciw0h",
+        orderID: longOrderID,
+        status: longStatus,
+      },
+      { authenticated: false }
+    );
+    const park = savedDocs["unmatched_petpooja_orders/upo_ord_pos3_long"];
+    expect(park.reason).toBe("untrusted_terminal_status");
+    expect(typeof park.rawStatus).toBe("string");
+    expect(park.rawStatus.startsWith("CANCELLED")).toBe(true);
+    expect(park.rawStatus.length).toBeLessThanOrEqual(200);
+    expect(park.callbackOrderId.length).toBeLessThanOrEqual(200);
+    expect(park.orderId.length).toBeLessThanOrEqual(200);
+    // The order itself still gets no terminal write.
+    expect(savedDocs["orders/ord_pos3_long"].status).toMatchObject({ code: "CONFIRMED" });
+  });
 });

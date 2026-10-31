@@ -20,6 +20,19 @@ export function computeStockQuarantineDocId(restId: any, itemId: any): string {
 }
 
 /**
+ * Bounds an untrusted callback string before it is written to the review
+ * queue — an unauthenticated caller must not be able to store an unbounded
+ * field. Numbers keep their string form; null/undefined stay null.
+ */
+const PARKED_STATUS_MAX_CHARS = 200;
+const PARKED_REF_MAX_CHARS = 200;
+function boundedParkedString(value: unknown, max: number): string | null {
+  if (value === undefined || value === null) return null;
+  const text = typeof value === "string" ? value : String(value);
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+/**
  * Normalizes Petpooja order status codes into canonical Burgonomics order statuses.
  */
 export function normalizePetpoojaStatus(rawStatus: any): string {
@@ -1057,7 +1070,7 @@ export async function handlePetpoojaWebhook(
   if (untrusted && (canonicalStatus === "cancelled" || canonicalStatus === "delivered")) {
     console.warn(
       `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} carried terminal status "${String(
-        rawStatus
+        boundedParkedString(rawStatus, PARKED_STATUS_MAX_CHARS)
       )}" (${canonicalStatus}) — parked, order untouched`
     );
     try {
@@ -1066,11 +1079,14 @@ export async function handlePetpoojaWebhook(
         .doc(`upo_${resolvedOrderId}`)
         .set(
           {
-            orderId: resolvedOrderId,
-            posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
-            callbackOrderId: callbackOrderId || null,
-            rawStatus: rawStatus ?? null,
-            restId: restIdRaw || null,
+            orderId: boundedParkedString(resolvedOrderId, PARKED_REF_MAX_CHARS),
+            posOrderId: boundedParkedString(
+              (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+              PARKED_REF_MAX_CHARS
+            ),
+            callbackOrderId: boundedParkedString(callbackOrderId || null, PARKED_REF_MAX_CHARS),
+            rawStatus: boundedParkedString(rawStatus ?? null, PARKED_STATUS_MAX_CHARS),
+            restId: boundedParkedString(restIdRaw || null, PARKED_REF_MAX_CHARS),
             status: "needs_review",
             reason: "untrusted_terminal_status",
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
