@@ -14,6 +14,7 @@ export interface CalculateOrderPricingInput {
   items: PricingLineItem[];
   branchId: string;
   orderType: "delivery" | "takeaway" | "dinein";
+  /** Ignored: the customer-facing fee is the published checkout quote. */
   deliveryFee?: number;
   packagingFee?: number;
   couponCode?: string;
@@ -330,9 +331,20 @@ export async function calculateOrderPricing(
     pricingDegraded = true;
   }
 
-  // If takeaway or dinein, adjust delivery fee to 0
+  // Customer-facing delivery fee. The checkout bill is built by the client
+  // pricing engine: `resolvePricingConfig` takes the published delivery quote
+  // (DEFAULT_DELIVERY_QUOTE_FEE = ₹35) and applies NO free-delivery threshold,
+  // so checkout.tsx:1051 and payment.tsx:829 display ₹35 for every delivery
+  // basket. The server mirrors THAT number — the client `deliveryFee` is
+  // untrusted (and the real client does not even send it, which used to price
+  // every delivery at ₹0). Store/branch fee fields do not reach the client bill
+  // (resolvePricingConfig honours only minOrderAmount), so applying them here
+  // would make an honest client pay a different amount.
+  //
+  // The courier dispatch fare is a separate provider cost and is NOT this fee.
+  const DELIVERY_QUOTE_FEE_RUPEES = 35;
   const deliveryFee =
-    input.orderType === "delivery" ? Math.max(0, Number(input.deliveryFee) || 0) : 0;
+    input.orderType === "delivery" ? DELIVERY_QUOTE_FEE_RUPEES : 0;
   if (input.orderType === "dinein") {
     packagingFee = 0;
   }

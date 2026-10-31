@@ -110,9 +110,10 @@ describe("Pricing Engine", () => {
 
     expect(breakdown.foodSubtotal).toBe(400);
     expect(breakdown.packagingFee).toBe(15);
-    expect(breakdown.deliveryFee).toBe(50);
+    // Client-sent 50 is ignored: the published checkout quote is ₹35.
+    expect(breakdown.deliveryFee).toBe(35);
     expect(breakdown.gst).toBe(20); // 5% of 400 = 20
-    expect(breakdown.grandTotal).toBe(485); // 400 + 15 + 50 + 20
+    expect(breakdown.grandTotal).toBe(470); // 400 + 15 + 35 + 20
   });
 
   it("computes Razorpay Route marketplace royalty split accurately", async () => {
@@ -132,12 +133,12 @@ describe("Pricing Engine", () => {
       packagingFee: 15,
     });
 
-    // Subtotal = 500, GST = 25, Packaging = 15, Delivery = 40, Total = 580
+    // Subtotal = 500, GST = 25, Packaging = 15, Delivery = 35, Total = 575
     // Royalty 7% of 500 = 35
     // Brand Royalty Paise = 3500 (₹35)
-    // Branch Net Transfer = (500 - 35) + 15 + 40 + 25 = ₹545 (54500 paise)
+    // Branch Net Transfer = (500 - 35) + 15 + 35 + 25 = ₹540 (54000 paise)
     expect(breakdown.split.brandRoyaltyAmount).toBe(35);
-    expect(breakdown.split.branchTransferAmount).toBe(545);
+    expect(breakdown.split.branchTransferAmount).toBe(540);
     expect(breakdown.split.brandRoyaltyPaise + breakdown.split.branchTransferPaise).toBe(
       Math.round(breakdown.grandTotal * 100)
     );
@@ -189,8 +190,8 @@ describe("Pricing Engine", () => {
 
     expect(breakdown.foodSubtotal).toBe(400);
     expect(breakdown.discount).toBe(0);
-    // GST = 5% of 400 = 20; delivery fee defaults to 0 when not provided
-    expect(breakdown.grandTotal).toBe(435); // 400 + 15 + 0 + 20
+    // GST = 5% of 400 = 20; delivery is the published ₹35 quote when not sent
+    expect(breakdown.grandTotal).toBe(470); // 400 + 15 + 35 + 20
   });
 
   it("prices cash and online identically for the same cart (single truth)", async () => {
@@ -214,7 +215,52 @@ describe("Pricing Engine", () => {
     const cashLeg = await calculateOrderPricing(cart);
     const onlineLeg = await calculateOrderPricing({ ...cart });
     expect(onlineLeg.grandTotal).toBe(cashLeg.grandTotal);
-    expect(onlineLeg.grandTotal).toBe(485);
+    expect(onlineLeg.grandTotal).toBe(470);
+  });
+
+  it("charges the published checkout quote and ignores the client deliveryFee (PAY-01)", async () => {
+    const base = {
+      items: [{ id: "1", productId: "prod_400", name: "Burger", price: 400, quantity: 1 }],
+      branchId: "branch_ahmedabad_1",
+      orderType: "delivery" as const,
+      packagingFee: 15,
+    };
+    // A client claiming ₹0 cannot make a delivery free...
+    const zero = await calculateOrderPricing({ ...base, deliveryFee: 0 });
+    expect(zero.deliveryFee).toBe(35);
+    // ...and a client claiming ₹999 cannot inflate it.
+    const inflated = await calculateOrderPricing({ ...base, deliveryFee: 999 });
+    expect(inflated.deliveryFee).toBe(35);
+    // No free-delivery threshold exists on the checkout path (the 499/40 rule
+    // is stale cart-fallback copy, not the bill).
+    const above = await calculateOrderPricing({
+      ...base,
+      items: [{ id: "1", productId: "prod_500", name: "Burger", price: 500, quantity: 1 }],
+      deliveryFee: 0,
+    });
+    expect(above.deliveryFee).toBe(35);
+    // Takeaway never carries a delivery fee.
+    const takeaway = await calculateOrderPricing({ ...base, orderType: "takeaway", deliveryFee: 35 });
+    expect(takeaway.deliveryFee).toBe(0);
+  });
+
+  it("matches the honest client's checkout total exactly (PAY-01)", async () => {
+    const items = [{ id: "1", productId: "prod_400", name: "Burger", price: 400, quantity: 1 }];
+    const server = await calculateOrderPricing({
+      items,
+      branchId: "branch_ahmedabad_1",
+      orderType: "delivery",
+      deliveryFee: 0, // the real client does not send a fee at all
+      packagingFee: 15,
+    });
+    // Client rule: calculateOrderTotals with resolvePricingConfig(deliveryQuoteFee=35).
+    const clientDeliveryFee = 35;
+    const clientTaxable = 400;
+    const clientGst = Math.round(clientTaxable * 0.05 * 100) / 100;
+    const clientGrandTotal =
+      Math.round((clientTaxable + 15 + clientDeliveryFee + clientGst) * 100) / 100;
+    expect(server.grandTotal).toBe(clientGrandTotal);
+    expect(server.grandTotal).toBe(470);
   });
 });
 
@@ -238,12 +284,12 @@ describe("repriceOrderForVerification (B2-S1 server truth)", () => {
   it("matches when the stored total equals the server recomputation", async () => {
     const res = await repriceOrderForVerification({
       ...storedCart,
-      pricing: { grandTotal: 485 },
+      pricing: { grandTotal: 470 },
     });
     expect(res.matches).toBe(true);
-    expect(res.expectedGrandTotal).toBe(485);
-    expect(res.expectedPaise).toBe(48500);
-    expect(res.storedPaise).toBe(48500);
+    expect(res.expectedGrandTotal).toBe(470);
+    expect(res.expectedPaise).toBe(47000);
+    expect(res.storedPaise).toBe(47000);
   });
 
   it("mismatches when the stored total drifted from catalog truth", async () => {
@@ -252,7 +298,7 @@ describe("repriceOrderForVerification (B2-S1 server truth)", () => {
       pricing: { grandTotal: 400 }, // tampered/stale total
     });
     expect(res.matches).toBe(false);
-    expect(res.expectedPaise).toBe(48500);
+    expect(res.expectedPaise).toBe(47000);
     expect(res.storedPaise).toBe(40000);
   });
 
@@ -260,7 +306,7 @@ describe("repriceOrderForVerification (B2-S1 server truth)", () => {
     const res = await repriceOrderForVerification({ ...storedCart });
     expect(res.matches).toBe(false);
     expect(res.storedPaise).toBeNull();
-    expect(res.expectedPaise).toBe(48500);
+    expect(res.expectedPaise).toBe(47000);
   });
 
   it("throws 422 UNPRICEABLE on missing items instead of coercing", async () => {
