@@ -98,7 +98,7 @@ import {
 import { withSchedulerLock } from "./core/schedulerLock";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
-import { filterSubscribableTopics } from "./modules/notifications/topics";
+import { filterSubscribableTopics, topicCallerFromClaims } from "./modules/notifications/topics";
 import {
   setUserCustomClaims,
   assignUserRole,
@@ -1167,21 +1167,17 @@ app.post(
         body: string;
         data?: Record<string, string>;
       };
-      const role = (req.user as any)?.role as string | undefined;
-      const isBrandAdmin =
-        (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
+      const caller = topicCallerFromClaims(req.user as any);
+      const isBrandAdmin = caller.isBrandAdmin === true;
       if (topic) {
-        const clean = filterSubscribableTopics([topic], { role, isBrandAdmin });
+        const clean = filterSubscribableTopics([topic], caller);
         if (clean.length === 0) {
           res.status(403).json({ error: "Forbidden: topic is outside your role scope" });
           return;
         }
         if (!isBrandAdmin) {
           const m = /^branch_([A-Za-z0-9_-]+)_(orders|tickets)$/.exec(topic);
-          const branchIds = Array.isArray((req.user as any)?.branchIds)
-            ? ((req.user as any).branchIds as unknown[]).filter((b): b is string => typeof b === "string")
-            : [];
-          if (m && !branchIds.includes(m[1])) {
+          if (m && !(caller.branchIds || []).includes(m[1])) {
             res.status(403).json({ error: "Forbidden: topic is outside your assigned branches" });
             return;
           }
@@ -1278,12 +1274,11 @@ app.post("/notifications/subscribe", requireAuth, validateBody(topicSubscription
       res.status(400).json({ error: "token and non-empty topics[] are required" });
       return;
     }
-    const role = (req.user as any)?.role as string | undefined;
-    const isBrandAdmin =
-      (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
+    const caller = topicCallerFromClaims(req.user as any);
     // Loop 4/120: branch operational topics are staff-only (customers could
-    // attach any branch's KOT/ticket pushes to their own token).
-    const clean = filterSubscribableTopics(topics, { role, isBrandAdmin });
+    // attach any branch's KOT/ticket pushes to their own token). SEC-01: staff
+    // are also limited to their assigned branchIds.
+    const clean = filterSubscribableTopics(topics, caller);
     if (clean.length === 0) {
       res.status(400).json({ error: "no subscribable branch topics" });
       return;
@@ -1315,13 +1310,12 @@ app.post("/notifications/unsubscribe", requireAuth, validateBody(topicSubscripti
       res.status(400).json({ error: "token and non-empty topics[] are required" });
       return;
     }
-    const role = (req.user as any)?.role as string | undefined;
-    const isBrandAdmin =
-      (req.user as any)?.isBrandAdmin === true || role === "brand_owner" || role === "developer";
+    const caller = topicCallerFromClaims(req.user as any);
     // Loop 4/120: same staff-only branch-topic filter as subscribe, plus the
     // token-ownership check subscribe already had (unsubscribing someone
     // else's token must 403, not silently detach their kitchen alerts).
-    const clean = filterSubscribableTopics(topics, { role, isBrandAdmin });
+    // SEC-01: staff are limited to their assigned branchIds.
+    const clean = filterSubscribableTopics(topics, caller);
     if (clean.length === 0) {
       res.status(400).json({ error: "no unsubscribable topics" });
       return;
