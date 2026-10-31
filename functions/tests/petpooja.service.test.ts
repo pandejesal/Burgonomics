@@ -160,19 +160,22 @@ describe("Petpooja POS Bridge Service", () => {
             id: "itm_smash_01",
             petpoojaItemId: "pp_b1",
             name: "Classic Smash Cheese Burger",
-            price: 249,
+            price: 235,
             quantity: 2,
             isVeg: true,
             modifiers: [{ id: "bun_brioche", name: "Brioche Bun", price: 20 }],
           },
         ],
+        // GST-INCLUSIVE (R1/R4): foodSubtotal 470 = 2 x 235, discount 50,
+        // net food 420, included GST 20.00, total 420 + 15 + 40 = 475.
         pricing: {
-          subtotal: 498,
-          gst: 24.9,
+          subtotal: 470,
+          foodSubtotal: 470,
+          gst: 20,
           deliveryFee: 40,
           packagingFee: 15,
           discount: 50,
-          grandTotal: 527.9,
+          grandTotal: 475,
         },
       };
 
@@ -212,8 +215,8 @@ describe("Petpooja POS Bridge Service", () => {
       expect(orderDetails.order_type).toBe("H"); // H = home delivery
       // Petpooja accepts COD / CARD / ONLINE — "Prepaid" is not a valid value.
       expect(orderDetails.payment_type).toBe("ONLINE");
-      expect(orderDetails.total).toBe("527.90");
-      expect(orderDetails.tax_total).toBe("24.90");
+      expect(orderDetails.total).toBe("475.00");
+      expect(orderDetails.tax_total).toBe("20.00");
       // The old `tax`/`discount` aliases are not in the sample.
       expect(orderDetails).not.toHaveProperty("tax");
       expect(orderDetails).not.toHaveProperty("discount");
@@ -256,8 +259,8 @@ describe("Petpooja POS Bridge Service", () => {
       expect(info.Tax.details[0].title).toBe("CGST");
       expect(info.Tax.details[0].type).toBe("P");
       expect(info.Tax.details[0].price).toBe("2.5");
-      expect(info.Tax.details[0].tax).toBe("12.45");
-      expect(info.Tax.details[0].restaurant_liable_amt).toBe("12.45");
+      expect(info.Tax.details[0].tax).toBe("10.00");
+      expect(info.Tax.details[0].restaurant_liable_amt).toBe("10.00");
       // The sample has no Discount member at all.
       expect(info).not.toHaveProperty("Discount");
 
@@ -267,17 +270,18 @@ describe("Petpooja POS Bridge Service", () => {
       expect(line.id).toBe("pp_b1");
       expect(line.name).toBe("Classic Smash Cheese Burger");
       expect(line.quantity).toBe("2");
-      expect(line.price).toBe("249.00");
+      expect(line.price).toBe("235.00");
       // `final_price = price - item_discount` — a UNIT figure. The old line
       // total ("498.00") violated the vendor's own invariant.
-      expect(line.final_price).toBe("249.00");
+      expect(line.final_price).toBe("235.00");
       expect(line.item_discount).toBe("0.00");
-      // Our checkout adds GST on top of the item price.
-      expect(line.tax_inclusive).toBe(false);
+      // R4: menu prices are GST-inclusive — the POS must be told so, and the
+      // line's tax is the INCLUDED share (20.00 / 2 rows).
+      expect(line.tax_inclusive).toBe(true);
       expect(line.gst_liability).toBe("restaurant");
       expect(line.item_tax).toHaveLength(2);
       expect(line.item_tax[0].tax_percentage).toBe("2.5");
-      expect(line.item_tax[0].amount).toBe("12.45");
+      expect(line.item_tax[0].amount).toBe("10.00");
       expect(line.description).toBe("");
       expect(line.variation_id).toBe("");
       expect(line.variation_name).toBe("");
@@ -297,6 +301,75 @@ describe("Petpooja POS Bridge Service", () => {
       expect(line).not.toHaveProperty("addons");
       expect(line).not.toHaveProperty("addon_items");
       expect(line).not.toHaveProperty("item_attribute");
+    });
+
+    it("declares GST-inclusive prices and the included tax split (R4)", () => {
+      // Owner decision 2026-10-31: menu prices are GST-INCLUSIVE. The POS must
+      // be told `tax_inclusive: true`, each line's item_tax must be its share
+      // of the INCLUDED tax, the order tax_total is that included amount, and
+      // the order total is what the customer actually pays. Delivery and
+      // packaging carry no tax in our model, so they are never taxed twice.
+      const order = {
+        id: "ord_incl_01",
+        branchId: "branch_surat_01",
+        fulfillmentType: "DELIVERY",
+        paymentMethod: "CASH",
+        customerName: "Aarav Mehta",
+        customerPhone: "+919825100001",
+        address: { street: "123 Adajan Main Rd" },
+        items: [
+          { id: "l1", petpoojaItemId: "pp_b1", name: "Burger", price: 235, quantity: 2 },
+          { id: "l2", petpoojaItemId: "pp_s1", name: "Fries", price: 105, quantity: 1 },
+        ],
+        // foodSubtotal 575 inclusive; gst = round2(575 · 5/105) = 27.38.
+        pricing: {
+          foodSubtotal: 575,
+          gst: 27.38,
+          deliveryFee: 35,
+          packagingFee: 15,
+          discount: 0,
+          grandTotal: 625,
+        },
+      };
+      const branch = { id: "branch_surat_01", petpoojaStoreId: "PP_SURAT_01" };
+      const payload = formatPetpoojaOrderPayload(order, branch, "PP_SURAT_01");
+      const info = payload.orderinfo.OrderInfo;
+
+      for (const line of info.OrderItem.details) {
+        expect(line.tax_inclusive).toBe(true);
+        // line price stays the INCLUSIVE menu price
+        expect(Number(line.price)).toBe(Number(line.final_price));
+      }
+
+      const taxRows = info.OrderItem.details.flatMap((l: any) => l.item_tax);
+      const itemTaxTotal = taxRows.reduce((s: number, t: any) => s + Number(t.amount), 0);
+      expect(itemTaxTotal).toBeCloseTo(order.pricing.gst, 2);
+      // Each line's share is proportional to its inclusive line total.
+      expect(info.OrderItem.details[0].item_tax.map((t: any) => t.amount)).toEqual([
+        "11.19",
+        "11.19",
+      ]);
+      expect(info.OrderItem.details[1].item_tax.map((t: any) => t.amount)).toEqual([
+        "2.50",
+        "2.50",
+      ]);
+
+      const details = info.Order.details;
+      // 575 (inclusive) + 15 packaging + 35 delivery — no tax added on top.
+      expect(details.total).toBe("625.00");
+      expect(details.tax_total).toBe("27.38");
+      expect(details.delivery_charges).toBe("35.00");
+      expect(details.packing_charges).toBe("15.00");
+      // Packaging and delivery are outside the GST base: no tax on either.
+      expect(details.dc_tax_amount).toBe("0.00");
+      expect(details.pc_tax_amount).toBe("0.00");
+      expect(details.sc_tax_amount).toBe("0.00");
+      // The order-level tax rows carry the same included amount, split.
+      const taxTotal = info.Tax.details.reduce(
+        (s: number, t: any) => s + Number(t.tax),
+        0
+      );
+      expect(taxTotal).toBeCloseTo(order.pricing.gst, 2);
     });
 
     it("carries the vendor's optional variation fields, as empty strings when absent", () => {

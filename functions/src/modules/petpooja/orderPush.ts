@@ -189,7 +189,9 @@ async function ensureAuthoritativeOrderPricing(
     })),
     branchId,
     orderType,
-    deliveryFee: order?.deliveryFee,
+    // R6: the fee is NEVER read off the order document (client-writable).
+    // createPaymentOrder / the bound quote supply it; without one the engine
+    // fails closed with DELIVERY_FEE_REQUIRED instead of a static fare.
     packagingFee: order?.packagingFee,
     couponCode: order?.couponCode,
     // The client always sends zero points after D31–D33; never let a legacy
@@ -262,17 +264,20 @@ export function formatPetpoojaOrderPayload(
     return {
       id: linePetpoojaItemId(item, firestoreBranchId),
       name: item.name,
-      // Our checkout prices are TAX-EXCLUSIVE: pricing.engine adds 5% GST on
-      // top of the net food subtotal, and the outlet menu declares
-      // tax_inclusive:false. Declaring true told the POS the price already
-      // contained the tax and let it back the GST out a second time.
-      tax_inclusive: false,
+      // Owner decision 2026-10-31 (pricing-contract.md R4): menu prices are
+      // GST-INCLUSIVE. `price`/`final_price` below stay the inclusive menu
+      // price and `item_tax` carries each line's share of the INCLUDED tax.
+      // Declaring false used to tell the POS the amount was ex-GST and let it
+      // add the tax on top a second time.
+      tax_inclusive: true,
       gst_liability: "restaurant",
       item_tax: branchTaxes.map((t) => ({
         id: t.id,
         name: t.name,
         tax_percentage: String(t.rate),
         amount: money(
+          // Each line's share of `pricing.gst` (the included amount), split
+          // evenly across the outlet's tax rows (CGST + SGST).
           preItemTotal > 0 && branchTaxes.length > 0
             ? (preGst * (lineTotal / preItemTotal)) / branchTaxes.length
             : 0
@@ -425,9 +430,12 @@ export function formatPetpoojaOrderPayload(
     table_no: tableNo,
     no_of_persons: String(noOfPersons),
     discount_total: money(discountAmount),
+    // R4: the INCLUDED GST amount. The POS backs it out of the inclusive line
+    // prices; it is never added to them.
     tax_total: money(gstAmount),
     // Discounts are sent as discount_type + discount_total (spec §8).
     discount_type: "F",
+    // R2/R4: exactly what the customer pays (inclusive food + fees).
     total: money(grandTotal),
     description: order.notes || order.specialInstructions || "",
     created_on: createdOn,
