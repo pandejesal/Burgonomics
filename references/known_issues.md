@@ -76,3 +76,24 @@
 | **R5** | Backup | Daily GCP automated Firestore backup exports in `asia-south1` | Cloud Console automated export schedule |
 | **R12** | POS Sync | Ingest extended Petpooja item modifiers (`AddonItem.details[]`, `variation_id`) | Pending Petpooja Account Manager confirmation of custom add-on schema |
 
+
+## Review of 31 October 2026
+
+Added by the full review; earlier entries are left as written. Each statement below was verified on the live staging project burgonomics-7faa8 unless marked. Full record: staging-review-20261030/11-final-report.md.
+
+**Open, needs a decision or setup**
+- Online ordering works end to end only on DEMO. 16 of 17 stores have no `partnerBranchId`; createPaymentOrder now returns 409 STORE_NOT_LINKED for them.
+- All 166 DEMO products are `inStock:false`, written by one mapper run on 2026-10-17 from vendor value `in_stock:"2"`. 81 also have price 0. Do not bulk-flip. Fix the vendor menu first.
+- Vendor menu fetch fails: `unable to fetch Object from s3 bucket`.
+- GST: the client treats menu prices as inclusive, the server adds 5%, and the POS payload says `tax_inclusive:false`. Checkout shows a price-change prompt as a result. Needs an owner and accountant decision.
+- Delivery: the real charge is a flat 35. The 499 and 40 rule survives only in a cart fallback and the terms copy.
+- Cash order totals are client-written. A server order endpoint is the proper fix.
+- Firestore has no backups, no PITR, and no delete protection.
+- App Check and Firebase Storage are not enabled. Support photo upload fails honestly.
+
+**Changed behaviour worth knowing**
+- Cash KOT is sent when staff first move an order out of PLACED, not at creation, because `payment.method` is client-written. It relies on the rule that clients cannot write `status`.
+- A 200 from Petpooja with an empty order id is `accepted_unconfirmed`, not synced. It raises an operator alert and is not auto-retried, since a retry could print a duplicate KOT.
+- An unauthenticated Petpooja callback can no longer apply a terminal status; it is parked.
+- Rule mirrors in the customer and partner repos must stay byte-identical to the root file. `npm run test:rules` runs the customer copy.
+- Any functions deploy needs `functions/.env` in the tree. Deployed env comes from that file.
