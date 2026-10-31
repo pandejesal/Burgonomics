@@ -31,6 +31,7 @@ import {
   type CreateOrderParams,
 } from "./modules/payments/razorpay.service";
 import { handleRazorpayWebhook } from "./modules/payments/webhookHandler";
+import { resolveCheckoutFees } from "./modules/payments/checkoutFees";
 import { disposeRefundRequest } from "./modules/payments/refundRequests";
 import { resolveDiscrepancy } from "./modules/payments/discrepancies";
 import {
@@ -116,6 +117,7 @@ import {
   normalizeOrderType,
   createPaymentOrderSchema,
   verifyPaymentSchema,
+  checkoutFeesSchema,
   refundSchema,
   disposeRefundSchema,
   resolveDiscrepancySchema,
@@ -256,6 +258,7 @@ app.use(
   [
     "/payments/createPaymentOrder",
     "/payments/verifyPayment",
+    "/checkout/fees",
     "/payments/refund",
     "/refunds/dispose",
     "/discrepancies/resolve",
@@ -353,6 +356,38 @@ app.post("/payments/createPaymentOrder", optionalAuth, validateBody(createPaymen
     // outage — the client retries the SAME idempotencyKey, never a fresh one).
     const status = err.statusCode === 400 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 503 ? err.statusCode : 500;
     res.status(status).json({ error: err.message || "Failed to create payment order", ...(err.code ? { code: err.code } : {}) });
+  }
+});
+
+// POST /checkout/fees (R5): the checkout screen's ONLY source of packaging and
+// delivery fees. Auth is required (a quote is owned by its uid), the body is
+// zod-validated, and the route runs behind the normal rate limiter + App Check.
+app.post("/checkout/fees", requireAuth, validateBody(checkoutFeesSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const body = req.body as Record<string, any>;
+    const result = await resolveCheckoutFees({
+      storeId: body.storeId,
+      branchId: body.branchId,
+      orderType: normalizeOrderType(body as any),
+      dropLat: body.dropLat,
+      dropLng: body.dropLng,
+      // The caller's own uid — never a body-supplied identity.
+      customerId: req.user?.uid,
+    });
+    res.status(200).json(result);
+  } catch (err: any) {
+    const status =
+      err.statusCode === 400 ||
+      err.statusCode === 401 ||
+      err.statusCode === 409 ||
+      err.statusCode === 422 ||
+      err.statusCode === 503
+        ? err.statusCode
+        : 500;
+    res.status(status).json({
+      error: err.message || "Failed to resolve checkout fees",
+      ...(err.code ? { code: err.code } : {}),
+    });
   }
 });
 

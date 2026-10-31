@@ -188,6 +188,26 @@ export const dispatchQuoteSchema = z.object({
   orderId: z.string().max(64).optional(),
 });
 
+// POST /checkout/fees (owner decision 2026-10-31, R5). DROP pin only: the
+// pickup pin is server data and there is deliberately no request field that
+// could set it. `fulfillment` is the same legacy alias createPaymentOrder
+// accepts.
+export const checkoutFeesSchema = z
+  .object({
+    storeId: z.string().min(1).max(128).optional(),
+    branchId: z.string().min(1).max(128).optional(),
+    orderType: canonicalOrderType.optional(),
+    fulfillment: fulfillmentAlias.optional(),
+    dropLat: optionalLatitude,
+    dropLng: optionalLongitude,
+  })
+  .refine((d) => d.branchId || d.storeId, {
+    message: "branchId or storeId is required",
+  })
+  .refine((d) => !!d.orderType || !!d.fulfillment, {
+    message: "orderType (or fulfillment alias) is required",
+  });
+
 export const dispatchBookSchema = z.object({
   orderId: nonEmptyString,
   staffName: z.string().max(128).optional(),

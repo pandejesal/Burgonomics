@@ -1,4 +1,9 @@
 import { db } from "../../core/firebase";
+import {
+  DEFAULT_PACKAGING_FEE,
+  DEFAULT_ROYALTY_PERCENTAGE,
+  resolveBranchPricingConfig,
+} from "./branchPricing";
 
 export interface PricingLineItem {
   id: string;
@@ -97,13 +102,7 @@ export function computeItemUnitPrice(item: PricingLineItem): number {
   return Math.max(0, unitPrice);
 }
 
-/** 60s in-memory branch config cache (royalty/packaging change rarely). */
-const branchConfigCache = new Map<
-  string,
-  { at: number; royaltyPercentage: number; packagingFee: number }
->();
-const BRANCH_CACHE_TTL_MS = 60_000;
-
+/** Branch config (royalty/packaging) lives in the shared helper. */
 function applyCatalogBasePrice(item: PricingLineItem, catalogPrice: number): number {
   let base = catalogPrice;
   if (Array.isArray(item.customizations)) {
@@ -258,82 +257,20 @@ export async function calculateOrderPricing(
 
   // 2+3. Branch config and coupon are INDEPENDENT reads — fire them together
   // instead of two serial round trips on the hot checkout path. Branch config
-  // always wins over client input — client-supplied fees are untrusted.
+  // is the SOLE source of packaging/royalty, shared with POST /checkout/fees
+  // through resolveBranchPricingConfig; client-supplied fees are untrusted.
   // Coupons collection is the SOLE discount authority (no hardcoded fallback).
-  let royaltyPercentage = 5; // Default 5% brand royalty (spec: 95/5 split)
-  let packagingFee = input.packagingFee ?? 15; // Default ₹15 packaging
+  let royaltyPercentage = DEFAULT_ROYALTY_PERCENTAGE;
+  let packagingFee = DEFAULT_PACKAGING_FEE;
   let couponDoc: any = null;
 
   const couponCode = input.couponCode?.trim().toUpperCase();
-  const branchRead: Promise<void> =
-    input.branchId && db && typeof db.collection === "function"
-      ? (async () => {
-          const cached = branchConfigCache.get(input.branchId!);
-          if (cached && Date.now() - cached.at < BRANCH_CACHE_TTL_MS) {
-            royaltyPercentage = cached.royaltyPercentage;
-            packagingFee = cached.packagingFee;
-            return;
-          }
-          try {
-            const branchSnap = await db.collection("branches").doc(input.branchId!).get();
-            if (branchSnap.exists) {
-              const branchData = branchSnap.data();
-              if (typeof branchData?.royaltyPercentage === "number") {
-                const rp = branchData.royaltyPercentage;
-                // Bounds before use: a corrupt rate (>100%, negative, NaN)
-                // would mint a NEGATIVE branch leg (split > 100% of net
-                // food), which attemptRouteTransfer then refuses forever —
-                // a permanently stuck Route settlement for every order at
-                // this branch. Refuse to price instead (mapped to the same
-                // fail-closed 503 below), exactly like a missing branch doc.
-                if (!Number.isFinite(rp) || rp < 0 || rp > 100) {
-                  throw new Error(
-                    `branch royaltyPercentage ${String(rp)} outside [0,100] for ${input.branchId} — refusing to price (corrupt royalty config would strand the Route split)`
-                  );
-                }
-                royaltyPercentage = rp;
-              }
-              if (typeof branchData?.packagingFee === "number") {
-                packagingFee = branchData.packagingFee;
-              }
-            } else {
-              // Fail-closed: a branchId that resolves to no branch doc (new
-              // outlet not yet onboarded, deleted branch) must NOT fall back
-              // to default royalty/packaging — that silently misprices the
-              // order and drifts the Route split. Same 503 as a read failure.
-              const { captureErrorSnapshot } = await import("../../core/errors");
-              await captureErrorSnapshot({
-                source: "payments",
-                severity: "p0_critical",
-                message: `branch doc missing for ${input.branchId} — cannot price without verified royalty/packaging`,
-                branchId: input.branchId,
-              });
-              const err2: any = new Error("Branch configuration unavailable — cannot calculate pricing");
-              err2.statusCode = 503;
-              throw err2;
-            }
-            branchConfigCache.set(input.branchId!, {
-              at: Date.now(),
-              royaltyPercentage,
-              packagingFee,
-            });
-          } catch (err: any) {
-            // Fail-closed: branch config determines royalty split (money-critical).
-            // Using defaults would silently change the 95/5 split — must fail instead.
-            const { captureErrorSnapshot } = await import("../../core/errors");
-            await captureErrorSnapshot({
-              source: "payments",
-              severity: "p0_critical",
-              message: `branch config read failed for ${input.branchId} — cannot price without verified royalty/packaging`,
-              branchId: input.branchId,
-              errorStack: err?.stack,
-            });
-            const err2: any = new Error("Branch configuration unavailable — cannot calculate pricing");
-            err2.statusCode = 503;
-            throw err2;
-          }
-        })()
-      : Promise.resolve();
+  const branchRead: Promise<void> = resolveBranchPricingConfig(input.branchId).then(
+    (cfg) => {
+      royaltyPercentage = cfg.royaltyPercentage;
+      packagingFee = cfg.packagingFee;
+    }
+  );
   const couponRead: Promise<void> =
     couponCode && db && typeof db.collection === "function"
       ? (async () => {
