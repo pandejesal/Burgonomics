@@ -235,9 +235,11 @@ export async function handleOrderStatusChanged(
     }
   }
 
-  // CASH-KOT: the staff "Accept KOT (Start Prep)" bump is the gate for cash /
+  // CASH-KOT: the first staff departure from PLACED (the "Accept KOT (Start
+  // Prep)" bump, or a direct move to READY) is the gate for cash /
   // pay-at-store orders (never creation — `payment.method` is client-written,
-  // so a creation push could print an unpaid ticket on demand). Same idempotent
+  // so a creation push could print an unpaid ticket on demand). Cancelled and
+  // terminal transitions send nothing. Same idempotent
   // push as the capture webhook/retry worker, so a redelivered update event
   // finds the dedupe marker and does not ring the kitchen twice.
   try {

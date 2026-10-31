@@ -507,32 +507,41 @@ export function isCashOrPayAtStoreOrder(order: any): boolean {
   return method === "cod" || method === "cash";
 }
 
-/** Statuses a staff member's "Accept KOT (Start Prep)" bump can land in. */
-export const CASH_KOT_ACCEPT_STATUSES = ["CONFIRMED", "PREPARING"] as const;
-
+/** Statuses that never warrant a KOT even as a first departure from PLACED. */
 function statusCodeOf(order: any): string {
   return String(
     typeof order?.status === "object" ? order?.status?.code ?? "" : order?.status ?? ""
   ).toUpperCase();
 }
 
+function isCancelledOrTerminal(order: any): boolean {
+  const code = statusCodeOf(order);
+  if (code === "CANCELLED") return true;
+  if (order?.status?.terminal === true) return true;
+  return String(order?.status?.kind ?? "").toLowerCase() === "cancelled";
+}
+
 /**
- * The one transition that may push a cash KOT: PLACED → CONFIRMED/PREPARING
- * on a cash / pay-at-store order. Both snapshots are required, so an unrelated
- * update (totals, rider, notes) or a later bump (READY, DELIVERED, CANCELLED)
- * does nothing.
+ * The one transition that may push a cash KOT: the FIRST departure from PLACED
+ * into any non-terminal, non-cancelled status (the KDS accept bump normally
+ * lands on PREPARING; a direct PLACED → READY or CONFIRMED must not silently
+ * skip the ticket). Both snapshots are required, so an unrelated update
+ * (totals, rider, notes) or a later bump (PREPARING → READY, DELIVERED,
+ * CANCELLED) does nothing.
  */
 export function isCashKotAcceptTransition(before: any, after: any): boolean {
-  return (
-    statusCodeOf(before) === "PLACED" &&
-    (CASH_KOT_ACCEPT_STATUSES as readonly string[]).includes(statusCodeOf(after)) &&
-    isCashOrPayAtStoreOrder(after)
-  );
+  if (statusCodeOf(before) !== "PLACED") return false;
+  const afterCode = statusCodeOf(after);
+  // A non-departure (PLACED → PLACED, e.g. a totals/notes update) is not an
+  // acceptance.
+  if (!afterCode || afterCode === "PLACED") return false;
+  if (isCancelledOrTerminal(after)) return false;
+  return isCashOrPayAtStoreOrder(after);
 }
 
 /**
  * CASH-KOT server entry: send the KOT for a cash / pay-at-store order when a
- * STAFF member accepts it (PLACED → CONFIRMED/PREPARING), never at creation.
+ * STAFF member accepts it (the first departure from PLACED), never at creation.
  *
  * Cash orders never reach the Razorpay capture webhook (the online KOT path),
  * and the client's own POST /petpooja/pushOrder is rejected for customers

@@ -91,13 +91,21 @@ describe("CASH-KOT gate", () => {
     expect(isCashOrPayAtStoreOrder({})).toBe(false);
   });
 
-  it("fires only on PLACED -> CONFIRMED/PREPARING", () => {
+  it("fires on every first departure from PLACED into a live status", () => {
     expect(isCashKotAcceptTransition(cash("PLACED"), cash("PREPARING"))).toBe(true);
     expect(isCashKotAcceptTransition(cash("PLACED"), cash("CONFIRMED"))).toBe(true);
+    // A direct jump past PREPARING must not silently skip the ticket.
+    expect(isCashKotAcceptTransition(cash("PLACED"), cash("READY"))).toBe(true);
     // Creation (no status delta), later bumps, and fees/notes updates do nothing.
     expect(isCashKotAcceptTransition(cash("PLACED"), cash("PLACED"))).toBe(false);
     expect(isCashKotAcceptTransition(cash("PREPARING"), cash("READY"))).toBe(false);
     expect(isCashKotAcceptTransition(cash("PLACED"), cash("CANCELLED"))).toBe(false);
+    expect(
+      isCashKotAcceptTransition(cash("PLACED"), {
+        ...cash("DELIVERED"),
+        status: { code: "DELIVERED", label: "Delivered", kind: "completed", terminal: true },
+      })
+    ).toBe(false);
     // Online orders are never this path, even on the same transition.
     expect(isCashKotAcceptTransition(online("PLACED"), online("PREPARING"))).toBe(false);
   });
@@ -175,6 +183,32 @@ describe("CASH-KOT push on staff acceptance", () => {
     expect(pushed).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(savedDocs["orders/ord_cash_1"].petpoojaOrderId).toBe("pp_ack_1");
+  });
+
+  it("pushes exactly once on a direct PLACED -> READY bump", async () => {
+    fetchMock.mockResolvedValueOnce(posAck());
+
+    const pushed = await pushKotForCashOrderOnAccept(
+      "ord_cash_1",
+      savedDocs["orders/ord_cash_1"],
+      { ...savedDocs["orders/ord_cash_1"], status: status("READY") }
+    );
+
+    expect(pushed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(savedDocs["orders/ord_cash_1"].petpoojaOrderId).toBe("pp_ack_1");
+  });
+
+  it("pushes nothing on PLACED -> CANCELLED", async () => {
+    const pushed = await pushKotForCashOrderOnAccept(
+      "ord_cash_1",
+      savedDocs["orders/ord_cash_1"],
+      { ...savedDocs["orders/ord_cash_1"], status: status("CANCELLED") }
+    );
+
+    expect(pushed).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(savedDocs["orders/ord_cash_1"].petpoojaOrderId).toBeUndefined();
   });
 
   it("a redelivered update event does not push a second KOT", async () => {
