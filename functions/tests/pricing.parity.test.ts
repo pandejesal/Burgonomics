@@ -15,6 +15,15 @@ const CATALOG: Record<string, number> = {
   prod_momos: 129,
 };
 
+// PAY-16: an add-on is priced from the product's own catalog option data, so
+// the parity basket's m1 must exist there (the customer app reads the same
+// `customizations` groups).
+const CATALOG_OPTIONS: Record<string, any[]> = {
+  prod_hero: [
+    { id: "g1", name: "Add-ons", options: [{ id: "m1", name: "Cheese", price: 30 }] },
+  ],
+};
+
 const { mockDb, getAllCalls } = vi.hoisted(() => {
   const getAllCalls = { count: 0 };
   const docGet = async (col: string, docId: string) => {
@@ -22,7 +31,15 @@ const { mockDb, getAllCalls } = vi.hoisted(() => {
       const price = (CATALOG as any)[docId];
       return price === undefined
         ? { exists: false, data: () => ({}), id: docId }
-        : { exists: true, data: () => ({ price, inStock: true }), id: docId };
+        : {
+            exists: true,
+            data: () => ({
+              price,
+              inStock: true,
+              ...(CATALOG_OPTIONS[docId] ? { customizations: CATALOG_OPTIONS[docId] } : {}),
+            }),
+            id: docId,
+          };
     }
     if (col === "branches") {
       return { exists: true, data: () => ({ royaltyPercentage: 5, packagingFee: 15 }), id: docId };

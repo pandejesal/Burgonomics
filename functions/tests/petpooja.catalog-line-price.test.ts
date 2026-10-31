@@ -195,3 +195,57 @@ describe("POS-11 POS line prices come from the catalog", () => {
     expect(String(savedDocs["orders/ord_price_missing"].lastPetpoojaError)).toMatch(/Ghost/);
   });
 });
+
+describe("PAY-16 KOT option prices come from the catalog", () => {
+  it("relays the catalog add-on price when the order line claims delta 0", async () => {
+    savedDocs["products/prod_optioned"] = {
+      price: 200,
+      inStock: true,
+      customizations: [
+        { id: "g1", name: "Add-ons", options: [{ id: "opt_cheese", name: "Cheese", price: 30 }] },
+      ],
+    };
+    seedOrder("ord_option_price", [
+      {
+        id: "l1",
+        petpoojaItemId: "101",
+        name: "Burger",
+        productId: "prod_optioned",
+        price: 200,
+        quantity: 1,
+        modifiers: [
+          {
+            id: "opt_cheese",
+            name: "Cheese",
+            priceDelta: 0,
+            // R4b: a relayed add-on needs the POS's own ids.
+            petpoojaItemId: "201",
+            petpoojaGroupId: 7,
+          },
+        ],
+      },
+    ]);
+    expect(await pushOrderToPetpooja("ord_option_price")).toBe(true);
+    const info = payload().orderinfo.OrderInfo;
+    expect(info.OrderItem.details[0].price).toBe("230.00");
+    expect(info.OrderItem.details[0].final_price).toBe("230.00");
+  });
+
+  it("parks the order when a selected option is not on the menu", async () => {
+    seedOrder("ord_option_ghost", [
+      {
+        id: "l1",
+        petpoojaItemId: "101",
+        name: "Burger",
+        productId: "prod_500",
+        price: 500,
+        quantity: 1,
+        modifiers: [{ id: "opt_not_real", name: "Mystery", priceDelta: 0 }],
+      },
+    ]);
+    expect(await pushOrderToPetpooja("ord_option_ghost")).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(savedDocs["orders/ord_option_ghost"].petpoojaStatus).toBe("blocked_configuration");
+    expect(String(savedDocs["orders/ord_option_ghost"].lastPetpoojaError)).toMatch(/Mystery/);
+  });
+});

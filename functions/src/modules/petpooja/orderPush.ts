@@ -196,6 +196,9 @@ async function resolveCatalogLinePrices(order: any): Promise<number[]> {
     new Set<string>(items.map(keyOf).filter((key: string) => key !== ""))
   );
   const priceByKey = new Map<string, number>();
+  // PAY-16: the product's own option data, so selected options are priced from
+  // the catalog rather than the order document.
+  const optionsByKey = new Map<string, any[] | undefined>();
 
   if (wanted.length > 0 && db && typeof db.collection === "function") {
     try {
@@ -209,6 +212,7 @@ async function resolveCatalogLinePrices(order: any): Promise<number[]> {
           const data = snap?.data?.();
           if (snap?.exists && typeof data?.price === "number") {
             priceByKey.set(id, data.price);
+            optionsByKey.set(id, data?.customizations);
           }
         });
       } else {
@@ -217,6 +221,7 @@ async function resolveCatalogLinePrices(order: any): Promise<number[]> {
           const data = snap?.data?.();
           if (snap?.exists && typeof data?.price === "number") {
             priceByKey.set(id, data.price);
+            optionsByKey.set(id, data?.customizations);
           }
         }
       }
@@ -241,7 +246,7 @@ async function resolveCatalogLinePrices(order: any): Promise<number[]> {
       });
       return 0;
     }
-    return applyCatalogBasePrice(item, catalogPrice);
+    return applyCatalogBasePrice(item, catalogPrice, optionsByKey.get(key));
   });
   if (gaps.length > 0) throw new PetpoojaStructuralError(gaps);
   return prices;
@@ -1247,8 +1252,19 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     let parked = false;
     // R4b: a structural refusal (unverified POS ids) is NOT retryable — the
     // mapping will not fix itself. Park it for an operator instead of feeding
-    // the retry worker a guaranteed failure.
-    const structural = err instanceof PetpoojaStructuralError ? err : null;
+    // the retry worker a guaranteed failure. PAY-16: an option that is not on
+    // the menu is the same class (the kitchen cannot cook an unknown add-on).
+    const structural =
+      err instanceof PetpoojaStructuralError
+        ? err
+        : err?.code === "ITEM_OPTION_UNVERIFIED"
+          ? new PetpoojaStructuralError([
+              {
+                field: "OrderItem.details[].item_tax/options",
+                reason: String(err?.message || "order option could not be verified"),
+              },
+            ])
+          : null;
     const parkedStatus = structural ? "blocked_configuration" : "pending_retry";
     const fallbackRetry = structural ? (order.petpoojaRetryCount || 0) : (order.petpoojaRetryCount || 0) + 1;
     let retryForSnapshot = fallbackRetry;

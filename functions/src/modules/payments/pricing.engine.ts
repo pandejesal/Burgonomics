@@ -104,22 +104,110 @@ export function computeItemUnitPrice(item: PricingLineItem): number {
 
 /** Branch config (royalty/packaging) lives in the shared helper. */
 /**
+ * PAY-16: builds { optionId → catalog price } from a product document's
+ * `customizations` groups (the exact data the customer app maps in
+ * menuService.mapToCustomizationGroups). Returns null when the product carries
+ * no option data AT ALL, which makes any selection on it unpriceable.
+ */
+export function catalogOptionPrices(
+  productCustomizations: any[] | undefined
+): Map<string, number> | null {
+  if (!Array.isArray(productCustomizations)) return null;
+  const prices = new Map<string, number>();
+  for (const group of productCustomizations) {
+    const options = Array.isArray(group?.options) ? group.options : [];
+    for (const option of options) {
+      const id = String(option?.id ?? option?.optionId ?? "").trim();
+      if (!id) continue;
+      const raw = option?.price;
+      const price = typeof raw === "number" ? raw : Number(raw ?? 0);
+      prices.set(id, Number.isFinite(price) ? price : NaN);
+    }
+  }
+  return prices;
+}
+
+function itemOptionUnverified(itemName: string, detail: string): Error {
+  const err: any = new Error(
+    `${itemName} has an option that could not be verified against the menu — please refresh your cart and try again (${detail}).`
+  );
+  err.statusCode = 422;
+  err.code = "ITEM_OPTION_UNVERIFIED";
+  return err;
+}
+
+/**
  * Unit price for a line from its AUTHORITATIVE catalog price plus its own
  * add-on deltas (the engine's own rule). Exported for the POS relay (POS-11),
  * which must price lines from the same source instead of the order document.
+ *
+ * PAY-16: the add-on deltas come from the CATALOG too. Every selected
+ * customization/modifier must exist in the product's own option data and is
+ * charged the catalog's price; the cart's `price`/`priceDelta` is never read.
  */
-export function applyCatalogBasePrice(item: PricingLineItem, catalogPrice: number): number {
+export function applyCatalogBasePrice(
+  item: PricingLineItem,
+  catalogPrice: number,
+  productCustomizations?: any[]
+): number {
   let base = catalogPrice;
+  const selections: Array<{ id: string; kind: string; label: string }> = [];
   if (Array.isArray(item.customizations)) {
     for (const c of item.customizations) {
-      base += Math.max(0, Number(c.price) || 0);
+      selections.push({
+        id: String(c?.id ?? (c as any)?.optionId ?? "").trim(),
+        kind: "customization",
+        label: String((c as any)?.name || c?.id || ""),
+      });
     }
   }
   if (Array.isArray(item.modifiers)) {
     for (const m of item.modifiers) {
-      base += Math.max(0, Number(m.priceDelta) || 0);
+      selections.push({
+        id: String(m?.id ?? (m as any)?.optionId ?? "").trim(),
+        kind: "modifier",
+        label: String((m as any)?.name || m?.id || ""),
+      });
     }
   }
+
+  if (selections.length > 0) {
+    const itemName = String(item?.name || "An item");
+    const optionLabels = selections
+      .map((s) => s.label || s.id)
+      .filter((label) => label !== "")
+      .join(", ");
+    const optionPrices = catalogOptionPrices(productCustomizations);
+    if (!optionPrices) {
+      throw itemOptionUnverified(
+        itemName,
+        `the menu has no option data for this product (selected: ${optionLabels || "unnamed option"})`
+      );
+    }
+    for (const selection of selections) {
+      if (!selection.id) {
+        throw itemOptionUnverified(
+          itemName,
+          `a ${selection.kind}${selection.label ? ` "${selection.label}"` : ""} has no id`
+        );
+      }
+      const price = optionPrices.get(selection.id);
+      if (price === undefined || !Number.isFinite(price)) {
+        throw itemOptionUnverified(
+          itemName,
+          `${selection.kind} "${selection.label || selection.id}" (${selection.id}) is not on the menu`
+        );
+      }
+      if (price < 0) {
+        throw itemOptionUnverified(
+          itemName,
+          `${selection.kind} "${selection.label || selection.id}" has an invalid catalog price`
+        );
+      }
+      base += price;
+    }
+  }
+
   return Math.max(0, base);
 }
 
@@ -159,6 +247,10 @@ export async function calculateOrderPricing(
   // before an 86, or from a stale menu, was still priced and charged. Reading
   // it here costs no extra query and refuses to trust client cart state.
   const catalogAvailability = new Map<string, unknown>();
+  // PAY-16: the product document's OWN option data (the `customizations`
+  // groups the customer app reads), so a selection's price comes from the
+  // catalog instead of the cart's priceDelta.
+  const catalogCustomizations = new Map<string, any[] | undefined>();
   // True when any line was priced from client input instead of the catalog.
   // Surfaced on the result so callers can tell a clean total from a degraded
   // one; before this it was declared and never set, so the documented signal
@@ -178,6 +270,7 @@ export async function calculateOrderPricing(
           if (snap.exists && typeof data?.price === "number") {
             catalogPrices.set(snap.id, data.price);
             catalogAvailability.set(snap.id, data?.inStock);
+            catalogCustomizations.set(snap.id, data?.customizations);
           }
         }
       } else {
@@ -188,6 +281,7 @@ export async function calculateOrderPricing(
             if (snap.exists && typeof data?.price === "number") {
               catalogPrices.set(id as string, data.price);
               catalogAvailability.set(id as string, data?.inStock);
+              catalogCustomizations.set(id as string, data?.customizations);
             }
           } catch {
             catalogReadFailed = true;
@@ -239,7 +333,11 @@ export async function calculateOrderPricing(
         unavailable.code = "ITEM_UNAVAILABLE";
         throw unavailable;
       }
-      unitPrice = applyCatalogBasePrice(item, catalogPrice);
+      unitPrice = applyCatalogBasePrice(
+        item,
+        catalogPrice,
+        catalogCustomizations.get(itemKey)
+      );
     } else {
       // FAIL CLOSED on an unverifiable price. The catalog is the only
       // authoritative price source, so charging the price the CLIENT sent for a
