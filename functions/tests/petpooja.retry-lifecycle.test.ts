@@ -149,6 +149,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       petpoojaItemTaxIds: ["3928", "3929"],
       petpoojaTaxInclusive: false,
       petpoojaTaxUnsupported: false,
+      petpoojaGstType: "goods",
     };
   });
 

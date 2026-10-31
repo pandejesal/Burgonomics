@@ -231,6 +231,7 @@ const seedPending = (id: string, retryCount = 0, createdAt = 1700000000000 - 600
       petpoojaItemTaxIds: ["3928", "3929"],
       petpoojaTaxInclusive: false,
       petpoojaTaxUnsupported: false,
+      petpoojaGstType: "goods",
     };
   savedDocs[`orders/${id}`] = {
     id,

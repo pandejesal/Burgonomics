@@ -254,6 +254,7 @@ beforeEach(() => {
     petpoojaItemTaxIds: ["3928", "3929"],
     petpoojaTaxInclusive: false,
     petpoojaTaxUnsupported: false,
+    petpoojaGstType: "goods",
   });
 });
 

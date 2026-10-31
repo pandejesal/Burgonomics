@@ -86,6 +86,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
       petpoojaItemTaxIds: ["3928", "3929"],
       petpoojaTaxInclusive: false,
       petpoojaTaxUnsupported: false,
+      petpoojaGstType: "goods",
     };
     savedDocs["orders/kot_1"] = {
       id: "kot_1",

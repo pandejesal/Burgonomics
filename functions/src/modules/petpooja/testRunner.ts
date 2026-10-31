@@ -2,6 +2,9 @@ import { config, isDeclaredProduction } from "../../config/env";
 import { getPetpoojaConfig } from "./client";
 import { db } from "../../core/firebase";
 import { assertBranchAccess } from "../../core/middleware";
+import { allocatePetpoojaTax, sumPetpoojaItemTax } from "./taxAmounts";
+import { petpoojaFinancials, petpoojaGstLiability, restaurantLiableItemTax } from "./financials";
+import { resolveTrustedProductSnapshots } from "./orderPush";
 
 /**
  * Branch-scope the QA relay. The request's `branchId` is the outlet's
@@ -60,8 +63,8 @@ export function assertPetpoojaRelayAccess(
  * fallback chain). When mock mode is off and any of those is missing the relay
  * THROWS; only mock mode may hand back a synthetic `pp_test_*` id.
  *
- * This module deliberately imports NO Firestore code: it is a self-contained
- * sandbox relay, unit-testable without firebase-admin mocks.
+ * Live relay metadata is read from the mapped branch's captured catalog.
+ * Synthetic scenario records are not authority for current GST ownership.
  */
 
 export interface PetpoojaTestRunnerParams {
@@ -113,6 +116,8 @@ export interface ScenarioItem {
   price: number;
   quantity: number;
   isVeg: boolean;
+  /** From the captured item menu row, never inferred from a tax percentage. */
+  gstType?: string;
   modifiers?: ScenarioModifier[];
   /** Variant (size/style) carried on this line, when the item has one. */
   variation?: ScenarioVariation;
@@ -476,9 +481,10 @@ export function formatPetpoojaV21Payload(
     );
   }
   const taxRows = taxResolution.rows;
+  const itemGstAmounts = allocatePetpoojaTax(gst, order.items.map(itemLineTotal));
 
-  const orderItems = order.items.map((item) => {
-    const lineTotal = itemLineTotal(item);
+  const orderItems = order.items.map((item, itemIndex) => {
+    const liability = petpoojaGstLiability(item.gstType);
     const modifierTotal = (item.modifiers || []).reduce(
       (sum, mod) => sum + mod.price,
       0
@@ -486,11 +492,9 @@ export function formatPetpoojaV21Payload(
     // `price` is the all-in UNIT figure (base + add-ons), which is how
     // Petpooja defines it and how this runner's scenario totals are built.
     const unitPrice = item.price + modifierTotal;
-    // Item tax follows the item's own line value, so addons/variants are taxed
-    // with their parent item (the restaurant-liable split Petpooja expects:
-    // vendor GST on the final line price, never on the raw MRP).
-    const lineGst = itemTotal > 0 ? round2((gst * lineTotal) / itemTotal) : 0;
-    const lineHalf = round2(lineGst / 2);
+    // Allocate the authoritative GST using integer paise, including the odd
+    // residual, instead of independently rounding both halves down/up.
+    const itemTaxAmounts = allocatePetpoojaTax(itemGstAmounts[itemIndex], taxRows.map((row) => Number(row.rate)));
     // M4 — the real integer add-on GROUP id is REQUIRED on every modifier
     // line and emitted verbatim. Vendor sample types group_id as an integer.
     // This outlet publishes NO addon configuration (`addongroups: []`,
@@ -512,14 +516,13 @@ export function formatPetpoojaV21Payload(
       name: item.name,
       // The runner adds GST ON TOP of its item prices, so this must be false.
       tax_inclusive: false,
-      gst_liability: "restaurant",
-      // The item's tax rows come from the CAPTURED catalogue subset (H2) and
-      // the line's GST share splits across them evenly.
-      item_tax: taxRows.map((t) => ({
+      gst_liability: liability,
+      // The item's tax rows come from the CAPTURED catalogue subset (H2).
+      item_tax: taxRows.map((t, taxIndex) => ({
         id: t.id,
         name: t.name,
         tax_percentage: t.rate,
-        amount: money(taxRows.length > 0 ? lineGst / taxRows.length : 0),
+        amount: money(itemTaxAmounts[taxIndex]),
       })),
       item_discount: money(0),
       price: money(unitPrice),
@@ -534,17 +537,21 @@ export function formatPetpoojaV21Payload(
     };
   });
 
-  // H2 — the order-level Tax member uses the SAME captured-catalogue subset
-  // as the item lines; amounts split evenly across the rows.
+  // H2 — same captured rows, summing their exact serialized item amounts.
   const taxLines = taxRows.map((t) => ({
     id: t.id,
     title: t.name,
     type: "P",
     // Numeric percentage string, matching the vendor sample ("2.5", not "2.5%").
     price: t.rate,
-    tax: money(gst / taxRows.length),
-    restaurant_liable_amt: money(gst / taxRows.length),
+    tax: money(sumPetpoojaItemTax(orderItems, t.id)),
+    restaurant_liable_amt: money(restaurantLiableItemTax(orderItems, t.id)),
   }));
+  const financials = petpoojaFinancials({
+    items: orderItems, discount, packagingFee: order.pricing.packagingFee,
+    deliveryFee: order.pricing.deliveryFee, customerTotal: order.pricing.grandTotal,
+    isDelivery, restaurantDelivery: false, paymentType: "COD",
+  });
 
   // Clearly-synthetic test contacts (test-only, sandbox dry-run fixture):
   // the relay fabricates an order BY DESIGN and must keep the sample's
@@ -627,19 +634,15 @@ export function formatPetpoojaV21Payload(
             no_of_persons: "0",
             discount_total: money(discount),
             tax_total: money(gst),
-            // Retained policy — do NOT flip to the sample's vendor split:
-            // all-restaurant GST liability, COD collects the FULL total,
-            // ONLINE collects nothing. Recorded in the reference §18.5.
             discount_type: "F",
-            total: money(order.pricing.grandTotal),
+            total: financials.total,
             description: `MT-01 sandbox relay — ${order.scenarioId}`,
             created_on: stamp,
-            // Riders are always third-party; `0` is the correct value (the
-            // sample's `1` is a restaurant-rider example).
-            enable_delivery: 0,
+            // These sandbox cases do not assign a merchant rider.
+            enable_delivery: financials.enable_delivery,
             min_prep_time: 0,
             callback_url: callbackUrl,
-            collect_cash: money(order.pricing.grandTotal),
+            collect_cash: financials.collect_cash,
             // Empty on purpose: the delivery OTP is the customer/rider
             // verification secret — never printed on a kitchen ticket.
             otp: "",
@@ -754,6 +757,18 @@ async function relayScenarioToPetpooja(
     if (partnerBranch) {
       const branchSnap = await (db.collection("branches") as any).doc(partnerBranch).get();
       taxCatalogue = branchSnap?.exists ? branchSnap.data()?.petpoojaTaxes : undefined;
+      const snapshots = await resolveTrustedProductSnapshots(
+        order.items.map((item) => ({ productId: `prod_${partnerBranch}_${item.id}` })),
+        partnerBranch
+      );
+      order = { ...order, items: order.items.map((item) => {
+        const snapshot = snapshots.find((row) => row.petpoojaItemId === item.id);
+        if (!snapshot || snapshot.taxInclusive !== false || snapshot.taxUnsupported) {
+          throw new Error(`item ${item.id} has no representable captured tax metadata`);
+        }
+        petpoojaGstLiability(snapshot.gstType); // Unknown must block, never default.
+        return { ...item, gstType: snapshot.gstType! };
+      }) };
     }
   } catch (err: any) {
     return {
@@ -761,8 +776,8 @@ async function relayScenarioToPetpooja(
       reason: "BLOCKED_CONFIGURATION",
       detail: [
         {
-          field: "branch.petpoojaTaxes",
-          reason: `captured tax catalogue read failed for branch ${partnerBranch}: ${err?.message || err}`,
+          field: "branch.menuMetadata",
+          reason: `captured menu/tax metadata unavailable for branch ${partnerBranch}: ${err?.message || err}`,
         },
       ],
     };
@@ -792,15 +807,17 @@ async function relayScenarioToPetpooja(
     };
   }
   const petpoojaConfig = getPetpoojaConfig();
-  const body = formatPetpoojaV21Payload(
-    order,
-    outletCode,
-    clientOrderID,
-    (config.petpooja as { callbackUrl?: string }).callbackUrl ||
-      `https://asia-south1-${config.firebase.projectId}.cloudfunctions.net/api/petpooja/webhook`,
-    new Date(),
-    taxCatalogue
-  );
+  let body: Record<string, unknown>;
+  try {
+    body = formatPetpoojaV21Payload(
+      order, outletCode, clientOrderID,
+      (config.petpooja as { callbackUrl?: string }).callbackUrl ||
+        `https://asia-south1-${config.firebase.projectId}.cloudfunctions.net/api/petpooja/webhook`,
+      new Date(), taxCatalogue
+    );
+  } catch (error: any) {
+    return { ok: false, reason: "BLOCKED_CONFIGURATION", detail: error?.message };
+  }
   // Credentials travel in the body (save_order contract) — dropped from the
   // builder above so the payload stays credential-free until this point.
   const payload = {
