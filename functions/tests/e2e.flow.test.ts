@@ -216,15 +216,17 @@ describe("End-to-End Platform Integration Flow", () => {
 
     expect(pricing.foodSubtotal).toBe(497); // 199*2 + 99
     expect(pricing.gst).toBe(24.85);
-    expect(pricing.deliveryFee).toBe(40);
+    // PAY-01: the customer-facing fee is the published checkout quote (₹35);
+    // the client-sent 40 is ignored.
+    expect(pricing.deliveryFee).toBe(35);
     expect(pricing.packagingFee).toBe(15);
-    expect(pricing.grandTotal).toBe(577);
+    expect(pricing.grandTotal).toBe(572);
 
     // Route split: default 5% brand royalty (spec 95/5), rest branch settlement
     expect(pricing.split.brandRoyaltyAmount).toBe(24.85);
-    expect(pricing.split.branchTransferAmount).toBe(552.0);
+    expect(pricing.split.branchTransferAmount).toBe(547.0);
     expect(pricing.split.brandRoyaltyPaise + pricing.split.branchTransferPaise).toBe(
-      Math.round((497 + 15 + 40 + 24.85) * 100)
+      Math.round((497 + 15 + 35 + 24.85) * 100)
     );
 
     // Initialize mock order in Firestore

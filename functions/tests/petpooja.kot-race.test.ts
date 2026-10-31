@@ -184,7 +184,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     expect(doc.petpoojaOrderId).toBeUndefined();
   });
 
-  it("an ack with an EMPTY order id is ACCEPTED — synced, deduped, and no id invented", async () => {
+  it("an ack with an EMPTY order id is ACCEPTED — deduped, accepted_unconfirmed, and no id invented", async () => {
     // The EXACT live sandbox response, verbatim: success:"1" with all ids
     // empty. Two earlier readings of this payload were both wrong:
     //  1. invent `pp_<epoch>` + kotPrinted  → claimed an id the POS never issued.
@@ -210,8 +210,10 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     expect(pushed).toBe(true);
 
     const doc = savedDocs["orders/kot_1"];
-    expect(doc.petpoojaStatus).toBe("synced");
-    expect(doc.petpoojaSyncStatus).toBe("synced");
+    // POS-01: an id-less ack is accepted but NOT synced (nothing to reconcile
+    // against), and it is never retried.
+    expect(doc.petpoojaStatus).toBe("accepted_unconfirmed");
+    expect(doc.petpoojaSyncStatus).toBe("accepted_unconfirmed");
     // Finding 5: An ack without an order ID establishes relay acceptance (kotPushedAt),
     // but does NOT manufacture physical printer evidence (kotPrinted).
     expect(doc.kotPrinted).toBeUndefined();
@@ -278,7 +280,7 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     expect(replay).toBe(true);
     // No second POST — the kitchen is not rung twice.
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(savedDocs["orders/kot_1"].petpoojaStatus).toBe("synced");
+    expect(savedDocs["orders/kot_1"].petpoojaStatus).toBe("accepted_unconfirmed");
   });
 
   it("two truly concurrent pushes produce exactly ONE KOT POST", async () => {
