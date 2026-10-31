@@ -14,11 +14,7 @@ import { markOrderReconciliation } from "./reconciliation";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
 import { resolveBranchId } from "./branchResolver";
-import {
-  DELIVERY_FEE_QUOTES,
-  assertDeliveryQuoteBindable,
-  deliveryQuoteError,
-} from "./deliveryQuotes";
+import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
 import {
   attemptRouteTransfer,
@@ -263,50 +259,9 @@ async function bindDeliveryQuoteForOrder(args: {
       "A delivery checkout needs an order to attach its delivery price to — retry from the cart."
     );
   }
-  if (!db || typeof db.collection !== "function") {
-    const err: any = new Error("Delivery pricing is temporarily unavailable — please retry checkout.");
-    err.statusCode = 503;
-    err.code = "DELIVERY_QUOTE_UNAVAILABLE";
-    throw err;
-  }
-
-  const quoteRef = db.collection(DELIVERY_FEE_QUOTES).doc(quoteId);
-  const orderRef = db.collection("orders").doc(orderId);
-
-  const runTx: (fn: (tx: any) => Promise<number>) => Promise<number> =
-    typeof (db as any).runTransaction === "function"
-      ? (fn) => (db as any).runTransaction(fn)
-      : async (fn) =>
-          fn({
-            get: (ref: any) => ref.get(),
-            set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
-          });
-
-  return runTx(async (tx) => {
-    const quoteSnap = await tx.get(quoteRef);
-    const orderSnap = await tx.get(orderRef);
-    const orderData = orderSnap?.exists ? (orderSnap.data() || {}) : {};
-    const dropLat = orderData?.deliveryAddress?.lat ?? orderData?.address?.lat;
-    const dropLng = orderData?.deliveryAddress?.lng ?? orderData?.address?.lng;
-
-    const fee = assertDeliveryQuoteBindable({
-      quote: quoteSnap?.exists ? quoteSnap.data() : null,
-      orderId,
-      uid,
-      branchId,
-      dropLat,
-      dropLng,
-    });
-
-    if ((quoteSnap.data() as any)?.usedByOrderId !== orderId) {
-      await tx.set(
-        quoteRef,
-        { usedByOrderId: orderId, usedAt: admin.firestore.FieldValue.serverTimestamp() },
-        { merge: true }
-      );
-    }
-    return fee;
-  });
+  // Shared transactional binder: same rules whether the order is paid online
+  // (expiry judged now) or accepted as cash later (R6b, judged at creation).
+  return bindDeliveryQuote({ quoteId, orderId, uid, branchId, expiryMode: "now" });
 }
 
 /**

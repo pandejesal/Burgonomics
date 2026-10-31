@@ -1,3 +1,4 @@
+import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 
 /**
@@ -103,7 +104,17 @@ export interface DeliveryQuoteBinding {
   branchId: string;
   dropLat: unknown;
   dropLng: unknown;
+  /**
+   * When set, expiry is judged at THIS moment (the order's server-readable
+   * createdAt) plus a small grace, instead of "now". A cash order can be
+   * accepted by staff long after the quote's TTL — the fee was quoted while
+   * the customer was checking out, which is what must be proven.
+   */
+  expiryAtMs?: number;
 }
+
+/** Grace on the cash-order expiry rule (clock/latency slack, not a price decision). */
+export const CASH_QUOTE_GRACE_MS = 5 * 60 * 1000;
 
 /**
  * Enforces R6's binding rules on a persisted quote. Returns the fee to charge
@@ -112,7 +123,7 @@ export interface DeliveryQuoteBinding {
  * expired, other uid, other branch, another address, or another order.
  */
 export function assertDeliveryQuoteBindable(input: DeliveryQuoteBinding): number {
-  const { quote, orderId, uid, branchId, dropLat, dropLng } = input;
+  const { quote, orderId, uid, branchId, dropLat, dropLng, expiryAtMs } = input;
   if (!quote) {
     throw deliveryQuoteError(
       "DELIVERY_QUOTE_REQUIRED",
@@ -126,7 +137,22 @@ export function assertDeliveryQuoteBindable(input: DeliveryQuoteBinding): number
       "The attached delivery price is invalid — get a new delivery fee and retry."
     );
   }
-  if (isDeliveryQuoteExpired(quote)) {
+  const expiresAt = Number(quote.expiresAt);
+  if (!Number.isFinite(expiresAt)) {
+    throw deliveryQuoteError(
+      "DELIVERY_QUOTE_INVALID",
+      "The attached delivery price has no expiry — get a new delivery fee and retry."
+    );
+  }
+  if (expiryAtMs !== undefined) {
+    // R6b: was it valid when the order was placed (plus grace)?
+    if (!(expiresAt + CASH_QUOTE_GRACE_MS > expiryAtMs)) {
+      throw deliveryQuoteError(
+        "DELIVERY_QUOTE_EXPIRED",
+        "The delivery price had already expired when this order was placed — get a new one."
+      );
+    }
+  } else if (isDeliveryQuoteExpired(quote)) {
     throw deliveryQuoteError(
       "DELIVERY_QUOTE_EXPIRED",
       "The delivery price expired — get a new delivery fee and retry."
@@ -159,4 +185,120 @@ export function assertDeliveryQuoteBindable(input: DeliveryQuoteBinding): number
     );
   }
   return Math.round(fee * 100) / 100;
+}
+
+/**
+ * The order's server-readable creation moment, in ms, or null when the doc
+ * carries nothing trustworthy. `createdAtMs` (numeric) is preferred because a
+ * serverTimestamp sentinel has no toMillis on a later read.
+ */
+export function orderCreatedAtMs(order: any): number | null {
+  const numeric = Number(order?.createdAtMs);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const stamp = order?.createdAt;
+  if (typeof stamp === "number" && Number.isFinite(stamp) && stamp > 0) return stamp;
+  if (stamp && typeof stamp.toMillis === "function") {
+    const ms = Number(stamp.toMillis());
+    if (Number.isFinite(ms) && ms > 0) return ms;
+  }
+  if (stamp && typeof stamp === "object" && typeof stamp.seconds === "number") {
+    const ms = stamp.seconds * 1000;
+    if (Number.isFinite(ms) && ms > 0) return ms;
+  }
+  if (typeof stamp === "string") {
+    const ms = Date.parse(stamp);
+    if (Number.isFinite(ms) && ms > 0) return ms;
+  }
+  return null;
+}
+
+export interface BindDeliveryQuoteInput {
+  quoteId?: string | null;
+  orderId: string;
+  uid: string;
+  branchId: string;
+  /**
+   * "orderCreated" judges expiry at the order's creation time + grace (R6b,
+   * cash orders accepted later); "now" is the checkout-time rule (R6).
+   */
+  expiryMode: "now" | "orderCreated";
+}
+
+/**
+ * Loads the persisted quote and binds it to the order inside ONE transaction
+ * (R6/R6b): validates every binding and claims the quote atomically, so two
+ * concurrent accepts cannot both spend it. Returns the fee, never a default.
+ *
+ * The order document supplies the drop pin and (for expiryMode
+ * "orderCreated") the creation time — both server-written, never request data.
+ */
+export async function bindDeliveryQuote(input: BindDeliveryQuoteInput): Promise<number> {
+  const { quoteId, orderId, uid, branchId, expiryMode } = input;
+  if (!quoteId) {
+    throw deliveryQuoteError(
+      "DELIVERY_QUOTE_REQUIRED",
+      "A delivery checkout needs a delivery price — get one and retry."
+    );
+  }
+  if (!db || typeof db.collection !== "function") {
+    const err: any = new Error("Delivery pricing is temporarily unavailable — please retry checkout.");
+    err.statusCode = 503;
+    err.code = "DELIVERY_QUOTE_UNAVAILABLE";
+    throw err;
+  }
+
+  const quoteRef = db.collection(DELIVERY_FEE_QUOTES).doc(quoteId);
+  const orderRef = db.collection("orders").doc(orderId);
+
+  const runTx: (fn: (tx: any) => Promise<number>) => Promise<number> =
+    typeof (db as any).runTransaction === "function"
+      ? (fn) => (db as any).runTransaction(fn)
+      : async (fn) =>
+          fn({
+            get: (ref: any) => ref.get(),
+            set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+          });
+
+  return runTx(async (tx) => {
+    const quoteSnap = await tx.get(quoteRef);
+    const orderSnap = await tx.get(orderRef);
+    const orderData = orderSnap?.exists ? orderSnap.data() || {} : {};
+    const dropLat = orderData?.deliveryAddress?.lat ?? orderData?.address?.lat;
+    const dropLng = orderData?.deliveryAddress?.lng ?? orderData?.address?.lng;
+
+    let expiryAtMs: number | undefined;
+    if (expiryMode === "orderCreated") {
+      const createdAt = orderCreatedAtMs(orderData);
+      if (createdAt === null) {
+        throw deliveryQuoteError(
+          "DELIVERY_QUOTE_INVALID",
+          "This order has no server-readable creation time — the delivery price cannot be verified."
+        );
+      }
+      expiryAtMs = createdAt;
+    }
+
+    const fee = assertDeliveryQuoteBindable({
+      quote: quoteSnap?.exists ? quoteSnap.data() : null,
+      orderId,
+      uid,
+      branchId,
+      dropLat,
+      dropLng,
+      expiryAtMs,
+    });
+
+    const current = (quoteSnap.data() as any) || {};
+    if (current.usedByOrderId !== orderId) {
+      await tx.set(
+        quoteRef,
+        {
+          usedByOrderId: orderId,
+          usedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+    return fee;
+  });
 }

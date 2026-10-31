@@ -1,5 +1,5 @@
 import { db } from "../../core/firebase";
-import { findDeliveryFeeQuoteForOrder } from "../payments/deliveryQuotes";
+import { findDeliveryFeeQuoteForOrder, bindDeliveryQuote } from "../payments/deliveryQuotes";
 import { allocatePetpoojaTax, sumPetpoojaItemTax } from "./taxAmounts";
 import { petpoojaFinancials } from "./financials";
 import { config, assertLivePetpoojaContext } from "../../config/env";
@@ -178,6 +178,81 @@ function lineUnitPrice(item: any): number {
   return Number(item?.basePrice ?? item?.price ?? item?.unitPrice ?? 0) || 0;
 }
 
+/** Canonical order type for KOT/pricing purposes. */
+function kotOrderType(order: any): "delivery" | "takeaway" | "dinein" {
+  const rawType = String(order?.fulfillmentType || order?.orderType || "delivery").toLowerCase();
+  return rawType === "takeaway" || rawType === "pickup"
+    ? "takeaway"
+    : rawType === "dinein" || rawType === "dine_in"
+      ? "dinein"
+      : "delivery";
+}
+
+interface KotDeliveryFeeBinding {
+  /** Fee for delivery_charges; undefined only for non-delivery orders. */
+  fee?: number;
+  /** True when no verified quote could be used — the KOT still relays. */
+  unverified: boolean;
+  reason?: string;
+}
+
+/**
+ * R6b — the cash delivery path. A cash order never calls createPaymentOrder,
+ * so nothing has bound its courier quote. Before the KOT is built we bind it
+ * here, in the same transaction as the online path, with ONE deliberate
+ * difference: expiry is judged at the order's server-readable createdAt (+ a
+ * small grace), because staff may accept long after the quote's TTL. The fee
+ * was quoted while the customer was checking out; that is what must be true.
+ *
+ * A missing/invalid quote never blocks the kitchen: the caller relays with
+ * delivery_charges 0 and an operator-visible flag. A client-written fee on the
+ * order is never used as money.
+ */
+async function resolveKotDeliveryFee(
+  order: any,
+  orderId: string,
+  branchId: string,
+  orderType: "delivery" | "takeaway" | "dinein"
+): Promise<KotDeliveryFeeBinding> {
+  if (orderType !== "delivery") return { unverified: false };
+
+  // Already bound (online payment, or a previous accept): reuse it.
+  const bound = await findDeliveryFeeQuoteForOrder(orderId);
+  const boundFee = Number(bound?.fee);
+  if (Number.isFinite(boundFee) && boundFee > 0) {
+    return { fee: Math.round(boundFee * 100) / 100, unverified: false };
+  }
+
+  const quoteId =
+    typeof order?.deliveryQuoteId === "string" && order.deliveryQuoteId.trim()
+      ? order.deliveryQuoteId.trim()
+      : null;
+  if (!quoteId) {
+    return {
+      fee: 0,
+      unverified: true,
+      reason: "no deliveryQuoteId on the order — the courier fee could not be verified",
+    };
+  }
+
+  try {
+    const fee = await bindDeliveryQuote({
+      quoteId,
+      orderId,
+      uid: String(order?.customerId || order?.userId || ""),
+      branchId,
+      expiryMode: "orderCreated",
+    });
+    return { fee, unverified: false };
+  } catch (err: any) {
+    return {
+      fee: 0,
+      unverified: true,
+      reason: `delivery quote ${quoteId} rejected: ${err?.message || err}`,
+    };
+  }
+}
+
 /**
  * Resolve server-authoritative pricing BEFORE a KOT/COD payload is built.
  *
@@ -191,7 +266,8 @@ function lineUnitPrice(item: any): number {
 async function ensureAuthoritativeOrderPricing(
   order: any,
   orderId: string,
-  branchId: string
+  branchId: string,
+  kotDeliveryFee?: KotDeliveryFeeBinding
 ): Promise<any> {
   const existing = order?.pricing;
   if (existing && Number.isFinite(Number(existing.grandTotal))) return order;
@@ -205,13 +281,7 @@ async function ensureAuthoritativeOrderPricing(
     throw err;
   }
 
-  const rawType = String(order?.fulfillmentType || order?.orderType || "delivery").toLowerCase();
-  const orderType =
-    rawType === "takeaway" || rawType === "pickup"
-      ? "takeaway"
-      : rawType === "dinein" || rawType === "dine_in"
-        ? "dinein"
-        : "delivery";
+  const orderType = kotOrderType(order);
 
   const pricing = await calculateOrderPricing({
     // The engine resolves the authoritative catalog price; `price` is only the
@@ -228,13 +298,12 @@ async function ensureAuthoritativeOrderPricing(
     })),
     branchId,
     orderType,
-    // R6: the fee is NEVER read off the order document (client-writable). Only
-    // the courier quote already bound to THIS order may supply it; without one
-    // the engine fails closed (DELIVERY_FEE_REQUIRED) instead of a static fare.
+    // R6/R6b: the fee is NEVER read off the order document (client-writable).
+    // Only the courier quote already bound to THIS order (or bound moments ago
+    // by resolveKotDeliveryFee) may supply it. When no quote could be verified
+    // the fee is 0 and the order is flagged — the kitchen still cooks.
     serverDeliveryFee:
-      orderType === "delivery"
-        ? (await findDeliveryFeeQuoteForOrder(orderId))?.fee
-        : undefined,
+      orderType === "delivery" ? (kotDeliveryFee?.fee ?? 0) : undefined,
     couponCode: order?.couponCode,
     // The client always sends zero points after D31–D33; never let a legacy
     // client payload re-introduce a redemption into a POS total.
@@ -257,7 +326,13 @@ export function formatPetpoojaOrderPayload(
   branch: any,
   resId: string,
   firestoreBranchId?: string,
-  orderDocId?: string
+  orderDocId?: string,
+  /**
+   * R6b: the courier fee the caller verified for THIS KOT (server-resolved).
+   * Overrides `pricing.deliveryFee`; 0 is a real value (unverified quote) and
+   * undefined means "not a delivery KOT — use the stored pricing".
+   */
+  kotDeliveryFee?: number
 ) {
   const fulfillment = (order.fulfillmentType || order.orderType || "DELIVERY").toUpperCase();
   // Official V2.1.0 order_type is a letter code: H (home delivery),
@@ -404,7 +479,12 @@ export function formatPetpoojaOrderPayload(
   // `order.taxAmount` / `order.totalAmount` / `order.total` are client-writable
   // and must never decide a KOT total or COD cash amount.
   const gstAmount = Number(pricing.gst) || 0;
-  const deliveryFee = Number(pricing.deliveryFee) || 0;
+  // R6b: the caller's verified courier fee wins; the stored value is only a
+  // fallback for callers that did not resolve one (non-delivery never does).
+  const deliveryFee =
+    kotDeliveryFee !== undefined
+      ? Math.round(Number(kotDeliveryFee) * 100) / 100
+      : Number(pricing.deliveryFee) || 0;
   const packagingFee = Number(pricing.packagingFee) || 0;
   const discountAmount = Number(pricing.discount) || 0;
   const loyaltyDiscount = Number(pricing.loyaltyDiscount) || 0;
@@ -881,8 +961,51 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
 
     // B02: never build a KOT/COD payload from client-authored totals. Resolve
     // and persist server pricing first; the formatter itself also fails closed.
-    const pricedOrder = await ensureAuthoritativeOrderPricing(order, orderId, branchId);
-    const payload = formatPetpoojaOrderPayload(pricedOrder, branchData, resId, branchId, orderId);
+    // R6b: cash delivery orders bind their courier quote HERE (nothing else
+    // did), and an unverifiable quote flags the order instead of blocking food.
+    const deliveryBinding = await resolveKotDeliveryFee(
+      order,
+      orderId,
+      branchId,
+      kotOrderType(order)
+    );
+    if (deliveryBinding.unverified) {
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId}: courier fee UNVERIFIED — relaying with delivery_charges 0. ${deliveryBinding.reason}`
+      );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `Courier fee unverified for order ${orderId} — KOT relayed with delivery_charges 0 (${deliveryBinding.reason})`,
+        orderId,
+        branchId,
+      });
+    }
+    await orderDoc.ref.set(
+      {
+        deliveryFeeUnverified: deliveryBinding.unverified,
+        deliveryFeeUnverifiedReason: deliveryBinding.unverified
+          ? deliveryBinding.reason || "delivery quote could not be verified"
+          : null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    const pricedOrder = await ensureAuthoritativeOrderPricing(
+      order,
+      orderId,
+      branchId,
+      deliveryBinding
+    );
+    const payload = formatPetpoojaOrderPayload(
+      pricedOrder,
+      branchData,
+      resId,
+      branchId,
+      orderId,
+      deliveryBinding.fee
+    );
 
     // Debug visibility: missing contact or zero totals push a broken KOT that
     // looks successful. Flag loudly instead of masking with fallbacks.
