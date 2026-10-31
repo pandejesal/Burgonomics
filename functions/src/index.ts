@@ -1639,7 +1639,7 @@ export const autoRebookCancelledDispatches = onSchedule(
       return;
     }
     console.log(
-      `[Auto Rebook Worker] scanned ${result!.scanned} — rebooked ${result!.rebooked}, failed ${result!.failed}, busy ${result!.busy}, skipped ${result!.skipped}, exhausted ${result!.exhausted}`
+      `[Auto Rebook Worker] scanned ${result!.scanned} — rebooked ${result!.rebooked}, failed ${result!.failed}, busy ${result!.busy}, manual ${result!.manual}, skipped ${result!.skipped}, exhausted ${result!.exhausted}`
     );
   }
 );

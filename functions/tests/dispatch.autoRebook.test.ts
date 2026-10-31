@@ -238,6 +238,41 @@ describe("autoRebookDispatchWorker (starvation/livelock fixes)", () => {
     expect(doc.rebookTrigger).toBeNull();
   });
 
+  it("counts a DR8 manual-lane booking separately and alerts, never as rebooked", async () => {
+    // Porter enabled but unkeyed/unmocked = the only provider is the manual
+    // paste lane. dispatchBook returns manual_action_required WITHOUT throwing,
+    // so the worker must not report this cancelled delivery as rebooked.
+    config.borzo.enabled = false;
+    config.shadowfax.enabled = false;
+    config.porter.enabled = true;
+    config.mock.porterDispatch = false;
+    seedOrder("ord_manual_worker", {
+      needsRebook: true,
+      rebookTrigger: "carrier_cancelled",
+      deliveryStatus: "rider_cancelled",
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await autoRebookDispatchWorker();
+
+    expect(res).toMatchObject({
+      scanned: 1,
+      rebooked: 0,
+      manual: 1,
+      failed: 0,
+      skipped: 0,
+    });
+    const doc = docOf("ord_manual_worker");
+    expect(doc.dispatchStatus).toBe("manual_pending");
+    expect(doc.needsRebook).toBe(false);
+    const alert = errorSpy.mock.calls
+      .map((c) => c.map(String).join(" "))
+      .find((line) => line.includes("MANUAL_ACTION_REQUIRED"));
+    expect(alert).toBeTruthy();
+    expect(alert).toContain("ord_manual_worker");
+    errorSpy.mockRestore();
+  });
+
   it("never re-books the carrier that cancelled the dispatch (DR6 exclusion)", async () => {
     config.porter.enabled = false;
     // Borzo owns the cancelled dispatch AND is the cheapest mock quote

@@ -1020,6 +1020,8 @@ export interface AutoRebookWorkerResult {
   busy: number;
   skipped: number;
   exhausted: number;
+  /** Bookings that parked on the staff manual-paste lane, not a rebook. */
+  manual: number;
 }
 
 /** Providers that must NOT be re-booked: whoever last owned this dispatch. */
@@ -1088,6 +1090,7 @@ export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult
     busy: 0,
     skipped: 0,
     exhausted: 0,
+    manual: 0,
   };
 
   let snap: any;
@@ -1139,11 +1142,31 @@ export async function autoRebookDispatchWorker(): Promise<AutoRebookWorkerResult
     }
 
     try {
-      await dispatchBook({
+      const bookResult = await dispatchBook({
         orderId: doc.id,
         staffName: "Auto Rebook",
         excludeProviders: excludedProvidersFor(order),
       });
+      // DR8 manual lane: dispatchBook does NOT throw when every walkable
+      // provider only offers "book it yourself" (Porter unkeyed). It parks
+      // the order on manual_pending and clears needsRebook, so counting it as
+      // "rebooked" hid a delivery that still needs a human — nobody was told.
+      if (bookResult?.manual_action_required) {
+        result.manual++;
+        // No suitable branch-alert helper exists (KOT/ticket builders would
+        // fabricate the wrong event type). Structured, greppable line so an
+        // alert policy can match the dispatch that is waiting for staff.
+        console.error(
+          "[Auto Rebook] MANUAL_ACTION_REQUIRED order parked for staff paste lane",
+          JSON.stringify({
+            orderId: doc.id,
+            branchId: order.branchId ?? null,
+            provider: bookResult.provider ?? null,
+            pasteEndpoint: bookResult.pasteEndpoint ?? null,
+          })
+        );
+        continue;
+      }
       result.rebooked++;
     } catch (err: any) {
       // 202 = a staff book is in flight right now — not an attempt, no count.
