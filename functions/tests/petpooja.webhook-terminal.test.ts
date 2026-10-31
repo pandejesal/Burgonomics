@@ -308,6 +308,52 @@ describe("handlePetpoojaWebhook — POS-assigned order id (only when proven)", (
     expect(savedDocs["petpooja_store_status_events/ss_31z58ciw0h"]).toBeUndefined();
   });
 
+  it("promotes an accepted_unconfirmed order to synced when an authenticated callback proves its POS id", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h", name: "HL Road" };
+    savedDocs["orders/ord_promote"] = {
+      id: "ord_promote",
+      branchId: "branch_t1",
+      petpoojaOrderId: "PP-PROMOTE-1",
+      petpoojaAcceptedNoId: true,
+      petpoojaStatus: "accepted_unconfirmed",
+      petpoojaSyncStatus: "accepted_unconfirmed",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({
+      restID: "31z58ciw0h",
+      orderID: "PP-PROMOTE-1",
+      status: "Accept",
+    });
+    const doc = savedDocs["orders/ord_promote"];
+    // The new accepted_unconfirmed state must not block the genuine
+    // post-acceptance promotion path.
+    expect(doc.petpoojaStatus).toBe("synced");
+    expect(doc.petpoojaSyncStatus).toBe("synced");
+    expect(doc.petpoojaOrderId).toBe("PP-PROMOTE-1");
+  });
+
+  it("stamps an authenticated explicit POS id onto an accepted_unconfirmed order and syncs it", async () => {
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h", name: "HL Road" };
+    savedDocs["orders/ord_promote2"] = {
+      id: "ord_promote2",
+      branchId: "branch_t1",
+      petpoojaAcceptedNoId: true,
+      petpoojaStatus: "accepted_unconfirmed",
+      petpoojaSyncStatus: "accepted_unconfirmed",
+      status: { code: "PENDING", label: "Pending", kind: "upcoming", terminal: false },
+    };
+    await handlePetpoojaWebhook({
+      order_id: "ord_promote2",
+      restID: "31z58ciw0h",
+      petpooja_order_id: "PP-EXPLICIT-2",
+      status: "Accept",
+    });
+    const doc = savedDocs["orders/ord_promote2"];
+    expect(doc.petpoojaOrderId).toBe("PP-EXPLICIT-2");
+    expect(doc.petpoojaStatus).toBe("synced");
+    expect(doc.petpoojaSyncStatus).toBe("synced");
+  });
+
   it("resolves an order from the POS id alone, with no client reference in the payload", async () => {
     savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h", name: "HL Road" };
     savedDocs["orders/ord_bypos"] = {

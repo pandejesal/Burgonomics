@@ -125,11 +125,26 @@ describe("paid-but-POS-pending alerts", () => {
   it("ignores unpaid orders, already-pushed orders, and orders with no paid timestamp", async () => {
     addOrder("unpaid", { paymentStatus: "pending", payment: { status: "pending" } });
     addOrder("pushed", { petpoojaOrderId: "pp_1" });
-    addOrder("accepted_no_id", { petpoojaAcceptedNoId: true });
     addOrder("no_paid_time", { payment: { status: "completed" } });
 
     await expect(posPendingAlertsWorker()).resolves.toEqual({ alerts2m: 0, escalations5m: 0 });
     expect(dispatchFCM).not.toHaveBeenCalled();
+  });
+
+  it("alerts an accepted-but-id-less order instead of leaving it unseen", async () => {
+    addOrder("accepted_no_id", {
+      petpoojaStatus: "accepted_unconfirmed",
+      petpoojaAcceptedNoId: true,
+      payment: { status: "completed", verifiedAt: Date.now() - 3 * MINUTE },
+    });
+    await expect(posPendingAlertsWorker()).resolves.toEqual({ alerts2m: 1, escalations5m: 0 });
+    expect(dispatchFCM).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(dispatchFCM).mock.calls[0][0]).toMatchObject({
+      topic: "branch_b1_orders",
+      data: { type: "pos_pending_alert", orderId: "accepted_no_id", branchId: "b1" },
+    });
+    expect(vi.mocked(dispatchFCM).mock.calls[0][0].body).toMatch(/accepted it without an order id/);
+    expect(savedDocs["orders/accepted_no_id"].posPendingAlert2mAt).toBeTypeOf("number");
   });
 
   it("covers a processing order that has been paid and stalled", async () => {

@@ -787,8 +787,13 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
           // Kept verbatim so an operator can see the vendor really did omit
           // the id rather than trusting our summary of it.
           petpoojaAcceptedNoIdAck: JSON.stringify(result).slice(0, 500),
-          petpoojaStatus: "synced",
-          petpoojaSyncStatus: "synced",
+          // Accepted-but-unconfirmed: the POS relay took the payload but issued
+          // no id we can reconcile against. Never "synced" (that asserts the
+          // KOT is traceable at the outlet) and never pending_retry (a retry
+          // could print a DUPLICATE KOT). The pending-alert worker watches this
+          // state so an operator verifies the ticket at the POS.
+          petpoojaStatus: "accepted_unconfirmed",
+          petpoojaSyncStatus: "accepted_unconfirmed",
           // KOT Truth: An ID-less relay acceptance confirms the POS server accepted
           // the payload, NOT that a physical kitchen ticket was printed.
           // Do NOT manufacture kotPrinted or kotPrintedAt.
@@ -800,7 +805,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         { merge: true }
       );
       console.warn(
-        `[Petpooja KOT Push] Order ${orderId} accepted by POS but the response carried no order id — marked synced (accepted-no-id), NOT queued for retry (a retry would duplicate the KOT)`
+        `[Petpooja KOT Push] Order ${orderId} accepted by POS but the response carried no order id — marked accepted_unconfirmed, NOT queued for retry (a retry would duplicate the KOT) and alerted for operator verification`
       );
       return true;
     }

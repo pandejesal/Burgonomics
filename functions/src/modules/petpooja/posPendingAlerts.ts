@@ -13,8 +13,10 @@ import { dispatchFCM } from "../notifications/fcm.service";
  *   - never auto-refund or blindly re-push from this worker.
  *
  * This worker is read/alert-only. The existing Petpooja retry worker owns
- * retries and its leases; this worker only observes `pending_retry` /
- * `processing` orders and writes idempotency markers.
+ * retries and its leases; this worker only observes `pending_retry`,
+ * `processing`, and `accepted_unconfirmed` orders and writes idempotency
+ * markers. The accepted-but-id-less state is never retried (that would print a
+ * duplicate KOT), so an operator alert is its only safety net.
  */
 
 export const POS_PENDING_ALERT_MS = 2 * 60 * 1000;
@@ -64,7 +66,9 @@ function orderLabel(order: any, orderId: string): string {
   return `Order ${shortCode}`;
 }
 
-async function scanStatus(status: "pending_retry" | "processing"): Promise<any[]> {
+async function scanStatus(
+  status: "pending_retry" | "processing" | "accepted_unconfirmed"
+): Promise<any[]> {
   const snap = await db
     .collection("orders")
     .where("petpoojaStatus", "==", status)
@@ -84,7 +88,7 @@ export async function posPendingAlertsWorker(): Promise<{
   // the age filter is applied in code. The retry worker still owns the
   // oldest-first retry ordering.
   const candidates = new Map<string, any>();
-  for (const status of ["pending_retry", "processing"] as const) {
+  for (const status of ["pending_retry", "processing", "accepted_unconfirmed"] as const) {
     try {
       for (const doc of await scanStatus(status)) {
         candidates.set(doc.id, doc);
@@ -99,7 +103,10 @@ export async function posPendingAlertsWorker(): Promise<{
 
   for (const doc of candidates.values()) {
     const order = (doc.data ? doc.data() : undefined) || {};
-    if (order.petpoojaOrderId || order.petpoojaAcceptedNoId) continue;
+    // A POS-issued id is the only proof the ticket is reconcilable. An
+    // accepted_unconfirmed order also carries petpoojaAcceptedNoId, but it has
+    // NO id to trace at the outlet — staff must verify the print.
+    if (order.petpoojaOrderId) continue;
     if (!isPaid(order)) continue;
 
     const branchId =
@@ -115,13 +122,20 @@ export async function posPendingAlertsWorker(): Promise<{
 
     const label = orderLabel(order, doc.id);
     const minutes = Math.floor(age / 60_000);
+    // Accepted-no-id is not "no acceptance": the relay took the payload but the
+    // POS issued nothing to reconcile against, so the copy asks for a print
+    // check instead of blaming the connection.
+    const pendingReason =
+      order.petpoojaAcceptedNoId === true
+        ? "the POS accepted it without an order id — verify the KOT printed at the outlet"
+        : "it has no POS acceptance. Check the POS connection.";
 
     if (age >= POS_PENDING_ESCALATION_MS) {
       if (order.posPendingEscalated5mAt) continue;
       const branchOk = await dispatchFCM({
         topic: `branch_${branchId}_orders`,
-        title: "ESCALATION: paid order still not in Petpooja",
-        body: `${label} was paid ${minutes} min ago and still has no POS acceptance. Verify the POS connection and push the order manually.`,
+        title: "ESCALATION: paid order still not confirmed in Petpooja",
+        body: `${label} was paid ${minutes} min ago and ${pendingReason} Verify the POS and push or reprint the order manually.`,
         data: {
           type: "pos_pending_escalation",
           orderId: doc.id,
@@ -132,7 +146,7 @@ export async function posPendingAlertsWorker(): Promise<{
       const escalationOk = await dispatchFCM({
         topic: "tickets_escalated",
         title: "POS pending escalation",
-        body: `${label} at ${branchId} was paid ${minutes} min ago with no POS acceptance.`,
+        body: `${label} at ${branchId} was paid ${minutes} min ago and ${pendingReason}`,
         data: {
           type: "pos_pending_escalation",
           orderId: doc.id,
@@ -161,7 +175,7 @@ export async function posPendingAlertsWorker(): Promise<{
     const ok = await dispatchFCM({
       topic: `branch_${branchId}_orders`,
       title: "Paid order waiting for Petpooja",
-      body: `${label} was paid ${minutes} min ago but has no POS acceptance. Check the POS connection.`,
+      body: `${label} was paid ${minutes} min ago but ${pendingReason}`,
       data: {
         type: "pos_pending_alert",
         orderId: doc.id,

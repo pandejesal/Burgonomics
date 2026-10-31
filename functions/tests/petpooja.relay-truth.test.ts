@@ -156,7 +156,7 @@ describe("KOT Truth & Relay Semantics (Review Finding 5 & Limitations)", () => {
     expect(doc.kotPushedAt).toBe("MOCK_SERVER_TIMESTAMP");
   });
 
-  it("live relay ACK without order ID records accepted-no-id and kotPushedAt but NO printed claim", async () => {
+  it("live relay ACK without order ID records accepted-unconfirmed and kotPushedAt but NO printed claim", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -173,8 +173,10 @@ describe("KOT Truth & Relay Semantics (Review Finding 5 & Limitations)", () => {
 
     const doc = savedDocs["orders/ord_truth_1"];
     expect(doc.petpoojaAcceptedNoId).toBe(true);
-    expect(doc.petpoojaStatus).toBe("synced");
-    expect(doc.petpoojaSyncStatus).toBe("synced");
+    // No id to reconcile at the outlet: the order is accepted but NOT synced,
+    // and it must never be retried (a retry would duplicate the KOT).
+    expect(doc.petpoojaStatus).toBe("accepted_unconfirmed");
+    expect(doc.petpoojaSyncStatus).toBe("accepted_unconfirmed");
     // No physical printing claimed
     expect(doc.kotPrinted).toBeUndefined();
     expect(doc.kotPrintedAt).toBeUndefined();

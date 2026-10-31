@@ -1128,18 +1128,26 @@ export async function handlePetpoojaWebhook(
   // record the existing accepted-no-id marker (truthful, keeps dedupe/retry from
   // re-pushing) and NEVER stamp the client reference as a POS id.
   const accepting = canonicalStatus !== "cancelled" && canonicalStatus !== "unknown";
+  // An accepted-but-id-less order (POS-01) holds no POS id yet. It is already
+  // at the POS, so a later CREDENTIALED callback that supplies the POS id can
+  // only add traceability — it can never drop a genuinely un-pushed order from
+  // the retry queue, because no retry exists for this state.
+  const acceptedUnconfirmed = orderData.petpoojaStatus === "accepted_unconfirmed";
   // Only an id the lookup PROVED may be stamped. An explicit field is a claim:
-  // it is accepted only when it already equals this order's stored POS id.
+  // it is accepted only when it already equals this order's stored POS id, or
+  // when the order is accepted_unconfirmed and the id arrives on an
+  // authenticated callback (explicit POS-id field, never the client-ref field).
   const posDerivedId =
     resolvedBy === "pos"
       ? posOrderId
-      : explicitPosOrderId && orderData.petpoojaOrderId === explicitPosOrderId
+      : explicitPosOrderId &&
+          (orderData.petpoojaOrderId === explicitPosOrderId || acceptedUnconfirmed)
         ? explicitPosOrderId
         : "";
   if (
     !untrusted &&
     posDerivedId &&
-    orderData.petpoojaOrderId !== posDerivedId &&
+    (orderData.petpoojaOrderId !== posDerivedId || acceptedUnconfirmed) &&
     accepting
   ) {
     updateData.petpoojaOrderId = posDerivedId;
