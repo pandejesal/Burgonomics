@@ -211,22 +211,27 @@ describe("End-to-End Platform Integration Flow", () => {
       branchId,
       orderType: "delivery",
       deliveryFee: 40,
+      serverDeliveryFee: 35,
       packagingFee: 15,
     });
 
     expect(pricing.foodSubtotal).toBe(497); // 199*2 + 99
-    expect(pricing.gst).toBe(24.85);
-    // PAY-01: the customer-facing fee is the published checkout quote (₹35);
-    // the client-sent 40 is ignored.
+    // Inclusive GST share: round2(497 * 5/105) = 23.67 — reported, never added.
+    expect(pricing.gst).toBe(23.67);
+    // R5/R6: the fee is the persisted courier quote (₹35); the client 40 is
+    // ignored.
     expect(pricing.deliveryFee).toBe(35);
     expect(pricing.packagingFee).toBe(15);
-    expect(pricing.grandTotal).toBe(572);
+    // R2: 497 + 15 + 35 = 547 — no tax on top, no whole-rupee rounding.
+    expect(pricing.grandTotal).toBe(547);
 
-    // Route split: default 5% brand royalty (spec 95/5), rest branch settlement
-    expect(pricing.split.brandRoyaltyAmount).toBe(24.85);
-    expect(pricing.split.branchTransferAmount).toBe(547.0);
+    // Route split: default 5% brand royalty (spec 95/5) on the EX-GST food
+    // value (R3): round(47333 * 5 / 100) = 2367 paise; the branch takes the
+    // remainder of the charged total.
+    expect(pricing.split.brandRoyaltyAmount).toBe(23.67);
+    expect(pricing.split.branchTransferAmount).toBe(523.33);
     expect(pricing.split.brandRoyaltyPaise + pricing.split.branchTransferPaise).toBe(
-      Math.round((497 + 15 + 35 + 24.85) * 100)
+      Math.round(pricing.grandTotal * 100)
     );
 
     // Initialize mock order in Firestore
@@ -252,15 +257,33 @@ describe("End-to-End Platform Integration Flow", () => {
     };
 
     // 2. Create Razorpay Payment Order with Route Notes
+    // R6: the delivery fee is charged from the persisted courier quote, bound
+    // to this order inside the payment transaction.
+    savedDocs["delivery_fee_quotes/dfq_e2e_1"] = {
+      uid: "cust_aarav_99",
+      branchId,
+      storeId: "demo",
+      dropLat: 23.0338,
+      dropLng: 72.5262,
+      fee: 35,
+      provider: "borzo",
+      providerQuoteId: "QTE-BORZO-E2E",
+      createdAt: "MOCK_TIMESTAMP",
+      createdAtMs: Date.now() - 1000,
+      expiresAt: Date.now() + 5 * 60_000,
+      usedByOrderId: null,
+    };
     const rzpOrder = await createPaymentOrder({
       orderId,
       items: savedDocs[`orders/${orderId}`].items,
       branchId,
       orderType: "delivery",
       deliveryFee: 40,
+      deliveryQuoteId: "dfq_e2e_1",
       packagingFee: 15,
       customerId: "cust_aarav_99",
     });
+    expect(savedDocs["delivery_fee_quotes/dfq_e2e_1"].usedByOrderId).toBe(orderId);
 
     expect(rzpOrder.razorpayOrderId).toBeDefined();
     expect(rzpOrder.amountPaise).toBe(Math.round(pricing.grandTotal * 100));
@@ -356,12 +379,12 @@ describe("End-to-End Platform Integration Flow", () => {
     const refundResult = await autoRefund({
       orderId,
       razorpayPaymentId: "pay_rzp_mock_98765",
-      amountRupees: 104, // 99 + 5% GST
+      amountRupees: 104, // partial-refund fixture, below the order total
       reason: "Kitchen 86ed Cajun Seasoned Fries",
     });
 
     expect(refundResult.id).toBeDefined();
-    // State honesty: ₹104 of a ₹577 order is a PARTIAL refund — the old
+    // State honesty: ₹104 of a ₹547 order is a PARTIAL refund — the old
     // code stamped the terminal "refunded" on it, which both lied to the
     // board and blocked any designed remainder refund afterward.
     expect(savedDocs[`orders/${orderId}`].refundStatus).toBe("partially_refunded");

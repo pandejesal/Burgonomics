@@ -77,6 +77,25 @@ export async function loadDeliveryFeeQuote(quoteId: string): Promise<any | null>
   }
 }
 
+/** Loads the quote already bound to an order (server-side single source). */
+export async function findDeliveryFeeQuoteForOrder(
+  orderId: string
+): Promise<any | null> {
+  if (!db || typeof db.collection !== "function" || !orderId) return null;
+  try {
+    const snap = await db
+      .collection(DELIVERY_FEE_QUOTES)
+      .where("usedByOrderId", "==", orderId)
+      .limit(1)
+      .get();
+    if (!snap || snap.empty || !snap.docs?.length) return null;
+    return snap.docs[0].data() as any;
+  } catch (err: any) {
+    console.warn("[Checkout] bound delivery quote lookup failed:", err?.message || err);
+    return null;
+  }
+}
+
 export interface DeliveryQuoteBinding {
   quote: any;
   orderId?: string;

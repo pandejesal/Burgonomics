@@ -1,4 +1,5 @@
 import { db } from "../../core/firebase";
+import { findDeliveryFeeQuoteForOrder } from "../payments/deliveryQuotes";
 import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
@@ -189,10 +190,13 @@ async function ensureAuthoritativeOrderPricing(
     })),
     branchId,
     orderType,
-    // R6: the fee is NEVER read off the order document (client-writable).
-    // createPaymentOrder / the bound quote supply it; without one the engine
-    // fails closed with DELIVERY_FEE_REQUIRED instead of a static fare.
-    packagingFee: order?.packagingFee,
+    // R6: the fee is NEVER read off the order document (client-writable). Only
+    // the courier quote already bound to THIS order may supply it; without one
+    // the engine fails closed (DELIVERY_FEE_REQUIRED) instead of a static fare.
+    serverDeliveryFee:
+      orderType === "delivery"
+        ? (await findDeliveryFeeQuoteForOrder(orderId))?.fee
+        : undefined,
     couponCode: order?.couponCode,
     // The client always sends zero points after D31–D33; never let a legacy
     // client payload re-introduce a redemption into a POS total.

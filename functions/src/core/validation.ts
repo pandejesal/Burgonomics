@@ -60,6 +60,10 @@ export const createPaymentOrderSchema = z
     fulfillment: fulfillmentAlias.optional(),
     deliveryFee: optionalNonNegative,
     packagingFee: optionalNonNegative,
+    // R6: the persisted courier quote from POST /checkout/fees. REQUIRED for
+    // delivery; the fee itself is read from the quote document server-side,
+    // never from this body.
+    deliveryQuoteId: z.string().min(8).max(128).optional(),
     couponCode: z.string().trim().max(64).optional(),
     loyaltyPointsToRedeem: z.number().int().min(0).max(100000).optional(),
     // Kept for shape compatibility ONLY — the route binds customerId from the

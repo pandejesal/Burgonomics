@@ -13,6 +13,12 @@ import { captureErrorSnapshot } from "../../core/errors";
 import { markOrderReconciliation } from "./reconciliation";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
+import { resolveBranchId } from "./branchResolver";
+import {
+  DELIVERY_FEE_QUOTES,
+  assertDeliveryQuoteBindable,
+  deliveryQuoteError,
+} from "./deliveryQuotes";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
 import {
   attemptRouteTransfer,
@@ -196,8 +202,20 @@ export interface CreateOrderParams {
   /** Delivery store id — resolved to a branch via stores/{id}.partnerBranchId. */
   storeId?: string;
   orderType: "delivery" | "takeaway" | "dinein";
+  /**
+   * IGNORED (R6): the customer-facing delivery fee comes from the persisted
+   * courier quote named by `deliveryQuoteId`. A body may still carry this
+   * legacy field; it is never read.
+   */
   deliveryFee?: number;
+  /** IGNORED: packaging is a server branch value (shared pricing helper). */
   packagingFee?: number;
+  /**
+   * The id returned by POST /checkout/fees. REQUIRED for delivery: it names
+   * the persisted courier quote whose fee is charged and which is bound to
+   * this order (R6).
+   */
+  deliveryQuoteId?: string;
   couponCode?: string;
   loyaltyPointsToRedeem?: number;
   customerId: string;
@@ -208,32 +226,87 @@ export interface CreateOrderParams {
 }
 
 /**
- * Resolves the branch for pricing, transfers, and KOT routing. Explicit
- * branchId wins; otherwise the delivery store record's linked branch.
+ * Branch resolution lives in ./branchResolver so POST /checkout/fees resolves
+ * the branch EXACTLY like createPaymentOrder (R5): explicit branchId wins,
+ * otherwise stores/{id}.partnerBranchId; an unlinked store is 409.
  */
-async function resolveBranchId(params: CreateOrderParams): Promise<string> {
-  if (params.branchId) return params.branchId;
-  if (params.storeId && db && typeof db.collection === "function") {
-    let snap: any;
-    try {
-      snap = await db.collection("stores").doc(params.storeId).get();
-    } catch (err) {
-      // A failed READ is transient; it must never be reported as "unlinked".
-      console.warn("[Payments] store→branch resolution failed:", (err as any)?.message || err);
-      const unavailable: any = new Error(
-        "We couldn't check this outlet just now — please retry.",
-      );
-      unavailable.statusCode = 503;
-      unavailable.code = "STORE_LOOKUP_UNAVAILABLE";
-      throw unavailable;
-    }
-    const linked = snap && snap.exists ? (snap.data() as any)?.partnerBranchId : undefined;
-    if (typeof linked === "string" && linked) return linked;
+
+/**
+ * R6: loads the persisted courier quote and binds it to this order inside a
+ * transaction, returning the fee to charge.
+ *
+ * The quote is the ONLY source of a delivery fee. Every binding is enforced
+ * here, atomically with the single-use claim:
+ *   - same uid, same branch, same drop coordinates as the order's address,
+ *   - not expired,
+ *   - `usedByOrderId` null (fresh) or THIS order (a legitimate retry).
+ * Anything else refuses checkout before a payable gateway order is minted, so
+ * a delivery is never charged 0, a default, or another order's price.
+ */
+async function bindDeliveryQuoteForOrder(args: {
+  quoteId: string | undefined;
+  orderId: string | undefined;
+  uid: string;
+  branchId: string;
+}): Promise<number> {
+  const { quoteId, orderId, uid, branchId } = args;
+  if (!quoteId) {
+    throw deliveryQuoteError(
+      "DELIVERY_QUOTE_REQUIRED",
+      "A delivery checkout needs a delivery price — get one and retry."
+    );
   }
-  const notLinked: any = new Error("This outlet isn't taking online orders yet.");
-  notLinked.statusCode = 409;
-  notLinked.code = "STORE_NOT_LINKED";
-  throw notLinked;
+  if (!orderId) {
+    // The quote binds to an order; without one there is nothing to protect.
+    throw deliveryQuoteError(
+      "DELIVERY_QUOTE_REQUIRED",
+      "A delivery checkout needs an order to attach its delivery price to — retry from the cart."
+    );
+  }
+  if (!db || typeof db.collection !== "function") {
+    const err: any = new Error("Delivery pricing is temporarily unavailable — please retry checkout.");
+    err.statusCode = 503;
+    err.code = "DELIVERY_QUOTE_UNAVAILABLE";
+    throw err;
+  }
+
+  const quoteRef = db.collection(DELIVERY_FEE_QUOTES).doc(quoteId);
+  const orderRef = db.collection("orders").doc(orderId);
+
+  const runTx: (fn: (tx: any) => Promise<number>) => Promise<number> =
+    typeof (db as any).runTransaction === "function"
+      ? (fn) => (db as any).runTransaction(fn)
+      : async (fn) =>
+          fn({
+            get: (ref: any) => ref.get(),
+            set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+          });
+
+  return runTx(async (tx) => {
+    const quoteSnap = await tx.get(quoteRef);
+    const orderSnap = await tx.get(orderRef);
+    const orderData = orderSnap?.exists ? (orderSnap.data() || {}) : {};
+    const dropLat = orderData?.deliveryAddress?.lat ?? orderData?.address?.lat;
+    const dropLng = orderData?.deliveryAddress?.lng ?? orderData?.address?.lng;
+
+    const fee = assertDeliveryQuoteBindable({
+      quote: quoteSnap?.exists ? quoteSnap.data() : null,
+      orderId,
+      uid,
+      branchId,
+      dropLat,
+      dropLng,
+    });
+
+    if ((quoteSnap.data() as any)?.usedByOrderId !== orderId) {
+      await tx.set(
+        quoteRef,
+        { usedByOrderId: orderId, usedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+    }
+    return fee;
+  });
 }
 
 /**
@@ -678,12 +751,25 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     }
   }
 
+  // R6: a delivery is priced from the persisted courier quote ONLY. The quote
+  // is loaded and bound to this order inside a transaction before any gateway
+  // order is minted; the client `deliveryFee` and the old static ₹35 are gone.
+  // A delivery without a usable quote refuses here — never 0, never a default.
+  const serverDeliveryFee =
+    params.orderType === "delivery"
+      ? await bindDeliveryQuoteForOrder({
+          quoteId: params.deliveryQuoteId,
+          orderId: params.orderId,
+          uid: params.customerId,
+          branchId,
+        })
+      : undefined;
+
   const pricing = await calculateOrderPricing({
     items: params.items,
     branchId,
     orderType: params.orderType,
-    deliveryFee: params.deliveryFee,
-    packagingFee: params.packagingFee,
+    serverDeliveryFee,
     couponCode: params.couponCode,
     loyaltyPointsToRedeem,
   });
