@@ -8,7 +8,13 @@
         ".git",
         "firebase-debug.log",
         "firebase-debug.*.log",
-        "*.local"
+        "*.local",
+        ".opencode",
+        ".swarm",
+        ".github",
+        "tests",
+        "*.out",
+        "AGENTS.md"
       ],
       "predeploy": [
         "npm --prefix functions run build"
