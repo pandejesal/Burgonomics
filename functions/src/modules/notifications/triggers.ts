@@ -3,6 +3,7 @@ import { db } from "../../core/firebase";
 import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlertMessage } from "./templates";
 import { sendFcmMessage, sendMulticastFcm, writeCustomerInboxDoc } from "./fcmClient";
 import { captureErrorSnapshot } from "../../core/errors";
+import { pushKotForCashOrderOnCreate } from "../petpooja/orderPush";
 
 const REGION = "asia-south1";
 
@@ -22,6 +23,25 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
     const order = snap.data();
     const orderId = event.params.orderId;
     const branchId = order.branchId || order.store?.id;
+
+    // CASH-KOT: cash / pay-at-store orders are never confirmed by the Razorpay
+    // webhook (the only other server-side KOT path), and the client-side
+    // POST /petpooja/pushOrder is rejected for customers (staff-only route).
+    // Without this the kitchen never receives those tickets. Same idempotent
+    // push as the webhook/retry worker, so redelivered events dedupe.
+    try {
+      const pushed = await pushKotForCashOrderOnCreate(orderId, order);
+      if (pushed === false) {
+        console.warn(
+          `[onOrderCreatedTrigger] Cash-order KOT for ${orderId} is pending_retry — POS sync outstanding, retry worker owns it`
+        );
+      }
+    } catch (err: any) {
+      console.warn(
+        `[onOrderCreatedTrigger] Cash-order KOT push failed for ${orderId}:`,
+        err?.message || err
+      );
+    }
 
     if (!branchId) {
       console.warn(`[onOrderCreatedTrigger] Order ${orderId} has no branchId`);

@@ -488,6 +488,42 @@ export function wasPushDeferredBusy(orderId: string): boolean {
   return true;
 }
 
+/**
+ * CASH-KOT: is this an order the kitchen must see without any gateway capture?
+ *
+ * The customer app writes `payment.method: "cod"` for both cash-on-delivery
+ * and pay-at-store/counter orders (OrderRepository maps `cash` → `cod`), and
+ * legacy/caller payloads may still say `cash` directly. Online methods
+ * (online/upi/card/netbanking/wallet) get their KOT from the Razorpay capture
+ * webhook, so this gate must stay false for them — pushing at creation would
+ * ring the kitchen for an order that might never be paid.
+ */
+export function isCashOrPayAtStoreOrder(order: any): boolean {
+  const method = String(order?.payment?.method ?? order?.paymentMethod ?? "").toLowerCase();
+  return method === "cod" || method === "cash";
+}
+
+/**
+ * CASH-KOT server entry: push the KOT for a cash / pay-at-store order at
+ * creation time.
+ *
+ * Without this, a non-online order never reaches the capture webhook (the only
+ * other server-side KOT path), and the client's own POST /petpooja/pushOrder
+ * is rejected for customers (403 — the route requires a staff role) before the
+ * order doc is even written. The push is the same idempotent path the webhook
+ * and retry worker use, so a redelivered creation event or a retry can never
+ * duplicate a KOT.
+ *
+ * Returns null when the order is not a cash order (nothing to do).
+ */
+export async function pushKotForCashOrderOnCreate(
+  orderId: string,
+  order: any
+): Promise<boolean | null> {
+  if (!isCashOrPayAtStoreOrder(order)) return null;
+  return pushOrderToPetpooja(orderId);
+}
+
 export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller): Promise<boolean> {
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
