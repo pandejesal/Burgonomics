@@ -1394,6 +1394,10 @@ app.post(
 app.post(
   "/auth/assignRole",
   requireAuth,
+  // SEC-08: defence in depth. The service still asserts the caller's role
+  // (assertCallerCanAssignRole) — this layer means a refactor of that check
+  // cannot turn the route into an open privilege-escalation endpoint.
+  requireRole(["brand_owner", "developer"]),
   validateBody(assignRoleSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
@@ -1409,6 +1413,8 @@ app.post(
 app.post(
   "/auth/revokeRole",
   requireAuth,
+  // SEC-08: same defence-in-depth layer as assignRole.
+  requireRole(["brand_owner", "developer"]),
   validateBody(revokeRoleSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
