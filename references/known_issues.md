@@ -97,3 +97,15 @@ Added by the full review; earlier entries are left as written. Each statement be
 - An unauthenticated Petpooja callback can no longer apply a terminal status; it is parked.
 - Rule mirrors in the customer and partner repos must stay byte-identical to the root file. `npm run test:rules` runs the customer copy.
 - Any functions deploy needs `functions/.env` in the tree. Deployed env comes from that file.
+
+### Update, night of 31 October 2026
+
+Owner decided: menu prices are GST-inclusive, and the delivery fee comes from Borzo and Shadowfax. The GST and delivery entries above are superseded by the following.
+
+- GST is included, never added. The included share is net food x 5/105, on client and server. Royalty is taken on the ex-GST food value; that base needs owner sign-off before Route goes live.
+- The delivery fee is a live courier quote from POST /checkout/fees, stored in `delivery_fee_quotes` and bound to one order. No static fee exists. If no courier can quote, delivery is unavailable. Only Borzo is enabled until Shadowfax has credentials.
+- `createPaymentOrder` prices the order document only. The branch comes from the order, and option prices come from the catalog.
+- POS `total` is what the restaurant is due, and excludes a third-party courier fee. `tax_inclusive:true` is unconfirmed: Petpooja has only approved exclusive runs.
+- Lines with unverified POS ids are parked, never sent with invented ids. Petpooja has rejected addon, variation, and group ids until they match the pushed menu.
+- Borzo returns a fee plus a phone warning at quote time. The adapter accepts that warning for quotes only. Booking needs a real store phone, and 9 of 17 stores, including DEMO, do not have one.
+- Windows Storage Sense on the dev machine deletes from Temp under low disk. Do not work from Temp.
