@@ -271,6 +271,11 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
   });
 
   it("does not require a quote for takeaway", async () => {
+    // PAY-13: the order document's orderType governs the priced fulfillment.
+    savedDocs[`orders/${ORDER_ID}`] = {
+      ...savedDocs[`orders/${ORDER_ID}`],
+      orderType: "takeaway",
+    };
     const res = await createPaymentOrder(
       baseOrderParams({ orderType: "takeaway" as const })
     );

@@ -270,8 +270,11 @@ async function bindDeliveryQuoteForOrder(args: {
  * order is minted. 404 for an unknown id, 409 for paid/foreign orders, 503
  * when the check itself is unavailable (fail closed — a checkout that cannot
  * prove ownership never opens).
+ *
+ * PAY-13: it also RETURNS the order document, because that document — not the
+ * request body — is the cart the money is computed from.
  */
-async function assertPayableOrderDoc(orderId: string, customerId: string): Promise<void> {
+async function assertPayableOrderDoc(orderId: string, customerId: string): Promise<any> {
   if (!db || typeof db.collection !== "function") {
     const err: any = new Error("Order verification is temporarily unavailable — please retry checkout.");
     err.statusCode = 503;
@@ -316,6 +319,95 @@ async function assertPayableOrderDoc(orderId: string, customerId: string): Promi
     err.code = "ORDER_NOT_OWNED";
     throw err;
   }
+  return data;
+}
+
+/**
+ * PAY-13 helpers. The ORDER DOCUMENT is the cart: `items`, the coupon and the
+ * order type are read from it, normalized to the engine's line shape, and
+ * fingerprinted so an idempotent retry can never hand back a gateway order
+ * minted for a different cart.
+ */
+function orderDocRequiredError(): Error {
+  const err: any = new Error(
+    "Start checkout from an existing cart — this payment attempt names no order to price."
+  );
+  err.statusCode = 409;
+  err.code = "ORDER_REQUIRED";
+  return err;
+}
+
+function unpriceableOrderError(detail: string): Error {
+  const err: any = new Error(`Cannot price this order: ${detail}`);
+  err.statusCode = 422;
+  err.code = "UNPRICEABLE";
+  return err;
+}
+
+/** The doc's order type (canonical), falling back to the request's. */
+function orderDocType(orderData: any, requested: string): string {
+  const raw = String(orderData?.orderType || orderData?.fulfillmentType || "").toLowerCase();
+  if (raw === "delivery") return "delivery";
+  if (raw === "takeaway" || raw === "pickup") return "takeaway";
+  if (raw === "dinein" || raw === "dine_in" || raw === "dine-in") return "dinein";
+  return requested;
+}
+
+/** Doc items in the pricing engine's validated line shape, or UNPRICEABLE. */
+function priceableDocItems(orderData: any): any[] {
+  const items = orderData?.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    throw unpriceableOrderError("the order has no priceable items.");
+  }
+  return items.map((item: any) => ({
+    id: String(item?.lineId || item?.id || item?.productId || ""),
+    productId: String(item?.productId || item?.id || ""),
+    name: String(item?.name || ""),
+    // Shape only: the engine replaces this with the authoritative catalog
+    // price. Never used as money on its own.
+    price: Number(item?.price ?? item?.unitPrice ?? item?.basePrice ?? 0),
+    quantity: Number(item?.quantity) || 1,
+    customizations: item?.customizations,
+    modifiers: item?.modifiers || item?.selectedAddons,
+  }));
+}
+
+/** Stable hash of everything that decides the amount for this cart. */
+export function cartFingerprintForOrder(
+  items: any[],
+  couponCode: string | undefined,
+  loyaltyPointsToRedeem: number
+): string {
+  const lines = items.map((item: any) => ({
+    id: item?.id || "",
+    productId: item?.productId || "",
+    quantity: Number(item?.quantity) || 1,
+    price: Number(item?.price) || 0,
+    customizations: (Array.isArray(item?.customizations) ? item.customizations : []).map(
+      (c: any) => [String(c?.id || ""), Number(c?.price) || 0]
+    ),
+    modifiers: (Array.isArray(item?.modifiers) ? item.modifiers : []).map((m: any) => [
+      String(m?.id || ""),
+      Number(m?.priceDelta ?? m?.price) || 0,
+    ]),
+  }));
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ lines, couponCode: couponCode || null, loyaltyPointsToRedeem }))
+    .digest("hex");
+}
+
+/** Internal alias (the exported name exists so retry tests can pre-seed one). */
+const cartFingerprint = cartFingerprintForOrder;
+
+/** An open gateway order minted for a cart this order no longer has. */
+function paymentIntentCartMismatchError(): Error {
+  const err: any = new Error(
+    "This cart changed after the payment attempt was created — nothing was charged. Please review your cart and start a new order."
+  );
+  err.statusCode = 409;
+  err.code = "PAYMENT_INTENT_CART_MISMATCH";
+  return err;
 }
 
 /**
@@ -613,12 +705,25 @@ export async function createPaymentOrder(params: CreateOrderParams) {
 
   const branchId = await resolveBranchId(params);
 
-  // PAYMENTS_CONTRACT_SPEC §1: the internal order doc must exist, be unpaid,
-  // and belong to the caller BEFORE anything else (fail fast ahead of balance
-  // lookups, idempotent reuse, and — critically — the gateway order mint).
-  if (params.orderId) {
-    await assertPayableOrderDoc(params.orderId, params.customerId);
-  }
+  // PAY-13: the ORDER DOCUMENT is the cart. `params.items` is accepted for
+  // wire compatibility and IGNORED — pricing a request body while the kitchen
+  // cooks the order document is how one cheap item could pay for ten burgers.
+  const orderData = params.orderId
+    ? await assertPayableOrderDoc(params.orderId, params.customerId)
+    : null;
+  if (!orderData) throw orderDocRequiredError();
+  const orderType = orderDocType(orderData, params.orderType) as
+    | "delivery"
+    | "takeaway"
+    | "dinein";
+  const cartItems = priceableDocItems(orderData);
+  // The doc is the offer too: a coupon written on the order is the coupon the
+  // customer saw. A body-only coupon is a fallback for legacy docs.
+  const docCoupon =
+    typeof orderData.couponCode === "string" && orderData.couponCode.trim()
+      ? orderData.couponCode
+      : undefined;
+  const couponCode = docCoupon ?? params.couponCode;
 
   // Server-verified redemption: the pricing engine only ever sees coins the
   // customer actually holds (guests hold none).
@@ -626,6 +731,10 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     params.customerId,
     params.loyaltyPointsToRedeem,
   );
+
+  // Everything that decides money for THIS cart, so a retry can prove it is
+  // still paying for the same thing.
+  const fingerprint = cartFingerprint(cartItems, couponCode, loyaltyPointsToRedeem);
 
   // Idempotent retries: same key returns the already-open gateway order
   // instead of minting a second payable order (double-charge risk).
@@ -688,6 +797,13 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       // refused here — before any gateway order is handed out — instead of
       // surfacing as a post-capture ORDER_MISMATCH at verify.
       assertIntentBoundToOrder(reusableIntent, params.orderId);
+      // PAY-13: and bound to the SAME cart. The intent stores the fingerprint
+      // of the doc-derived cart it was priced for; an order whose items,
+      // coupon or redemption changed (or an intent predating this contract,
+      // which has no fingerprint) can never be reused at a stale amount.
+      if (reusableIntent.cartFingerprint !== fingerprint) {
+        throw paymentIntentCartMismatchError();
+      }
       return reusedIntentResponse(reusableIntent);
     }
     if (corruptIntent) {
@@ -711,7 +827,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // order is minted; the client `deliveryFee` and the old static ₹35 are gone.
   // A delivery without a usable quote refuses here — never 0, never a default.
   const serverDeliveryFee =
-    params.orderType === "delivery"
+    orderType === "delivery"
       ? await bindDeliveryQuoteForOrder({
           quoteId: params.deliveryQuoteId,
           orderId: params.orderId,
@@ -721,11 +837,12 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       : undefined;
 
   const pricing = await calculateOrderPricing({
-    items: params.items,
+    // PAY-13: the DOCUMENT's cart, not the request's.
+    items: cartItems,
     branchId,
-    orderType: params.orderType,
+    orderType,
     serverDeliveryFee,
-    couponCode: params.couponCode,
+    couponCode,
     loyaltyPointsToRedeem,
   });
 
@@ -783,7 +900,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           orderId: params.orderId || "",
           branchId,
           customerId: params.customerId,
-          orderType: params.orderType,
+          orderType,
           brandRoyaltyPaise: pricing.split.brandRoyaltyPaise,
           branchTransferPaise: pricing.split.branchTransferPaise,
         },
@@ -815,8 +932,11 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       // doc (legacy client verifying before creating it) can rebuild the doc
       // from SERVER-owned data only (spec §2 ghost-order guard).
       branchId,
-      orderType: params.orderType,
+      orderType,
       customerId: params.customerId,
+      // PAY-13: the fingerprint of the DOC-derived cart this amount was priced
+      // for. A retry must match it exactly or it is refused (stale amount).
+      cartFingerprint: fingerprint,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAtMs: nowMs,
       expiresAtMs: nowMs + INTENT_TTL_MS,
@@ -849,7 +969,13 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           freshIntent: intentDoc,
           orderId: params.orderId,
         });
-        if (resolution.kind === "reuse") return reusedIntentResponse(resolution.intent);
+        if (resolution.kind === "reuse") {
+          // PAY-13: the winner must also be for the SAME doc-derived cart.
+          if (resolution.intent.cartFingerprint !== fingerprint) {
+            throw paymentIntentCartMismatchError();
+          }
+          return reusedIntentResponse(resolution.intent);
+        }
         if (resolution.kind === "superseded") {
           return newOrderResponse({ razorpayOrderId, amountPaise, receipt, pricing });
         }

@@ -114,7 +114,7 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
+import { createPaymentOrder, cartFingerprintForOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
 
 const basket = {
@@ -124,12 +124,17 @@ const basket = {
   customerId: "cust_a",
 };
 
+/** PAY-13: the order document is the cart the money comes from. */
+const DOC_ITEMS = [{ id: "p1", productId: "p1", name: "Burger", price: 199, quantity: 1 }];
+const DOC_FINGERPRINT = cartFingerprintForOrder(DOC_ITEMS, undefined, 0);
+
 function seedOrder(id: string, customerId = "cust_a", extra: Record<string, any> = {}) {
   savedDocs[`orders/${id}`] = {
     id,
     customerId,
     orderType: "takeaway",
     status: "pending_payment",
+    items: DOC_ITEMS.map((item) => ({ ...item })),
     ...extra,
   };
 }
@@ -144,6 +149,7 @@ function seedLiveIntent(key: string, overrides: Record<string, any> = {}) {
     branchId: "branch_c1",
     orderType: "takeaway",
     customerId: "cust_a",
+    cartFingerprint: DOC_FINGERPRINT,
     createdAtMs: Date.now() - 60_000,
     expiresAtMs: Date.now() + 60 * 60 * 1000,
     ...overrides,
@@ -269,18 +275,16 @@ describe("createPaymentOrder — reused intent must stay bound to the same inter
     expect(err.message).not.toContain("order_mock_");
   });
 
-  it("legacy caller with NO internal order keeps the previous reuse behaviour", async () => {
-    const first = await createPaymentOrder({ ...basket, orderId: "ord_a", idempotencyKey: "k_legacy" });
-    const legacy = await createPaymentOrder({
-      items: basket.items,
-      branchId: basket.branchId,
-      orderType: basket.orderType,
-      customerId: basket.customerId,
-      idempotencyKey: "k_legacy",
-    });
-
-    expect(legacy.razorpayOrderId).toBe(first.razorpayOrderId);
-    expect((legacy as any).reused).toBe(true);
+  it("legacy caller with NO internal order is refused (PAY-13: there is no cart to price)", async () => {
+    await expect(
+      createPaymentOrder({
+        items: basket.items,
+        branchId: basket.branchId,
+        orderType: basket.orderType,
+        customerId: basket.customerId,
+        idempotencyKey: "k_legacy",
+      })
+    ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_REQUIRED" });
   });
 
   it("corrupt (string) stored amount is refused BEFORE minting and leaves the doc alone", async () => {

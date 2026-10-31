@@ -226,6 +226,8 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         customerId: "cust_a",
         orderType: "takeaway",
         status: "pending_payment",
+        // PAY-13: the doc is the cart.
+        items: [{ id: "p1", productId: "p1", name: "Burger", price: 199, quantity: 1 }],
       };
       const res = await createPaymentOrder({
         ...basket,

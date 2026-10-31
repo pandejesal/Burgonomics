@@ -392,10 +392,20 @@ describe("End-to-End Platform Integration Flow", () => {
   });
 
   it("reuses the open gateway order on idempotent retry (no double charge)", async () => {
+    // PAY-13: the amount comes from the order document, so the retry needs one.
+    savedDocs["orders/ord_dup_retry"] = {
+      id: "ord_dup_retry",
+      branchId: "branch_ahmedabad_cg_road",
+      customerId: "cust_dup",
+      orderType: "takeaway",
+      status: "pending_payment",
+      items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+    };
     const first = await createPaymentOrder({
       items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
       branchId: "branch_ahmedabad_cg_road",
       orderType: "takeaway",
+      orderId: "ord_dup_retry",
       customerId: "cust_dup",
       idempotencyKey: "chk_dupkey_001",
     });
@@ -403,6 +413,7 @@ describe("End-to-End Platform Integration Flow", () => {
       items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
       branchId: "branch_ahmedabad_cg_road",
       orderType: "takeaway",
+      orderId: "ord_dup_retry",
       customerId: "cust_dup",
       idempotencyKey: "chk_dupkey_001",
     });
@@ -414,6 +425,14 @@ describe("End-to-End Platform Integration Flow", () => {
     // Loop 4 (F2): read-hit falls through on a corrupt winner, the claim
     // loses (create throws 6), and the winner re-read is still corrupt —
     // the checkout must 503 (retry same key), never mint a second order.
+    savedDocs["orders/ord_race_corrupt"] = {
+      id: "ord_race_corrupt",
+      branchId: "branch_ahmedabad_cg_road",
+      customerId: "cust_race",
+      orderType: "takeaway",
+      status: "pending_payment",
+      items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+    };
     savedDocs["payment_intents/chk_race_corrupt_001"] = {
       razorpayOrderId: "",
       amountPaise: "garbage",
@@ -423,6 +442,7 @@ describe("End-to-End Platform Integration Flow", () => {
         items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
         branchId: "branch_ahmedabad_cg_road",
         orderType: "takeaway",
+        orderId: "ord_race_corrupt",
         customerId: "cust_race",
         idempotencyKey: "chk_race_corrupt_001",
       })
