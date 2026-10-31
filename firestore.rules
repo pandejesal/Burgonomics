@@ -335,7 +335,7 @@ service cloud.firestore {
       // razorpayAccountId, so a signed-in CUSTOMER must not read them
       // either — only operator roles (isStaff: brand + support/regional/
       // branch) do.
-      allow read: if isAuthenticated();
+      allow read: if isStaff();
       allow create: if isBrandOwner();
       allow update: if isBrandOwner() || (
         ownsBranch(branchId) &&
