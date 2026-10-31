@@ -72,7 +72,7 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { adjustCustomerCoins } from "../src/modules/customers/customerCoins";
+import { adjustCustomerCoins, restoreRedeemedCoins } from "../src/modules/customers/customerCoins";
 
 const STAFF_A = { uid: "staff_a", role: "branch_staff", branchIds: ["branch_surat_01"] };
 const STAFF_B = { uid: "staff_b", role: "branch_staff", branchIds: ["branch_ahmedabad_01"] };
@@ -145,5 +145,51 @@ describe("Staff Grill-Coins adjustment (server-side, audited)", () => {
     await expect(
       adjustCustomerCoins({ customerId: "cust_1", delta: 10, reason: "x" }, STAFF_A)
     ).rejects.toThrow();
+  });
+});
+
+describe("restoreRedeemedCoins (PAY-03)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    addedDocs.length = 0;
+    savedDocs["customers/cust_1"] = { loyaltyPoints: 50 };
+    savedDocs["orders/ord_restore_1"] = {
+      payment: { razorpayOrderId: "rzp_restore_1" },
+    };
+    // Clamped debit: 200 requested, only 100 actually taken.
+    savedDocs["coin_transactions/coin_redemption_rzp_restore_1"] = {
+      customerId: "cust_1",
+      delta: -100,
+      balanceAfter: 0,
+      type: "redemption",
+      orderId: "ord_restore_1",
+    };
+  });
+
+  it("restores exactly the debited amount, not the requested redemption", async () => {
+    const res = await restoreRedeemedCoins({ orderId: "ord_restore_1" });
+    expect(res).toMatchObject({ restored: 100, balanceAfter: 150, alreadyDone: false });
+    expect(savedDocs["customers/cust_1"].loyaltyPoints).toBe(150);
+    expect(savedDocs["coin_transactions/coin_redemption_restore_ord_restore_1"]).toMatchObject({
+      customerId: "cust_1",
+      delta: 100,
+      type: "redemption_restore",
+      orderId: "ord_restore_1",
+    });
+  });
+
+  it("is idempotent: a replay restores nothing twice", async () => {
+    await restoreRedeemedCoins({ orderId: "ord_restore_1" });
+    const second = await restoreRedeemedCoins({ orderId: "ord_restore_1" });
+    expect(second.alreadyDone).toBe(true);
+    expect(savedDocs["customers/cust_1"].loyaltyPoints).toBe(150);
+  });
+
+  it("restores nothing when no debit record exists", async () => {
+    delete savedDocs["coin_transactions/coin_redemption_rzp_restore_1"];
+    const res = await restoreRedeemedCoins({ orderId: "ord_restore_1" });
+    expect(res).toMatchObject({ restored: 0, alreadyDone: true });
+    expect(savedDocs["customers/cust_1"].loyaltyPoints).toBe(50);
+    expect(savedDocs["coin_transactions/coin_redemption_restore_ord_restore_1"]).toBeUndefined();
   });
 });

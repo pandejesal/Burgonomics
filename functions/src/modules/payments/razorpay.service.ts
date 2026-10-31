@@ -2172,9 +2172,44 @@ export async function autoRefund(
       },
       { merge: true }
     );
-    return nextTotal;
+    // Coins are restored only when the WHOLE captured amount is back with the
+    // customer. A partial refund leaves the order live, so its redeemed coins
+    // stay spent (PAY-03).
+    const fullyRefunded =
+      isFullRequest || (captureAuthority !== null && nextTotal >= captureAuthority);
+    return { nextTotal, fullyRefunded };
   });
-  void refundedTotal;
+  const refundState = refundedTotal as { nextTotal: number; fullyRefunded: boolean };
+  void refundState.nextTotal;
+
+  if (refundState.fullyRefunded) {
+    try {
+      const { restoreRedeemedCoins } = await import("../customers/customerCoins");
+      await restoreRedeemedCoins({
+        orderId,
+        razorpayOrderId:
+          (typeof order?.payment?.razorpayOrderId === "string"
+            ? order.payment.razorpayOrderId
+            : typeof order?.["payment.razorpayOrderId"] === "string"
+              ? order["payment.razorpayOrderId"]
+              : undefined) || undefined,
+      });
+    } catch (err: any) {
+      // A coin-restore failure must never fail (or retry) a completed refund.
+      console.warn(
+        `[Payments] coin restore failed after full refund for order ${orderId}:`,
+        err?.message || err
+      );
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Grill-Coins restore failed after full refund for order ${orderId} — remediate via adjustCustomerCoins`,
+        orderId,
+        razorpayPaymentId,
+        errorStack: err?.stack,
+      }).catch(() => undefined);
+    }
+  }
 
   // Append audit trail
   const auditId = `aud_rfnd_${Date.now()}_${refundResult.id}`;

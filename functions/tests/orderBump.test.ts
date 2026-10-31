@@ -116,6 +116,32 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
     expect(savedDocs["orders/ord_1"].status.terminal).toBe(true);
   });
 
+  it("restores redeemed coins when an order moves to CANCELLED (PAY-03)", async () => {
+    savedDocs["orders/ord_1"] = {
+      branchId: "b1",
+      status: { code: "PLACED" },
+      payment: { razorpayOrderId: "rzp_cancel_1" },
+    };
+    savedDocs["customers/cust_cancel"] = { loyaltyPoints: 20 };
+    savedDocs["coin_transactions/coin_redemption_rzp_cancel_1"] = {
+      customerId: "cust_cancel",
+      delta: -80,
+      balanceAfter: 0,
+      type: "redemption",
+      orderId: "ord_1",
+    };
+    await bumpOrderStatus({
+      orderId: "ord_1",
+      status: "cancelled",
+      cancellationReason: "Customer asked to cancel",
+      caller: ownBranchCaller,
+    });
+    expect(savedDocs["customers/cust_cancel"].loyaltyPoints).toBe(100);
+    expect(
+      savedDocs["coin_transactions/coin_redemption_restore_ord_1"]
+    ).toMatchObject({ customerId: "cust_cancel", delta: 80, type: "redemption_restore" });
+  });
+
   // Regression: a stale KDS screen / delayed second tap must not reverse a
   // newer status written by another staff member (was blind last-write-wins).
   it("applies the bump when expectedStatus still matches the stored state", async () => {

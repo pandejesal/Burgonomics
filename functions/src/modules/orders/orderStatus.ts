@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
-import { serviceError } from "../../core/errors";
+import { serviceError, captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 
 /**
@@ -178,6 +178,29 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     }
     tx.update(orderRef, payload);
   });
+
+  // PAY-03: a cancelled order gives back the Grill Coins its payment debited.
+  // Partial refunds never reach here — only a cancel (or a full refund in
+  // autoRefund) restores. A restore failure must never fail the cancel, and
+  // the deterministic restore ledger makes cancel-after-refund idempotent.
+  if (canonical === "cancelled") {
+    try {
+      const { restoreRedeemedCoins } = await import("../customers/customerCoins");
+      await restoreRedeemedCoins({ orderId });
+    } catch (err: any) {
+      console.warn(
+        `[OrderStatus] Grill-Coins restore failed for cancelled order ${orderId}:`,
+        err?.message || err
+      );
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Grill-Coins restore failed for cancelled order ${orderId} — remediate via adjustCustomerCoins`,
+        orderId,
+        errorStack: err?.stack,
+      }).catch(() => undefined);
+    }
+  }
 
   // Return the meta we actually WROTE (fulfillment-specific), not the generic
   // delivery meta - the KDS response is a state artifact and dinein/takeaway

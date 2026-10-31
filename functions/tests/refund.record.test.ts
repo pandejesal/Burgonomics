@@ -5,15 +5,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // posted (staff saw failure, retried, double refund). The mock set() accepts
 // undefined, so this test asserts the stored shape directly: null, never
 // undefined, and JSON-serializable.
-const { mockDb, savedDocs } = vi.hoisted(() => {
+const { mockDb, savedDocs, control } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
+  const control = { failCustomerReadId: "" };
   const docRef = (colName: string, docId: string) => ({
     id: docId,
     path: `${colName}/${docId}`,
-    get: vi.fn(async () => ({
-      exists: !!savedDocs[`${colName}/${docId}`],
-      data: () => savedDocs[`${colName}/${docId}`] || {},
-    })),
+    get: vi.fn(async () => {
+      if (colName === "customers" && docId === control.failCustomerReadId) {
+        throw new Error("customer read unavailable");
+      }
+      return {
+        exists: !!savedDocs[`${colName}/${docId}`],
+        data: () => savedDocs[`${colName}/${docId}`] || {},
+      };
+    }),
     set: vi.fn(async (data: any, options?: any) => {
       const p = `${colName}/${docId}`;
       savedDocs[p] =
@@ -35,7 +41,7 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
       return fn(tx);
     }),
   };
-  return { mockDb, savedDocs };
+  return { mockDb, savedDocs, control };
 });
 
 vi.mock("firebase-admin", () => {
@@ -159,5 +165,65 @@ describe("Loop 64: refund record writes are Firestore-serializable", () => {
     await expect(
       autoRefund({ orderId: "ord_r1", razorpayPaymentId: "pay_r1" })
     ).rejects.toMatchObject({ statusCode: 409, code: "REFUND_PARTIALS_EXIST" });
+  });
+});
+
+describe("PAY-03: redeemed Grill Coins on refund", () => {
+  let prevMock: boolean;
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    control.failCustomerReadId = "";
+    prevMock = config.mock.paymentGateway;
+    config.mock.paymentGateway = true;
+    savedDocs["orders/ord_c1"] = {
+      payment: { razorpayPaymentId: "pay_c1", razorpayOrderId: "rzp_c1" },
+      pricing: { grandTotal: 500 },
+    };
+    savedDocs["customers/c1"] = { loyaltyPoints: 50 };
+    // A clamped debit: 200 were requested, only 100 were on the balance.
+    savedDocs["coin_transactions/coin_redemption_rzp_c1"] = {
+      customerId: "c1",
+      delta: -100,
+      balanceAfter: 0,
+      type: "redemption",
+      orderId: "ord_c1",
+    };
+  });
+
+  afterEach(() => {
+    config.mock.paymentGateway = prevMock;
+  });
+
+  it("restores exactly what the debit actually took on a full refund", async () => {
+    const res: any = await autoRefund({ orderId: "ord_c1", razorpayPaymentId: "pay_c1" });
+    expect(res.status).toBe("processed");
+    expect(savedDocs["customers/c1"].loyaltyPoints).toBe(150);
+    expect(savedDocs["coin_transactions/coin_redemption_restore_ord_c1"]).toMatchObject({
+      customerId: "c1",
+      delta: 100,
+      type: "redemption_restore",
+      orderId: "ord_c1",
+    });
+  });
+
+  it("restores nothing on a partial refund", async () => {
+    await autoRefund({
+      orderId: "ord_c1",
+      razorpayPaymentId: "pay_c1",
+      amountRupees: 200,
+      reason: "item rejection",
+    });
+    expect(savedDocs["orders/ord_c1"].refundStatus).toBe("partially_refunded");
+    expect(savedDocs["customers/c1"].loyaltyPoints).toBe(50);
+    expect(savedDocs["coin_transactions/coin_redemption_restore_ord_c1"]).toBeUndefined();
+  });
+
+  it("still completes the refund when the coin restore throws", async () => {
+    control.failCustomerReadId = "c1";
+    const res: any = await autoRefund({ orderId: "ord_c1", razorpayPaymentId: "pay_c1" });
+    expect(res.status).toBe("processed");
+    expect(savedDocs["orders/ord_c1"].refundStatus).toBe("refunded");
+    expect(savedDocs["customers/c1"].loyaltyPoints).toBe(50);
   });
 });
