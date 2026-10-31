@@ -48,12 +48,7 @@
       ],
       "headers": [
         {
-          "source": "/assets/**",
-          "headers": [
-            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-          ]
-        },
-        {
+          "//": "The app shell is ALWAYS revalidated. The old rule matched only /index.html, so `/` and every extensionless SPA route fell through to the Hosting default max-age=3600 and customers could keep a stale shell for an hour after a deploy. `**` now carries no-cache (see below) and content-hashed assets re-assert immutable AFTER it, because Firebase applies matching header rules in order and the LAST one wins for a given key.",
           "source": "/index.html",
           "headers": [
             { "key": "Cache-Control", "value": "no-cache" }
@@ -67,7 +62,15 @@
             { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" },
             { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
             { "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=(self)" },
-            { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://checkout.razorpay.com https://*.razorpay.com https://www.google.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.razorpay.com https://*.razorpay.com https://*.googleapis.com https://*.gstatic.com https://*.firebaseio.com wss://*.firebaseio.com https://*.cloudfunctions.net https://www.google.com https://nominatim.openstreetmap.org; frame-src https://checkout.razorpay.com https://*.razorpay.com https://api.razorpay.com https://www.google.com https://*.firebaseapp.com; frame-ancestors 'self'; object-src 'none'; base-uri 'self'" }
+            { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://checkout.razorpay.com https://*.razorpay.com https://www.google.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://api.razorpay.com https://*.razorpay.com https://*.googleapis.com https://*.gstatic.com https://*.firebaseio.com wss://*.firebaseio.com https://*.cloudfunctions.net https://www.google.com https://nominatim.openstreetmap.org; frame-src https://checkout.razorpay.com https://*.razorpay.com https://api.razorpay.com https://www.google.com https://*.firebaseapp.com; frame-ancestors 'self'; object-src 'none'; base-uri 'self'" },
+            { "key": "Cache-Control", "value": "no-cache" }
+          ]
+        },
+        {
+          "//": "Placed AFTER the `**` no-cache rule so content-hashed assets keep the long immutable cache (last matching rule wins).",
+          "source": "/assets/**",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
           ]
         },
         {

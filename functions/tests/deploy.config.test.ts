@@ -68,6 +68,92 @@ describe("hosting CSP allows phone sign-in (OPS-I)", () => {
   });
 });
 
+describe("hosting fonts + app-shell cache (OPS-J)", () => {
+  const config = readFirebaseJson();
+
+  /** Firebase Hosting glob subset used by this config ("**", "/x/**", exact). */
+  function matchesSource(source: string, requestPath: string): boolean {
+    if (source === "**") return true;
+    if (source.endsWith("/**")) {
+      return requestPath === source.slice(0, -3) || requestPath.startsWith(source.slice(0, -2));
+    }
+    return source === requestPath;
+  }
+
+  /** Last matching rule wins per header key (the ordering the config relies on). */
+  function effectiveHeader(target: string, requestPath: string, key: string): string | null {
+    const hosting = config.hosting.find((h: any) => h.target === target);
+    expect(hosting, `hosting target ${target}`).toBeTruthy();
+    let value: string | null = null;
+    for (const rule of hosting.headers) {
+      if (!matchesSource(rule.source, requestPath)) continue;
+      const header = (rule.headers || []).find(
+        (h: any) => String(h.key).toLowerCase() === key.toLowerCase()
+      );
+      if (header) value = header.value;
+    }
+    return value;
+  }
+
+  it("allows Google Fonts on burgonomics-app (stylesheet + font files)", () => {
+    const csp = cspFor(config, "burgonomics-app");
+    expect(cspDirective(csp, "style-src")).toBe(
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com"
+    );
+    expect(cspDirective(csp, "font-src")).toBe(
+      "font-src 'self' data: https://fonts.gstatic.com"
+    );
+  });
+
+  it("never caches the shell at / or on extensionless SPA routes", () => {
+    for (const route of ["/", "/index.html", "/orders/ord_1/track", "/store/demo"]) {
+      expect(effectiveHeader("burgonomics-app", route, "Cache-Control"), route).toBe("no-cache");
+    }
+  });
+
+  it("keeps hashed assets immutable (the assets rule wins after the catch-all)", () => {
+    expect(
+      effectiveHeader("burgonomics-app", "/assets/index-a1b2c3.js", "Cache-Control")
+    ).toBe("public, max-age=31536000, immutable");
+  });
+
+  it("keeps the .well-known JSON rules last and effective", () => {
+    for (const file of ["/.well-known/apple-app-site-association", "/.well-known/assetlinks.json"]) {
+      expect(effectiveHeader("burgonomics-app", file, "Content-Type"), file).toBe(
+        "application/json"
+      );
+      expect(effectiveHeader("burgonomics-app", file, "Cache-Control"), file).toBe(
+        "public, max-age=300"
+      );
+    }
+  });
+
+  it("leaves the partner hosting headers unchanged", () => {
+    const partner = config.hosting.find((h: any) => h.target === "burgonomics-partner");
+    const cacheRules = (partner.headers || [])
+      .filter((r: any) =>
+        (r.headers || []).some((h: any) => String(h.key).toLowerCase() === "cache-control")
+      )
+      .map((r: any) => [
+        r.source,
+        (r.headers as any[]).find((h: any) => String(h.key).toLowerCase() === "cache-control")!
+          .value,
+      ]);
+    expect(cacheRules).toEqual([
+      ["/assets/**", "public, max-age=31536000, immutable"],
+      ["/index.html", "no-cache"],
+      ["/.well-known/apple-app-site-association", "public, max-age=300"],
+      ["/.well-known/assetlinks.json", "public, max-age=300"],
+    ]);
+  });
+
+  it("adds no robots/noindex rule (staging headers would follow a production launch)", () => {
+    const all = JSON.stringify(config.hosting);
+    expect(all.toLowerCase()).not.toContain("x-robots-tag");
+    expect(all.toLowerCase()).not.toContain("noindex");
+  });
+});
+
 describe("functions deploy ignore list (OPS-F)", () => {
   it("keeps agent/dev artifacts out of the functions bundle", () => {
     const functions = readFirebaseJson().functions[0];
