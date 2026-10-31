@@ -2,6 +2,7 @@ import { db } from "../../core/firebase";
 import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
+import { interpretPackaging, itemPackingCharge } from "./packaging";
 import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
 
@@ -339,6 +340,30 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   const items = (menuData.items || []) as PetpoojaMenuItem[];
   const categories = menuData.categories || [];
 
+  // P1: the outlet-level packaging contract rides `restaurants[0].details`.
+  // Absent keys mean "the vendor sent nothing this time": leave whatever is
+  // stored and warn — never clear it, and never guess a value.
+  const outletDetails = Array.isArray(menuData.restaurants)
+    ? menuData.restaurants[0]?.details
+    : undefined;
+  const packagingInfo = interpretPackaging(outletDetails);
+  // D8/P1: a push without packaging keys leaves the stored value alone and
+  // raises a warning IN THE SYNC LOG (not a console warn on every hourly push,
+  // which the sync-log wording of D8 asks for and which keeps the "all quiet"
+  // guarantees of the menu suites meaningful).
+  const packagingWarning = packagingInfo.present ? null : "NO_PACKAGING_KEYS";
+
+  // P4 census of the menu's add-on / variation shape (record-only).
+  const addonGroupCount = Array.isArray(menuData.addongroups)
+    ? menuData.addongroups.length
+    : 0;
+  let itemsAllowingAddons = 0;
+  let itemsAllowingVariations = 0;
+  let itemsWithVariationsDefined = 0;
+  // Correction from the design review: per-variation add-ons are not supported
+  // by the mapper yet; count them so the gap stays visible.
+  let itemsWithVariationScopedAddons = 0;
+
   // Resolve the item -> category NAME join ONCE, before the loop: the real push
   // carries the id on each item and the name only in the top-level catalog.
   const categoryNames = buildCategoryNameMap(menuData.categories);
@@ -379,6 +404,26 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // overwrite (and steal) the first branch's doc.
     const productId = `prod_${branchId}_${item.itemid}`;
     const productRef = db.collection("products").doc(productId);
+
+    // P4 census (record-only; the flag spellings the vendor uses are "1"/1).
+    const allowsAddons =
+      (item as any).itemallowaddon === "1" || (item as any).itemallowaddon === 1;
+    const allowsVariations =
+      (item as any).itemallowvariation === "1" || (item as any).itemallowvariation === 1;
+    const variationsDefined =
+      Array.isArray((item as any).variation) && (item as any).variation.length > 0;
+    if (allowsAddons) itemsAllowingAddons++;
+    if (allowsVariations) itemsAllowingVariations++;
+    if (variationsDefined) itemsWithVariationsDefined++;
+    if (
+      variationsDefined &&
+      (item as any).variation.some(
+        (variation: any) =>
+          Array.isArray(variation?.addon) && variation.addon.length > 0
+      )
+    ) {
+      itemsWithVariationScopedAddons++;
+    }
     const rawInStock = (item as any)?.in_stock;
     const priceKnown = Number.isFinite(Number(item.price)) && Number(item.price) > 0;
     // The flag's documented-as-true spellings, used only for the price-hazard
@@ -470,6 +515,9 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       pushInStock: rawInStock === undefined ? null : rawInStock,
       isVeg,
       branchId,
+      // P1: item-level packaging charge. `""` (the vendor's "none") is null,
+      // never 0 silently — the pricing helper treats null as "no charge".
+      packingCharge: itemPackingCharge((item as any).item_packingcharges),
       // Delivery filters products by this restId (stores/{id}.petpoojaRestId
       // must equal the branch's restId once outlets are linked — Runbook §5).
       restId,
@@ -583,6 +631,16 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     {
       lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
       petpoojaItemCount: items.length,
+      // P1: only ever written when the push actually carried packaging keys, so
+      // a keyless push (or a failed one) cannot clear a stored contract.
+      ...(packagingInfo.packaging
+        ? {
+            packaging: {
+              ...packagingInfo.packaging,
+              syncedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          }
+        : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
@@ -634,6 +692,19 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       unpricedInStockCount,
       unpricedVariationFlaggedCount,
       unpricedInStockVariationMissingCount,
+      // P4: packaging + menu-shape census. Raw vendor values only, no
+      // customer data, and nothing here influences a product document.
+      packagingRaw: packagingInfo.raw,
+      packagingUnderstood: packagingInfo.packaging
+        ? packagingInfo.packaging.understood
+        : null,
+      // P1/D8: the absent-keys warning lives here, on the sync log.
+      packagingWarning,
+      addonGroupCount,
+      itemsAllowingAddons,
+      itemsAllowingVariations,
+      itemsWithVariationsDefined,
+      itemsWithVariationScopedAddons,
       error: unexplainedVendorMessage,
       simulated: config.mock.petpoojaPos,
       source: "menuSyncWebhook",

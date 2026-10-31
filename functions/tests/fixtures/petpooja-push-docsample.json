@@ -1,0 +1,179 @@
+{
+  "fixture": "Petpooja published Push Menu sample (vendor API doc), trimmed to the fields this repo consumes. NOT real restaurant data; outlet identifiers and menu content are the vendor's own example values.",
+  "source": "C:/Users/DELL/Desktop/PETPOOJA API Docs.txt, Push Menu sample (lines ~824-1340)",
+  "payload": {
+    "success": "1",
+    "restaurants": [
+      {
+        "details": {
+          "menusharingcode": "xxxxxx",
+          "restaurantname": "Heaven",
+          "city": "Ahmedabad",
+          "state": "Gujarat",
+          "calculatetaxonpacking": 1,
+          "pc_taxes_id": "11213,20375",
+          "calculatetaxondelivery": 1,
+          "dc_taxes_id": "11213,20375",
+          "packaging_applicable_on": "ORDER",
+          "packaging_charge": "20",
+          "packaging_charge_type": ""
+        }
+      }
+    ],
+    "ordertypes": [
+      { "ordertypeid": 1, "ordertype": "Delivery" },
+      { "ordertypeid": 2, "ordertype": "PickUp" },
+      { "ordertypeid": 3, "ordertype": "DineIn" }
+    ],
+    "categories": [
+      {
+        "categoryid": "500773",
+        "active": "1",
+        "parent_category_id": "0",
+        "categoryname": "Pizzaandsides"
+      }
+    ],
+    "items": [
+      {
+        "itemid": "118829149",
+        "itemallowvariation": "0",
+        "item_categoryid": "500773",
+        "item_packingcharges": "",
+        "itemallowaddon": "1",
+        "itemaddonbasedon": "0",
+        "in_stock": "2",
+        "variation_groupname": "",
+        "variation": [],
+        "addon": [
+          { "addon_group_id": "135699", "addon_item_selection_min": "0", "addon_item_selection_max": "1" },
+          { "addon_group_id": "135707", "addon_item_selection_min": "0", "addon_item_selection_max": "4" }
+        ],
+        "itemname": "Veg Loaded Pizza",
+        "item_attributeid": "1",
+        "itemdescription": "",
+        "price": "100",
+        "active": "1",
+        "item_image_url": "",
+        "item_tax": "11213,20375",
+        "tax_inclusive": false,
+        "gst_type": "services"
+      },
+      {
+        "itemid": "7765809",
+        "itemallowvariation": "0",
+        "item_categoryid": "500773",
+        "item_packingcharges": "",
+        "itemallowaddon": "0",
+        "itemaddonbasedon": "0",
+        "in_stock": "2",
+        "variation_groupname": "",
+        "variation": [
+          {
+            "id": "7765862",
+            "variationid": "89058",
+            "name": "3Pieces",
+            "groupname": "Quantity",
+            "price": "140",
+            "markup_price": "",
+            "active": "1",
+            "item_packingcharges": "20",
+            "variationrank": "1",
+            "addon": [],
+            "variationallowaddon": 0
+          },
+          {
+            "id": "7765097",
+            "variationid": "89059",
+            "name": "6Pieces",
+            "groupname": "Quantity",
+            "price": "160",
+            "markup_price": "",
+            "active": "1",
+            "item_packingcharges": "20",
+            "variationrank": "3",
+            "addon": [],
+            "variationallowaddon": 0
+          }
+        ],
+        "addon": [],
+        "is_recommend": "0",
+        "itemname": "Garlic Bread",
+        "item_attributeid": "1",
+        "itemdescription": "",
+        "price": "140",
+        "markup_price": "",
+        "active": "1",
+        "item_image_url": "",
+        "tax_inclusive": false,
+        "item_tax": "11213,20375",
+        "gst_type": "services"
+      }
+    ],
+    "addongroups": [
+      {
+        "addongroupid": "135699",
+        "addongroup_rank": "3",
+        "active": "1",
+        "addongroupitems": [
+          {
+            "addonitemid": "1150783",
+            "addonitem_name": "Mojito",
+            "addonitem_price": "0",
+            "active": "1",
+            "attributes": "1",
+            "addonitem_rank": "1"
+          },
+          {
+            "addonitemid": "1150784",
+            "addonitem_name": "Hazelnut Mocha",
+            "addonitem_price": "10",
+            "active": "1",
+            "attributes": "1",
+            "addonitem_rank": "1"
+          }
+        ],
+        "addongroup_name": "Add Beverage"
+      },
+      {
+        "addongroupid": "135707",
+        "addongroup_rank": "15",
+        "active": "1",
+        "addongroupitems": [
+          {
+            "addonitemid": "1150810",
+            "addonitem_name": "Egg",
+            "addonitem_price": "20",
+            "active": "1",
+            "attributes": "24",
+            "addonitem_rank": "1"
+          },
+          {
+            "addonitemid": "1150811",
+            "addonitem_name": "Jalapenos",
+            "addonitem_price": "20",
+            "active": "1",
+            "attributes": "1",
+            "addonitem_rank": "1"
+          },
+          {
+            "addonitemid": "1150812",
+            "addonitem_name": "Onion Rings",
+            "addonitem_price": "20",
+            "active": "1",
+            "attributes": "1",
+            "addonitem_rank": "1"
+          },
+          {
+            "addonitemid": "1150813",
+            "addonitem_name": "Cheese",
+            "addonitem_price": "10",
+            "active": "1",
+            "attributes": "1",
+            "addonitem_rank": "1"
+          }
+        ],
+        "addongroup_name": "Extra Toppings"
+      }
+    ]
+  }
+}
