@@ -132,6 +132,8 @@ function seedOrder(id: string, customerId = "cust_a", extra: Record<string, any>
   savedDocs[`orders/${id}`] = {
     id,
     customerId,
+    // PAY-15: the doc names the branch the money is priced against.
+    branchId: "branch_c1",
     orderType: "takeaway",
     status: "pending_payment",
     items: DOC_ITEMS.map((item) => ({ ...item })),

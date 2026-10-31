@@ -265,6 +265,27 @@ async function bindDeliveryQuoteForOrder(args: {
 }
 
 /**
+ * PAY-15: the order document names the branch. An explicit `branchId` on the
+ * doc wins outright; otherwise the doc's own store maps to its branch. The
+ * REQUEST is never consulted — a caller-supplied branch used to move the
+ * packaging fee and the Route transfer target.
+ */
+async function resolveOrderBranchForPayment(orderData: any): Promise<string> {
+  const docBranch =
+    typeof orderData?.branchId === "string" && orderData.branchId.trim()
+      ? orderData.branchId.trim()
+      : "";
+  if (docBranch) return docBranch;
+
+  const docStoreId =
+    (typeof orderData?.storeId === "string" && orderData.storeId) ||
+    (typeof orderData?.store?.id === "string" && orderData.store.id) ||
+    "";
+  // Same resolution (and same typed 409/503) as POST /checkout/fees.
+  return resolveBranchId({ storeId: docStoreId });
+}
+
+/**
  * PAYMENTS_CONTRACT_SPEC §1 gate: the internal orders/{orderId} doc must
  * EXIST, be UNPAID, and belong to the CALLER before any payable gateway
  * order is minted. 404 for an unknown id, 409 for paid/foreign orders, 503
@@ -703,8 +724,6 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // `order_mock_*` payable id, no matter how the config object got flipped.
   assertLivePaymentsContext("createPaymentOrder");
 
-  const branchId = await resolveBranchId(params);
-
   // PAY-13: the ORDER DOCUMENT is the cart. `params.items` is accepted for
   // wire compatibility and IGNORED — pricing a request body while the kitchen
   // cooks the order document is how one cheap item could pay for ten burgers.
@@ -712,6 +731,11 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     ? await assertPayableOrderDoc(params.orderId, params.customerId)
     : null;
   if (!orderData) throw orderDocRequiredError();
+
+  // PAY-15: the branch comes from the ORDER too. It decides the packaging fee
+  // and the Route transfer target, so a request branch must never move money.
+  // The doc's branch wins; its store mapping is the only fallback.
+  const branchId = await resolveOrderBranchForPayment(orderData);
   const orderType = orderDocType(orderData, params.orderType) as
     | "delivery"
     | "takeaway"

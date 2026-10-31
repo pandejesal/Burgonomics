@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { state } = vi.hoisted(() => {
   process.env.OTP_HMAC_SECRET = "test_otp_payments_store_link";
   const state: { mode: "unlinked" | "throw" } = { mode: "unlinked" };
-  const doc: any = {
+  const storeDoc: any = {
     get: async () => {
       if (state.mode === "throw") throw new Error("firestore unavailable");
       return { exists: true, data: () => ({ name: "Unlinked outlet" }) };
@@ -15,8 +15,25 @@ const { state } = vi.hoisted(() => {
     set: async () => undefined,
     update: async () => undefined,
   };
+  // PAY-15: the branch resolves from the ORDER document, so the mock must be
+  // collection-aware: the order exists and points at the unlinked store.
+  const orderDoc: any = {
+    get: async () => ({
+      exists: true,
+      data: () => ({
+        id: "ord_store_link",
+        customerId: "cust_unlinked",
+        orderType: "takeaway",
+        storeId: "store_unlinked_1",
+        items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+      }),
+    }),
+    set: async () => undefined,
+    update: async () => undefined,
+  };
+  const doc = (col: string) => (col === "orders" ? orderDoc : storeDoc);
   const mockDb: any = {
-    collection: () => ({ doc: () => doc }),
+    collection: (col: string) => ({ doc: () => doc(col) }),
   };
   (globalThis as any).__mockDb = mockDb;
   return { state };
@@ -54,6 +71,7 @@ const basket = {
   orderType: "takeaway" as const,
   customerId: "cust_unlinked",
   storeId: "store_unlinked_1",
+  orderId: "ord_store_link",
 };
 
 describe("D-01 createPaymentOrder store→branch resolution", () => {

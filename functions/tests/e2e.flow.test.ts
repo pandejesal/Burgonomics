@@ -450,8 +450,21 @@ describe("End-to-End Platform Integration Flow", () => {
   });
 
   it("rejects unresolvable branch instead of pricing blind", async () => {
+    // PAY-15: the branch is resolved from the ORDER (doc branch, else the
+    // doc's store mapping) — never from the request. An order with neither is
+    // refused rather than priced blind.
+    savedDocs["orders/ord_nobranch"] = {
+      id: "ord_nobranch",
+      customerId: "cust_nobranch",
+      orderType: "takeaway",
+      status: "pending_payment",
+      storeId: "store_unlinked",
+      items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+    };
+    savedDocs["stores/store_unlinked"] = { id: "store_unlinked", name: "Unlinked outlet" };
     await expect(
       createPaymentOrder({
+        orderId: "ord_nobranch",
         items: [{ id: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
         orderType: "takeaway",
         customerId: "cust_nobranch",
