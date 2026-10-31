@@ -138,6 +138,89 @@ export function borzoWarningCodes(data: any): string[] {
   return collectBorzoCodes(data?.warnings, data?.parameter_warnings);
 }
 
+interface WarningIssue {
+  path: string;
+  code: string;
+}
+
+/** Flattens parameter_warnings into `path -> code` leaves (arrays indexed). */
+function flattenWarningIssues(value: any, path: string, out: WarningIssue[]): void {
+  if (value === null || value === undefined) return;
+  if (typeof value === "string") {
+    if (value.trim()) out.push({ path, code: value.trim() });
+    return;
+  }
+  if (Array.isArray(value)) {
+    // A list of strings is a CODE LIST for this path ([“required”]); a list of
+    // objects is an indexed collection (points[0], points[1]).
+    if (value.every((entry) => typeof entry === "string")) {
+      for (const entry of value) flattenWarningIssues(entry, path, out);
+      return;
+    }
+    value.forEach((entry, index) => {
+      flattenWarningIssues(entry, `${path}[${index}]`, out);
+    });
+    return;
+  }
+  if (typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      flattenWarningIssues(child, path ? `${path}.${key}` : key, out);
+    }
+  }
+}
+
+/**
+ * Quote-time warnings that must WITHHOLD the fare (empty = keep it).
+ *
+ * Live finding (Stage 4, proven against Borzo's test host): a quote has no
+ * order yet, so the adapter deliberately omits contact phones. Borzo answers
+ * `is_successful:true` WITH a fee and
+ * `warnings:["invalid_parameters"]` +
+ * `parameter_warnings:{points:[{contact_person:{phone:["required"]}},…]}`.
+ * Treating that as a refusal threw away every real fare (503
+ * NO_SERVICEABLE_PROVIDER). The single exception below is exactly that shape:
+ * every warning is `points[n].contact_person.phone: required` and the only
+ * top-level code is `invalid_parameters`. Any other warning or parameter still
+ * withholds — book-time validation remains strict and unchanged.
+ */
+export function borzoQuoteWithheldCodes(data: any): string[] {
+  const warnings: string[] =
+    Array.isArray(data?.warnings)
+      ? data.warnings
+          .filter((w: unknown): w is string => typeof w === "string")
+          .map((w: string) => w.trim())
+          .filter((w: string) => w !== "")
+      : typeof data?.warnings === "string" && data.warnings.trim()
+        ? [data.warnings.trim()]
+        : [];
+
+  const issues: WarningIssue[] = [];
+  flattenWarningIssues(data?.parameter_warnings, "", issues);
+
+  if (warnings.length === 0 && issues.length === 0) return [];
+
+  const phoneOnly =
+    issues.length > 0 &&
+    issues.every(
+      (issue) =>
+        /^points\[\d+\]\.contact_person\.phone$/.test(issue.path) &&
+        issue.code === "required"
+    ) &&
+    warnings.length === 1 &&
+    warnings[0] === "invalid_parameters";
+  if (phoneOnly) return [];
+
+  // Blocking: keep the raw codes (classification) AND the path labels (so the
+  // server log and error name the actual parameter, not just the envelope).
+  const codes = new Set<string>();
+  for (const warning of warnings) codes.add(warning);
+  for (const issue of issues) {
+    codes.add(issue.code);
+    codes.add(`${issue.path}:${issue.code}`);
+  }
+  return Array.from(codes);
+}
+
 /** Human-readable text carried by the parsed body (never the raw JSON blob). */
 function borzoBodyMessage(data: any): string | undefined {
   const raw =
@@ -314,9 +397,26 @@ export const borzoAdapter: ProviderAdapter = {
     // Quote-time warnings (D2): Borzo returns these same codes as errors if the
     // identical data is booked, so a non-empty list predicts a book-time 400 —
     // withhold the fare instead of presenting one we know will be rejected.
-    const warnings = borzoWarningCodes(res.data);
-    if (warnings.length > 0) {
-      throw classifyBorzoError("borzo", res.status, res.data, { codes: warnings });
+    // ONE exception (live finding, Stage 4): a quote carries no order and
+    // therefore no contact phones, and Borzo flags exactly those as "required"
+    // while STILL returning a fare. borzoQuoteWithheldCodes keeps that fare and
+    // withholds every other warning/parameter.
+    const withheldCodes = borzoQuoteWithheldCodes(res.data);
+    if (withheldCodes.length > 0) {
+      // Structured, server-side only: the customer-facing 503 must stay safe,
+      // but ops needs the provider's actual reason (Stage 4 hid it).
+      console.warn(
+        "[Dispatch] borzo quote withheld",
+        JSON.stringify({
+          event: "dispatch.provider.quote_withheld",
+          provider: "borzo",
+          httpStatus: res.status,
+          codes: withheldCodes,
+          warnings: res.data?.warnings ?? null,
+          parameterWarnings: res.data?.parameter_warnings ?? null,
+        })
+      );
+      throw classifyBorzoError("borzo", res.status, res.data, { codes: withheldCodes });
     }
 
     const fare = pickFiniteNumber(

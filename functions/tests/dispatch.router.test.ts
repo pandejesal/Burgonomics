@@ -296,14 +296,33 @@ describe("dispatchQuote (DR1/DR4/DR5)", () => {
     config.mock.borzoDispatch = false;
     config.mock.shadowfaxDispatch = false;
 
-    await expect(
-      dispatchQuote({
-        pickupLat: PICKUP.lat,
-        pickupLng: PICKUP.lng,
-        dropLat: DROP.lat,
-        dropLng: DROP.lng,
-      })
-    ).rejects.toMatchObject({ statusCode: 503, code: "NO_SERVICEABLE_PROVIDER" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(
+        dispatchQuote({
+          pickupLat: PICKUP.lat,
+          pickupLng: PICKUP.lng,
+          dropLat: DROP.lat,
+          dropLng: DROP.lng,
+        })
+      ).rejects.toMatchObject({ statusCode: 503, code: "NO_SERVICEABLE_PROVIDER" });
+
+      // Stage 4: the safe 503 must not be the ONLY trace — the provider's real
+      // reason is logged, structured, server-side.
+      const structured = warn.mock.calls.find((call) =>
+        String(call[1] ?? "").includes("dispatch.quote.no_serviceable_provider")
+      );
+      expect(structured).toBeTruthy();
+      const payload = JSON.parse(String(structured![1]));
+      expect(Array.isArray(payload.outcomes)).toBe(true);
+      expect(Array.isArray(payload.eligibleProviders)).toBe(true);
+      // No provider was even eligible here, so both lists are empty — the log
+      // still records the attempt with the coordinates and the event name.
+      expect(payload.eligibleProviders).toEqual([]);
+      expect(payload.outcomes).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

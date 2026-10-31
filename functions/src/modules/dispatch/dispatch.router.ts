@@ -577,7 +577,38 @@ export async function dispatchQuote(params: DispatchQuoteParams): Promise<any> {
     orderId: params.orderId,
   });
 
-  if (ranked.length === 0) throw noServiceableProviderError(outcomes);
+  if (ranked.length === 0) {
+    // Stage 4: the customer-facing 503 is deliberately vague ("no provider
+    // services this address"), which hid a provider-side reason for a whole
+    // stage. Log the real per-provider outcome, structured, server-side only.
+    console.warn(
+      "[Dispatch] quote failed — no serviceable provider",
+      JSON.stringify({
+        event: "dispatch.quote.no_serviceable_provider",
+        pickup: { lat: params.pickupLat, lng: params.pickupLng },
+        drop: { lat: params.dropLat, lng: params.dropLng },
+        // Empty when no provider was even eligible to be asked; then the
+        // absence itself is the reason.
+        eligibleProviders: ADAPTERS.filter((adapter) => {
+          try {
+            return adapter.isEligible() === true;
+          } catch {
+            return false;
+          }
+        }).map((adapter) => adapter.provider),
+        outcomes: outcomes.map((outcome) =>
+          outcome.outcome === "ok"
+            ? { provider: outcome.provider, outcome: outcome.outcome }
+            : {
+                provider: outcome.provider,
+                outcome: outcome.outcome,
+                error: outcome.error,
+              }
+        ),
+      })
+    );
+    throw noServiceableProviderError(outcomes);
+  }
 
   const winner = ranked[0];
   return {

@@ -374,6 +374,78 @@ describe("borzo failure classification (D1/D2/D3, findings 13/14)", () => {
 });
 
 describe("borzo quote warnings (D2)", () => {
+  // REAL calculate-order shapes, captured against Borzo's test host for the
+  // owner's probe (tools/borzo-warnings.cjs). Quotes deliberately omit phone
+  // numbers, so Borzo reports them as required parameters and still returns a
+  // fee. Those warnings must not cost the fare; any other warning must.
+  const QUOTE_FEE = "45.00";
+  const phoneRequired = { contact_person: { phone: ["required"] } };
+  const quoteBody = (points: any[]) => ({
+    is_successful: true,
+    order: { payment_amount: QUOTE_FEE },
+    warnings: ["invalid_parameters"],
+    parameter_warnings: { points },
+  });
+
+  it("keeps the fare when BOTH point phones are missing (as sent today)", async () => {
+    fetchHandler = () => okJson(quoteBody([phoneRequired, phoneRequired]));
+    const quote = await borzoAdapter.quote(borzoContext());
+    expect(quote.outcome).toBe("ok");
+    expect(quote.fare).toBe(45);
+    expect(quote.source).toBe("borzo_api_live");
+  });
+
+  it("keeps the fare when only the DROP phone is missing", async () => {
+    fetchHandler = () => okJson(quoteBody([phoneRequired, null]));
+    const quote = await borzoAdapter.quote(borzoContext());
+    expect(quote.outcome).toBe("ok");
+    expect(quote.fare).toBe(45);
+  });
+
+  it("keeps the fare when only the PICKUP phone is missing", async () => {
+    fetchHandler = () => okJson(quoteBody([null, phoneRequired]));
+    const quote = await borzoAdapter.quote(borzoContext());
+    expect(quote.outcome).toBe("ok");
+    expect(quote.fare).toBe(45);
+  });
+
+  it("keeps the fare when BOTH phones are present (warnings empty, null params)", async () => {
+    fetchHandler = () =>
+      okJson({
+        is_successful: true,
+        order: { payment_amount: QUOTE_FEE },
+        warnings: [],
+        parameter_warnings: null,
+      });
+    const quote = await borzoAdapter.quote(borzoContext());
+    expect(quote.outcome).toBe("ok");
+    expect(quote.fare).toBe(45);
+  });
+
+  it("still withholds the fare when a phone warning comes with a REAL parameter problem", async () => {
+    fetchHandler = () =>
+      okJson(
+        quoteBody([{ contact_person: { phone: ["required"] }, address: ["address_not_found"] }, null])
+      );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const err = await capture(borzoAdapter.quote(borzoContext()));
+      expect(err).toBeInstanceOf(ProviderDispatchError);
+      expect(err.message).toContain("address_not_found");
+      // The provider's actual reason is in a structured server log line, not
+      // only inside a customer-safe 503.
+      const structured = warn.mock.calls.find((call) =>
+        String(call[1] ?? "").includes("dispatch.provider.quote_withheld")
+      );
+      expect(structured).toBeTruthy();
+      const payload = JSON.parse(String(structured![1]));
+      expect(payload.provider).toBe("borzo");
+      expect(payload.codes.join(" ")).toContain("address_not_found");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("withholds the fare when calculate-order returns warnings", async () => {
     fetchHandler = () =>
       okJson({
@@ -391,7 +463,7 @@ describe("borzo quote warnings (D2)", () => {
     expect(err.message).toContain("invalid_parameters");
   });
 
-  it("withholds the fare when parameter_warnings are set", async () => {
+  it("withholds the fare when a NON-phone parameter_warning is set", async () => {
     fetchHandler = () =>
       okJson({
         is_successful: true,
@@ -404,6 +476,19 @@ describe("borzo quote warnings (D2)", () => {
 
     expect(err.kind).toBe("not_serviced");
     expect(err.message).toContain("address_not_found");
+  });
+
+  it("withholds the fare when the top-level warning is not invalid_parameters", async () => {
+    fetchHandler = () =>
+      okJson({
+        is_successful: true,
+        order: { payment_amount: "60.00" },
+        warnings: ["order_is_duplicate"],
+        parameter_warnings: { points: [phoneRequired, null] },
+      });
+    const err = await capture(borzoAdapter.quote(borzoContext()));
+    expect(err).toBeInstanceOf(ProviderDispatchError);
+    expect(err.message).toContain("order_is_duplicate");
   });
 
   it("still quotes a fare when there are no warnings", async () => {
