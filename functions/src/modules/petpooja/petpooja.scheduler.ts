@@ -45,6 +45,9 @@ export async function syncAllBranchesPetpoojaMenu(): Promise<{
   }
 
   let syncedBranches = 0;
+  // Unlinked outlets are CONFIGURATION, not a sync failure: collect them and
+  // report ONE warning for the run instead of an error per branch per hour.
+  const unlinkedBranches: string[] = [];
 
   const CHUNK_SIZE = 4;
 
@@ -59,10 +62,20 @@ export async function syncAllBranchesPetpoojaMenu(): Promise<{
       const doc = chunk[j];
       if (res.status === "fulfilled") {
         syncedBranches++;
+      } else if ((res.reason as any)?.unlinkedOutlet === true) {
+        unlinkedBranches.push(doc.id);
       } else {
         logger.error(`[Petpooja Menu Scheduler] Failed for branch ${doc.id}:`, res.reason);
       }
     }
+  }
+
+  if (unlinkedBranches.length > 0) {
+    logger.warn(
+      `[Petpooja Menu Scheduler] ${unlinkedBranches.length} active branch(es) have no linked Petpooja outlet — skipped this run: ${unlinkedBranches.join(
+        ", "
+      )}`
+    );
   }
 
   return { syncedBranches };

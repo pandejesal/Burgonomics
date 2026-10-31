@@ -133,13 +133,18 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     const branchSnap = await db.collection("branches").doc(branchId).get();
     const b = branchSnap.data() as any;
     if (!b?.petpoojaStoreId) {
-      throw new Error(
+      // Marker, not message-matching: the hourly scheduler reports all
+      // unlinked outlets as ONE configuration warning per run instead of an
+      // error per branch per hour.
+      const unlinked: any = new Error(
         `Branch ${branchId} has no linked Petpooja outlet (petpoojaStoreId) — refusing menu sync (ops must link it per Runbook §5)`
       );
+      unlinked.unlinkedOutlet = true;
+      throw unlinked;
     }
     restId = b.petpoojaStoreId;
   } catch (err: any) {
-    if (err?.message?.includes("no linked Petpooja outlet")) throw err;
+    if (err?.unlinkedOutlet === true) throw err;
     throw new Error(
       `Branch lookup failed for menu sync of ${branchId} — refusing to sync with an untrusted rest_id: ${err?.message || err}`
     );
