@@ -7,7 +7,7 @@ import * as admin from "firebase-admin";
 import express from "express";
 import type { Response } from "express";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 // Security Middleware
 import {
@@ -20,6 +20,7 @@ import {
   AuthenticatedRequest,
 } from "./core/middleware";
 import { corsOriginError } from "./core/cors";
+import { resolveClientAddress } from "./core/clientAddress";
 
 // Modules
 import {
@@ -192,10 +193,19 @@ const limiter = rateLimit({
   message: { error: "Too many requests from this IP, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
+  // One trusted hop (Cloud Run's front end). It appends the real client as the
+  // RIGHTMOST X-Forwarded-For entry, so a client-sent leading entry cannot
+  // spoof identity; `true` would trust any chain.
+  keyGenerator: (req) =>
+    ipKeyGenerator(resolveClientAddress(req.headers["x-forwarded-for"], req.socket?.remoteAddress)),
+  // The standardized Forwarded header is not parsed by Express; this app never
+  // reads it, so silence the library's advisory for it only.
+  validate: { forwardedHeader: false },
   skip: (req) => WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES.some((p) => req.path === p),
 });
 
 const app = express();
+app.set("trust proxy", 1);
 
 // Fail-closed production-key guard (see enforceProductionKeysOnce above): the
 // first request through this process boots the assert, so a misconfigured
