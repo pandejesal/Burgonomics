@@ -413,7 +413,11 @@ describe("End-to-End Platform Integration Flow", () => {
         orderType: "takeaway",
         customerId: "cust_nobranch",
       } as any)
-    ).rejects.toThrow(/Branch could not be resolved/);
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "STORE_NOT_LINKED",
+      message: "This outlet isn't taking online orders yet.",
+    });
   });
 
   it("skips transfer when already transferred (no double payout)", async () => {
