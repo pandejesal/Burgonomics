@@ -1,7 +1,11 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { serviceError, captureErrorSnapshot } from "../../core/errors";
-import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
+import {
+  assertOrderBranchAccess,
+  isBrandAdminClaim,
+  type StaffCaller,
+} from "../../core/middleware";
 
 /**
  * Server-side KDS order-status bump. Mirrors the partner
@@ -117,6 +121,27 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     if (canonical === "delivered") {
       finalMeta = { code: "PICKED_UP", label: "Picked up", kind: "completed", terminal: true };
     }
+  }
+
+  // OTP-01 (SEC-01): a DELIVERY handover needs customer-possession proof.
+  // firestore.rules' directDeliveredBypass() blocks the client write for
+  // exactly this reason, and clients can no longer write status at all — so
+  // this route became the only path and must carry the same rule. Branch-level
+  // callers complete a delivery via POST /orders/verifyDeliveryOtp (or the
+  // courier webhook); only a brand-level caller may override, and the route's
+  // timeline event is the audit trail. `caller` undefined is a trusted
+  // internal/scheduler path, never an HTTP request.
+  if (
+    (fulfillment === "delivery" || fulfillment === "deliver") &&
+    canonical === "delivered" &&
+    caller &&
+    !isBrandAdminClaim(caller)
+  ) {
+    throw serviceError(
+      "DELIVERY_OTP_REQUIRED",
+      "Delivery orders are completed by the customer's handover OTP — use Verify delivery OTP (a brand-level override is required otherwise).",
+      409,
+    );
   }
 
   const payload: Record<string, any> = {

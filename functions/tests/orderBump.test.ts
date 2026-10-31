@@ -74,6 +74,8 @@ import { bumpOrderStatus } from "../src/modules/orders/orderStatus";
 
 describe("bumpOrderStatus (server-side KDS bump)", () => {
   const ownBranchCaller = { uid: "staff_1", role: "branch_staff", branchIds: ["b1"] };
+  const branchOwnerCaller = { uid: "owner_1", role: "branch_owner", branchIds: ["b1"] };
+  const brandCaller = { uid: "brand_1", role: "brand_owner", isBrandAdmin: true };
 
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];
@@ -242,9 +244,101 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       orderId: "ord_ofd",
       status: "delivered",
       expectedStatus: "out_for_delivery", // lowercase canonical spelling
-      caller: ownBranchCaller,
+      caller: brandCaller,
     });
     expect(savedDocs["orders/ord_ofd"].status).toMatchObject({ code: "DELIVERED", terminal: true });
+  });
+
+  // OTP-01 (SEC-01): clients can no longer write status, so this route is the
+  // ONLY path — and it must not let branch staff skip the customer's handover
+  // OTP. The rules block the direct write for exactly this reason.
+  it("refuses a branch-level bump to delivered on a delivery order (409 DELIVERY_OTP_REQUIRED)", async () => {
+    savedDocs["orders/ord_otp"] = {
+      branchId: "b1",
+      orderType: "delivery",
+      status: { code: "OUT_FOR_DELIVERY", terminal: false },
+    };
+    for (const caller of [ownBranchCaller, branchOwnerCaller]) {
+      await expect(
+        bumpOrderStatus({ orderId: "ord_otp", status: "delivered", caller })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: "DELIVERY_OTP_REQUIRED",
+      });
+    }
+    // Nothing was written: the order is still out for delivery.
+    expect(savedDocs["orders/ord_otp"].status).toMatchObject({
+      code: "OUT_FOR_DELIVERY",
+      terminal: false,
+    });
+  });
+
+  it("lets a brand owner force delivered, with the audit timeline entry", async () => {
+    savedDocs["orders/ord_otp_brand"] = {
+      branchId: "b1",
+      orderType: "delivery",
+      status: { code: "OUT_FOR_DELIVERY", terminal: false },
+    };
+    await bumpOrderStatus({
+      orderId: "ord_otp_brand",
+      status: "delivered",
+      caller: brandCaller,
+      timelineEvent: {
+        title: "Marked delivered (brand override)",
+        actor: "owner@burgonomics.test",
+        description: "Courier handover confirmed by phone",
+      },
+    });
+    expect(savedDocs["orders/ord_otp_brand"].status).toMatchObject({
+      code: "DELIVERED",
+      terminal: true,
+    });
+    expect(savedDocs["orders/ord_otp_brand"].timeline).toHaveLength(1);
+    expect(savedDocs["orders/ord_otp_brand"].timeline[0]).toMatchObject({
+      title: "Marked delivered (brand override)",
+      actor: "owner@burgonomics.test",
+    });
+  });
+
+  it("does not affect takeaway completion (PICKED_UP) or dine-in completion (COMPLETED)", async () => {
+    savedDocs["orders/ord_otp_away"] = {
+      branchId: "b1",
+      orderType: "takeaway",
+      status: { code: "READY_FOR_PICKUP", terminal: false },
+    };
+    const away: any = await bumpOrderStatus({
+      orderId: "ord_otp_away",
+      status: "delivered",
+      caller: ownBranchCaller,
+    });
+    expect(away.status).toMatchObject({ code: "PICKED_UP", terminal: true });
+
+    savedDocs["orders/ord_otp_dine"] = {
+      branchId: "b1",
+      orderType: "dinein",
+      status: { code: "READY_TO_SERVE", terminal: false },
+    };
+    const dine: any = await bumpOrderStatus({
+      orderId: "ord_otp_dine",
+      status: "delivered",
+      caller: ownBranchCaller,
+    });
+    expect(dine.status).toMatchObject({ code: "COMPLETED", terminal: true });
+  });
+
+  it("keeps the courier webhooks off this route (they complete delivery themselves)", async () => {
+    // The webhook handlers own delivery completion from provider truth; if one
+    // of them ever started calling this bump, the OTP gate would block a real
+    // delivery. Pin the separation instead of assuming it.
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    for (const file of [
+      "../src/modules/dispatch/dispatch.webhooks.ts",
+      "../src/modules/porter/porter.service.ts",
+    ]) {
+      const source = readFileSync(resolve(__dirname, file), "utf8");
+      expect(source).not.toContain("bumpOrderStatus");
+    }
   });
 
   it("matches UPPERCASE member vocabulary through the lowercase-keyed tables", async () => {
