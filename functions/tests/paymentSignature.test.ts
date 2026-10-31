@@ -8,7 +8,7 @@ import * as crypto from "crypto";
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
-  const mockDb = {
+  const mockDb: any = {
     collection: (colName: string) => ({
       doc: (docId: string) => ({
         id: docId,
@@ -23,7 +23,26 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
             options?.merge && savedDocs[docPath] ? { ...savedDocs[docPath], ...data } : data;
         }),
       }),
+      // Payment-intent lookups (loadPaymentIntent / resolveIntentRedemption)
+      // query payment_intents by razorpayOrderId; this store holds none, so
+      // the chain returns an empty result set — the real fail-closed null
+      // path, not a missing-shim error.
+      where: (..._filters: any[]) => ({
+        limit: (..._n: any[]) => ({
+          get: async () => ({ empty: true, docs: [] }),
+        }),
+      }),
     }),
+    // R20: finishVerifiedPayment requires a transactional datastore (the
+    // production path has NO non-atomic fallback). Mirror the R06
+    // concurrency fixtures: get/set delegate to the same doc refs the
+    // direct path uses, so tx reads re-materialize current store state.
+    runTransaction: vi.fn(async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      })
+    ),
   };
   return { mockDb, savedDocs };
 });

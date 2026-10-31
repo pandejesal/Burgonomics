@@ -16,7 +16,7 @@
     "backfill:orders": "tsc -p ../scripts/backfill/tsconfig.json && set \"NODE_PATH=node_modules\" && node ../scripts/backfill/dist/backfillOrders.js"
   },
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "dependencies": {
     "@types/express-rate-limit": "^5.1.3",

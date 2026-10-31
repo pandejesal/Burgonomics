@@ -27,6 +27,12 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
     collection: (colName: string) => ({
       doc: (docId?: string) => docRef(colName, docId || `mock_${Math.random().toString(36).slice(2, 8)}`),
     }),
+    runTransaction: vi.fn(async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      })
+    ),
   };
   return { mockDb, savedDocs };
 });
@@ -56,13 +62,17 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { resolveTicket, addTicketMessage } from "../src/modules/tickets/tickets.service";
+import { resolveTicket, resolveTicketNote, addTicketMessage } from "../src/modules/tickets/tickets.service";
 import { config } from "../src/config/env";
 
 const BASE = {
   resolvedBy: "staff_1",
   resolvedByName: "Staff One",
   notes: "test resolution",
+  // Loop 7 hardening: the service now rejects caller-less resolves (fail-closed).
+  // This suite drives REFUND behavior, not the auth boundary, so it presents a
+  // global caller (rbac.md: brand_owner acts brand-wide without branch scoping).
+  caller: { uid: "staff_1", role: "brand_owner" },
 } as const;
 
 describe("resolveTicket (real money paths)", () => {
@@ -114,11 +124,15 @@ describe("resolveTicket (real money paths)", () => {
     expect(savedDocs["support_tickets/tk_cod"].status).toBeUndefined();
   });
 
-  it("applies loyalty credit exactly once to the customer profile", async () => {
+  it("applies loyalty credit exactly once to the customer's REAL balance, with a ledger row", async () => {
     savedDocs["support_tickets/tk_loyal"] = {
       ticketNumber: "TICK-2026-0004",
       customerId: "cust_9",
     };
+    // The wallet lives on customers/{uid}.loyaltyPoints (redeem gate +
+    // staff adjustments + redemption debits all read it) — the old code
+    // credited users/{uid}, which nothing reads.
+    savedDocs["customers/cust_9"] = { loyaltyPoints: 50 };
     const res = await resolveTicket({
       ...BASE,
       ticketId: "tk_loyal",
@@ -127,6 +141,32 @@ describe("resolveTicket (real money paths)", () => {
     });
     expect(res.success).toBe(true);
     expect(savedDocs["support_tickets/tk_loyal"].status).toBe("resolved");
+    expect(savedDocs["customers/cust_9"].loyaltyPoints).toBe(150);
+    // Audit trail: one coin_transactions ledger row per credit.
+    const ledger = savedDocs["coin_transactions/coin_ticket_credit_tk_loyal"];
+    expect(ledger).toMatchObject({
+      customerId: "cust_9",
+      delta: 100,
+      balanceAfter: 150,
+      type: "ticket_credit",
+      ticketId: "tk_loyal",
+    });
+    // Never the wrong collection again.
+    expect(savedDocs["users/cust_9"]).toBeUndefined();
+  });
+
+  it("refuses loyalty credit when the customer profile doc is missing (no void credit)", async () => {
+    savedDocs["support_tickets/tk_loyal_missing"] = {
+      ticketNumber: "TICK-2026-0012",
+      customerId: "cust_ghost",
+    };
+    await expect(
+      resolveTicket({ ...BASE, ticketId: "tk_loyal_missing", action: "loyalty_credit", amount: 100 })
+    ).rejects.toThrow(/not found/);
+    expect(savedDocs["support_tickets/tk_loyal_missing"].status).toBeUndefined();
+    expect(
+      Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/"))
+    ).toEqual([]);
   });
 
   it("refuses unbounded loyalty credit mint (over 5000)", async () => {
@@ -196,7 +236,7 @@ describe("resolveTicket (real money paths)", () => {
     expect(auditsAfterSecond).toBe(1);
   });
 
-  it("replays idempotently across tickets on the same order, refuses a different amount", async () => {
+  it("treats two tickets on one order as two refund intents — equal amounts are not a replay", async () => {
     savedDocs["support_tickets/tk_rfnd_a"] = {
       ticketNumber: "TICK-2026-0006",
       orderId: "order_rfnd_1",
@@ -208,7 +248,7 @@ describe("resolveTicket (real money paths)", () => {
       customerId: "cust_3",
     };
     savedDocs["orders/order_rfnd_1"] = {
-      payment: { razorpayPaymentId: "pay_live_3" },
+      payment: { razorpayPaymentId: "pay_live_3", capturedAmountPaise: 50000 },
     };
     const first = await resolveTicket({
       ...BASE,
@@ -221,20 +261,27 @@ describe("resolveTicket (real money paths)", () => {
       k.startsWith("payment_audits/")
     ).length;
     expect(auditsAfterFirst).toBe(1);
-    // Same order + same amount on a second ticket: stored receipt replayed,
-    // no second charge, no new audit.
-    const replay = await resolveTicket({
+    // F10: refund identity is the durable request id (ticket + action), not
+    // (order, amount). A different ticket is a different intent, so the same
+    // ₹50 is a NEW refund that must still respect the cumulative captured cap —
+    // it is neither replayed as the first receipt nor silently collapsed.
+    const second = await resolveTicket({
       ...BASE,
       ticketId: "tk_rfnd_b",
       action: "partial_refund",
       amount: 50,
     });
-    expect(replay.success).toBe(true);
-    expect(replay.resolution.refundResult.reused).toBe(true);
-    const auditsAfterReplay = Object.keys(savedDocs).filter((k) =>
+    expect(second.success).toBe(true);
+    expect(second.resolution.refundResult.reused).not.toBe(true);
+    expect(second.resolution.refundResult.id).not.toBe(first.resolution.refundResult.id);
+    const auditsAfterSecond = Object.keys(savedDocs).filter((k) =>
       k.startsWith("payment_audits/")
     ).length;
-    expect(auditsAfterReplay).toBe(1);
+    expect(auditsAfterSecond).toBe(2);
+    const order = savedDocs["orders/order_rfnd_1"];
+    expect(order.refundedTotalPaise).toBe(10000);
+    expect(Object.keys(order.refundLedger)).toHaveLength(2);
+    expect(order.refundStatus).toBe("partially_refunded");
   });
 
   it("refuses a different-amount refund on an already-refunded order (ALREADY_REFUNDED)", async () => {
@@ -365,5 +412,54 @@ describe("addTicketMessage authz (Loop 57/58)", () => {
         caller: { uid: "cust_1", role: "customer" },
       })
     ).rejects.toThrow(/not found/);
+  });
+});
+
+describe("resolveTicketNote (non-money resolution)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    savedDocs["support_tickets/tk_note"] = {
+      ticketNumber: "TICK-2026-0100",
+      customerId: "cust_1",
+      branchId: "branch_a",
+      status: "open",
+    };
+  });
+
+  it("resolves with a timeline entry and no money movement", async () => {
+    const res: any = await resolveTicketNote({
+      ticketId: "tk_note",
+      resolution: "Burger re-fired fresh, customer satisfied.",
+      caller: { uid: "staff_1", role: "branch_staff", branchIds: ["branch_a"] },
+    });
+    expect(res.success).toBe(true);
+    const doc = savedDocs["support_tickets/tk_note"];
+    expect(doc.status).toBe("resolved");
+    expect(doc.resolution).toBe("Burger re-fired fresh, customer satisfied.");
+    expect(doc.timeline).toHaveLength(1);
+    expect(doc.timeline[0]).toMatchObject({ action: "resolved_note" });
+  });
+
+  it("refuses an already-resolved ticket (409, no rewrite)", async () => {
+    savedDocs["support_tickets/tk_done"] = { status: "resolved", branchId: "branch_a" };
+    await expect(
+      resolveTicketNote({
+        ticketId: "tk_done",
+        resolution: "again",
+        caller: { uid: "staff_1", role: "branch_staff", branchIds: ["branch_a"] },
+      })
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(savedDocs["support_tickets/tk_done"].timeline).toBeUndefined();
+  });
+
+  it("denies a cross-branch staffer (403, untouched)", async () => {
+    await expect(
+      resolveTicketNote({
+        ticketId: "tk_note",
+        resolution: "intruder note",
+        caller: { uid: "staff_2", role: "branch_staff", branchIds: ["branch_b"] },
+      })
+    ).rejects.toThrow(/outside your assigned branches/);
+    expect(savedDocs["support_tickets/tk_note"].status).toBe("open");
   });
 });

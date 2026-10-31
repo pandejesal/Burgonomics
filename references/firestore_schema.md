@@ -52,7 +52,7 @@ interface Branch {
   packagingFee?: number;                // e.g. 15 (₹15 standard packaging)
   razorpayAccountId: string;            // "acc_branch_ahmedabad_01" (Razorpay Route linked account)
   features: {
-    porterEnabled: boolean;             // True if Porter courier API is active for this branch
+    porterEnabled: boolean;             // HISTORICAL branch-level flag from the retired Porter era; no current code reads it. The only live Porter switch is the backend env opt-in PORTER_ENABLED="true"
   };
   petpooja: {
     restId: string;
@@ -150,7 +150,7 @@ interface Order {
     subtotal: number;
     taxGst: number;                     // 5% GST
     packingCharge: number;              // server default ₹15.00 flat
-    deliveryFee: number;                // ₹0 if takeaway/dinein; else Porter quote
+    deliveryFee: number;                // ₹0 if takeaway/dinein; else the dispatch quote (Borzo / Shadowfax router quote; historical orders may carry a Porter quote)
     couponDiscount: number;
     loyaltyDiscount: number;            // Capped at max 20% of subtotal
     totalPayable: number;               // whole rupees (server-rounded)
@@ -170,12 +170,25 @@ interface Order {
     lastSyncAt: Timestamp;
   };
   porter?: {
+    // HISTORICAL: the retired Porter integration's order sub-object. Kept so legacy
+    // orders still parse; new bookings only write it if an operator explicitly
+    // re-arms Porter with PORTER_ENABLED="true" (which re-arms full dispatch —
+    // no history-only mode).
     orderId?: string;
     trackingUrl?: string;
     driverName?: string;
     driverPhone?: string;
     status?: 'quoted' | 'driver_assigned' | 'in_transit' | 'delivered' | 'cancelled';
   };
+  // Multi-Provider Delivery Dispatch (Borzo / Shadowfax / restaurant in-house rider)
+  dispatchProvider?: 'borzo' | 'shadowfax' | 'porter'; // 'porter' only if re-armed via PORTER_ENABLED="true"
+  dispatchOrderId?: string;                            // Provider order id (porterOrderId kept as legacy alias)
+  dispatchStatus?: 'dispatch_pending' | 'dispatched' | 'dispatch_failed' | 'manual_pending' | 'cancelled_by_store'; // exact DispatchStatus union (dispatch/types.ts)
+  dispatchType?: string;                               // "manual_branch_terminal" when staff assigns restaurant in-house rider via POST /orders/manualDispatch (never customer pickup)
+  deliveryStatus?: 'dispatched' | 'in_transit' | 'delivered' | 'rider_cancelled' | 'needs_review' | 'dispatch_failed'; // free-form in Firestore; historical rows may carry 'quoted' or 'cancelled'
+  riderName?: string;
+  riderPhone?: string;
+  riderVehicleNumber?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -239,7 +252,9 @@ interface PaymentAudit {
 ```typescript
 interface DevErrorSnapshot {
   id: string;
-  source: 'payments' | 'petpooja' | 'porter' | 'tickets' | 'notifications' | 'auth' | 'system';
+  // 'porter' stays in the union so legacy retired-provider snapshots keep parsing
+  // (matches functions/src/core/errors.ts:7); new Porter captures occur only if re-armed.
+  source: 'payments' | 'petpooja' | 'porter' | 'dispatch' | 'tickets' | 'notifications' | 'auth' | 'system';
   severity: 'low' | 'medium' | 'high' | 'p0_critical';
   message: string;
   orderId?: string;

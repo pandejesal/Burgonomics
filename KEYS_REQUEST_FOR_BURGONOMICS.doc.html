@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Burgonomics — Keys & Actions Required From Company</title></head>
+<body style="font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; line-height: 1.6;">
+<h1>Burgonomics — Keys &amp; Actions Required From Company</h1>
+<p>Hi Burgonomics team,</p>
+<p>To test the app end-to-end and launch to production, please provide the items below. I have split it into <b>what only you can get (needs business KYC / outlet contract)</b> vs <b>what I will handle myself</b>.</p>
+<p>Project: <code>burgonomics-7faa8</code> | Region: <code>asia-south1</code></p>
+<hr>
+<h2>1. Razorpay — Please call / email Razorpay (Test + Live)</h2>
+<p>You need a Razorpay business account. Please share BOTH test and live:</p>
+<ul>
+<li><input type="checkbox"> <code>RAZORPAY_KEY_ID</code> — TEST: <code>rzp_test_...</code></li>
+<li><input type="checkbox"> <code>RAZORPAY_KEY_SECRET</code> — TEST secret</li>
+<li><input type="checkbox"> <code>RAZORPAY_WEBHOOK_SECRET</code> — TEST webhook secret</li>
+<li><input type="checkbox"> <code>RAZORPAY_KEY_ID</code> — LIVE: <code>rzp_live_...</code></li>
+<li><input type="checkbox"> <code>RAZORPAY_KEY_SECRET</code> — LIVE secret (server-only)</li>
+<li><input type="checkbox"> <code>RAZORPAY_WEBHOOK_SECRET</code> — LIVE webhook secret</li>
+<li><input type="checkbox"> <code>razorpayAccountId</code> per branch — e.g. <code>acc_...</code> (for 95% store / 5% royalty auto-split)</li>
+</ul>
+<p><b>What to ask Razorpay for:</b></p>
+<ol>
+<li>Complete business KYC (PAN, GSTIN, FSSAI, current-account + IFSC, brand website)</li>
+<li>Activate <b>Razorpay Route</b> + create Linked Accounts for each outlet</li>
+<li>Dashboard → Settings → API Keys (copy Test + Live)</li>
+<li>Dashboard → Settings → Webhooks — I will give you the URL after backend deploy. Events: <code>payment.captured, payment.failed, refund.processed, transfer.processed</code></li>
+</ol>
+<p>Note: Test keys work immediately. Live keys take 1-3 days after KYC.</p>
+<h2>2. Petpooja — Please call your Petpooja Account Manager (Test + Live)</h2>
+<ul>
+<li><input type="checkbox"> <code>PETPOOJA_APP_KEY</code> — TEST + LIVE (32 chars)</li>
+<li><input type="checkbox"> <code>PETPOOJA_APP_SECRET</code> — TEST + LIVE (40 chars)</li>
+<li><input type="checkbox"> <code>PETPOOJA_ACCESS_TOKEN</code> — TEST + LIVE (40 chars)</li>
+<li><input type="checkbox"> <code>restID</code> for each outlet — e.g. Test: Ahmedabad Central, plus all live stores</li>
+</ul>
+<ol>
+<li>Sandbox outlet credentials for testing + live credentials per outlet</li>
+<li>Confirm each outlet's <code>restID</code></li>
+<li>Whitelist these 2 webhook URLs:<br>
+<code>https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/stockWebhook</code><br>
+<code>https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook</code></li>
+</ol>
+<h2>3. Porter — Please email help@porter.in / porter.in/api-integrations (Live only)</h2>
+<p>Porter has NO sandbox — first live booking is the test.</p>
+<ul>
+<li><input type="checkbox"> <code>PORTER_API_KEY</code> — LIVE x-api-key</li>
+<li><input type="checkbox"> <code>PORTER_CUSTOMER_ID</code> — LIVE Enterprise Customer ID</li>
+<li><input type="checkbox"> <code>PORTER_WEBHOOK_SECRET</code> — LIVE HMAC secret</li>
+<li><input type="checkbox"> Prepaid wallet topped-up (required before volume)</li>
+</ul>
+<p>Webhook: <code>https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/porter/webhook</code></p>
+<h2>4. App Stores — Company-owned (I will build, you publish)</h2>
+<ul>
+<li><input type="checkbox"> Apple Developer Program Organization ($99/yr, needs D-U-N-S + legal entity)</li>
+<li><input type="checkbox"> Google Play Console ($25 one-time)</li>
+<li>Customer: <code>com.glassdoorsstudio.burgonomics</code> / Partner: <code>com.glassdoorsstudio.burgonomics.partner</code></li>
+</ul>
+<h2>5. Business / Legal — Required before Live payments</h2>
+<ul>
+<li><input type="checkbox"> GSTIN + FSSAI license + current-account details</li>
+<li><input type="checkbox"> Live website pages: burgonomics.com/privacy, /terms, /support, /partner/support</li>
+<li><input type="checkbox"> Confirm 95%/5% royalty split per branch</li>
+</ul>
+<hr>
+<h2>What I will handle myself (no action needed from you)</h2>
+<ul>
+<li>Firebase Hosting / Functions deploy (<code>burgonomics-7faa8</code>), Firestore rules + indexes</li>
+<li><code>OTP_HMAC_SECRET</code>, <code>BURGONOMICS_ENV</code>, <code>MOCK_*</code> flags, <code>google-services.json</code>, <code>GoogleService-Info.plist</code>, <code>VITE_FCM_VAPID_KEY</code>, <code>VITE_RECAPTCHA_SITE_KEY</code>, <code>VITE_MAPS_API_KEY</code>, <code>VITE_FIREBASE_*</code></li>
+<li>Reviewer logins: +91 99999 99999 / 123456 + reviewer@burgonomics.com</li>
+<li>Smoke test: test order → KOT print → menu sync → Porter dispatch → OTP delivery</li>
+</ul>
+<h2>Where to send</h2>
+<p>Reply with: 1. Razorpay Test + Live, 2. Petpooja Test + Live, 3. Porter Live, 4. Store account owner email + GSTIN/FSSAI. Once TEST keys arrive I can make the app fully testable. Once LIVE keys + KYC arrive I can go production-ready.</p>
+<p>Thanks!</p>
+</body></html>

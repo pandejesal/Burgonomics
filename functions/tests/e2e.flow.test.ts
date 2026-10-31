@@ -1,55 +1,84 @@
 ﻿import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// Porter is retired (opt-in). This suite exercises Porter booking, so it
+// declares the capability explicitly; hoisted so config sees it at import time.
+vi.hoisted(() => {
+  process.env.PORTER_ENABLED = "true";
+});
+
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
 
-  const mockDb = {
-    collection: (colName: string) => ({
-      doc: (docId: string) => ({
-        id: docId,
-        create: vi.fn(async (data: any) => {
-          const p = `${colName}/${docId}`;
-          if (savedDocs[p]) {
-            const err: any = new Error("Document already exists");
-            err.code = 6;
-            throw err;
-          }
-          savedDocs[p] = data;
-        }),
-        set: vi.fn(async (data: any) => {
-          savedDocs[`${colName}/${docId}`] = {
-            ...(savedDocs[`${colName}/${docId}`] || {}),
-            ...data,
-          };
-        }),
-        get: vi.fn(async () => {
-          const docPath = `${colName}/${docId}`;
-          if (savedDocs[docPath]) {
-            return { exists: true, data: () => savedDocs[docPath], ref: { set: vi.fn(async (d: any) => { savedDocs[docPath] = { ...savedDocs[docPath], ...d }; }) } };
-          }
-          if (colName === "branches") {
-            return {
-              exists: true,
-              data: () => ({
-                id: docId,
-                name: "Burgonomics CG Road",
-                razorpayAccountId: "acc_branch_ahmedabad_1",
-                active: true,
-                branchCoordinates: { lat: 23.0131, lng: 72.5085 },
-              }),
-            };
-          }
+  // Fixture returned by any where() query the shared shim does not model.
+  // `routeTransferStatus: "pending_retry"` makes the doc claimable by the
+  // route-transfer worker's claim transaction (R20), while it still carries
+  // NO branch/pricing/payment linkage — so processDoc must mark it failed
+  // instead of POSTing a payout, exactly as this suite has always asserted.
+  const matchedQueryDoc = { status: "ready", routeTransferStatus: "pending_retry" };
+
+  // Realistic doc-ref factory: refs expose get/set/create so direct reads
+  // AND `tx.get(ref)` / `tx.set(ref, ...)` inside runTransaction work (R20 —
+  // finishVerifiedPayment, the KOT-push claim, the porter dispatch claim,
+  // and the route-transfer worker claim all re-read through the snapshot's
+  // `ref`, exactly like real Firestore DocumentReferences).
+  const docRef = (colName: string, docId: string, fallbackData?: any): any => {
+    const path = `${colName}/${docId}`;
+    const ref: any = {
+      id: docId,
+      path,
+      create: vi.fn(async (data: any) => {
+        if (savedDocs[path]) {
+          const err: any = new Error("Document already exists");
+          err.code = 6;
+          throw err;
+        }
+        savedDocs[path] = data;
+      }),
+      set: vi.fn(async (data: any) => {
+        savedDocs[path] = {
+          ...(savedDocs[path] || {}),
+          ...data,
+        };
+      }),
+      get: vi.fn(async () => {
+        if (savedDocs[path]) {
+          return { exists: true, data: () => savedDocs[path], ref };
+        }
+        if (colName === "products") {
+          // Authoritative catalog: the engine refuses to price an item it
+          // cannot look up, so the fixtures' ids carry their real prices.
+          const catalog: Record<string, number> = { pp_b1: 199, pp_s1: 99 };
+          const price = catalog[docId];
+          return price === undefined
+            ? { exists: false, data: () => ({}), ref }
+            : { exists: true, data: () => ({ price, inStock: true }), ref };
+        }
+        if (colName === "branches") {
           return {
             exists: true,
-            data: () => savedDocs[docPath] || {},
-            ref: {
-              set: vi.fn(async (d: any) => {
-                savedDocs[docPath] = { ...(savedDocs[docPath] || {}), ...d };
-              }),
-            },
+            data: () => ({
+              id: docId,
+              name: "Burgonomics CG Road",
+              razorpayAccountId: "acc_branch_ahmedabad_1",
+              active: true,
+              branchCoordinates: { lat: 23.0131, lng: 72.5085 },
+            }),
+            ref,
           };
-        }),
+        }
+        return {
+          exists: true,
+          data: () => savedDocs[path] || fallbackData || {},
+          ref,
+        };
       }),
+    };
+    return ref;
+  };
+
+  const mockDb: any = {
+    collection: (colName: string) => ({
+      doc: (docId: string) => docRef(colName, docId),
       where: (field: string, op: string, val: any) => {
         const query = {
           where: (f2: string, o2: string, v2: any) => query,
@@ -58,15 +87,8 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
               empty: false,
               docs: [
                 {
-                  ref: {
-                    set: vi.fn(async (data: any) => {
-                      savedDocs[`${colName}/matched_doc`] = {
-                        ...(savedDocs[`${colName}/matched_doc`] || {}),
-                        ...data,
-                      };
-                    }),
-                  },
-                  data: () => ({ status: "ready" }),
+                  ref: docRef(colName, "matched_doc", matchedQueryDoc),
+                  data: () => savedDocs[`${colName}/matched_doc`] || matchedQueryDoc,
                 },
               ],
             }),
@@ -75,6 +97,17 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
         return query;
       },
     }),
+    // R20: realistic transaction seam (mirrors the R06 concurrency fixtures).
+    // get/set delegate to the SAME doc refs the direct path uses, so a tx
+    // read re-materializes current store state; update maps to a merge-set
+    // (orderStatus's optimistic-concurrency write shape).
+    runTransaction: vi.fn(async (fn: any) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+        update: (ref: any, data: any) => ref.set(data, { merge: true }),
+      })
+    ),
     batch: () => ({
       set: vi.fn((ref: any, data: any) => {
         savedDocs[ref.id || "batch_doc"] = data;
@@ -254,7 +287,9 @@ describe("End-to-End Platform Integration Flow", () => {
     const kotPushed = await pushOrderToPetpooja(orderId);
     expect(kotPushed).toBe(true);
     expect(savedDocs[`orders/${orderId}`].petpoojaStatus).toBe("synced");
-    expect(savedDocs[`orders/${orderId}`].kotPrinted).toBe(true);
+    // Finding 5: Relay response / mock does not manufacture kotPrinted
+    expect(savedDocs[`orders/${orderId}`].kotPrinted).toBeUndefined();
+    expect(savedDocs[`orders/${orderId}`].kotPushedAt).toBeDefined();
 
     // 5. Petpooja Webhook: Kitchen status transitions to FOOD_READY (Code 5)
     await handlePetpoojaWebhook({
@@ -324,7 +359,10 @@ describe("End-to-End Platform Integration Flow", () => {
     });
 
     expect(refundResult.id).toBeDefined();
-    expect(savedDocs[`orders/${orderId}`].refundStatus).toBe("refunded");
+    // State honesty: ₹104 of a ₹577 order is a PARTIAL refund — the old
+    // code stamped the terminal "refunded" on it, which both lied to the
+    // board and blocked any designed remainder refund afterward.
+    expect(savedDocs[`orders/${orderId}`].refundStatus).toBe("partially_refunded");
     expect(savedDocs[`orders/${orderId}`].refundAmount).toBe(104);
   });
 

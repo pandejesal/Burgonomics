@@ -1,0 +1,746 @@
+{
+  "generatedAt": "2026-10-05T06:36:28.975Z",
+  "applied": true,
+  "menuDir": "burgonomics-foundation-core/public/images/menu",
+  "filesBefore": 77,
+  "filesAfter": 45,
+  "bytesBefore": 14288996,
+  "bytesAfter": 7426954,
+  "caps": {
+    "maxFileBytes": 307200,
+    "maxTotalBytes": 16777216,
+    "totalOk": true
+  },
+  "staged": {
+    "photos": 43,
+    "bytes": 6742204,
+    "installedForItems": 32,
+    "unmatchedNotInstalled": [
+      "Big Bang/Burning Man.jpeg",
+      "Big Bang/Farm Fresh.jpg",
+      "Classic Burgers/red hot.JPG",
+      "Cold Coffee/Mocha.jpg",
+      "Meals/Red Hot meal.jpg",
+      "MYOB.png",
+      "Shakes/Biscoff Shake.png",
+      "Shakes/Cookie Crumble.JPG",
+      "Shakes/Nutella.JPG"
+    ],
+    "unmatchedNote": "mapping-report.md section (a): 9 staged photos match no menuData item, so they have no menu file to update. MYOB.png is the source the existing banners/myob-banner.png was built from; its owner-final bytes are installed at banners/myob-banner.jpg because that banner breached the 300KB per-file cap."
+  },
+  "bannerImageSwap": {
+    "from": "images/menu/banners/myob-banner.png",
+    "to": "images/menu/banners/myob-banner.jpg",
+    "staged": "MYOB.png",
+    "bannerId": "banner_myob"
+  },
+  "items": [
+    {
+      "item": "American Burger",
+      "categoryId": "big-bang-burgers",
+      "source": null,
+      "final": "images/menu/big-bang-burgers/great-indian-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Great Indian Burger",
+      "categoryId": "big-bang-burgers",
+      "source": "Big Bang/Great Indian.jpg",
+      "final": "images/menu/big-bang-burgers/great-indian-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Gochuchang Burger",
+      "categoryId": "big-bang-burgers",
+      "source": null,
+      "final": "images/menu/big-bang-burgers/great-indian-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Cheese Burst Burger",
+      "categoryId": "big-bang-burgers",
+      "source": "Big Bang/Cheese burst.jpg",
+      "final": "images/menu/big-bang-burgers/cheese-burst-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Tandoori Paneer Burger",
+      "categoryId": "big-bang-burgers",
+      "source": "Big Bang/tandoori paneer.jpg",
+      "final": "images/menu/big-bang-burgers/tandoori-paneer-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Super Hero Burger",
+      "categoryId": "big-bang-burgers",
+      "source": "Big Bang/Super Hero.jpg",
+      "final": "images/menu/big-bang-burgers/super-hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Jr. Hero Burger",
+      "categoryId": "classic-burgers",
+      "source": "Classic Burgers/Jr. Hero.jpeg",
+      "final": "images/menu/classic-burgers/jr-hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Korean Kimchi Burger",
+      "categoryId": "classic-burgers",
+      "source": "Classic Burgers/Korean Kimchi.JPG",
+      "final": "images/menu/classic-burgers/korean-kimchi-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Mexican Mafia Burger",
+      "categoryId": "classic-burgers",
+      "source": "Classic Burgers/Mexican.jpg",
+      "final": "images/menu/classic-burgers/mexican-mafia-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Hero Burger",
+      "categoryId": "classic-burgers",
+      "source": "Classic Burgers/Hero burgr.jpg",
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Veggie Loaded Burger",
+      "categoryId": "classic-burgers",
+      "source": "Classic Burgers/Veggie loaded.jpg",
+      "final": "images/menu/classic-burgers/veggie-loaded-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Kurkure Momos Burger",
+      "categoryId": "classic-burgers",
+      "source": null,
+      "final": "images/menu/classic-burgers/jr-hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Cheese Jalapeño Burger",
+      "categoryId": "classic-burgers",
+      "source": null,
+      "final": "images/menu/classic-burgers/jr-hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Veg Sizzling Burger",
+      "categoryId": "sizzling",
+      "source": "Big Bang/Farm Fresh.jpg",
+      "final": "images/menu/sizzling-burgers/veg-sizzling-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Cheese Supreme Burger",
+      "categoryId": "sizzling",
+      "source": "Big Bang/Cheese burst.jpg",
+      "final": "images/menu/sizzling-burgers/cheese-supreme-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Paneer Supreme Burger",
+      "categoryId": "sizzling",
+      "source": "Big Bang/tandoori paneer.jpg",
+      "final": "images/menu/sizzling-burgers/paneer-supreme-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Classic Dipper Burger",
+      "categoryId": "sydney-s-viral",
+      "source": null,
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Cheese Dipper Burger",
+      "categoryId": "sydney-s-viral",
+      "source": null,
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Galaxy Seal Hero Burger",
+      "categoryId": "ufo-burgers",
+      "source": null,
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Orbit X Paneer Burger",
+      "categoryId": "ufo-burgers",
+      "source": null,
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Cosmic Lava Cheese Burger",
+      "categoryId": "ufo-burgers",
+      "source": null,
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "2 Jr. Hero Burger",
+      "categoryId": "combos",
+      "source": "Meals/hero meal.JPG",
+      "final": "images/menu/combos/2-jr-hero-burger.jpg",
+      "created": true,
+      "relocated": true,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Jr Hero Burger Meal",
+      "categoryId": "combos",
+      "source": "Meals/hero meal.JPG",
+      "final": "images/menu/combos/jr-hero-meal.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Any Classic Burger Meal",
+      "categoryId": "combos",
+      "source": "Meals/hero meal.JPG",
+      "final": "images/menu/combos/classic-burger-meal.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Any Big Bang Burger Meal",
+      "categoryId": "combos",
+      "source": "Meals/big bang meal.JPG",
+      "final": "images/menu/combos/big-bang-meal.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Cheese Slice",
+      "categoryId": "add-ons",
+      "source": null,
+      "final": "images/menu/banners/peri-peri-fries-banner.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Peri Peri",
+      "categoryId": "add-ons",
+      "source": null,
+      "final": "images/menu/banners/peri-peri-fries-banner.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Make It A Meal",
+      "categoryId": "add-ons",
+      "source": null,
+      "final": "images/menu/banners/peri-peri-fries-banner.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Classic Salted Fries",
+      "categoryId": "sides",
+      "source": "Fries/Salted fries.jpg",
+      "final": "images/menu/fries/salted-fries.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Peri Peri Fries",
+      "categoryId": "sides",
+      "source": "Fries/Peri peri fries.JPG",
+      "final": "images/menu/fries/peri-peri-fries.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Onion Rings (5 pcs.)",
+      "categoryId": "sides",
+      "source": null,
+      "final": "images/menu/fries/salted-fries.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Mint Fries",
+      "categoryId": "sides",
+      "source": null,
+      "final": "images/menu/fries/salted-fries.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Peri Peri Cheese Fries",
+      "categoryId": "sides",
+      "source": "Fries/Peri Peri Cheesy.jpeg",
+      "final": "images/menu/fries/peri-peri-cheesy-fries.jpg",
+      "created": false,
+      "relocated": true,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Dirty Fries",
+      "categoryId": "sides",
+      "source": "Fries/Dirty fries.jpg",
+      "final": "images/menu/fries/dirty-fries.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Margherita Pizza",
+      "categoryId": "pizza",
+      "source": "Pizza/margherita pizza.png",
+      "final": "images/menu/pizza/classic-margherita-pizza.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Tandoori Paneer Pizza",
+      "categoryId": "pizza",
+      "source": "Pizza/Tandoori paneer pizza.png",
+      "final": "images/menu/pizza/tandoori-paneer-pizza.jpg",
+      "created": true,
+      "relocated": true,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "The Veg Overload Pizza",
+      "categoryId": "pizza",
+      "source": "Pizza/veggie loaded pizza.jpg",
+      "final": "images/menu/pizza/veg-overload-pizza.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Cheese Heaven Pizza",
+      "categoryId": "pizza",
+      "source": "Pizza/4 cheese.png",
+      "final": "images/menu/pizza/cheesy-heaven-pizza.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "White Sauce Pasta",
+      "categoryId": "pasta",
+      "source": "Pasta/White Sauce.png",
+      "final": "images/menu/pasta/alfredo-cheese-sauce-pasta.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Pink Sauce Pasta",
+      "categoryId": "pasta",
+      "source": "Pasta/Pink and Arrabiata.JPG",
+      "final": "images/menu/pasta/pink-sauce-pasta.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Arrabiata Pasta",
+      "categoryId": "pasta",
+      "source": "Pasta/Pink and Arrabiata.JPG",
+      "final": "images/menu/pasta/arrabiata-pasta.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Veg Momos",
+      "categoryId": "momos",
+      "source": "Momos/MOMOS.JPG",
+      "final": "images/menu/momos/veg-momos-fried.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Veg Cheese Momos",
+      "categoryId": "momos",
+      "source": "Momos/MOMOS.JPG",
+      "final": "images/menu/momos/veg-cheese-momos-fried.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Kurkure Momos",
+      "categoryId": "momos",
+      "source": "Momos/MOMOS.JPG",
+      "final": "images/menu/momos/kurkure-momos.jpg",
+      "created": true,
+      "relocated": true,
+      "fallback": false,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Lemon Iced Tea",
+      "categoryId": "coolers",
+      "source": "Beverages/Lemon Iced Tea.jpg",
+      "final": "images/menu/coolers/lemon-iced-tea.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Peach Iced Tea",
+      "categoryId": "coolers",
+      "source": "Beverages/Peach.jpg",
+      "final": "images/menu/coolers/peach-iced-tea.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Masala Coke",
+      "categoryId": "coolers",
+      "source": "Beverages/Lemon Iced Tea.jpg",
+      "final": "images/menu/coolers/masala-coke.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Kokum Iced Tea",
+      "categoryId": "coolers",
+      "source": "Beverages/Peach.jpg",
+      "final": "images/menu/coolers/kokum-drink.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Oreo Shake",
+      "categoryId": "shakes",
+      "source": "Shakes/Oreo.JPG",
+      "final": "images/menu/thick-shakes/oreo-shake.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Chocolate Shake",
+      "categoryId": "shakes",
+      "source": "Shakes/Chocolate.JPG",
+      "final": "images/menu/thick-shakes/chocolate-shake.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "BlueBerry Shake",
+      "categoryId": "shakes",
+      "source": null,
+      "final": "images/menu/thick-shakes/oreo-shake.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": true,
+      "previouslyReferenced": false
+    },
+    {
+      "item": "Strawberry Oreo Shake",
+      "categoryId": "shakes",
+      "source": "Shakes/Strawberry Shake.png",
+      "final": "images/menu/thick-shakes/strawberry-oreo-shake.jpg",
+      "created": true,
+      "relocated": true,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Classic Cold Coffee",
+      "categoryId": "cold-coffee",
+      "source": "Cold Coffee/Oreo.JPG",
+      "final": "images/menu/beverages/classic-cold-coffee.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Hazlenut Cold Coffee",
+      "categoryId": "cold-coffee",
+      "source": "Cold Coffee/Hazelnut.jpg",
+      "final": "images/menu/beverages/hazelnut-cold-coffee.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Irish Cold Coffee",
+      "categoryId": "cold-coffee",
+      "source": "Cold Coffee/Irish.jpg",
+      "final": "images/menu/beverages/irish-cold-coffee.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    },
+    {
+      "item": "Chocolate Brownie",
+      "categoryId": "desserts",
+      "source": "Brownie/Chocolate Brownie.png",
+      "final": "images/menu/desserts/chocolate-brownie.jpg",
+      "created": false,
+      "relocated": false,
+      "fallback": false,
+      "previouslyReferenced": true
+    }
+  ],
+  "categories": [
+    {
+      "id": "add-ons",
+      "final": "images/menu/banners/peri-peri-fries-banner.jpg",
+      "changed": false
+    },
+    {
+      "id": "big-bang-burgers",
+      "final": "images/menu/big-bang-burgers/great-indian-burger.jpg",
+      "changed": false
+    },
+    {
+      "id": "classic-burgers",
+      "final": "images/menu/classic-burgers/jr-hero-burger.jpg",
+      "changed": false
+    },
+    {
+      "id": "cold-coffee",
+      "final": "images/menu/beverages/classic-cold-coffee.jpg",
+      "changed": false
+    },
+    {
+      "id": "combos",
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "changed": false
+    },
+    {
+      "id": "coolers",
+      "final": "images/menu/coolers/lemon-iced-tea.jpg",
+      "changed": false
+    },
+    {
+      "id": "desserts",
+      "final": "images/menu/desserts/chocolate-brownie.jpg",
+      "changed": false
+    },
+    {
+      "id": "momos",
+      "final": "images/menu/momos/veg-momos-fried.jpg",
+      "changed": false
+    },
+    {
+      "id": "pasta",
+      "final": "images/menu/pasta/pink-sauce-pasta.jpg",
+      "changed": false
+    },
+    {
+      "id": "pizza",
+      "final": "images/menu/pizza/classic-margherita-pizza.jpg",
+      "changed": false
+    },
+    {
+      "id": "shakes",
+      "final": "images/menu/thick-shakes/oreo-shake.jpg",
+      "changed": false
+    },
+    {
+      "id": "sides",
+      "final": "images/menu/fries/salted-fries.jpg",
+      "changed": false
+    },
+    {
+      "id": "sizzling",
+      "final": "images/menu/sizzling-burgers/veg-sizzling-burger.jpg",
+      "changed": false
+    },
+    {
+      "id": "sydney-s-viral",
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "changed": true
+    },
+    {
+      "id": "ufo-burgers",
+      "final": "images/menu/classic-burgers/hero-burger.jpg",
+      "changed": false
+    }
+  ],
+  "banners": [
+    {
+      "id": "banner_big_bang",
+      "final": "images/menu/banners/hero-burger-banner.jpg",
+      "swapped": false
+    },
+    {
+      "id": "banner_big_bang_meal",
+      "final": "images/menu/banners/big-bang-meal-banner.jpg",
+      "swapped": false
+    },
+    {
+      "id": "banner_myob",
+      "final": "images/menu/banners/myob-banner.jpg",
+      "swapped": true
+    },
+    {
+      "id": "banner_peri_peri_fries",
+      "final": "images/menu/banners/peri-peri-fries-banner.jpg",
+      "swapped": false
+    }
+  ],
+  "orphansRemoved": [
+    "images/menu/banners/hero-meal-banner.jpg",
+    "images/menu/banners/myob-banner.png",
+    "images/menu/banners/myob.png",
+    "images/menu/beverages/americano.jpg",
+    "images/menu/beverages/hot-cappuccino.jpg",
+    "images/menu/beverages/hot-chocolate.jpg",
+    "images/menu/beverages/hot-mocha.jpg",
+    "images/menu/beverages/jaggery-hot-chocolate.jpg",
+    "images/menu/beverages/latte.jpg",
+    "images/menu/beverages/mocha-cold-coffee.jpg",
+    "images/menu/big-bang-burgers/burning-man-burger.jpg",
+    "images/menu/big-bang-burgers/farm-fresh-burger.jpg",
+    "images/menu/classic-burgers/red-hot-spicy-burger.jpg",
+    "images/menu/combos/cheese-burst-combo.jpg",
+    "images/menu/combos/great-indian-meal.jpg",
+    "images/menu/combos/kimchi-coffee-combo.jpg",
+    "images/menu/combos/red-hot-meal.jpg",
+    "images/menu/combos/strawberry-shake-veggie-combo.jpg",
+    "images/menu/coolers/blueberry-rosemint-tea.jpg",
+    "images/menu/coolers/hibiscus-iced-tea.jpg",
+    "images/menu/coolers/masala-lemonade.jpg",
+    "images/menu/garlic-bread/cheese-corn-garlic-bread.jpg",
+    "images/menu/garlic-bread/cheese-garlic-bread.jpg",
+    "images/menu/momos/spicy-paneer-momos-fried.jpg",
+    "images/menu/momos/spicy-paneer-momos-steam.jpg",
+    "images/menu/momos/veg-cheese-momos-steam.jpg",
+    "images/menu/momos/veg-momos-steam.jpg",
+    "images/menu/pizza/peri-peri-paneer-pizza.jpg",
+    "images/menu/tandoori_paneer.jpg",
+    "images/menu/thick-shakes/alfanso-mango-shake.jpg",
+    "images/menu/thick-shakes/biscoff-shake.jpg",
+    "images/menu/thick-shakes/brownie-shake.jpg",
+    "images/menu/thick-shakes/cold-coco.jpg",
+    "images/menu/thick-shakes/cookies-cream-shake.jpg",
+    "images/menu/thick-shakes/ferrero-rocher-shake.jpg",
+    "images/menu/thick-shakes/strawberry-cheesecake-shake.jpg",
+    "images/menu/thick-shakes/tiramisu-cheesecake-shake.jpg"
+  ],
+  "brokenRefs": [],
+  "createdBySeed": [
+    "images/menu/combos/2-jr-hero-burger.jpg",
+    "images/menu/pizza/tandoori-paneer-pizza.jpg",
+    "images/menu/momos/kurkure-momos.jpg",
+    "images/menu/thick-shakes/strawberry-oreo-shake.jpg",
+    "images/menu/banners/myob-banner.jpg"
+  ],
+  "overFileCap": []
+}

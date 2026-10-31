@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from "vitest";
 
 const { mockDb, savedDocs, batchUpdates, batchSets, batchDeletes } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
@@ -44,42 +44,79 @@ const { mockDb, savedDocs, batchUpdates, batchSets, batchDeletes } = vi.hoisted(
         };
       },
       where: (field: string, op: string, val: any) => {
-        const createQuery = (filters: Array<{ field: string; op: string; val: any }>) => ({
-          where: (f2: string, o2: string, v2: any) => createQuery([...filters, { field: f2, op: o2, val: v2 }]),
-          limit: (n: number) => ({
-            get: async () => {
-              const matched: any[] = [];
-              for (const [docPath, data] of Object.entries(savedDocs)) {
-                if (!docPath.startsWith(`${colName}/`)) continue;
-                const matchesAll = filters.every((f) => data[f.field] === f.val);
-                if (matchesAll) {
-                  matched.push({
-                    ref: { id: docPath.replace(`${colName}/`, ""), path: docPath },
-                    data: () => data,
-                  });
+        const createQuery = (
+          filters: Array<{ field: string; op: string; val: any }>,
+          orderFields: Array<{ field: any; dir?: string }> = [],
+          cursorDoc: any = null
+        ) => ({
+          where: (f2: string, o2: string, v2: any) =>
+            createQuery([...filters, { field: f2, op: o2, val: v2 }], orderFields, cursorDoc),
+          orderBy: (f2: any, dir: string = "asc") =>
+            createQuery(filters, [...orderFields, { field: f2, dir }], cursorDoc),
+          startAfter: (c: any) =>
+            createQuery(filters, orderFields, c),
+          limit: (n: number) => {
+            const inner = createQuery(filters, orderFields, cursorDoc);
+            return {
+              ...inner,
+              get: async () => {
+                const matched: any[] = [];
+                for (const [docPath, data] of Object.entries(savedDocs)) {
+                  if (!docPath.startsWith(`${colName}/`)) continue;
+                  const matchesAll = filters.every((f) => data[f.field] === f.val);
+                  if (matchesAll) {
+                    const id = docPath.replace(`${colName}/`, "");
+                    matched.push({
+                      id,
+                      ref: { id, path: docPath },
+                      data: () => data,
+                    });
+                  }
                 }
-              }
-              return {
-                empty: matched.length === 0,
-                docs: matched.slice(0, n),
-              };
-            },
-          }),
+                matched.sort((a, b) => a.id.localeCompare(b.id));
+                let sliced = matched;
+                if (cursorDoc) {
+                  const afterId =
+                    typeof cursorDoc === "string"
+                      ? cursorDoc
+                      : cursorDoc?.id || cursorDoc?.ref?.id;
+                  const idx = matched.findIndex((d) => d.id === afterId);
+                  if (idx !== -1) sliced = matched.slice(idx + 1);
+                }
+                return {
+                  empty: sliced.slice(0, n).length === 0,
+                  docs: sliced.slice(0, n),
+                };
+              },
+            };
+          },
           get: async () => {
             const matched: any[] = [];
             for (const [docPath, data] of Object.entries(savedDocs)) {
               if (!docPath.startsWith(`${colName}/`)) continue;
               const matchesAll = filters.every((f) => data[f.field] === f.val);
               if (matchesAll) {
+                const id = docPath.replace(`${colName}/`, "");
                 matched.push({
-                  ref: { id: docPath.replace(`${colName}/`, ""), path: docPath },
+                  id,
+                  ref: { id, path: docPath },
                   data: () => data,
                 });
               }
             }
+            matched.sort((a, b) => a.id.localeCompare(b.id));
+            let sliced = matched;
+            if (cursorDoc) {
+              const afterId =
+                typeof cursorDoc === "string"
+                  ? cursorDoc
+                  : cursorDoc?.id || cursorDoc?.ref?.id;
+              const idx = matched.findIndex((d) => d.id === afterId);
+              if (idx !== -1) sliced = matched.slice(idx + 1);
+            }
             return {
-              empty: matched.length === 0,
-              docs: matched,
+              empty: sliced.length === 0,
+              docs: sliced,
             };
           },
         });
@@ -123,6 +160,9 @@ vi.mock("firebase-admin", () => {
 
   const firestoreFn: any = vi.fn(() => mockDb);
   firestoreFn.FieldValue = FieldValue;
+  firestoreFn.FieldPath = {
+    documentId: () => "__name__",
+  };
 
   // Default: the source UID is a genuine anonymous account (no providers).
   const mockAuth = {
@@ -150,6 +190,21 @@ import {
   verifyBonusEligibility,
   migrateGuestAccount,
 } from "../src/modules/auth/guestMigration";
+
+// H1 fail-closed: every fixture that expects a session relink must present a
+// VALID guest-ownership proof (minted with the isolated test secret), and the
+// negatives below pin missing/forged/cross-UID refusals BEFORE side effects.
+beforeAll(() => {
+  process.env.OTP_HMAC_SECRET = "test-guest-proof-secret";
+});
+afterAll(() => {
+  delete process.env.OTP_HMAC_SECRET;
+});
+
+const proofFor = async (sid: string): Promise<string> => {
+  const { mintGuestOwnershipProof } = await import("../src/modules/auth/guestMigration");
+  return mintGuestOwnershipProof(sid);
+};
 
 describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud Prevention", () => {
   beforeEach(() => {
@@ -261,10 +316,12 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
         ],
       };
 
+      const proof_1 = await proofFor(guestSessionId);
       const migrationResult = await migrateGuestAccount({
         guestSessionId,
         permanentUid,
         phone,
+        guestProof: proof_1,
         addresses: [
           // 1 duplicate address
           { lat: 23.0132, lng: 72.5086, fullAddress: "Existing Home Duplicate" },
@@ -295,12 +352,15 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       expect(updatedUser.hasClaimedWelcomeBonus).toBe(true);
 
       // Readiness-1: the bonus credits the SPENDABLE ledger field
-      // (customers.loyaltyPoints), never the dead users.grillCoins.
-      const coinCredit = batchSets.find(
-        (s: any) => s.ref?.path === `customers/${permanentUid}`
-      );
-      expect(coinCredit).toBeDefined();
-      expect(coinCredit.data.loyaltyPoints).toBe(50);
+      // (customers.loyaltyPoints), never the dead users.grillCoins. The
+      // award is DEFERRED until after the relink batch commits (finding:
+      // ledger-before-batch loss), so it lands outside batchSets now.
+      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
+      // Exactly one deterministic ledger row, alongside the balance. No
+      // OTP-verified caller phone here, so the row is UID-keyed.
+      expect(
+        savedDocs[`coin_transactions/welcome_bonus_uid_${permanentUid}`]
+      ).toMatchObject({ type: "welcome_bonus", amount: 50, customerId: permanentUid });
       const deadWrites = batchSets.filter(
         (s: any) =>
           typeof s.ref?.path === "string" &&
@@ -311,19 +371,138 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       expect(deadWrites).toHaveLength(0);
     });
 
-    it("refuses to migrate orders from an identified (non-anonymous) account", async () => {
-      const { auth } = await import("../src/core/firebase");
-      (auth.getUser as any).mockResolvedValueOnce({
-        uid: "usr_identified_victim",
-        providerData: [{ providerId: "phone" }],
-      });
+    it("a FAILED relink batch never strands the welcome bonus (retry awards it in full)", async () => {
+      // Finding: the ledger row used to be create()d BEFORE the batch — a
+      // failed commit left a "granted" ledger row with no coins, and every
+      // retry read "already claimed". The award now runs after the commit.
+      const guestSessionId = "sess_guest_batchfail_1";
+      const permanentUid = "usr_batchfail_1";
+      savedDocs["orders/ord_batchfail_1"] = {
+        id: "ord_batchfail_1",
+        guestSessionId,
+        customerId: "guest",
+        total: 199,
+      };
 
+      const realBatch = (mockDb as any).batch;
+      (mockDb as any).batch = () => {
+        const b = realBatch();
+        b.commit = async () => {
+          throw new Error("simulated commit failure");
+        };
+        return b;
+      };
+      try {
+        await expect(
+          migrateGuestAccount(
+            { guestSessionId, permanentUid, guestProof: await proofFor(guestSessionId) },
+            { uid: permanentUid }
+          )
+        ).rejects.toThrow(/simulated commit failure/);
+      } finally {
+        (mockDb as any).batch = realBatch;
+      }
+
+      // Nothing was stranded: no ledger row, no balance, no claim flag.
+      expect(
+        Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/welcome_bonus_"))
+      ).toEqual([]);
+      expect(savedDocs[`customers/${permanentUid}`]).toBeUndefined();
+      expect(savedDocs[`users/${permanentUid}`]?.hasClaimedWelcomeBonus).toBeUndefined();
+
+      // The test mock applies batch ops EAGERLY at update() time, so undo
+      // them to simulate a commit that truly never landed on the server.
+      savedDocs["orders/ord_batchfail_1"].customerId = "guest";
+      delete savedDocs["orders/ord_batchfail_1"].migratedAt;
+
+      // Retry (batch healthy again): relink + FULL bonus, exactly once.
+      const retry = await migrateGuestAccount(
+        { guestSessionId, permanentUid, guestProof: await proofFor(guestSessionId) },
+        { uid: permanentUid }
+      );
+      expect(retry.success).toBe(true);
+      expect(retry.migratedOrdersCount).toBe(1);
+      expect(retry.welcomeBonusAwarded).toBe(true);
+      expect(retry.bonusCoins).toBe(50);
+      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
+      expect(
+        savedDocs[`coin_transactions/welcome_bonus_uid_${permanentUid}`]
+      ).toMatchObject({ type: "welcome_bonus", amount: 50 });
+
+      // A THIRD run (double-submit) grants nothing further.
+      const third = await migrateGuestAccount(
+        { guestSessionId, permanentUid, guestProof: await proofFor(guestSessionId) },
+        { uid: permanentUid }
+      );
+      expect(third.welcomeBonusAwarded).toBe(false);
+      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
+    });
+
+    it("H1 fail-closed: cross-UID relink is BLOCKED and the Admin-SDK lookup is never an authorization", async () => {
+      // The old guard looked the source UID up and allowed it when "anonymous"
+      // - a possession inference the Admin SDK cannot make. There is no
+      // supported source-proof mechanism, so cross-UID relink is refused
+      // BEFORE the lookup and before any read/write.
+      const { auth } = await import("../src/core/firebase");
+      (auth.getUser as any).mockClear();
       await expect(
         migrateGuestAccount({
           anonymousUid: "usr_identified_victim",
           permanentUid: "usr_attacker_999",
         })
-      ).rejects.toThrow(/not anonymous/);
+      ).rejects.toMatchObject({
+        code: "MIGRATION_SOURCE_UNOWNED",
+        statusCode: 403,
+      });
+      expect((auth.getUser as any).mock.calls.length).toBe(0);
+    });
+
+    it("H1 fail-closed: session relink WITHOUT a proof is a typed 403 BEFORE any side effect", async () => {
+      savedDocs["orders/ord_noproof_1"] = {
+        id: "ord_noproof_1",
+        guestSessionId: "sess_noproof_h1_12345",
+        customerId: "guest",
+        total: 199,
+      };
+      await expect(
+        migrateGuestAccount(
+          {
+            guestSessionId: "sess_noproof_h1_12345",
+            permanentUid: "usr_noproof_h1",
+          },
+          { uid: "usr_noproof_h1" }
+        )
+      ).rejects.toMatchObject({
+        code: "MIGRATION_PROOF_REQUIRED",
+        statusCode: 403,
+      });
+      // Nothing relinked, nothing minted, nothing happened.
+      expect(savedDocs["orders/ord_noproof_1"].customerId).toBe("guest");
+      expect(savedDocs["orders/ord_noproof_1"].migratedAt).toBeUndefined();
+      expect(savedDocs["carts/guest_sess_noproof_h1_12345"]).toBeUndefined();
+    });
+
+    it("H1 fail-closed: a FORGED (recomputed-not-minted) proof is a 403 BEFORE reads/writes", async () => {
+      savedDocs["orders/ord_forged_h1_1"] = {
+        id: "ord_forged_h1_1",
+        guestSessionId: "sess_forged_h1_12345",
+        customerId: "guest",
+        total: 199,
+      };
+      await expect(
+        migrateGuestAccount(
+          {
+            guestSessionId: "sess_forged_h1_12345",
+            permanentUid: "usr_forged_h1",
+            guestProof: "0".repeat(64), // any hex-like garbage with no mint behind it
+          },
+          { uid: "usr_forged_h1" }
+        )
+      ).rejects.toMatchObject({
+        code: "MIGRATION_PROOF_REQUIRED",
+        statusCode: 403,
+      });
+      expect(savedDocs["orders/ord_forged_h1_1"].customerId).toBe("guest");
     });
 
     it("handles recurring customer sign-in without awarding duplicate welcome bonus", async () => {
@@ -344,6 +523,7 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
           guestSessionId,
           permanentUid,
           phone,
+          guestProof: await proofFor(guestSessionId),
         },
         { uid: permanentUid, phone_number: phone }
       );
@@ -366,8 +546,15 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
         total: 999,
       };
 
+      // Valid proof + still-owner-protected docs: the guest-relink guard's
+      // WITH-proof behavior is pinned (proof valid, but identified docs are
+      // never stolen).
       const result = await migrateGuestAccount(
-        { guestSessionId, permanentUid: "usr_attacker_999" },
+        {
+          guestSessionId,
+          permanentUid: "usr_attacker_999",
+          guestProof: await proofFor(guestSessionId),
+        },
         { uid: "usr_attacker_999" }
       );
 
@@ -379,36 +566,35 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
     });
 
     it("rejects a tampered guest-ownership proof but accepts a valid one", async () => {
-      process.env.OTP_HMAC_SECRET = "test-guest-proof-secret";
-      try {
-        const { mintGuestOwnershipProof } = await import("../src/modules/auth/guestMigration");
-        const guestSessionId = "sess_guest_proofed_12345";
-        const goodProof = mintGuestOwnershipProof(guestSessionId);
+      // H1: the suite-level fixture keeps the isolated proof secret set; the
+      // tamper negative and the mint+accept positive share one mechanism.
+      const guestSessionId = "sess_guest_proofed_12345";
+      const goodProof = await proofFor(guestSessionId);
 
-        savedDocs["orders/ord_proofed_1"] = {
-          id: "ord_proofed_1",
-          guestSessionId,
-          customerId: "guest",
-          total: 199,
-        };
+      savedDocs["orders/ord_proofed_1"] = {
+        id: "ord_proofed_1",
+        guestSessionId,
+        customerId: "guest",
+        total: 199,
+      };
 
-        await expect(
-          migrateGuestAccount(
-            { guestSessionId, permanentUid: "usr_proofed_user", guestProof: `${goodProof}ff` },
-            { uid: "usr_proofed_user" }
-          )
-        ).rejects.toThrow(/invalid guest-ownership proof/);
-        expect(savedDocs["orders/ord_proofed_1"].customerId).toBe("guest");
-
-        const ok = await migrateGuestAccount(
-          { guestSessionId, permanentUid: "usr_proofed_user", guestProof: goodProof },
+      await expect(
+        migrateGuestAccount(
+          { guestSessionId, permanentUid: "usr_proofed_user", guestProof: `${goodProof}ff` },
           { uid: "usr_proofed_user" }
-        );
-        expect(ok.migratedOrdersCount).toBe(1);
-        expect(savedDocs["orders/ord_proofed_1"].customerId).toBe("usr_proofed_user");
-      } finally {
-        delete process.env.OTP_HMAC_SECRET;
-      }
+        )
+      ).rejects.toMatchObject({
+        code: "MIGRATION_PROOF_REQUIRED",
+        statusCode: 403,
+      });
+      expect(savedDocs["orders/ord_proofed_1"].customerId).toBe("guest");
+
+      const ok = await migrateGuestAccount(
+        { guestSessionId, permanentUid: "usr_proofed_user", guestProof: goodProof },
+        { uid: "usr_proofed_user" }
+      );
+      expect(ok.migratedOrdersCount).toBe(1);
+      expect(savedDocs["orders/ord_proofed_1"].customerId).toBe("usr_proofed_user");
     });
 
     it("refuses a body phone that contradicts the OTP-verified token phone", async () => {
@@ -418,6 +604,7 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
             guestSessionId: "sess_guest_phone_clash_1",
             permanentUid: "usr_clash_1",
             phone: "+91 98250 11111",
+            guestProof: await proofFor("sess_guest_phone_clash_1"),
           },
           { uid: "usr_clash_1", phone_number: "+91 98250 22222" }
         )
@@ -450,6 +637,7 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
           guestSessionId: "sess_guest_unverified_ph_1",
           permanentUid: "usr_unverified_ph_1",
           phone: "+91 98250 33333", // unverified body phone: ignored
+          guestProof: await proofFor("sess_guest_unverified_ph_1"),
         },
         { uid: "usr_unverified_ph_1" }
       );

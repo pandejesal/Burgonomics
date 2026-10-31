@@ -4,6 +4,8 @@
 .swarm/
 .swarm-worktrees/
 .firebase/
+~/.local/
+**/opencode-nexus/
 
 # Secrets & credentials (never commit)
 CLIENT_HANDOVER_AND_KEYS.md
@@ -37,3 +39,10 @@ _archive/screenshots/
 # Standalone app repos (own git history)
 burgonomics-foundation-core/
 burgonomics-partner/
+# Agent session traces
+scripts/session_*.json
+scripts/petpooja-ip-watch.log
+scripts/petpooja-sandbox-evidence.json
+
+# Autonomous audit artifacts (local evidence: ledger, bug register, logs, screenshots)
+audit-results/

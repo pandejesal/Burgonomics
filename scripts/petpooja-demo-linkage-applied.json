@@ -1,0 +1,30 @@
+{
+  "appliedAt": "2026-10-17T10:03:16.355Z",
+  "project": "burgonomics-7faa8",
+  "outlet": {
+    "restaurantId": "5439",
+    "restID": "31z58ciw0h"
+  },
+  "writes": [
+    "branches/amar-jawan-circle.petpoojaStoreId = null",
+    "branches/containers-park.petpoojaStoreId = null",
+    "branches/food-valley.petpoojaStoreId = null",
+    "branches/ganesh-glory.petpoojaStoreId = null",
+    "branches/hl-road.petpoojaStoreId = null",
+    "branches/mansi-circle.petpoojaStoreId = null",
+    "branches/motera.petpoojaStoreId = null",
+    "branches/nehru-nagar.petpoojaStoreId = null",
+    "branches/nizampura.petpoojaStoreId = null",
+    "branches/pal-road.petpoojaStoreId = null",
+    "branches/sabri-food-court.petpoojaStoreId = null",
+    "branches/science-city.petpoojaStoreId = null",
+    "branches/sobo.petpoojaStoreId = null",
+    "branches/westbank.petpoojaStoreId = null",
+    "created branches/demo",
+    "created stores/demo"
+  ],
+  "notTouched": {
+    "stores/*.petpoojaRestId": "load-bearing: menuService resolves the store's product scope from it",
+    "branches/*.petpoojaRestId": "read by nothing"
+  }
+}

@@ -5,6 +5,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as functionsV1 from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import express from "express";
+import type { Response } from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 
@@ -25,17 +26,25 @@ import {
   verifyPayment,
   autoRefund,
   retryPendingRouteTransfersWorker,
+  type CreateOrderParams,
 } from "./modules/payments/razorpay.service";
 import { handleRazorpayWebhook } from "./modules/payments/webhookHandler";
 import { disposeRefundRequest } from "./modules/payments/refundRequests";
 import { resolveDiscrepancy } from "./modules/payments/discrepancies";
 import {
   syncPetpoojaMenu,
+  handlePetpoojaMenuWebhook,
+  extractMenuRestId,
   handlePetpoojaStockWebhook,
   handlePetpoojaWebhook,
   pushOrderToPetpooja,
   pushItemStockToPetpooja,
+  runPetpoojaTestScenario,
 } from "./modules/petpooja";
+// Direct module import (not via the barrel): the /petpooja/menu-sync route's
+// 503-vs-400 mapping is a pure helper kept testable without booting this app.
+import { menuSyncFailureStatus } from "./modules/petpooja/menuSyncWebhook";
+import { auditPetpoojaWebhook } from "./modules/petpooja/webhookAudit";
 import {
   syncAllBranchesPetpoojaMenu,
   retryPendingPetpoojaOrdersWorker,
@@ -50,13 +59,30 @@ import {
   manualBranchDispatch,
   pollActivePorterOrdersWorker,
 } from "./modules/porter/porter.service";
+import {
+  dispatchQuote,
+  dispatchBook,
+  dispatchRebook,
+  dispatchCancel,
+  savePorterManualBooking,
+  autoRebookDispatchWorker,
+  sweepStaleDispatchClaims,
+  handleDispatchWebhook,
+} from "./modules/dispatch";
+import {
+  assertDispatchReadinessIfRequired,
+  assertDispatchBookingReadinessIfRequired,
+} from "./modules/dispatch/readiness";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
+import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
 import {
   createTicket,
   addTicketMessage,
   resolveTicket,
+  resolveTicketNote,
   escalateTicket,
 } from "./modules/tickets/tickets.service";
+import { ticketErrorResponse } from "./modules/tickets/ticketRouteErrors";
 import { checkTicketInactivityReminders } from "./modules/tickets/ticketReminder.scheduler";
 import { deleteUserAccount } from "./modules/auth/accountDeletion";
 import {
@@ -67,6 +93,7 @@ import {
   broadcastToDevices,
   BroadcastSchema,
 } from "./modules/notifications/broadcast";
+import { withSchedulerLock } from "./core/schedulerLock";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
@@ -83,6 +110,7 @@ import { adjustCustomerCoins } from "./modules/customers/customerCoins";
 import { assertProductionKeys } from "./config/env";
 import {
   validateBody,
+  normalizeOrderType,
   createPaymentOrderSchema,
   verifyPaymentSchema,
   refundSchema,
@@ -91,9 +119,15 @@ import {
   pushOrderSchema,
   syncMenuSchema,
   pushStockSchema,
+  petpoojaTestRunnerSchema,
   porterBookSchema,
   porterCancelSchema,
   porterQuoteSchema,
+  dispatchQuoteSchema,
+  dispatchBookSchema,
+  dispatchRebookSchema,
+  dispatchPorterManualSchema,
+  dispatchCancelSchema,
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
   orderBumpSchema,
@@ -102,6 +136,7 @@ import {
   ticketMessageSchema,
   resolveTicketSchema,
   escalateTicketSchema,
+  resolveNoteSchema,
   dispatchNotificationSchema,
   registerTokenSchema,
   unregisterTokenSchema,
@@ -114,8 +149,25 @@ import {
   deleteAccountSchema,
 } from "./core/validation";
 
-// Enforce live production keys check on deployment
-assertProductionKeys();
+// Live production-key enforcement.
+//
+// DELIBERATELY LAZY (runs on the first request, not at module import).
+// Import-time enforcement made every `firebase deploy` fail: Firebase's
+// deploy-time source analysis loads this module in a bare node process with no
+// env injected, so `assertProductionKeys()` threw and the CLI reported
+// "User code failed to load. Cannot determine backend specification. Timeout
+// after 10000" — no backend could ever ship. The fail-closed guarantee is
+// unchanged: a booted process refuses to serve while production keys are
+// missing — and because the flag flips only after a PASSING check, it keeps
+// refusing on every later request too (in dev the check is a no-op by design).
+let productionKeysAsserted = false;
+function enforceProductionKeysOnce(): void {
+  if (productionKeysAsserted) return;
+  // Assert BEFORE flipping the flag: if assertProductionKeys() throws, the
+  // guard must keep failing closed on every subsequent request, not fall open.
+  assertProductionKeys();
+  productionKeysAsserted = true;
+}
 
 // Rate limiting middleware
 // F4: provider webhooks arrive from shared egress IPs and monitors poll
@@ -125,8 +177,11 @@ assertProductionKeys();
 const WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES = [
   "/payments/webhook",
   "/porter/webhook",
+  "/dispatch/webhooks/borzo",
+  "/dispatch/webhooks/shadowfax",
   "/petpooja/webhook",
   "/petpooja/stockWebhook",
+  "/petpooja/menu-sync",
   "/health",
   "/config/app",
 ];
@@ -139,7 +194,21 @@ const limiter = rateLimit({
   skip: (req) => WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES.some((p) => req.path === p),
 });
 
-const app = express();
+// Exported for behavioural route tests (they drive the real middleware chain
+// with stubbed services instead of pinning handler source text).
+export const app = express();
+
+// Fail-closed production-key guard (see enforceProductionKeysOnce above): the
+// first request through this process boots the assert, so a misconfigured
+// production deploy refuses to serve instead of silently running in mock mode.
+app.use((req, res, next) => {
+  try {
+    enforceProductionKeysOnce();
+    next();
+  } catch (err: any) {
+    res.status(503).json({ error: err?.message || "Production keys not configured" });
+  }
+});
 
 // Whitelisted CORS origins (Strict 60-30-10 & Production Security)
 const allowedOrigins = [
@@ -203,12 +272,18 @@ app.use(
     "/porter/book",
     "/porter/rebook",
     "/porter/cancel",
+    "/dispatch/quote",
+    "/dispatch/book",
+    "/dispatch/rebook",
+    "/dispatch/porter-manual",
+    "/dispatch/cancel",
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
     "/tickets/create",
     "/tickets/message",
     "/tickets/resolve",
+    "/tickets/resolveNote",
     "/tickets/escalate",
     "/notifications/dispatch",
     "/notifications/subscribe",
@@ -264,26 +339,64 @@ app.get("/config/app", async (_req, res) => {
 
 app.post("/payments/createPaymentOrder", optionalAuth, validateBody(createPaymentOrderSchema), async (req: AuthenticatedRequest, res) => {
   try {
-    const customerId = req.user?.uid || req.body.customerId || "guest";
-    const result = await createPaymentOrder({ ...req.body, customerId });
+    // P0 (auth-bound customer identity): an authenticated caller ALWAYS pays
+    // as themselves — the body customerId is never honoured (it used to let
+    // an anonymous caller debit ANOTHER user's loyalty coins). Unauthenticated
+    // callers are "guest" only, never a body-supplied id.
+    const customerId = req.user?.uid || "guest";
+    // `fulfillment` is a legacy alias for orderType (spec §1) — normalize and
+    // strip before the service sees the body.
+    const { fulfillment: _fulfillmentAlias, ...rest } = req.body as Record<string, any>;
+    const orderType = normalizeOrderType(req.body as any);
+    // validateBody(createPaymentOrderSchema) guarantees items/orderType at
+    // runtime; the rest-spread widens to Record<string, any>, hence the cast.
+    const result = await createPaymentOrder({ ...rest, orderType, customerId } as CreateOrderParams);
     res.status(200).json(result);
   } catch (err: any) {
     // Pass through service status codes (400 validation, 503 retryable
     // outage — the client retries the SAME idempotencyKey, never a fresh one).
-    const status = err.statusCode === 400 || err.statusCode === 503 ? err.statusCode : 500;
-    res.status(status).json({ error: err.message || "Failed to create payment order" });
+    const status = err.statusCode === 400 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 503 ? err.statusCode : 500;
+    res.status(status).json({ error: err.message || "Failed to create payment order", ...(err.code ? { code: err.code } : {}) });
   }
 });
 
 app.post("/payments/verifyPayment", optionalAuth, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
   try {
-    const result = await verifyPayment(req.body);
+    const body = req.body as Record<string, any>;
+    // Legacy shape { paymentId, orderId, signature }: the lone orderId is the
+    // GATEWAY order id — the internal id resolves server-side through the
+    // payment intent (spec §2). Canonical shape carries both ids.
+    const params =
+      typeof body.razorpayPaymentId === "string"
+        ? {
+            orderId: body.orderId as string,
+            razorpayOrderId: body.razorpayOrderId as string,
+            razorpayPaymentId: body.razorpayPaymentId as string,
+            razorpaySignature: body.razorpaySignature as string,
+          }
+        : {
+            orderId: "",
+            razorpayOrderId: body.orderId as string,
+            razorpayPaymentId: body.paymentId as string,
+            razorpaySignature: body.signature as string,
+          };
+    // Ownership gating (spec §2): null = unauthenticated caller (guest) — the
+    // response then carries NO order payload unless a matching guest intent
+    // binds the payment. undefined would mean "trusted internal path", which
+    // the HTTP surface can never produce.
+    const result = await verifyPayment(
+      params,
+      req.user?.uid ? { uid: req.user.uid } : null
+    );
     res.status(200).json(result);
   } catch (err: any) {
     // Pass through service status codes — notably 202 TRANSFER_IN_PROGRESS
     // (client retries verify with the same key in ~2s). Degrading it to 400
     // makes clients treat a live transfer as a hard failure and re-pay.
-    const status = err.statusCode === 202 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 502 || err.statusCode === 503 ? err.statusCode : 400;
+    // 401 INVALID_SIGNATURE must also pass through: collapsing a forged or
+    // empty signature into a generic 400 hides an auth failure behind a
+    // validation error (Track-2 mandate: signature refusals answer 401).
+    const status = err.statusCode === 202 || err.statusCode === 401 || err.statusCode === 404 || err.statusCode === 409 || err.statusCode === 502 || err.statusCode === 503 ? err.statusCode : 400;
     if (err.statusCode === 202 && Number.isFinite(err.retryAfterMs)) {
       res.setHeader("Retry-After", String(Math.ceil(err.retryAfterMs / 1000)));
     }
@@ -420,19 +533,121 @@ app.post(
 );
 
 app.post("/petpooja/stockWebhook", verifyPetpoojaAuth, async (req, res) => {
+  const p = req.body || {};
   try {
-    await handlePetpoojaStockWebhook(req.body);
+    // F6: a stock toggle that was NOT applied must be answered non-2XX. Two
+    // shapes used to answer 200 while nothing happened — a version conflict (the
+    // park document has no drainer) and an unclassified local write failure (the
+    // handler fell off the end). Both are silent 86ing losses: the item stays
+    // orderable for customers while the kitchen believes it is out. 503 tells
+    // Petpooja to redeliver, and the redelivery re-reads the product.
+    const result = await handlePetpoojaStockWebhook(p);
+    const retryable = result?.retryable === true;
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/stockWebhook",
+      outcome: retryable ? "error" : "ok",
+      restId: p.rest_id ?? p.restID ?? p.restId ?? null,
+      itemId: p.item_id ?? p.itemID ?? p.itemId ?? null,
+      detail: retryable ? `not applied (${result.reason || "retry"}) — answered 503 for redelivery` : undefined,
+    });
+    if (retryable) {
+      res.status(503).json({ status: "retry", reason: "stock toggle not applied — redeliver" });
+      return;
+    }
     res.status(200).json({ status: "success" });
   } catch (err: any) {
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/stockWebhook",
+      outcome: "error",
+      restId: p.rest_id ?? p.restID ?? p.restId ?? null,
+      itemId: p.item_id ?? p.itemID ?? p.itemId ?? null,
+      detail: err?.message,
+    });
     res.status(500).json({ error: err.message || "Stock webhook failed" });
   }
 });
 
-app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
+// Menu push webhook: Petpooja desktop POS notifies us of catalog changes and
+// we re-pull the authoritative menu for the linked outlet. Fail-closed auth
+// (verifyPetpoojaAuth) like every other inbound POS webhook — an
+// unauthenticated menu-sync trigger would let anyone fan out catalog pulls.
+app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
+  const p = req.body || {};
   try {
-    await handlePetpoojaWebhook(req.body);
+    const result = await handlePetpoojaMenuWebhook(p);
+    // A menu PUSH nests the outlet code in `restaurants[0].details.menusharingcode`,
+    // NOT in a top-level rest_id — so auditing only the top-level keys recorded
+    // `restId: null` for every refused push and hid WHICH outlet failed (observed
+    // live: a dashboard "Burgonomics API Menu" error whose audit row named no
+    // outlet). Resolve it the same way the handler does.
+    const restId = extractMenuRestId(p);
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/menu-sync",
+      outcome: "ok",
+      restId,
+      itemCount: result.itemCount,
+      detail: result.success ? undefined : "outlet not linked — catalog pull skipped",
+    });
+    // success:false (unlinked outlet) is still a 200 — the payload was valid,
+    // there is nothing for Petpooja to retry; the skip was logged loudly. The
+    // reason is included so the dashboard/bus shows WHY it was refused instead
+    // of a bare failure.
+    res.status(200).json(
+      result.success
+        ? result
+        : {
+            ...result,
+            reason: `outlet ${restId || "(unidentified)"} is not linked — no branch carries it as petpoojaStoreId (Runbook §5)`,
+          }
+    );
+  } catch (err: any) {
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/menu-sync",
+      outcome: "error",
+      restId: extractMenuRestId(p),
+      detail: err?.message,
+    });
+    // A vendor-side lookup refusal (e.g. the outlet's menu file is not
+    // provisioned yet) is transient: 400 would tell Petpooja "your request was
+    // malformed — do not retry". Answer 503 so it retries. Genuine caller errors
+    // (missing rest_id) and malformed bodies keep their 400. The mapping lives in
+    // menuSyncFailureStatus (menu-sync module) so it can be unit-tested without
+    // booting the app; the marker property, never the message text, decides it.
+    res.status(menuSyncFailureStatus(err)).json({ error: err.message || "Menu webhook failed" });
+  }
+});
+
+app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
+  const p = req.body || {};
+  try {
+    // `petpoojaAuthenticated` is false only when the middleware admitted the call
+    // by callback SHAPE (the vendor sends no credential header). The handler uses
+    // it to keep sync state — the POS id and "synced" — out of reach of an
+    // unauthenticated caller.
+    await handlePetpoojaWebhook(p, {
+      authenticated: (req as any).petpoojaAuthenticated !== false,
+    });
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/webhook",
+      outcome: "ok",
+      // Pass the raw body so the audit derives restId through the shared
+      // extractor (rest_id ?? restId ?? restID ?? restaurantid, mirroring the
+      // handler). An order-status callback carries the outlet id as `restID`,
+      // which the previous inline `rest_id ?? restId` list dropped to null.
+      payload: p,
+      orderId: p.order_id ?? p.clientOrderID ?? p.client_order_id ?? null,
+    });
     res.status(200).json({ status: "success" });
   } catch (err: any) {
+    await auditPetpoojaWebhook({
+      endpoint: "/petpooja/webhook",
+      outcome: "error",
+      // See the ok-branch note: derive restId from the raw body via the shared
+      // extractor so a `restID`-shaped callback is attributed, not nulled.
+      payload: p,
+      orderId: p.order_id ?? p.clientOrderID ?? p.client_order_id ?? null,
+      detail: err?.message,
+    });
     res.status(500).json({ error: err.message || "Petpooja webhook failed" });
   }
 });
@@ -462,9 +677,49 @@ app.post(
     try {
       const { branchId, itemId, inStock } = req.body;
       const success = await pushItemStockToPetpooja(branchId, itemId, inStock, req.user);
-      res.status(200).json({ success });
+      if (!success) {
+        // Fail-closed to the KDS: apiRequest only throws on non-2xx, so a
+        // 200 {success:false} would read as "synced" in the Partner app and
+        // the kitchen would believe a rejected/unreachable POS toggle landed.
+        // 502 is retryable client-side; the failure snapshot is already
+        // written server-side (item86ingSync).
+        res.status(502).json({
+          success: false,
+          error: "Petpooja POS did not confirm the stock toggle — not synced",
+        });
+        return;
+      }
+      res.status(200).json({ success: true });
     } catch (err: any) {
       res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Stock push failed" });
+    }
+  }
+);
+
+// MT-01: sandbox 5-scenario relay (dine-in KOT / modifiers / delivery GST+fee /
+// cancel+discount / bulk). Falls back to a `pp_test_*` order id ONLY in mock
+// mode; a live relay must return a real Petpooja order id or it throws.
+app.post(
+  "/petpooja/testRunner",
+  requireAuth,
+  requireRole([
+    "brand_owner",
+    "developer",
+    "branch_owner",
+    "branch_staff",
+    "superadmin",
+    "manager",
+  ]),
+  validateBody(petpoojaTestRunnerSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await runPetpoojaTestScenario(req.body, req.user);
+      res.status(200).json(result);
+    } catch (err: any) {
+      // 403 = zero-mock production refusal or forbidden branch access;
+      // other staff errors map via staffErrorStatus, or keep err.statusCode.
+      const status = err.statusCode || staffErrorStatus(err, 500);
+      res.status(status).json({ error: err.message || "Petpooja test runner failed" });
     }
   }
 );
@@ -475,10 +730,15 @@ app.post(
 
 app.post("/porter/quote", optionalAuth, validateBody(porterQuoteSchema), async (req: AuthenticatedRequest, res) => {
   try {
+    // The direct Porter lane must obey the SAME test-window readiness gate as
+    // the dispatch router. Without it this route could call a provider while a
+    // dispatch mock is active or a live host is configured, and its typed
+    // refusal was previously swallowed by a hardcoded 500.
+    assertDispatchReadinessIfRequired();
     const quote = await getDeliveryQuote(req.body);
     res.status(200).json(quote);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to calculate Porter quote" });
+    sendDispatchError(res, err, "Failed to calculate Porter quote");
   }
 });
 
@@ -490,6 +750,10 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, staffName } = req.body;
+      // Booking is gated separately from quoting: in the test window a real
+      // rider may not be booked until the exclusion is explicitly confirmed.
+      assertDispatchReadinessIfRequired();
+      assertDispatchBookingReadinessIfRequired();
       const result = await bookPorterRider(
         orderId,
         staffName || req.user?.email || "Branch Staff",
@@ -497,7 +761,7 @@ app.post(
       );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to dispatch Porter rider" });
+      sendDispatchError(res, err, "Failed to dispatch Porter rider");
     }
   }
 );
@@ -510,6 +774,8 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, staffName } = req.body;
+      assertDispatchReadinessIfRequired();
+      assertDispatchBookingReadinessIfRequired();
       const result = await rebookPorterRider(
         orderId,
         staffName || req.user?.email || "Branch Staff",
@@ -517,7 +783,7 @@ app.post(
       );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Failed to re-book Porter rider" });
+      sendDispatchError(res, err, "Failed to re-book Porter rider");
     }
   }
 );
@@ -546,6 +812,156 @@ app.post(
   }
 );
 
+// ==========================================
+// 3b. MULTI-PROVIDER DISPATCH ROUTES (delivery_routing.md)
+// ==========================================
+
+// Typed dispatch errors carry an explicit statusCode (202/400/404/409/422/
+// 502/503) so staff UI can branch on the exact failure; everything else
+// falls back to staffErrorStatus. 202 = dispatch already in flight; carries
+// Retry-After so the client's retry lands after the claim settles.
+function dispatchErrorStatus(err: any): number {
+  const known = [202, 400, 404, 409, 422, 502, 503];
+  return known.includes(err?.statusCode) ? err.statusCode : staffErrorStatus(err, 500);
+}
+
+function sendDispatchError(res: Response, err: any, fallback: string): void {
+  const status = dispatchErrorStatus(err);
+  if (status === 202) {
+    res.setHeader("Retry-After", String(Math.ceil((err?.retryAfterMs || 2000) / 1000)));
+  }
+  const extra: Record<string, any> = {};
+  if (err?.attempts) extra.attempts = err.attempts;
+  if (err?.providers) extra.providers = err.providers;
+  if (err?.retryAfterMs) extra.retryAfterMs = err.retryAfterMs;
+  // Carry the machine-readable code through. Without it the app sees only the
+  // human message, so a typed refusal (e.g. DISPATCH_READINESS_FAILED,
+  // DISPATCH_TEST_BOOKING_BLOCKED, PROVIDER_BOOK_AMBIGUOUS) is indistinguishable
+  // from an opaque 500 and cannot be handled or logged precisely.
+  if (typeof err?.code === "string" && err.code) extra.code = err.code;
+  res.status(status).json({ error: err?.message || fallback, ...extra });
+}
+
+app.post("/dispatch/quote", optionalAuth, validateBody(dispatchQuoteSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const quote = await dispatchQuote(req.body);
+    res.status(200).json(quote);
+  } catch (err: any) {
+    sendDispatchError(res, err, "Failed to calculate dispatch quote");
+  }
+});
+
+app.post(
+  "/dispatch/book",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchBookSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await dispatchBook({
+        ...req.body,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to dispatch order");
+    }
+  }
+);
+
+app.post(
+  "/dispatch/rebook",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchRebookSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await dispatchRebook({
+        ...req.body,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to rebook dispatch");
+    }
+  }
+);
+
+app.post(
+  "/dispatch/porter-manual",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchPorterManualSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await savePorterManualBooking({
+        ...req.body,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to save Porter booking");
+    }
+  }
+);
+
+app.post(
+  "/dispatch/cancel",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchCancelSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await dispatchCancel({
+        orderId: req.body.orderId,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to cancel dispatch");
+    }
+  }
+);
+
+app.post("/dispatch/webhooks/borzo", async (req, res) => {
+  try {
+    // Official header is X-DV-Signature (HMAC-SHA256 with the Callback Secret
+    // Key); x-borzo-signature kept as a fallback for pre-doc wiring/tests.
+    const signature =
+      (req.headers["x-dv-signature"] as string) ||
+      (req.headers["x-borzo-signature"] as string) ||
+      "";
+    const rawBody = (req as any).rawBody
+      ? (req as any).rawBody.toString("utf8")
+      : typeof req.body === "string"
+      ? req.body
+      : JSON.stringify(req.body);
+    await handleDispatchWebhook("borzo", rawBody, signature, req.body);
+    res.status(200).json({ status: "success" });
+  } catch (err: any) {
+    res.status(err?.statusCode || staffErrorStatus(err, 500)).json({ error: err.message || "Borzo webhook failed" });
+  }
+});
+
+app.post("/dispatch/webhooks/shadowfax", async (req, res) => {
+  try {
+    const signature = (req.headers["x-shadowfax-signature"] as string) || "";
+    const rawBody = (req as any).rawBody
+      ? (req as any).rawBody.toString("utf8")
+      : typeof req.body === "string"
+      ? req.body
+      : JSON.stringify(req.body);
+    await handleDispatchWebhook("shadowfax", rawBody, signature, req.body);
+    res.status(200).json({ status: "success" });
+  } catch (err: any) {
+    res.status(err?.statusCode || staffErrorStatus(err, 500)).json({ error: err.message || "Shadowfax webhook failed" });
+  }
+});
+
 app.post(
   "/orders/bumpStatus",
   requireAuth,
@@ -556,11 +972,11 @@ app.post(
       const result = await bumpOrderStatus({ ...req.body, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
-      const status =
-        err.statusCode === 400 || err.statusCode === 404
-          ? err.statusCode
-          : staffErrorStatus(err, 500);
-      res.status(status).json({ error: err.message || "Failed to update order status" });
+      // Scoped mapping (bumpRouteErrors): documented 400/403/404/409 refusals
+      // keep their status and machine-readable code; anything else stays the
+      // staff fallback (500) without widening what the body leaks.
+      const { status, body } = bumpStatusErrorResponse(err);
+      res.status(status).json(body);
     }
   }
 );
@@ -655,6 +1071,12 @@ app.post("/tickets/message", requireAuth, validateBody(ticketMessageSchema), asy
   }
 });
 
+// Ticket resolve routes: surface the service's DOCUMENTED refusals (400/403/
+// 404/409 lease/already-resolved, 503 busy-retry) with their machine-readable
+// `code` — a typed "another staff member is resolving this" REFUSAL used to
+// surface as a bare 500 with no code, indistinguishable from a crash. Same
+// posture as sendDispatchError for the dispatch routes. The mapping itself is
+// unit-tested in modules/tickets/ticketRouteErrors.ts.
 app.post(
   "/tickets/resolve",
   requireAuth,
@@ -675,7 +1097,8 @@ app.post(
       const result = await resolveTicket({ ...req.body, resolvedBy, caller });
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to resolve ticket" });
+      const { status, body } = ticketErrorResponse(err, "Failed to resolve ticket");
+      res.status(status).json(body);
     }
   }
 );
@@ -700,6 +1123,25 @@ app.post(
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to escalate ticket" });
+    }
+  }
+);
+
+// Non-money ticket resolution note (staff-only, branch-scoped, timeline-
+// appended). Money actions stay on /tickets/resolve; this route must never
+// move funds.
+app.post(
+  "/tickets/resolveNote",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "support", "branch_owner", "branch_staff"]),
+  validateBody(resolveNoteSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await resolveTicketNote({ ...req.body, caller: req.user });
+      res.status(200).json(result);
+    } catch (err: any) {
+      const { status, body } = ticketErrorResponse(err, "Failed to resolve ticket");
+      res.status(status).json(body);
     }
   }
 );
@@ -798,30 +1240,28 @@ app.post("/notifications/registerToken", requireAuth, validateBody(registerToken
       res.status(400).json({ error: "platform must be ios, android, or web" });
       return;
     }
-    const { db } = await import("./core/firebase");
     const uid = req.user?.uid;
     if (!uid) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const now = admin.firestore.FieldValue.serverTimestamp();
-    await db
-      .collection("device_tokens")
-      .doc(token)
-      .set(
-        { token, userId: uid, platform: platform || "unknown", appVersion: appVersion || null, updatedAt: now },
-        { merge: true }
-      );
-    await db
-      .collection("users")
-      .doc(uid)
-      .set(
-        { fcmTokens: admin.firestore.FieldValue.arrayUnion(token), updatedAt: now },
-        { merge: true }
-      );
-    res.status(200).json({ success: true });
+    // Ownership gate (standing claim): the handler BELOW used to merge
+    // userId: uid unconditionally — a foreign caller silently rebound a token
+    // owned by another account, concurrent registers raced (last write
+    // wins), and ownerless legacy docs were claimable by anyone. The seam
+    // makes claim/refresh/refuse one transaction: authenticated uid only,
+    // foreign/ownerless binding refuses race-safe, and the exact wire
+    // contract (200 {success}, generic 409) is pinned by httpResponseFor's
+    // unit tests.
+    const { registerDeviceToken, httpResponseFor } = await import("./core/deviceTokenRegister");
+    const result = await registerDeviceToken({ token, uid, platform, appVersion });
+    const http = httpResponseFor(result);
+    res.status(http.status).json(http.body);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to register token" });
+    // Fixed body: transaction retry-exhaustion / infra text must not leak to
+    // the client; the detail is logged instead.
+    console.error("[registerToken] registration failed:", err?.message || err);
+    res.status(500).json({ error: "Failed to register token" });
   }
 });
 
@@ -978,15 +1418,35 @@ app.post(
         res.status(400).json({ error: "Missing authenticated customer UID" });
         return;
       }
-      const result = await migrateGuestAccount({
-        ...req.body,
-        permanentUid,
-        phone: req.body.phone || (req.user as any)?.phone_number,
-        email: req.body.email || (req.user as any)?.email,
-      });
+      const result = await migrateGuestAccount(
+        {
+          ...req.body,
+          permanentUid,
+          phone: req.body.phone || (req.user as any)?.phone_number,
+          email: req.body.email || (req.user as any)?.email,
+        },
+        // M4: the second argument is the ID-token-verified caller. Without it
+        // the service's caller/target bind and the OTP-verified-phone
+        // contradiction guard are dead code, so a body phone could overwrite
+        // the profile and a client-supplied target would go unchecked.
+        req.user
+      );
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to migrate guest session" });
+      // Deliberate refusals (target mismatch, contradictory body phone,
+      // missing/invalid guest proof) are typed 4xx. Pass them through so the
+      // client can act (re-auth / pick the right account) instead of retrying
+      // a 500; anything else stays a fail-closed 500.
+      const typed =
+        typeof err?.statusCode === "number" &&
+        err.statusCode >= 400 &&
+        err.statusCode < 500
+          ? err.statusCode
+          : 500;
+      res.status(typed).json({
+        error: err.message || "Failed to migrate guest session",
+        ...(typeof err?.code === "string" && err.code ? { code: err.code } : {}),
+      });
     }
   }
 );
@@ -1042,6 +1502,7 @@ export const api = onRequest(
     maxInstances: 20,
     timeoutSeconds: 60,
     concurrency: 80,
+    invoker: "public",
   },
   app
 );
@@ -1057,8 +1518,18 @@ export const hourlyPetpoojaMenuSync = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await syncAllBranchesPetpoojaMenu();
-    console.log(`[Hourly Sync] Processed ${result.syncedBranches} branches`);
+    // Whole-run overlap guard (TTL < cadence, >> 60s function timeout):
+    // a still-running tick makes the next one skip instead of double-scan.
+    const { ran, result } = await withSchedulerLock(
+      "hourly-petpooja-menu-sync",
+      30 * 60 * 1000,
+      () => syncAllBranchesPetpoojaMenu()
+    );
+    if (!ran) {
+      console.log("[Hourly Sync] previous tick still running — skipped");
+      return;
+    }
+    console.log(`[Hourly Sync] Processed ${result!.syncedBranches} branches`);
   }
 );
 
@@ -1067,10 +1538,22 @@ export const retryPetpoojaOrders = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (M2): the 100-doc window × 15s abort budget can
+    // overrun the 60s v2 default and die mid-claim. 9 minutes bounds it
+    // comfortably (worst case ~375s) so a claimed batch always finishes.
+    timeoutSeconds: 540,
   },
   async () => {
-    const result = await retryPendingPetpoojaOrdersWorker();
-    console.log(`[Retry Worker] Retried ${result.retriedCount} KOT orders`);
+    const { ran, result } = await withSchedulerLock(
+      "retry-petpooja-orders",
+      4 * 60 * 1000,
+      () => retryPendingPetpoojaOrdersWorker()
+    );
+    if (!ran) {
+      console.log("[Retry Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(`[Retry Worker] Retried ${result!.retriedCount} KOT orders`);
   }
 );
 
@@ -1079,10 +1562,22 @@ export const retryRouteTransfers = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (M2): 40 claimed docs × up-to-45s gateway
+    // budget overruns the 60s v2 default and dies mid-claim. 9 minutes
+    // bounds it comfortably (worst case ~450s).
+    timeoutSeconds: 540,
   },
   async () => {
-    const result = await retryPendingRouteTransfersWorker();
-    console.log(`[Route Transfer Retry Worker] Retried ${result.retriedCount} transfers`);
+    const { ran, result } = await withSchedulerLock(
+      "retry-route-transfers",
+      4 * 60 * 1000,
+      () => retryPendingRouteTransfersWorker()
+    );
+    if (!ran) {
+      console.log("[Route Transfer Retry Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(`[Route Transfer Retry Worker] Retried ${result!.retriedCount} transfers`);
   }
 );
 
@@ -1093,8 +1588,16 @@ export const ticketInactivityReminder = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await checkTicketInactivityReminders();
-    console.log(`[Ticket Inactivity Worker] Sent ${result.remindedCount} reminders`);
+    const { ran, result } = await withSchedulerLock(
+      "ticket-inactivity-reminder",
+      10 * 60 * 1000,
+      () => checkTicketInactivityReminders()
+    );
+    if (!ran) {
+      console.log("[Ticket Inactivity Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(`[Ticket Inactivity Worker] Sent ${result!.remindedCount} reminders`);
   }
 );
 
@@ -1105,9 +1608,78 @@ export const pollActivePorterDeliveries = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await pollActivePorterOrdersWorker();
+    const { ran, result } = await withSchedulerLock(
+      "poll-active-porter",
+      4 * 60 * 1000,
+      () => pollActivePorterOrdersWorker()
+    );
+    if (!ran) {
+      console.log("[Porter Polling Worker] previous tick still running — skipped");
+      return;
+    }
     console.log(
-      `[Porter Polling Worker] Polled ${result.polledCount} orders, updated ${result.updatedCount} orders`
+      `[Porter Polling Worker] Polled ${result!.polledCount} orders, updated ${result!.updatedCount} orders`
+    );
+  }
+);
+
+// Auto-rebook worker (mission §3): sweeps orders a CARRIER cancelled (or a
+// dispatch that failed) and re-dispatches with the NEXT alternative provider —
+// never the one that cancelled, never a staff cancel, never past
+// AUTO_REBOOK_MAX_ATTEMPTS. Dead code until this wiring: without a schedule a
+// `carrier_cancelled` order sat waiting for a manual rebook forever.
+export const autoRebookCancelledDispatches = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (F11): up to AUTO_REBOOK_QUERY_LIMIT orders, each
+    // with a fresh quote fan-out + book call (60–90s+ worst case) overruns the
+    // 60s v2 default and would die mid-walk. Matches its sibling workers.
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "auto-rebook-dispatch",
+      4 * 60 * 1000,
+      () => autoRebookDispatchWorker()
+    );
+    if (!ran) {
+      console.log("[Auto Rebook Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Auto Rebook Worker] scanned ${result!.scanned} — rebooked ${result!.rebooked}, failed ${result!.failed}, busy ${result!.busy}, skipped ${result!.skipped}, exhausted ${result!.exhausted}`
+    );
+  }
+);
+
+// Stale-claim sweep (F10 crash lane): an order whose dispatch process died
+// between the provider's create-order POST and our success write keeps only a
+// `dispatch_pending` lease. Once that lease expires, a retry would book a
+// SECOND rider. This sweep parks such orders `needs_reconciliation` (never
+// rebooks) so staff reconcile the possible remote booking.
+export const sweepStaleDispatchClaimsJob = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+    // 25 per tick, each with a transaction re-read + park write: minutes, not
+    // seconds, on a hot collection — never the 60s v2 default.
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "sweep-stale-dispatch-claims",
+      4 * 60 * 1000,
+      () => sweepStaleDispatchClaims()
+    );
+    if (!ran) {
+      console.log("[Stale Claim Sweep] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Stale Claim Sweep] scanned ${result!.scanned} — parked ${result!.parked}`
     );
   }
 );
@@ -1119,8 +1691,16 @@ export const cleanupExpiredGuestSessions = onSchedule(
     timeZone: "Asia/Kolkata",
   },
   async () => {
-    const result = await cleanupExpiredGuestSessionsWorker();
-    console.log(`[Guest Cleanup Worker] Purged ${result.cleanedCartsCount} expired guest carts`);
+    const { ran, result } = await withSchedulerLock(
+      "cleanup-guest-sessions",
+      12 * 60 * 60 * 1000,
+      () => cleanupExpiredGuestSessionsWorker()
+    );
+    if (!ran) {
+      console.log("[Guest Cleanup Worker] previous run still active — skipped");
+      return;
+    }
+    console.log(`[Guest Cleanup Worker] Purged ${result!.cleanedCartsCount} expired guest carts`);
   }
 );
 

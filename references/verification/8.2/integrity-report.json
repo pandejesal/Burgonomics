@@ -1,0 +1,2879 @@
+{
+  "generatedAt": "2026-10-05T06:53:30.281Z",
+  "applied": true,
+  "seedSources": "menuData.json extracted from finale - Copy/src/components/Menu/menuData.js (one-time owner-provided seed for the test build; Petpooja remains the ongoing authoritative menu source per FR-001)",
+  "counts": {
+    "products": {
+      "live": 1512,
+      "expected": 1512
+    },
+    "categories": {
+      "live": 15,
+      "expected": 15
+    },
+    "banners": {
+      "live": 4,
+      "expected": 4
+    }
+  },
+  "writesApplied": 281,
+  "documentsLeftUnchanged": 1250,
+  "changed": {
+    "products": [
+      {
+        "id": "prd_amar-jawan-circle_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_2-jr-hero-burger",
+        "name": "2 Jr. Hero Burger",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_peri-peri-cheese-fries",
+        "name": "Peri Peri Cheese Fries",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_tandoori-paneer-pizza",
+        "name": "Tandoori Paneer Pizza",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_cheese-heaven-pizza",
+        "name": "Cheese Heaven Pizza",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_white-sauce-pasta",
+        "name": "White Sauce Pasta",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_kurkure-momos",
+        "name": "Kurkure Momos",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_kokum-iced-tea",
+        "name": "Kokum Iced Tea",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_chocolate-shake",
+        "name": "Chocolate Shake",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_strawberry-oreo-shake",
+        "name": "Strawberry Oreo Shake",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_amar-jawan-circle_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_nikol",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_cbd-mall_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_cbd-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_containers-park_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_containers_park",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_food-valley_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_food_valley",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ganesh-glory_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_gota",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_ghodasar_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_ghodasar",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_gor-dhod-road_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_gor-dhod-road",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_hl-road_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_navrangpura",
+        "changedKeys": [
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_karnavati-university_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_karnavati-university",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_mansi-circle_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_mansi_circle",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_motera_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_motera",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_narayanpura_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_narayanpura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nehru-nagar_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_nehrunagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_new-ranip_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_new-ranip",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_nizampura_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_nizampura",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pal-road_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_pal_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_patan_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_patan",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_pune_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_pune",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_akshar_chowk_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_akshar_chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_rest_kota_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_kota",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sabri-food-court_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_ayodhya",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_science-city_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_science_city",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_sobo_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_sobo",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_urban-chowk_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_urban-chowk",
+        "changedKeys": [
+          "imageUrls",
+          "imageUrl",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vallabh-vidhyanagar_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_vallabh-vidhyanagar",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_vr-mall_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_vr-mall",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      },
+      {
+        "id": "prd_westbank_hazlenut-cold-coffee",
+        "name": "Hazlenut Cold Coffee",
+        "restId": "rest_raiya_road",
+        "changedKeys": [
+          "imageUrl",
+          "imageUrls",
+          "updatedAt"
+        ]
+      }
+    ],
+    "categories": [
+      {
+        "id": "sydney-s-viral",
+        "changedKeys": [
+          "imageUrl"
+        ]
+      },
+      {
+        "id": "sides",
+        "changedKeys": [
+          "order"
+        ]
+      },
+      {
+        "id": "pizza",
+        "changedKeys": [
+          "order"
+        ]
+      },
+      {
+        "id": "pasta",
+        "changedKeys": [
+          "order"
+        ]
+      },
+      {
+        "id": "momos",
+        "changedKeys": [
+          "order"
+        ]
+      },
+      {
+        "id": "coolers",
+        "changedKeys": [
+          "order"
+        ]
+      },
+      {
+        "id": "shakes",
+        "changedKeys": [
+          "order"
+        ]
+      },
+      {
+        "id": "cold-coffee",
+        "changedKeys": [
+          "order"
+        ]
+      },
+      {
+        "id": "desserts",
+        "changedKeys": [
+          "order"
+        ]
+      },
+      {
+        "id": "add-ons",
+        "changedKeys": [
+          "order"
+        ]
+      }
+    ],
+    "banners": [
+      {
+        "id": "banner_myob",
+        "changedKeys": [
+          "imageUrl"
+        ]
+      }
+    ]
+  },
+  "imageReferencesChecked": 2422,
+  "brokenImageReferences": [],
+  "productImageCoverage": {
+    "docsWithImage": 1161,
+    "docsWithoutImage": 351,
+    "itemsWithoutImage": [
+      "American Burger",
+      "BlueBerry Shake",
+      "Cheese Dipper Burger",
+      "Cheese Jalapeño Burger",
+      "Cheese Slice",
+      "Classic Dipper Burger",
+      "Cosmic Lava Cheese Burger",
+      "Gochuchang Burger",
+      "Kurkure Momos Burger",
+      "Make It A Meal",
+      "Mint Fries",
+      "Onion Rings (5 pcs.)",
+      "Orbit X Paneer Burger"
+    ],
+    "policy": "13 menuData items have no owner-final photo in the staged set. Existing Firestore practice is null-or-own-photo for products, so their imageUrl stays null instead of borrowing a different product's picture. Category images are different and may be shared, so sydney-s-viral (previously null) is seeded with the same fallback its products use."
+  },
+  "categoryOrder": [
+    {
+      "id": "big-bang-burgers",
+      "order": "1"
+    },
+    {
+      "id": "classic-burgers",
+      "order": "2"
+    },
+    {
+      "id": "sizzling",
+      "order": "3"
+    },
+    {
+      "id": "sydney-s-viral",
+      "order": "4"
+    },
+    {
+      "id": "ufo-burgers",
+      "order": "5"
+    },
+    {
+      "id": "combos",
+      "order": "6"
+    },
+    {
+      "id": "sides",
+      "order": "7"
+    },
+    {
+      "id": "pizza",
+      "order": "8"
+    },
+    {
+      "id": "pasta",
+      "order": "9"
+    },
+    {
+      "id": "momos",
+      "order": "10"
+    },
+    {
+      "id": "coolers",
+      "order": "11"
+    },
+    {
+      "id": "shakes",
+      "order": "12"
+    },
+    {
+      "id": "cold-coffee",
+      "order": "13"
+    },
+    {
+      "id": "desserts",
+      "order": "14"
+    },
+    {
+      "id": "add-ons",
+      "order": "15"
+    }
+  ],
+  "itemsVerified": 56,
+  "itemsCheckedAcrossAllBranches": true,
+  "mismatched": [],
+  "verdict": "PASS",
+  "petpoojaDisclosure": "Petpooja remains the ongoing authoritative menu source (FR-001). This seed is a one-time owner-provided refresh of the test build; a future Petpooja sync may overwrite these documents."
+}

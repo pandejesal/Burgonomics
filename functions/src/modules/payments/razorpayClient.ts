@@ -1,4 +1,4 @@
-import { config } from "../../config/env";
+import { config, isDeclaredProduction, isRazorpayTestKeyId } from "../../config/env";
 
 /**
  * Single owning module for the Razorpay SDK client (Batch 1 S1 — H-R3/H11).
@@ -19,6 +19,13 @@ function assertLiveKeys(): { keyId: string; keySecret: string } {
     throw new Error(
       "Razorpay live keys missing — refusing gateway call (fail-closed). " +
         "Set RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET in functions/.env."
+    );
+  }
+  // Production + test-mode key: refuse at the last possible moment (the boot
+  // assert is the primary gate; this one catches a post-boot env swap).
+  if (isDeclaredProduction() && isRazorpayTestKeyId(keyId)) {
+    throw new Error(
+      "Razorpay test-mode key (rzp_test_*) configured in production — refusing gateway call (fail-closed)."
     );
   }
   return { keyId, keySecret };
@@ -51,12 +58,33 @@ export function getRazorpayClient(): any {
 /**
  * Publishable key id for checkout. Safe to return the mock id in mock mode
  * (it only identifies the gateway order to Razorpay.js, never authorizes).
+ *
+ * Belt-and-braces on the same fail-closed rule as the boot assert and
+ * `assertLiveKeys()`: the idempotency-reuse and claim-race paths hand a key
+ * id back WITHOUT ever building the SDK client, so an rzp_test_* id could
+ * otherwise reach a production checkout (customers would open Razorpay.js
+ * against the test realm and "pay" into nothing).
  */
 export function getRazorpayKeyId(): string {
+  if (isDeclaredProduction() && isRazorpayTestKeyId(config.razorpay.keyId)) {
+    throw new Error(
+      "Razorpay test-mode key (rzp_test_*) configured in production — refusing to hand it to checkout (fail-closed)."
+    );
+  }
   return config.razorpay.keyId;
 }
 
 /** Test seam: drop the cached SDK instance between tests. */
 export function __resetRazorpayClientForTests(): void {
   cachedClient = null;
+}
+
+/**
+ * Test seam: inject a stub SDK instance so the reconcile-before-POST and
+ * transfer-POST paths in `routeTransfers.ts` can be exercised without a
+ * network round-trip. Pass null to fall back to the real client builder.
+ * (Same convention as `__setPaymentsFetchForTests` in razorpay.service.ts.)
+ */
+export function __setRazorpayClientForTests(client: any): void {
+  cachedClient = client;
 }

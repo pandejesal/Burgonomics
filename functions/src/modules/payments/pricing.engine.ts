@@ -28,7 +28,8 @@ export interface PricingBreakdown {
   discount: number;
   loyaltyDiscount: number;
   grandTotal: number;
-  /** True when branch/coupon reads fell back to defaults — price is degraded. */
+  /** True when pricing used a default input (no branchId → default packaging).
+   *  Catalog read failures refuse with 503; they never degrade to a client price. */
   pricingDegraded: boolean;
   split: {
     royaltyPercentage: number;
@@ -115,6 +116,20 @@ export async function calculateOrderPricing(
   // (db.getAll) instead of N sequential gets; degrades to sequential on
   // Firestore shims without getAll, and to client prices on read failure.
   const catalogPrices = new Map<string, number>();
+  // Availability is captured from the SAME snapshot as the price. Until now the
+  // cart was the ONLY availability gate and it is client-side: a line added
+  // before an 86, or from a stale menu, was still priced and charged. Reading
+  // it here costs no extra query and refuses to trust client cart state.
+  const catalogAvailability = new Map<string, unknown>();
+  // Per-line read failures (sequential path only). A transient read error is
+  // an OUTAGE for that line, not a price: the catalog is the only
+  // authoritative source, so the basket is refused with the same retryable
+  // 503 a catalog-layer failure returns (below). A doc that genuinely does
+  // not exist is a different outcome (409 ITEM_PRICE_UNVERIFIED).
+  const catalogReadErrors = new Set<string>();
+  // True when a pricing INPUT fell back to a default (no branchId → default
+  // packaging). Lines are never priced from client input any more.
+  let pricingDegraded = false;
   const wantedIds = [...new Set(input.items.map((i) => i.productId || i.id).filter(Boolean))];
   // True only when reads themselves threw (outage) — distinct from docs that
   // merely lack a price field (data shape, keeps per-item fallback).
@@ -122,12 +137,30 @@ export async function calculateOrderPricing(
   if (wantedIds.length > 0 && db && typeof db.collection === "function") {
     try {
       if (typeof (db as any).getAll === "function") {
-        const refs = wantedIds.map((id) => db.collection("products").doc(id as string));
-        const snaps = await (db as any).getAll(...refs);
-        for (const snap of snaps) {
-          const data = snap.data();
-          if (snap.exists && typeof data?.price === "number") {
-            catalogPrices.set(snap.id, data.price);
+        try {
+          const refs = wantedIds.map((id) => db.collection("products").doc(id as string));
+          const snaps = await (db as any).getAll(...refs);
+          for (const snap of snaps) {
+            const data = snap.data();
+            if (snap.exists && typeof data?.price === "number") {
+              catalogPrices.set(snap.id, data.price);
+              catalogAvailability.set(snap.id, data?.inStock);
+            }
+          }
+        } catch {
+          // If getAll throws (e.g. single doc error or unsupported batch), degrade to sequential gets
+          for (const id of wantedIds) {
+            try {
+              const snap = await db.collection("products").doc(id as string).get();
+              const data = snap.data();
+              if (snap.exists && typeof data?.price === "number") {
+                catalogPrices.set(id as string, data.price);
+                catalogAvailability.set(id as string, data?.inStock);
+              }
+            } catch {
+              catalogReadFailed = true;
+              catalogReadErrors.add(id as string);
+            }
           }
         }
       } else {
@@ -137,33 +170,40 @@ export async function calculateOrderPricing(
             const data = snap.data();
             if (snap.exists && typeof data?.price === "number") {
               catalogPrices.set(id as string, data.price);
+              catalogAvailability.set(id as string, data?.inStock);
             }
           } catch {
             catalogReadFailed = true;
+            catalogReadErrors.add(id as string);
             // Fallback to validated client price for this item
           }
         }
       }
     } catch (err) {
       catalogReadFailed = true;
-      // Fallback to validated client prices — but never silently: a blind
-      // catalog read failure prices the whole order off untrusted input.
+      // A failure outside the per-document reads means the catalog layer
+      // itself is unavailable. Do NOT mark every wanted id as a transient
+      // per-line failure: that would let a genuinely missing product fall back
+      // to a client price. Fail closed with a retryable 503 instead.
       const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
         captureErrorSnapshot: async () => {},
       }));
       await captureErrorSnapshot({
         source: "payments",
         severity: "high",
-        message: `Catalog price resolution failed, falling back to client prices (${wantedIds.length} items)`,
+        message: `Catalog price resolution failed (${wantedIds.length} items)`,
         branchId: input.branchId,
       }).catch(() => undefined);
       void err;
+      const outage: any = new Error("Menu pricing is temporarily unavailable — please retry checkout.");
+      outage.statusCode = 503;
+      throw outage;
     }
   }
 
   // Fail CLOSED on total catalog outage: pricing the whole order off
   // untrusted client input turns any Firestore blip into arbitrary charges.
-  // Partial misses keep per-item fallback (flagged via pricingDegraded).
+  // Partial read failures are refused per line below.
   if (wantedIds.length > 0 && catalogPrices.size === 0 && catalogReadFailed) {
     const err: any = new Error("Menu pricing is temporarily unavailable — please retry checkout.");
     err.statusCode = 503;
@@ -172,9 +212,55 @@ export async function calculateOrderPricing(
 
   for (const item of input.items) {
     let unitPrice = computeItemUnitPrice(item);
-    const catalogPrice = catalogPrices.get(item.productId || item.id);
+    const itemKey = item.productId || item.id;
+    const catalogPrice = catalogPrices.get(itemKey);
     if (catalogPrice !== undefined) {
+      // Money-time ELIGIBILITY. Only an EXPLICIT false blocks the line: product
+      // docs written by the combo builder and brand imports predate `inStock`
+      // and are legitimately sellable. An explicit 86 still fails closed, and
+      // the availability value comes from the same snapshot as the price.
+      if (catalogAvailability.get(itemKey) === false) {
+        const unavailable: any = new Error(
+          `${String((item as any)?.name || "An item")} is no longer available — please review your cart.`
+        );
+        unavailable.statusCode = 409;
+        unavailable.code = "ITEM_UNAVAILABLE";
+        throw unavailable;
+      }
       unitPrice = applyCatalogBasePrice(item, catalogPrice);
+    } else if (catalogReadErrors.has(itemKey)) {
+      // The read for THIS line threw while the catalog as a whole answered:
+      // refuse the basket with the same retryable outage as a catalog-layer
+      // failure. Charging `item.price` here would let a Firestore blip turn
+      // the client-supplied amount into the authoritative charge — the old
+      // fallback reported that as "degraded" and still completed the sale.
+      const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
+        captureErrorSnapshot: async () => {},
+      }));
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Catalog price read failed for ${itemKey} — refused basket (retryable outage)`,
+        branchId: input.branchId,
+      }).catch(() => undefined);
+      const outage: any = new Error(
+        "Menu pricing is temporarily unavailable — please retry checkout."
+      );
+      outage.statusCode = 503;
+      throw outage;
+    } else {
+      // FAIL CLOSED on an unverifiable price. The catalog is the only
+      // authoritative price source, so charging the price the CLIENT sent for a
+      // product we cannot look up lets an arbitrary request value set the
+      // amount. A deleted, foreign or mistyped product is refused instead of
+      // silently priced, because "we could not verify it" is not a licence to
+      // charge it.
+      const unverified: any = new Error(
+        `${String((item as any)?.name || "An item")} could not be verified against the menu — please refresh your cart and try again.`
+      );
+      unverified.statusCode = 409;
+      unverified.code = "ITEM_PRICE_UNVERIFIED";
+      throw unverified;
     }
 
     const qty = Math.max(1, Math.floor(Number(item.quantity) || 1));
@@ -188,9 +274,6 @@ export async function calculateOrderPricing(
   let royaltyPercentage = 5; // Default 5% brand royalty (spec: 95/5 split)
   let packagingFee = input.packagingFee ?? 15; // Default ₹15 packaging
   let couponDoc: any = null;
-  // True when any pricing input fell back to defaults — surfaced on the
-  // result so callers/ops can distinguish a clean price from a degraded one.
-  let pricingDegraded = false;
 
   const couponCode = input.couponCode?.trim().toUpperCase();
   const branchRead: Promise<void> =
@@ -207,7 +290,19 @@ export async function calculateOrderPricing(
             if (branchSnap.exists) {
               const branchData = branchSnap.data();
               if (typeof branchData?.royaltyPercentage === "number") {
-                royaltyPercentage = branchData.royaltyPercentage;
+                const rp = branchData.royaltyPercentage;
+                // Bounds before use: a corrupt rate (>100%, negative, NaN)
+                // would mint a NEGATIVE branch leg (split > 100% of net
+                // food), which attemptRouteTransfer then refuses forever —
+                // a permanently stuck Route settlement for every order at
+                // this branch. Refuse to price instead (mapped to the same
+                // fail-closed 503 below), exactly like a missing branch doc.
+                if (!Number.isFinite(rp) || rp < 0 || rp > 100) {
+                  throw new Error(
+                    `branch royaltyPercentage ${String(rp)} outside [0,100] for ${input.branchId} — refusing to price (corrupt royalty config would strand the Route split)`
+                  );
+                }
+                royaltyPercentage = rp;
               }
               if (typeof branchData?.packagingFee === "number") {
                 packagingFee = branchData.packagingFee;
@@ -274,6 +369,13 @@ export async function calculateOrderPricing(
       : Promise.resolve();
   await Promise.all([branchRead, couponRead]);
 
+  // No branch to read means the default packaging fee stands. That IS a
+  // fallback, so it must be visible rather than silent — the flag loses its
+  // old meaning (client-priced lines) now that those are refused outright.
+  if (!input.branchId) {
+    pricingDegraded = true;
+  }
+
   // If takeaway or dinein, adjust delivery fee to 0
   const deliveryFee =
     input.orderType === "delivery" ? Math.max(0, Number(input.deliveryFee) || 0) : 0;
@@ -313,7 +415,10 @@ export async function calculateOrderPricing(
                   : (c.discount ?? c.value ?? c.amount ?? 0);
               // respect coupon maxDiscount cap if set
               const capped = c.maxDiscount ? Math.min(raw, c.maxDiscount) : raw;
-              discount = Math.min(capped, foodSubtotal);
+              // P2 clamp: a corrupt negative discount (console edit / bad
+              // import) must never INFLATE the bill — discount floors at 0
+              // and ceilings at the food subtotal.
+              discount = Math.max(0, Math.min(capped, foodSubtotal));
             }
           }
     }

@@ -7,6 +7,15 @@
 
 ## 🟢 Resolved Items (Reference)
 
+> **Retired-provider note (2026-10-22; code retirement in root `086b60d`, business sign-off date not recorded here).** Porter has since been
+> RETIRED as a dispatch partner (root `086b60d`): dispatch is Borzo / Shadowfax or the restaurant's
+> own in-house rider via `POST /orders/manualDispatch` (`deliveryStatus: "dispatched"`,
+> `dispatchType: "manual_branch_terminal"` — restaurant-driven delivery, never customer pickup).
+> The Porter rows below are kept verbatim as historical resolution records — they describe work
+> that was real at the time, not an active provider commitment to configure. Porter's code paths
+> (quote, `bookPorterRider`, webhook HMAC, paste lane, reconciliation) remain real but cold:
+> `PORTER_ENABLED="true"` must be explicitly set to re-arm full dispatch (no history-only mode).
+
 | Issue | Resolution | Area |
 |---|---|---|
 | Petpooja `isVeg` boolean parsing | Removed `|| true` tautology in `petpooja.service.ts`, correctly differentiating Veg (`"1"`) vs NonVeg (`"2"`) | Integrations / Petpooja |
@@ -60,7 +69,7 @@
 
 | ID | Area | Item Description | Status / Next Step |
 |---|---|---|---|
-| **R1** | Logistics | Live Porter API production credentials flip (`PORTER_API_KEY`, `PORTER_CUSTOMER_ID`, `PORTER_WEBHOOK_SECRET`) | Set in `functions/.env` and toggle `MOCK_PORTER_DISPATCH=false` |
+| **R1** | Logistics | ~~Live Porter API production credentials flip~~ **Porter is RETIRED (code retirement in root `086b60d`; business sign-off date not recorded here).** Re-arming is a deliberate operator decision: add `PORTER_ENABLED="true"` (this fully re-arms dispatch - new quotes, paid booking, rebooking; there is no history-only mode), then `PORTER_API_KEY` / `PORTER_CUSTOMER_ID` / `PORTER_WEBHOOK_SECRET`, and toggle `MOCK_PORTER_DISPATCH=false`. Do not arm without the business decision. |
 | **R2** | POS Sync | Petpooja live branch credentials configuration (`PETPOOJA_APP_KEY`, `PETPOOJA_APP_SECRET`, `PETPOOJA_ACCESS_TOKEN`) | Set in `functions/.env` and toggle `MOCK_PETPOOJA_POS=false` |
 | **R3** | Payment | Razorpay Route linked account onboarding for new franchise branches | Self-serve via Partner App / Branch settings (`branches/{id}.razorpayAccountId`) |
 | **R4** | Mobile | Native App Store Connect & Google Play Console app submission | Build `.aab` (Android) and Xcode Archive `.ipa` (iOS) via [RELEASE_AND_INTEGRATION_GUIDE.md](file:///c:/Users/DELL/Desktop/Burgonomics/RELEASE_AND_INTEGRATION_GUIDE.md) |

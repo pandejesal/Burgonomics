@@ -1,0 +1,227 @@
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
+
+/**
+ * Borzo contact-phone normalisation (lane 09).
+ *
+ * Borzo's Business API 1.8 documents the contact phone as `91` + a 10-digit
+ * national number ("918880000001"). The adapter used to normalise every input
+ * of 12+ digits by slicing to 12, so a 13-digit value such as a number written
+ * with a country code AND a trunk 0 ("+91 098250 12345" -> "9109825012345")
+ * was silently converted into "910982501234" — a different, plausible-looking
+ * phone number sent to Borzo on a LIVE booking/quote. A courier would then ring
+ * someone who is not the branch.
+ *
+ * These tests pin the wire behaviour: only unambiguous 10/11/12-digit inputs
+ * are normalised; anything else is null, the QUOTE omits the key (honest
+ * "unknown" per the adapter's own contract), and the BOOKING fails closed
+ * before any network call. The existing provider-contract pins
+ * ("+91 98250 12345" -> "919825012345") are the positive controls for the
+ * unchanged cases.
+ */
+
+vi.mock("firebase-admin", () => {
+  const FieldValue = {
+    serverTimestamp: () => "MOCK_TIMESTAMP",
+    increment: (n: number) => n,
+    arrayUnion: (item: any) => [item],
+  };
+  const firestoreFn: any = vi.fn(() => ({}));
+  firestoreFn.FieldValue = FieldValue;
+  return {
+    default: {
+      firestore: firestoreFn,
+      auth: vi.fn(() => ({})),
+      messaging: vi.fn(() => ({})),
+      initializeApp: vi.fn(),
+      apps: [{ name: "mock" }],
+    },
+    firestore: firestoreFn,
+    auth: vi.fn(() => ({})),
+    messaging: vi.fn(() => ({})),
+    initializeApp: vi.fn(),
+    apps: [{ name: "mock" }],
+  };
+});
+
+import { borzoAdapter } from "../src/modules/dispatch/providers/borzo.adapter";
+import { config } from "../src/config/env";
+
+const PICKUP = { lat: 23.0131, lng: 72.5085 };
+const DROP = { lat: 23.0338, lng: 72.5262 };
+
+const okJson = (data: any, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+
+const CALC_OK = () =>
+  okJson({ is_successful: true, order: { payment_amount: "60.00", order_id: "CALC-1" } });
+const CREATE_OK = () => okJson({ is_successful: true, order: { order_id: "BZ-PHONE-1" } });
+
+const QUOTE = {
+  provider: "borzo" as const,
+  outcome: "ok" as const,
+  fare: 60,
+  distanceKm: 5,
+  pickupEtaMinutes: 8,
+  quoteId: "QTE-BORZO-phone-test",
+  expiresAt: Date.now() + 60_000,
+  source: "borzo_mock_rate_card",
+};
+
+/** Quote context with a caller-chosen branch phone (the wire's pickup contact). */
+function quoteCtx(branchPhone: string | undefined): any {
+  return {
+    pickup: PICKUP,
+    drop: DROP,
+    customerName: "Aarav Shah",
+    customerPhone: "+91 99999 88888",
+    order: {
+      branchName: "Burgonomics CG Road",
+      store: branchPhone === undefined ? { name: "Burgonomics CG Road" } : { name: "Burgonomics CG Road", phone: branchPhone },
+      deliveryAddress: {
+        full: "102, Shivalik Highstreet, Vastrapur",
+        city: "Ahmedabad",
+        lat: DROP.lat,
+        lng: DROP.lng,
+      },
+    },
+  };
+}
+
+function bookCtx(branchPhone: string | undefined): any {
+  return { ...quoteCtx(branchPhone), orderId: "ord_phone_probe" };
+}
+
+const originalFetch = globalThis.fetch;
+let sentBodies: any[] = [];
+let fetchHandler: (() => Response) | null = null;
+
+beforeAll(() => {
+  globalThis.fetch = vi.fn(async (_url: any, init: any) => {
+    sentBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+    return fetchHandler ? fetchHandler() : okJson({ message: "no handler" }, 404);
+  }) as any;
+});
+
+afterAll(() => {
+  globalThis.fetch = originalFetch;
+});
+
+let saved: any = {};
+
+beforeEach(() => {
+  saved = { borzo: { ...config.borzo }, mock: { ...config.mock } };
+  config.borzo.enabled = true;
+  config.borzo.apiKey = "test_borzo_key";
+  config.mock.borzoDispatch = false;
+  sentBodies = [];
+  fetchHandler = null;
+});
+
+afterEach(() => {
+  config.borzo = { ...saved.borzo };
+  config.mock = { ...saved.mock };
+});
+
+describe("borzo contact phone normalisation (never invent a recipient)", () => {
+  it.each([
+    ["+91 98250 12345", "919825012345"],
+    ["919825012345", "919825012345"],
+    ["098250 12345", "919825012345"],
+    ["9825012345", "919825012345"],
+    ["+91-98250-12345", "919825012345"],
+  ])("normalises %s to %s on the wire", async (input, expected) => {
+    fetchHandler = CALC_OK;
+
+    const quote = await borzoAdapter.quote(quoteCtx(input));
+
+    expect(quote.outcome).toBe("ok");
+    expect(sentBodies).toHaveLength(1);
+    expect(sentBodies[0].points[0].contact_person.phone).toBe(expected);
+  });
+
+  it("a 10-digit trunk form (leading 0) is not turned into a mobile number", async () => {
+    fetchHandler = CALC_OK;
+
+    // "0982501234" is a 10-digit STD form, not a national mobile: "91" + it
+    // would be the same wrong-recipient fabrication the length rule refuses.
+    const quote = await borzoAdapter.quote(quoteCtx("0982501234"));
+
+    expect(quote.outcome).toBe("ok");
+    expect(sentBodies[0].points[0].contact_person.phone).toBeUndefined();
+    expect(JSON.stringify(sentBodies[0])).not.toContain("910982501234");
+  });
+
+  it("a 12-digit value that does not start with 91 is refused, not sent as-is", async () => {
+    fetchHandler = CALC_OK;
+
+    // "098250012345" is 12 digits but is not the documented 91+10 form.
+    const quote = await borzoAdapter.quote(quoteCtx("098250012345"));
+
+    expect(quote.outcome).toBe("ok");
+    expect(sentBodies[0].points[0].contact_person.phone).toBeUndefined();
+    expect(JSON.stringify(sentBodies[0])).not.toContain("098250012345");
+  });
+
+  it("a 13-digit value is NOT truncated: the quote omits the pickup phone instead of sending a wrong one", async () => {
+    fetchHandler = CALC_OK;
+
+    // "+91 098250 12345" -> 13 digits. Slicing to 12 produced "910982501234".
+    const quote = await borzoAdapter.quote(quoteCtx("+91 098250 12345"));
+
+    expect(quote.outcome).toBe("ok");
+    expect(sentBodies).toHaveLength(1);
+    const pickupContact = sentBodies[0].points[0].contact_person;
+    expect(pickupContact.phone).toBeUndefined();
+    expect(JSON.stringify(sentBodies[0])).not.toContain("910982501234");
+  });
+
+  it("a BOOKING with an un-normalisable branch phone fails closed before any network call", async () => {
+    fetchHandler = CREATE_OK;
+
+    // The classification (ProviderDispatchError vs local 422) is pinned by the
+    // shared provider-contract suite; this suite pins only the decisive wire
+    // fact: no Borzo request left the process carrying a fabricated contact.
+    // (The router may then try another provider — that is its own contract.)
+    await expect(
+      borzoAdapter.book({ ...bookCtx("+91 098250 12345"), quote: QUOTE })
+    ).rejects.toThrow(/branch phone/i);
+    expect(sentBodies).toHaveLength(0);
+  });
+
+  it("an un-normalisable CUSTOMER phone (drop fallback) blocks the booking before any network call", async () => {
+    fetchHandler = CREATE_OK;
+    const ctx = bookCtx("+91 98250 12345"); // branch phone is fine
+    ctx.customerPhone = "+91 098250 12345"; // 13 digits: drop contact unresolvable
+
+    await expect(borzoAdapter.book({ ...ctx, quote: QUOTE })).rejects.toThrow(/contact phone/i);
+    expect(sentBodies).toHaveLength(0);
+  });
+
+  it("a BOOKING still sends the normalised branch phone for a valid number (positive control)", async () => {
+    fetchHandler = CREATE_OK;
+
+    const booked = await borzoAdapter.book({ ...bookCtx("+91 98250 12345"), quote: QUOTE });
+
+    expect(booked.kind).toBe("booked");
+    expect(sentBodies).toHaveLength(1);
+    expect(sentBodies[0].points[0].contact_person.phone).toBe("919825012345");
+    expect(sentBodies[0].points[1].contact_person.phone).toBe("919999988888");
+  });
+
+  it("an empty branch phone still omits the key on a quote and blocks a booking", async () => {
+    fetchHandler = CALC_OK;
+    const quote = await borzoAdapter.quote(quoteCtx("   "));
+    expect(quote.outcome).toBe("ok");
+    expect(sentBodies[0].points[0].contact_person.phone).toBeUndefined();
+
+    sentBodies = [];
+    fetchHandler = CREATE_OK;
+    await expect(
+      borzoAdapter.book({ ...bookCtx("   "), quote: QUOTE })
+    ).rejects.toThrow(/branch phone/i);
+    expect(sentBodies).toHaveLength(0);
+  });
+});

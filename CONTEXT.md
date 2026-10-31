@@ -18,7 +18,7 @@ Identify your current goal and open the designated Stage Contract:
 | **02** | `stages/02_firebase_firestore/` | Collections, security rules, indexes, client SDK | [02 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/02_firebase_firestore/CONTEXT.md) | `references/firestore_schema.md`, `references/rbac.md` |
 | **03** | `stages/03_auth_roles/` | Phone/Email Auth, RBAC custom claims, guest policy | [03 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/03_auth_roles/CONTEXT.md) | `references/rbac.md`, `_config/coding_standards.md` |
 | **04** | `stages/04_dashboard/` | Executive stats, branch performance, live KOT cards | [04 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/04_dashboard/CONTEXT.md) | `_config/design_system.md`, `references/push_notifications.md` |
-| **05** | `stages/05_orders/` | Order creation, 3-way fulfillment, Petpooja KOT, Porter | [05 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/05_orders/CONTEXT.md) | `references/order_flow.md`, `references/petpooja_pos.md`, `references/delivery_porter.md` |
+| **05** | `stages/05_orders/` | Order creation, 3-way fulfillment, Petpooja KOT, Porter | [05 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/05_orders/CONTEXT.md) | `references/order_flow.md`, `references/petpooja_pos.md`, `references/delivery_porter.md`, `references/delivery_routing.md` |
 | **06** | `stages/06_customers/` | Customer CRM, Global Grill Coins loyalty, order history | [06 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/06_customers/CONTEXT.md) | `references/firestore_schema.md` |
 | **07** | `stages/07_tickets/` | Unified ticketing, 3-tier escalator, 60m reminder cron | [07 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/07_tickets/CONTEXT.md) | `references/ticketing.md`, `references/rbac.md` |
 | **08** | `stages/08_menu/` | Menu categories, pre-made items/combos, Petpooja sync | [08 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/08_menu/CONTEXT.md) | `references/petpooja_pos.md`, `_config/design_system.md` |
@@ -26,6 +26,7 @@ Identify your current goal and open the designated Stage Contract:
 | **10** | `stages/10_branches/` | Dynamic branches, Route linked accounts, franchise leads | [10 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/10_branches/CONTEXT.md) | `references/scaling_architecture.md`, `references/push_notifications.md` |
 | **11** | `stages/11_users/` | Staff management, custom claims assignment, audit logs | [11 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/11_users/CONTEXT.md) | `references/rbac.md`, `_config/coding_standards.md` |
 | **12** | `stages/12_settings_notifications/` | FCM push notifications, 1:1 DMs (chats/{pairId}) | [12 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/12_settings_notifications/CONTEXT.md) | `references/push_notifications.md`, `references/firestore_schema.md` |
+| **13** | `stages/13_production_rehearsal/` | Dry-run gate verification, mobile artifact proof, staging readiness | [13 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/13_production_rehearsal/CONTEXT.md) | `PRODUCTION_HANDOFF.md`, `_config/deployment_strategy.md` |
 
 ---
 
@@ -46,6 +47,7 @@ Identify your current goal and open the designated Stage Contract:
 - [order_flow.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/order_flow.md) — Delivery, Takeaway, and Dine-In lifecycle states.
 - [petpooja_pos.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/petpooja_pos.md) — Petpooja POS bridge, hourly sync, and instant 86ing.
 - [delivery_porter.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/delivery_porter.md) — Porter delivery integration and Partner manual dispatch.
+- [delivery_routing.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/delivery_routing.md) — Multi-provider dispatch routing (Borzo/Shadowfax/Porter, cheapest-serviceable-wins).
 - [ticketing.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/ticketing.md) — 3-tier support ticket escalator and 60-min reminder.
 - [push_notifications.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/push_notifications.md) — FCM subscription topics and loud audio alarms.
 - [rbac.md](file:///c:/Users/DELL/Desktop/Burgonomics/references/rbac.md) — Role hierarchy, custom claims, and security rule helpers.

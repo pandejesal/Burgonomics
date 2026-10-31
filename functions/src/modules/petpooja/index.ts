@@ -5,8 +5,13 @@
  * in Batch 4 S1 after verifying zero importers (PLAN-B §4.5) — it duplicated
  * these symbols with unscoped prod_{itemid} ids and a fabricated fallback phone.
  */
-export { syncPetpoojaMenu, handlePetpoojaMenuWebhook } from "./menuSyncWebhook";
-export { pushOrderToPetpooja, formatPetpoojaOrderPayload } from "./orderPush";
+export {
+  syncPetpoojaMenu,
+  handlePetpoojaMenuWebhook,
+  extractMenuRestId,
+  menuApiFailureReason,
+} from "./menuSyncWebhook";
+export { pushOrderToPetpooja, formatPetpoojaOrderPayload, wasPushDeferredBusy } from "./orderPush";
 export {
   handlePetpoojaStockWebhook,
   pushItemStockToPetpooja,
@@ -15,6 +20,7 @@ export {
   resolveBranchIdForRestId,
 } from "./item86ingSync";
 export { getPetpoojaConfig, verifyPetpoojaSignature } from "./client";
+export { runPetpoojaTestScenario } from "./testRunner";
 export {
   syncAllBranchesPetpoojaMenu,
   retryPendingPetpoojaOrdersWorker,

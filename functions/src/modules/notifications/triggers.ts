@@ -294,14 +294,27 @@ export const onTicketEscalatedNotificationTrigger = onDocumentUpdated(
     const ticketId = event.params.ticketId;
 
     if (before.priority !== after.priority && after.priority === "urgent") {
-      const branchId = after.branchId || "global";
-      const message = buildTicketAlertMessage(branchId, {
-        id: ticketId,
-        ticketNumber: after.ticketNumber || ticketId.substring(0, 6),
-        priority: after.priority,
-      });
+      // P2: same guard as the born-urgent trigger — an escalation alert that
+      // throws must not blow up the Firestore trigger (retries + silent SLA
+      // clock); it snapshots loudly instead.
+      try {
+        const branchId = after.branchId || "global";
+        const message = buildTicketAlertMessage(branchId, {
+          id: ticketId,
+          ticketNumber: after.ticketNumber || ticketId.substring(0, 6),
+          priority: after.priority,
+        });
 
-      await sendFcmMessage(message, { critical: true });
+        await sendFcmMessage(message, { critical: true });
+      } catch (err: any) {
+        console.error("[onTicketEscalatedNotificationTrigger] Failed:", err?.message || err);
+        await captureErrorSnapshot({
+          source: "notifications",
+          severity: "high",
+          message: `escalation alert failed for ticket ${ticketId} — SLA clock runs silently`,
+          errorStack: err?.stack,
+        });
+      }
     }
   }
 );
