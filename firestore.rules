@@ -292,6 +292,10 @@ service cloud.firestore {
         ownsBranch(resource.data.branchId) &&
         // Loop 12: delivery handover needs OTP proof — never direct.
         !directDeliveredBypass() &&
+        // SEC-04: status moves ONLY through POST /orders/bumpStatus (branch
+        // scope check + audit record). No partner client writes an order's
+        // status directly; letting the rule allow it bypassed that audit.
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
       ) || (
         // Customers may cancel their own pre-terminal orders only — canonical
@@ -323,15 +327,14 @@ service cloud.firestore {
     // =========================================================================
 
     match /branches/{branchId} {
-      // Hardened: was `if true`. Grep evidence — the customer app NEVER
-      // reads branches/* (its store directory is stores/*, separately
-      // public); every branches reader is an authenticated partner hook
-      // (useBranches/useTickets/useAnalytics/useBranchMenu). Anonymous
-      // exposure of branch config (petpoojaStoreId, city/coords, hours) is
-      // therefore closed. RESIDUAL RISK (recorded per audit): branch docs
-      // carry Petpooja linkage fields — NEVER store secrets (API keys,
-      // petpooja credentials/tokens, razorpay key secrets) on branches/*
-      // docs; this rule makes them readable by ANY signed-in user.
+      // Hardened: was `if true`, then `isAuthenticated()`. Grep evidence —
+      // the customer app NEVER reads branches/* (its store directory is
+      // stores/*, separately public); every branches reader is an
+      // authenticated partner hook (useBranches/useTickets/useAnalytics/
+      // useBranchMenu). SEC-06: branch docs carry restIDs and
+      // razorpayAccountId, so a signed-in CUSTOMER must not read them
+      // either — only operator roles (isStaff: brand + support/regional/
+      // branch) do.
       allow read: if isAuthenticated();
       allow create: if isBrandOwner();
       allow update: if isBrandOwner() || (
