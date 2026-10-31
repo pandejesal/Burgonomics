@@ -1049,6 +1049,43 @@ export async function handlePetpoojaWebhook(
   const canonicalStatus = normalizePetpoojaStatus(rawStatus);
   const orderData = (orderDoc.data() || {}) as Record<string, any>;
 
+  // SECURITY (POS-03): a shape-admitted (untrusted) callback must not apply a
+  // TERMINAL status. CANCELLED would cancel a real order and park a refund;
+  // DELIVERED would close it. Park the event for review exactly like the
+  // refused-callback path above and leave the order untouched. Bounded
+  // non-terminal status changes still apply below.
+  if (untrusted && (canonicalStatus === "cancelled" || canonicalStatus === "delivered")) {
+    console.warn(
+      `[Petpooja Webhook] untrusted callback for order ${resolvedOrderId} carried terminal status "${String(
+        rawStatus
+      )}" (${canonicalStatus}) — parked, order untouched`
+    );
+    try {
+      await db
+        .collection("unmatched_petpooja_orders")
+        .doc(`upo_${resolvedOrderId}`)
+        .set(
+          {
+            orderId: resolvedOrderId,
+            posOrderId: (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+            callbackOrderId: callbackOrderId || null,
+            rawStatus: rawStatus ?? null,
+            restId: restIdRaw || null,
+            status: "needs_review",
+            reason: "untrusted_terminal_status",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+    } catch (err) {
+      console.warn(
+        `[Petpooja Webhook] Failed to park untrusted terminal event for order ${resolvedOrderId}:`,
+        (err as any)?.message || err
+      );
+    }
+    return;
+  }
+
   // ---- Replay defense (finding: duplicate POS redeliveries) ----
   // When the POS supplies an event id, an id already processed on this order
   // within the freshness window is a REDelivery — applying it again re-runs

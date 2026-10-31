@@ -701,3 +701,65 @@ describe("handlePetpoojaWebhook — documented client-ref callback (orderID only
     expect(savedDocs["unmatched_petpooja_orders/upo_PP-7"]).toBeDefined();
   });
 });
+
+describe("handlePetpoojaWebhook — untrusted terminal status (POS-03)", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    savedDocs["branches/branch_t1"] = { petpoojaStoreId: "31z58ciw0h" };
+  });
+
+  const seedLive = (id: string) => {
+    savedDocs[`orders/${id}`] = {
+      id,
+      branchId: "branch_t1",
+      payment: { razorpayPaymentId: "pay_pos3" },
+      status: { code: "CONFIRMED", label: "Order confirmed", kind: "upcoming", terminal: false },
+    };
+  };
+
+  it("parks a shape-admitted CANCELLED and leaves the order untouched", async () => {
+    seedLive("ord_pos3_cancel");
+    await handlePetpoojaWebhook(
+      { order_id: "ord_pos3_cancel", restID: "31z58ciw0h", status: -1, cancel_reason: "forged" },
+      { authenticated: false }
+    );
+    const doc = savedDocs["orders/ord_pos3_cancel"];
+    expect(doc.status).toMatchObject({ code: "CONFIRMED", terminal: false });
+    expect(doc.cancelledAt).toBeUndefined();
+    expect(doc.cancellationReason).toBeUndefined();
+    expect(doc.petpoojaKitchenStatus).toBeUndefined();
+    expect(refundDocs()).toEqual([]);
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_pos3_cancel"]).toMatchObject({
+      orderId: "ord_pos3_cancel",
+      status: "needs_review",
+      reason: "untrusted_terminal_status",
+    });
+  });
+
+  it("parks a shape-admitted DELIVERED instead of closing the order", async () => {
+    seedLive("ord_pos3_delivered");
+    await handlePetpoojaWebhook(
+      { order_id: "ord_pos3_delivered", restID: "31z58ciw0h", status: 10 },
+      { authenticated: false }
+    );
+    expect(savedDocs["orders/ord_pos3_delivered"].status).toMatchObject({ code: "CONFIRMED" });
+    expect(savedDocs["unmatched_petpooja_orders/upo_ord_pos3_delivered"]).toMatchObject({
+      reason: "untrusted_terminal_status",
+    });
+  });
+
+  it("still applies an authenticated CANCELLED and parks its refund request", async () => {
+    seedLive("ord_pos3_auth");
+    await handlePetpoojaWebhook({
+      order_id: "ord_pos3_auth",
+      restID: "31z58ciw0h",
+      status: -1,
+      cancel_reason: "kitchen closed",
+    });
+    const doc = savedDocs["orders/ord_pos3_auth"];
+    expect(doc.status).toMatchObject({ code: "CANCELLED", terminal: true });
+    expect(doc.cancelledAt).toBe("MOCK_TIMESTAMP");
+    expect(doc.cancellationReason).toBe("kitchen closed");
+    expect(refundDocs()).toEqual(["refunds/refund_pos_cancel_ord_pos3_auth"]);
+  });
+});
