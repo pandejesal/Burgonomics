@@ -210,6 +210,36 @@ confirmation.
 
 
 
+## Test payment attempt (31 October 2026) — blocked before Razorpay
+
+On the installed test-mode build (`760a170e…`), a real checkout was attempted on
+`RZCX51TXRKB` with the signed-in account:
+
+1. Added one item (2 Jr. Hero Burger, ₹109) and opened Checkout.
+2. Checkout showed “Checkout price locked” and the address selected.
+3. Tapping **Pay ₹164.00 securely** failed with:
+   “Couldn’t initiate online payment — We couldn’t save your order, so the
+   kitchen never received it.”
+4. `ordersService` reports that as `PERSIST_FAILED` — the **client Firestore
+   write** of `orders/{id}` failed. A Firestore read confirms **no new order
+   document was created** (latest order is `ord_qa_e2e_1793290867250` from
+   29 Oct). The Razorpay modal never opened, so no payment was attempted.
+5. After the failure the Pay button stopped responding, suggesting the busy flag
+   is not cleared on that failure path.
+
+The deployed Firestore rules were read and match the local file, including
+`orderCreateInitialStatus` and `orderCreateForbiddenKeys`; the client payload
+shape (both uid fields, PLACED status, no forbidden keys) satisfies them on
+inspection. The leading suspect is **App Check**: this QA build deliberately
+removes the native Firebase initialisation, and Firestore rejects writes when
+App Check is enforced for a client that cannot mint a token.
+
+Next step to unblock payment testing: build without the QA manifest overlay (or
+register a debug App Check token) so the client can write the order, then repeat
+this checkout. This is a QA-build limitation, not evidence about Razorpay itself.
+
+
+
 ## Evidence files
 
 - `route-results.json` — full per-sample data (latest run)
