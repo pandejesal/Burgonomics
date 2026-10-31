@@ -9,7 +9,7 @@ import {
   resolvePickupCoordinates,
 } from "../../core/utils/pickupCoords";
 import { resolveBranchId } from "./branchResolver";
-import { resolveBranchPricingConfig } from "./branchPricing";
+import { computePackagingFee, resolveBranchPricingConfig } from "./branchPricing";
 import { DELIVERY_FEE_QUOTES } from "./deliveryQuotes";
 
 /**
@@ -77,9 +77,14 @@ export async function resolveCheckoutFees(
     storeId: input.storeId,
   });
   const config = await resolveBranchPricingConfig(branchId);
-  // Dine-in is eaten off the table: no packaging. Takeaway/delivery use the
-  // branch value (or the documented default) from the shared helper.
-  const packagingFee = input.orderType === "dinein" ? 0 : config.packagingFee;
+  // P2: the SAME helper the pricing engine uses. Dine-in is 0 inside it, so
+  // the screen and the bill cannot disagree about packaging.
+  const packagingFee = await computePackagingFee({
+    packaging: config.packaging ?? null,
+    branchFee: config.branchPackagingFee,
+    orderType: input.orderType,
+    branchId,
+  });
 
   if (input.orderType !== "delivery") {
     // Non-delivery: no provider call, ever.

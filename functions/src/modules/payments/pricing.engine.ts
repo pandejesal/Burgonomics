@@ -2,7 +2,9 @@ import { db } from "../../core/firebase";
 import {
   DEFAULT_PACKAGING_FEE,
   DEFAULT_ROYALTY_PERCENTAGE,
+  computePackagingFee,
   resolveBranchPricingConfig,
+  type BranchPricingConfig,
 } from "./branchPricing";
 
 export interface PricingLineItem {
@@ -365,13 +367,14 @@ export async function calculateOrderPricing(
   // Coupons collection is the SOLE discount authority (no hardcoded fallback).
   let royaltyPercentage = DEFAULT_ROYALTY_PERCENTAGE;
   let packagingFee = DEFAULT_PACKAGING_FEE;
+  const branchState: { config: BranchPricingConfig | null } = { config: null };
   let couponDoc: any = null;
 
   const couponCode = input.couponCode?.trim().toUpperCase();
   const branchRead: Promise<void> = resolveBranchPricingConfig(input.branchId).then(
     (cfg) => {
       royaltyPercentage = cfg.royaltyPercentage;
-      packagingFee = cfg.packagingFee;
+      branchState.config = cfg;
     }
   );
   const couponRead: Promise<void> =
@@ -425,7 +428,9 @@ export async function calculateOrderPricing(
   }
 
   // R7: a server-written packaging snapshot wins over live branch config, so
-  // repricing an agreed total cannot be moved by a later config edit.
+  // repricing an agreed total cannot be moved by a later config edit. Outside
+  // that, P2's single documented rule (ORDER + blank type) decides, through
+  // the SAME helper the fees endpoint uses.
   if (input.serverPackagingFee !== undefined) {
     const locked = Number(input.serverPackagingFee);
     if (!Number.isFinite(locked) || locked < 0) {
@@ -435,9 +440,15 @@ export async function calculateOrderPricing(
       throw err;
     }
     packagingFee = round2(locked);
-  }
-  if (input.orderType === "dinein") {
+  } else if (input.orderType === "dinein") {
     packagingFee = 0;
+  } else {
+    packagingFee = await computePackagingFee({
+      packaging: branchState.config?.packaging ?? null,
+      branchFee: branchState.config?.branchPackagingFee,
+      orderType: input.orderType,
+      branchId: input.branchId,
+    });
   }
 
   // 3. Discount calculation from the concurrently-fetched coupon doc
