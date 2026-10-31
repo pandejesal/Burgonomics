@@ -123,9 +123,9 @@ async function deleteDeviceTokensForUser(uid: string): Promise<boolean> {
 }
 
 /**
- * Cleans up user-related state upon user account deletion. Wired as a real
- * Auth blocking trigger (beforeUserDeleted) in index.ts — previously dead
- * code that never ran.
+ * Cleans up user-related state upon user account deletion. Wired as the
+ * `functionsV1.auth.user().onDelete` trigger in index.ts (post-deletion) —
+ * previously dead code that never ran.
  *
  * SEC-02: erasure now covers the customer profile and its subcollections,
  * the retained user profile's subcollections, and the account's device tokens.

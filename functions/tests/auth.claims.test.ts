@@ -233,7 +233,8 @@ describe("Auth Module — Claims Manager & Privilege Escalation Prevention", () 
     });
   });
 
-  describe("5. In-Function Caller Assert (B3-S1: deny even if the route is miswired)", () => {    const brandCaller = { role: "brand_owner", isBrandAdmin: true } as any;
+  describe("5. In-Function Caller Assert (B3-S1: deny even if the route is miswired)", () => {
+    const brandCaller = { role: "brand_owner", isBrandAdmin: true } as any;
 
     it("denies setUserCustomClaims for every non-brand caller role", async () => {
       for (const role of ["customer", "branch_staff", "branch_owner", "support", "regional_manager", "driver"]) {
