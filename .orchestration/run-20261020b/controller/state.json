@@ -1,0 +1,531 @@
+{
+  "version": 1,
+  "items": {
+    "ticket-rules-mask": {
+      "phase": "accepted",
+      "phaseSetBy": "main:exact_bytes_dual_review_and_gates",
+      "attempts": 2,
+      "deliveries": 2,
+      "consecutiveProviderErrors": 0,
+      "lastAttemptAt": 1792596281195,
+      "lastSentAt": 1792596281195,
+      "lastSentPhase": "qa",
+      "lastDeliveryAt": 1792596281195,
+      "lastContinuationAt": 1792596281195,
+      "lastErrorAt": null,
+      "retryAt": null,
+      "lastError": null,
+      "lastErrorMessageId": "msg_15f0d62ff001940KsCu6diUzPz",
+      "reservation": {
+        "id": "res_1792596281195_zri430",
+        "itemId": "ticket-rules-mask",
+        "phase": "qa",
+        "sessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+        "text": "[Burgonomics delivery queue | run-20261020b | item ticket-rules-mask | phase qa | continuation]\nNo completion observed since the last queued prompt at 2026-10-21T15:08:01.402Z.\nRepo: C:/Users/DELL/Desktop/Burgonomics. Brief: .orchestration/run-20261020b/lane-07.md. Contract: .orchestration/run-20261020b/CONTRACT.md. Evidence dir: .orchestration/run-20261020b/evidence/lane-07. Committed baseline: root 0cca973, customer 9c5ecc1, partner 8a59244.\nContinue the same packet from the existing context. Do not restart finished gates and do not reimplement committed work.\nStart your final message with \"QUEUE_TASK: ticket-rules-mask\" so the queue can correlate it; COMPLETE/EXTERNAL_BLOCK without this marker is ignored. Owned paths only; no pushes, deploys, secret changes, provider changes or network changes. If your last state is WAITING_REVIEW, do not spawn or replace a child; finish the same packet. End with exactly one SUPERVISOR_STATE line: the final line must be exactly `SUPERVISOR_STATE: COMPLETE` with no trailing text, or `SUPERVISOR_STATE: EXTERNAL_BLOCK <reason>`. Anything else is ignored.\nSay COMPLETE only when the work and evidence are actually finished. Use EXTERNAL_BLOCK <reason> only for a real external prerequisite.",
+        "status": "sent",
+        "createdAt": "2026-10-21T15:24:41.195Z",
+        "sentAt": "2026-10-21T15:24:41.195Z",
+        "httpStatus": 200
+      },
+      "needsAttention": null,
+      "mainNotifiedAt": null,
+      "consumedMessageIds": [],
+      "acceptedAt": "2026-10-21T17:48:47.222Z",
+      "acceptedBy": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+      "acceptanceEvidence": {
+        "commits": {
+          "root": "d5f8c0dee2c8f23ec4ebc5c199d461a6087fca1d",
+          "customer": "2f47cef1dd9d9b7696898c3c502051df22b7dc2f",
+          "partner": "6f81fbafa4ba907d8c6cd770a6f332ebd6222af2"
+        },
+        "prerequisite": "8123bbc411176dea3d8bf79bc38520f93a17ac1b",
+        "rulesBlob": "32238e8b1a46eb84622cbfcf20cdc124a060d963",
+        "deepseek": "ses_ea0ea7f1fffeZ2HBINJSWgDln5",
+        "glm": "ses_ea0a81b8fffeIodADuKguUl1My",
+        "record": ".orchestration/run-20261020b/evidence/main-ticket-workflow-status.md",
+        "truthLabel": "LOCAL CODE VERIFIED",
+        "customerRulesPassed": 108,
+        "customerUnitPassed": 538,
+        "partnerUnitPassed": 544,
+        "partnerUnitSkipped": 1
+      }
+    },
+    "backend-ticket-resolution-lease": {
+      "phase": "accepted",
+      "phaseSetBy": "main:dual_review_exact_bytes_and_transferred_gate",
+      "attempts": 2,
+      "deliveries": 2,
+      "consecutiveProviderErrors": 3,
+      "lastAttemptAt": 1792609270235,
+      "lastSentAt": 1792609270235,
+      "lastSentPhase": "owner",
+      "lastDeliveryAt": 1792609270235,
+      "lastContinuationAt": 1792609270235,
+      "lastErrorAt": 1792609279516,
+      "retryAt": 1792616479516,
+      "lastError": {
+        "status": 429,
+        "type": "provider.quota",
+        "message": "Rate limit exceeded. Please try again later.",
+        "backoffMs": 7200000
+      },
+      "lastErrorMessageId": "msg_15fd6d810001DeWu0B97z54OXY",
+      "reservation": {
+        "id": "res_1792609270235_qkx2c0",
+        "itemId": "backend-ticket-resolution-lease",
+        "phase": "owner",
+        "sessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+        "text": "[Burgonomics delivery queue | run-20261020b | item backend-ticket-resolution-lease | phase owner | continuation]\nNo completion observed since the last queued prompt at 2026-10-21T17:54:17.375Z.\nRepo: C:/Users/DELL/Desktop/Burgonomics. Brief: .orchestration/run-20261020b/lane-04-ticket-lease-resume.md. Contract: .orchestration/run-20261020b/CONTRACT.md. Evidence dir: .orchestration/run-20261020b/evidence. Committed baseline: root d5f8c0dee2c8f23ec4ebc5c199d461a6087fca1d, customer 2f47cef1dd9d9b7696898c3c502051df22b7dc2f, partner 6f81fbafa4ba907d8c6cd770a6f332ebd6222af2.\nContinue the same packet from the existing context. Do not restart finished gates and do not reimplement committed work.\nStart your final message with \"QUEUE_TASK: backend-ticket-resolution-lease\" so the queue can correlate it; COMPLETE/EXTERNAL_BLOCK without this marker is ignored. Owned paths only; no pushes, deploys, secret changes, provider changes or network changes. If your last state is WAITING_REVIEW, do not spawn or replace a child; finish the same packet. End with exactly one SUPERVISOR_STATE line: the final line must be exactly `SUPERVISOR_STATE: COMPLETE` with no trailing text, or `SUPERVISOR_STATE: EXTERNAL_BLOCK <reason>`. Anything else is ignored.\nSay COMPLETE only when the work and evidence are actually finished. Use EXTERNAL_BLOCK <reason> only for a real external prerequisite.",
+        "status": "sent",
+        "createdAt": "2026-10-21T19:01:10.235Z",
+        "sentAt": "2026-10-21T19:01:10.235Z",
+        "httpStatus": 200
+      },
+      "needsAttention": null,
+      "mainNotifiedAt": null,
+      "consumedMessageIds": [],
+      "backoffMs": 7200000,
+      "acceptedAt": "2026-10-21T20:15:37.984Z",
+      "acceptedBy": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+      "acceptanceEvidence": {
+        "commit": "5e1777cb0e48cca59712f7536300158dad167243",
+        "deepseek": "ses_e9fed3758ffe8YhUtb25YiB4HD",
+        "glm": "ses_e9fe88f87ffe816vusMctuQ4iw",
+        "gateBase": "b9b2d9a0ed36b6dc8c6d984c28e07def6c66f8b3",
+        "gateEvidence": ".orchestration/run-20261020b/evidence/lane-04-gate4.txt",
+        "transferredBecauseNoFunctionsCommitsSinceGate": true,
+        "typecheck": 0,
+        "testsPassed": 892,
+        "testsSkipped": 2,
+        "files": 73,
+        "build": 0,
+        "truthLabel": "LOCAL CODE VERIFIED",
+        "knownFollowUps": [
+          "commit-fence negative test missing",
+          "commit-tx abort degrades to 500 with money moved",
+          "non-finite claimedAt can wedge a ticket",
+          "delete-sentinel shim asserts a string"
+        ]
+      }
+    },
+    "token-unregister-closeout": {
+      "phase": "accepted",
+      "phaseSetBy": "main:local_scope_qa_verified",
+      "attempts": 2,
+      "deliveries": 2,
+      "consecutiveProviderErrors": 0,
+      "lastAttemptAt": 1792629711853,
+      "lastSentAt": 1792629711853,
+      "lastSentPhase": "qa",
+      "lastDeliveryAt": 1792629711853,
+      "lastContinuationAt": null,
+      "lastErrorAt": 1792597714050,
+      "retryAt": null,
+      "lastError": null,
+      "lastErrorMessageId": "msg_16111e51300135k5ujqFjm9WHX",
+      "reservation": {
+        "id": "res_1792629711853_vtvnxo",
+        "itemId": "token-unregister-closeout",
+        "phase": "qa",
+        "sessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+        "text": "[Burgonomics delivery queue | run-20261020b | item token-unregister-closeout | phase qa | qa_verification]\nEvidence-verification stage only for item token-unregister-closeout. This is not acceptance and not a redo.\nRepo: C:/Users/DELL/Desktop/Burgonomics. Brief: .orchestration/run-20261020b/closeout-20261022/lane-07-task.md. Contract: .orchestration/run-20261020b/CONTRACT.md. Evidence dir: .orchestration/run-20261020b/evidence. Committed baseline: root 5e1777cb0e48cca59712f7536300158dad167243, customer 2f47cef1dd9d9b7696898c3c502051df22b7dc2f, partner 6f81fbafa4ba907d8c6cd770a6f332ebd6222af2.\nCheck that the committed work and recorded evidence match the claims (diff, tests, truth labels). Do not re-run the full gate suite unless an evidence gap requires it; record what you checked and what you could not check.\nMain accepts the item; the queue never marks it accepted.\nStart your final message with \"QUEUE_TASK: token-unregister-closeout\" so the queue can correlate it; COMPLETE/EXTERNAL_BLOCK without this marker is ignored. Owned paths only; no pushes, deploys, secret changes, provider changes or network changes. If your last state is WAITING_REVIEW, do not spawn or replace a child; finish the same packet. End with exactly one SUPERVISOR_STATE line: the final line must be exactly `SUPERVISOR_STATE: COMPLETE` with no trailing text, or `SUPERVISOR_STATE: EXTERNAL_BLOCK <reason>`. Anything else is ignored.",
+        "status": "sent",
+        "createdAt": "2026-10-22T00:41:51.853Z",
+        "sentAt": "2026-10-22T00:41:51.853Z",
+        "httpStatus": 200
+      },
+      "needsAttention": null,
+      "mainNotifiedAt": null,
+      "consumedMessageIds": [
+        "msg_1610cb28b001E5R7di28qWqLvb"
+      ],
+      "backoffMs": 1800000,
+      "acceptedAt": "2026-10-22T00:50:55.627Z",
+      "acceptedBy": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+      "acceptanceEvidence": {
+        "commit": "4b6e4f620fe26c589ecf7c31bc85905df4aaab6f",
+        "paths": [
+          "functions/src/modules/notifications/unregisterToken.ts",
+          "functions/tests/notifications.token-ownership.test.ts",
+          "functions/tests/unregisterToken.test.ts"
+        ],
+        "qaSession": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+        "qaMessage": "msg_16111e51300135k5ujqFjm9WHX",
+        "record": ".orchestration/run-20261020b/qa/spot-checks.md#sc-027",
+        "reviewChain": "DS APPROVE_WITH_CHANGES (comment corrections applied), separate GLM final VERIFIED",
+        "deepseek": "ses_e9f07d88bffeoOunDDx2cJJEIu",
+        "glm": "ses_e9f02f99effeNM51y21kZSmPym",
+        "actualAssistantModels": {
+          "deepseek": 48,
+          "glm": 19,
+          "mismatches": 0
+        },
+        "gate": {
+          "base": "086b60d",
+          "typecheck": 0,
+          "passed": 912,
+          "skipped": 2,
+          "build": 0
+        },
+        "truthLabel": "LOCAL CODE VERIFIED",
+        "notes": [
+          "QA terminal marker was backticked; Main inspected actual evidence and accepts manually, not by parser",
+          "Reviewer session lifetimes overlap; simultaneous active review turns not established by that fact",
+          "Acceptance does not certify end-to-end cross-account push isolation: stale profile fanout requires separate send-time ownership validation; Main investigating with a reproduction"
+        ]
+      }
+    },
+    "customer-address-closeout": {
+      "phase": "accepted",
+      "phaseSetBy": "main:qa_byte_identity_and_message_provenance",
+      "attempts": 3,
+      "deliveries": 3,
+      "consecutiveProviderErrors": 0,
+      "lastAttemptAt": 1792630781514,
+      "lastSentAt": 1792630781514,
+      "lastSentPhase": "awaiting_main_acceptance",
+      "lastDeliveryAt": 1792630781514,
+      "lastContinuationAt": null,
+      "lastErrorAt": null,
+      "retryAt": null,
+      "lastError": null,
+      "lastErrorMessageId": "msg_1611dceb0001r052E3W5X3BnJ3",
+      "reservation": {
+        "id": "res_1792630781514_3zxa0i",
+        "itemId": "customer-address-closeout",
+        "phase": "awaiting_main_acceptance",
+        "sessionID": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+        "text": "[Burgonomics delivery queue | run-20261020b | item customer-address-closeout | main acceptance required]\nQUEUE_TASK: customer-address-closeout\nQA reported SUPERVISOR_STATE: COMPLETE at 2026-10-22T00:58:25.866Z. The queue did not verify the item and did not accept it.\nInspect the evidence for customer-address-closeout: root unknown, customer 2f47cef1dd9d9b7696898c3c502051df22b7dc2f, partner unknown; evidence dir .orchestration/run-20261020b/closeout-20261022.\nAccept or reject it yourself. To accept, set state.json items[<id>].phase to \"accepted\" (or remove the item); the queue never advances on its own and never accepts from message text.\nThis is the only notification for this item; no work is requested of you here.",
+        "status": "sent",
+        "createdAt": "2026-10-22T00:59:41.514Z",
+        "sentAt": "2026-10-22T00:59:41.514Z",
+        "httpStatus": 200
+      },
+      "needsAttention": null,
+      "mainNotifiedAt": 1792630781514,
+      "consumedMessageIds": [
+        "msg_161186334001AXmS3Bzhf6j2Fm",
+        "msg_1611dceb0001r052E3W5X3BnJ3"
+      ],
+      "acceptedAt": "2026-10-22T01:00:25.770Z",
+      "acceptedBy": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+      "acceptanceEvidence": {
+        "commit": "6e25a0cb6a3ae5883e860ea89fa758c17342664b",
+        "parent": "2f47cef1dd9d9b7696898c3c502051df22b7dc2f",
+        "paths": [
+          "src/features/addresses/repositories/AddressRepository.ts",
+          "src/features/addresses/services/addressService.ts",
+          "src/features/profile/components/AddressFormModal.test.tsx",
+          "src/features/profile/components/AddressFormModal.tsx",
+          "src/routes/addresses.create.test.tsx",
+          "src/routes/addresses.create.tsx",
+          "src/routes/profile.addresses.test.tsx",
+          "src/routes/profile.addresses.tsx",
+          "tests/address-persistence-failures.test.ts"
+        ],
+        "qaSession": "ses_ea5c87a64ffecPa7h3J8Zxpw6h",
+        "qaMessage": "msg_1611dceb0001r052E3W5X3BnJ3",
+        "record": ".orchestration/run-20261020b/closeout-20261022/qa-customer-address-closeout.md",
+        "reviewServingProof": [
+          {
+            "id": "ses_e9efb6f73ffeX7EjqhU8MqK50m",
+            "parentID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+            "expected": "deepseek-v4.1-flash-free",
+            "assistantMessages": 31,
+            "mismatches": 0
+          },
+          {
+            "id": "ses_e9eefadd3fferIQBDmrE9QSWfS",
+            "parentID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+            "expected": "glm-5.3-flash-free",
+            "assistantMessages": 10,
+            "mismatches": 0
+          }
+        ],
+        "gate": {
+          "typecheck": 0,
+          "passed": 591,
+          "build": 0
+        },
+        "truthLabel": "LOCAL CODE VERIFIED",
+        "notes": [
+          "All9blobIDs match; QAprovedgateworktreecontentmatchescommit",
+          "SHAcolumnmixesCRLFworktreevscommittedbytesfor2files; blobIDsareauthoritative, notahashdrift",
+          "QAhasrerunmissingcapturedtscwith0exit;nofullgateredo",
+          "Temporarymanifestuntracked; Gitcommitimmutablypinsactual9sourceblobs",
+          "Read-back/listgap, default-deletecachemirrorandoutside-packetAddressFormUXremainlimits"
+        ]
+      }
+    },
+    "dispatch-boundary-closeout": {
+      "phase": "accepted",
+      "phaseSetBy": "main:independent_blob_gate_and_red_green_reverification",
+      "attempts": 1,
+      "deliveries": 1,
+      "consecutiveProviderErrors": 0,
+      "lastAttemptAt": 1792629321610,
+      "lastSentAt": 1792629321610,
+      "lastSentPhase": "owner",
+      "lastDeliveryAt": 1792629321610,
+      "lastContinuationAt": null,
+      "lastErrorAt": 1792609279516,
+      "retryAt": null,
+      "lastError": null,
+      "lastErrorMessageId": "msg_16146cf22001wPTz3IGK3R6p6m",
+      "reservation": {
+        "id": "res_1792629321610_a1pn80",
+        "itemId": "dispatch-boundary-closeout",
+        "phase": "owner",
+        "sessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+        "text": "[Burgonomics delivery queue | run-20261020b | item dispatch-boundary-closeout | phase owner | owner_initial]\nContinue your existing packet; do not reimplement committed work or redo gates that already have evidence.\nRepo: C:/Users/DELL/Desktop/Burgonomics. Brief: .orchestration/run-20261020b/closeout-20261022/lane-04-webhook-task.md. Contract: .orchestration/run-20261020b/CONTRACT.md. Evidence dir: .orchestration/run-20261020b/closeout-20261022. Committed baseline: root 086b60d5afe492391d222873f259e6ddc7d760ad, customer unknown, partner unknown.\nReconciliation note: Explicit Main-managed one admission, originalroot04. Stopnewwork2026-10-22T03:05:59Z. MainfreshDSfoundHIGHstalemapownershipbypassandnonstickycustomer-cancelcontainment; writtenbrief includesexactfixes/REDcontrols andexistingneeds_reviewvocabularydecision. Threeownedpaths only; actualDSthenindependentGLM; oneisolatedgateafterlane07releasesfunctionsslot. No newaudit/ticketleaseredo/Porter/config/payments/authchanges. Mainacceptanceonly, preservebudgetandallforeignwork.\nStart your final message with \"QUEUE_TASK: dispatch-boundary-closeout\" so the queue can correlate it; COMPLETE/EXTERNAL_BLOCK without this marker is ignored. Owned paths only; no pushes, deploys, secret changes, provider changes or network changes. If your last state is WAITING_REVIEW, do not spawn or replace a child; finish the same packet. End with exactly one SUPERVISOR_STATE line: the final line must be exactly `SUPERVISOR_STATE: COMPLETE` with no trailing text, or `SUPERVISOR_STATE: EXTERNAL_BLOCK <reason>`. Anything else is ignored.\nSay COMPLETE only when the work and evidence are actually finished. Use EXTERNAL_BLOCK <reason> only for a real external prerequisite.",
+        "status": "sent",
+        "createdAt": "2026-10-22T00:35:21.610Z",
+        "sentAt": "2026-10-22T00:35:21.610Z",
+        "httpStatus": 200
+      },
+      "needsAttention": null,
+      "mainNotifiedAt": null,
+      "consumedMessageIds": [],
+      "backoffMs": 1800000,
+      "acceptedAt": "2026-10-22T01:47:57.409Z",
+      "acceptedBy": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+      "acceptanceEvidence": {
+        "commit": "d3f37285aa4e22abd1b1856268625b97d29386a1",
+        "paths": [
+          "functions/src/modules/dispatch/dispatch.webhooks.ts",
+          "functions/tests/dispatch.webhook-boundary.fresh.test.ts",
+          "references/delivery_routing.md"
+        ],
+        "blobsVerified": {
+          "functions/src/modules/dispatch/dispatch.webhooks.ts": "51db3573702f07bc2c1aeb97e2268f8c87d6978a",
+          "functions/tests/dispatch.webhook-boundary.fresh.test.ts": "09f239eb077409c415d5884129e723d0ce86bd17",
+          "references/delivery_routing.md": "122f1e7764a3b4adc60ca92eda3a6ead97df24e6"
+        },
+        "reviews": {
+          "deepseek": "ses_e9edb8e2fffeUTqdlpvixpbn5H (64 rows, 0 mismatches, actual deepseek-v4.1-flash-free)",
+          "glm": "ses_e9ec321cdffeA7C2uhogmtyUVA (13 rows, 0 mismatches, actual glm-5.3-flash-free)"
+        },
+        "gate": {
+          "base": "4b6e4f6",
+          "typecheck": 0,
+          "passed": 939,
+          "skipped": 2,
+          "build": 0
+        },
+        "mainIndependentControls": {
+          "redAtPristine086b60d": "16 failed / 11 passed (27)",
+          "greenAtCommitted": "27 passed (27)",
+          "worktrees": [
+            "Temp/opencode/main-red-control-086b60d",
+            "Temp/opencode/main-green-control-d3f3728"
+          ]
+        },
+        "evidence": ".orchestration/run-20261020b/evidence/closeout-lane04-webhook-evidence.md",
+        "truthLabel": "LOCAL CODE VERIFIED",
+        "notes": [
+          "Owner disclosed and recorded a mixed-session reviewer call that was discarded for provenance; accepted chain uses a fresh DS session",
+          "Known debt: router-side torn-down-dispatch bindings (releaseClaimFailed / dispatchCancel) still hold stale bindings for the new order-ownership proof ? a follow-up packet is required before that path is considered closed"
+        ]
+      }
+    },
+    "restaurant-dispatch-choice": {
+      "phase": "blocked_provider_quota",
+      "phaseSetBy": "queue_seed",
+      "attempts": 1,
+      "deliveries": 1,
+      "consecutiveProviderErrors": 2,
+      "lastAttemptAt": 1792629779052,
+      "lastSentAt": 1792629779052,
+      "lastSentPhase": "owner",
+      "lastDeliveryAt": 1792629779052,
+      "lastContinuationAt": null,
+      "lastErrorAt": 1792633738640,
+      "retryAt": 1792637338640,
+      "lastError": {
+        "status": 429,
+        "type": "provider.free-limit",
+        "message": "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.",
+        "backoffMs": 3600000
+      },
+      "lastErrorMessageId": "msg_1614c1533001BObBz9flUPTIv6",
+      "reservation": {
+        "id": "res_1792629779052_d1kn4b",
+        "itemId": "restaurant-dispatch-choice",
+        "phase": "owner",
+        "sessionID": "ses_ea5c8a2daffekU3r3U5bPrJspn",
+        "text": "[Burgonomics delivery queue | run-20261020b | item restaurant-dispatch-choice | phase owner | owner_initial]\nContinue your existing packet; do not reimplement committed work or redo gates that already have evidence.\nRepo: C:/Users/DELL/Desktop/Burgonomics. Brief: .orchestration/run-20261020b/closeout-20261022/lane-02-delivery-task.md. Contract: .orchestration/run-20261020b/CONTRACT.md. Evidence dir: .orchestration/run-20261020b/closeout-20261022. Committed baseline: root 4b6e4f6, customer unknown, partner 6f81fbafa4ba907d8c6cd770a6f332ebd6222af2.\nReconciliation note: ExplicitsolewriterhandoffexistingPartner02, deadline2026-10-22T03:05:59Z. PorterCANCELLED, Borzo/Shadowfax+restaurantinhouse. No new-orderPorteraction, realservermanualshape, asyncfailuremustretaininputs/nofalseclose, assignmentnotpickupproof. Inspect/adoptonlynamedoldhook/pagepatchandminimalnewsource/tests, readonlyactualDSchildthenactualGLMchild; isolatedPARTNERgategranted. QAexisting11verifiesonlycode/gateevidence, NOTMac/deviceacceptance. Backendmanualassignmentatomicityisseparateknownlimit. No unrelatedfiles/push/deploy/phoneinstall/secrets/providers. On429STOP.\nStart your final message with \"QUEUE_TASK: restaurant-dispatch-choice\" so the queue can correlate it; COMPLETE/EXTERNAL_BLOCK without this marker is ignored. Owned paths only; no pushes, deploys, secret changes, provider changes or network changes. If your last state is WAITING_REVIEW, do not spawn or replace a child; finish the same packet. End with exactly one SUPERVISOR_STATE line: the final line must be exactly `SUPERVISOR_STATE: COMPLETE` with no trailing text, or `SUPERVISOR_STATE: EXTERNAL_BLOCK <reason>`. Anything else is ignored.\nSay COMPLETE only when the work and evidence are actually finished. Use EXTERNAL_BLOCK <reason> only for a real external prerequisite.",
+        "status": "sent",
+        "createdAt": "2026-10-22T00:42:59.052Z",
+        "sentAt": "2026-10-22T00:42:59.052Z",
+        "httpStatus": 200
+      },
+      "needsAttention": {
+        "reason": "continuation_cap_reached",
+        "at": "2026-10-22T02:49:41.700Z"
+      },
+      "mainNotifiedAt": null,
+      "consumedMessageIds": [],
+      "backoffMs": 3600000,
+      "blockedAt": "2026-10-22T04:35:37.655Z",
+      "blockedReason": "free-tier usage limit exhausted; window deadline passed",
+      "pendingStep": "GLM verifier ? isolated PARTNER gate ? commit"
+    },
+    "fcm-recipient-ownership": {
+      "phase": "blocked_provider_quota",
+      "phaseSetBy": "queue_seed",
+      "attempts": 1,
+      "deliveries": 1,
+      "consecutiveProviderErrors": 0,
+      "lastAttemptAt": 1792630969732,
+      "lastSentAt": 1792630969732,
+      "lastSentPhase": "owner",
+      "lastDeliveryAt": 1792630969732,
+      "lastContinuationAt": null,
+      "lastErrorAt": null,
+      "retryAt": null,
+      "lastError": null,
+      "lastErrorMessageId": "msg_1610cb28b001E5R7di28qWqLvb",
+      "reservation": {
+        "id": "res_1792630969732_kh12tj",
+        "itemId": "fcm-recipient-ownership",
+        "phase": "owner",
+        "sessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+        "text": "[Burgonomics delivery queue | run-20261020b | item fcm-recipient-ownership | phase owner | owner_initial]\nContinue your existing packet; do not reimplement committed work or redo gates that already have evidence.\nRepo: C:/Users/DELL/Desktop/Burgonomics. Brief: .orchestration/run-20261020b/closeout-20261022/lane-07-fcm-send-task.md. Contract: .orchestration/run-20261020b/CONTRACT.md. Evidence dir: .orchestration/run-20261020b/closeout-20261022. Committed baseline: root 4b6e4f620fe26c589ecf7c31bc85905df4aaab6f, customer unknown, partner unknown.\nReconciliation note: USERcorrection MainONLYdelegates. Existingroot07SOLEWRITERfcmClient.ts+newfcm.recipient-ownership.test.ts+push_notifications.md; no parallelMainimplementation. CandidateMain10/10greenprecededlasttestedits; FINAL11testsNOTVERIFIEDyet. Independentlyinspect/test/reviewviaFRESHactualDSthenDIFFERENTactualGLMread-onlychildren; isolatedgateafter04END/release, localexactcommitonly. Stopnewwork03:05:59Z, on429STOPnoothermodels/retrystorm. Lastnativeattemptmayexhaustglobal12budget; do notexpectanotherwake. Prioracceptedtoken/addressstateskept; QA6notclaimedadmitted.\nStart your final message with \"QUEUE_TASK: fcm-recipient-ownership\" so the queue can correlate it; COMPLETE/EXTERNAL_BLOCK without this marker is ignored. Owned paths only; no pushes, deploys, secret changes, provider changes or network changes. If your last state is WAITING_REVIEW, do not spawn or replace a child; finish the same packet. End with exactly one SUPERVISOR_STATE line: the final line must be exactly `SUPERVISOR_STATE: COMPLETE` with no trailing text, or `SUPERVISOR_STATE: EXTERNAL_BLOCK <reason>`. Anything else is ignored.\nSay COMPLETE only when the work and evidence are actually finished. Use EXTERNAL_BLOCK <reason> only for a real external prerequisite.",
+        "status": "sent",
+        "createdAt": "2026-10-22T01:02:49.732Z",
+        "sentAt": "2026-10-22T01:02:49.732Z",
+        "httpStatus": 200
+      },
+      "needsAttention": null,
+      "mainNotifiedAt": null,
+      "consumedMessageIds": [],
+      "blockedAt": "2026-10-22T04:35:37.655Z",
+      "blockedReason": "free-tier usage limit exhausted; window deadline passed",
+      "pendingStep": "finish isolated Functions gate at d3f3728 + 3 frozen paths ? commit"
+    }
+  },
+  "totalAttempts": 12,
+  "totalDeliveries": 12,
+  "seededItemIds": [
+    "ticket-rules-mask",
+    "backend-ticket-resolution-lease",
+    "token-unregister-closeout",
+    "customer-address-closeout",
+    "dispatch-boundary-closeout",
+    "restaurant-dispatch-choice",
+    "fcm-recipient-ownership"
+  ],
+  "updatedAt": "2026-10-22T05:10:51.686Z",
+  "explicitHandoffs": {
+    "cap": 6,
+    "used": 6,
+    "coordinator": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+    "policy": ".orchestration/run-20261020b/closeout-20261022/AUTONOMOUS_WINDOW.md#explicit-handoff-ledger",
+    "entries": [
+      {
+        "taskId": "customer-payment-truth",
+        "sessionID": "ses_ea5c87df5ffe7Vjpzr9yv5VLpA",
+        "ownerKey": "payments",
+        "brief": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261020b\\closeout-20261022\\lane-08-payments-task.md",
+        "scopeSummary": "customer repo: useRazorpayPayment.ts(+test), PaymentRepository.ts, PaymentRecoveryPanel(+test), tests/server-payment-truth-guards.test.ts, tests/paid-order-finalization.test.ts, tests/payment-response-wire.test.ts, tests/order-service-auth-isolation.test.ts; Phase B root: functions/tests/payments.webhook-stale-claim.test.ts, functions/tests/routeTransfers.lease-race.test.ts",
+        "admittedAt": "2026-10-22T01:25:32.850Z",
+        "promptHttpStatus": 200,
+        "model": "deepseek-v4.1-flash-free"
+      },
+      {
+        "taskId": "references-porter-drift",
+        "sessionID": "ses_ea5c88b2fffeMMzjFL6tYZzs5W",
+        "ownerKey": "docs",
+        "brief": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261020b\\closeout-20261022\\lane-05-references-task.md",
+        "scopeSummary": "ROOT references only: backend_upgrade_spec.md, delivery_porter.md, changelog.md, known_issues.md, order_flow.md, demo_presentation_script.md, firestore_schema.md, rbac.md, ui_ux_spec.md, verification/7.3.md; NO delivery_routing.md / push_notifications.md / petpooja_save_order_api.md (owned by other sessions now); no code",
+        "admittedAt": "2026-10-22T01:33:01.559Z",
+        "promptHttpStatus": 200,
+        "model": "glm-5.3-flash-free"
+      },
+      {
+        "taskId": "shadowfax-fail-closed-verification",
+        "sessionID": "ses_ea5c878abffemS4Xy9icDiSjo8",
+        "ownerKey": "dispatch-shadowfax",
+        "brief": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261020b\\closeout-20261022\\lane-10-shadowfax-task.md",
+        "scopeSummary": "READ-ONLY verification; single writable path: .orchestration/run-20261020b/closeout-20261022/lane-10-shadowfax-verification.md. No source/test edits, no commits, no provider calls",
+        "admittedAt": "2026-10-22T01:33:55.742Z",
+        "promptHttpStatus": 200,
+        "model": "deepseek-v4.1-flash-free"
+      },
+      {
+        "taskId": "qa-porter-retirement",
+        "sessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+        "ownerKey": "qa",
+        "brief": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261020b\\closeout-20261022\\lane-12-qa-porter-task.md",
+        "scopeSummary": "READ-ONLY verification of root commit 086b60d (11 paths). Single writable path: .orchestration/run-20261020b/closeout-20261022/qa-porter-retirement.md. No source/test edits, no commits, no provider calls, no deploy",
+        "admittedAt": "2026-10-22T01:34:57.123Z",
+        "promptHttpStatus": 200,
+        "model": "glm-5.3-flash-free"
+      },
+      {
+        "taskId": "release-infra-closeout",
+        "sessionID": "ses_ea5c87669ffeLD1vE6kugwmFVm",
+        "ownerKey": "native",
+        "brief": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261020b\\closeout-20261022\\lane-11-release-task.md",
+        "scopeSummary": "ROOT scripts/validate-mobile-hosting.cjs + test, .github/workflows/functions-ci.yml, .gitignore, R15/R18 docs, client-handover v1.0.0 AABs (provenance decision); CUSTOMER .github/workflows/{android-build,ios-build}.yml, MAC_INSTRUCTIONS.txt, mac-build.sh, scripts/patch-ios-spm.js, scripts/select-xcode-toolchain.sh, scripts/validate-ios-workflow.test.cjs, public/.well-known/assetlinks.json; PARTNER ios/App/App.xcodeproj/project.pbxproj, MAC_INSTRUCTIONS.txt, public/.well-known/assetlinks.json, scripts/select-xcode-toolchain.sh, scripts/validate-ios-workflow.test.cjs. NO heavy CUSTOMER/PARTNER app gate while lane08/lane02 own those slots",
+        "admittedAt": "2026-10-22T01:35:50.124Z",
+        "promptHttpStatus": 200,
+        "model": "deepseek-v4.1-flash-free"
+      },
+      {
+        "taskId": "dispatch-teardown-binding",
+        "sessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+        "ownerKey": "dispatch-router",
+        "brief": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261020b\\closeout-20261022\\lane-04-teardown-task.md",
+        "scopeSummary": "functions/src/modules/dispatch/dispatch.router.ts + dispatch.webhooks.ts + functions/tests/dispatch.* + evidence. Teardown must retire the binding; late callbacks from a dead booking must park with zero order mutation. Functions heavy gate only after lane07 releases the slot",
+        "admittedAt": "2026-10-22T04:28:14.170Z",
+        "promptHttpStatus": 200,
+        "model": "glm-5.3-flash-free"
+      }
+    ],
+    "note": "Automatic queue run cap 12 is spent and was NOT reset. These entries authorise bounded explicit handoffs on existing root sessions only; no idle nudges, no retries of 429, no new watchers."
+  },
+  "quotaStop": {
+    "observedAt": "2026-10-22T04:35:37.655Z",
+    "firstFailure": "2026-10-22T01:48:35Z",
+    "lastFailure": "2026-10-22T04:28:14Z",
+    "error": "provider.free-limit 429 ? free usage limit reached",
+    "modelsAffected": [
+      "opencode/deepseek-v4.1-flash-free",
+      "opencode/glm-5.3-flash-free"
+    ],
+    "substitutionUsed": false,
+    "retriesAfterFirstFailure": 0,
+    "record": ".orchestration/run-20261020b/closeout-20261022/QUOTA_STOP.md",
+    "deadlineExpired": true
+  },
+  "explicitHandoffsPhase2": {
+    "cap": 3,
+    "used": 2,
+    "coordinator": "ses_ec0542be0ffemk4j2yKN0lXQnI",
+    "scope": "user-requested: prompt ONLY the first three sessions (lanes 01,02,03) and orchestrate them",
+    "entries": [
+      {
+        "taskId": "restaurant-dispatch-choice",
+        "sessionID": "ses_ea5c8a2daffekU3r3U5bPrJspn",
+        "ownerKey": "partner-delivery",
+        "brief": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261020b\\closeout-20261022\\lane-02-delivery-task.md",
+        "scopeSummary": "resume at the GLM verification step; partner repo; ONLY the six packet paths (PorterDispatchCard, RiderAssignmentModal, usePorterLogistics, DeliveryQueuePage, OrderTableList, tests/restaurant-dispatch-choice.test.tsx); isolated worktree at 6f81fba because the dirty partner tree typecheck is broken by lane06's foreign petpoojaSync.test.ts; then PARTNER gate and commit",
+        "admittedAt": "2026-10-22T04:52:31.764Z",
+        "promptHttpStatus": 200,
+        "model": "glm-5.3-flash-free"
+      },
+      {
+        "taskId": "customer-address-server-truth",
+        "sessionID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+        "ownerKey": "customer-addresses",
+        "brief": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.orchestration\\run-20261020b\\closeout-20261022\\lane-01-address-debt-task.md",
+        "scopeSummary": "CUSTOMER repo; sole writer of AddressRepository.ts, addressService.ts, AddressForm.tsx(+test), profile.addresses.tsx, addresses.create.tsx (only if the route owns a failure), tests/address-persistence-failures.test.ts, and the untracked AddressFormModal.a11y.test.tsx only if green. Close the four recorded debts: server address seed after login, account-switch isolation, delete-default promotion truth, /addresses/create failure coverage. CUSTOMER heavy gate is YOURS FIRST; post GATE START/END",
+        "admittedAt": "2026-10-22T05:10:51.686Z",
+        "promptHttpStatus": 200,
+        "model": "deepseek-v4.1-flash-free"
+      }
+    ],
+    "note": "Phase 2 of the explicit-handoff ledger, authorised by the user on 2026-10-22. No automatic queue delivery; no counter reset; no new watchers."
+  }
+}

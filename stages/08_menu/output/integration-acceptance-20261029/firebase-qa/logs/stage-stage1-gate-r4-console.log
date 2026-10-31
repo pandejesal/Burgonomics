@@ -1,0 +1,162 @@
+[2026-10-29T09:44:36.051Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8bf error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:36.433Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c0 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:36.608Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c1 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:36.801Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c2 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:36.950Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c3 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:37.048Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c4 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:37.269Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:37.448Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:37.586Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:37.710Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:37.810Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8c9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:37.936Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8ca error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:38.074Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8cb error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:38.195Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8cc error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:38.356Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8cd error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:38.531Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8ce error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:38.638Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8cf error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:38.738Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d0 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:38.856Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d1 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:39.034Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d2 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:39.125Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d3 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:39.248Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d4 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:39.349Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:39.483Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:39.574Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:39.656Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:39.785Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8d9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:39.881Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8da error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:39.975Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8db error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:40.078Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8dc error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:40.152Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8dd error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:40.272Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8de error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:40.368Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8df error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:40.485Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e0 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:40.578Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e1 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:40.685Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e2 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:40.768Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e3 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:40.874Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e4 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:40.962Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:41.058Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:41.147Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:41.238Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:41.344Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8e9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:41.460Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8ea error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:41.548Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8eb error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:41.620Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8ec error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:41.718Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8ed error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:41.806Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8ee error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:41.895Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8ef error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.015Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f0 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.100Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f1 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'update' @ L272
+[2026-10-29T09:44:42.224Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f2 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.344Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f3 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.427Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f4 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.516Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.610Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.689Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.775Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.857Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8f9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:42.967Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8fa error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.046Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8fb error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.147Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8fc error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.233Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8fd error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.328Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8fe error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.414Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc8ff error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.495Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc900 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.574Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc901 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.664Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc902 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.738Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc903 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.823Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc904 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.901Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc905 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:43.983Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc906 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:44.073Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc907 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:44.153Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc908 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:44.235Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc909 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:44.337Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc90a error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:44.421Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc90b error. Code: 7 Message: 7 PERMISSION_DENIED: 
+evaluation error at L272:24 for 'update' @ L272, false for 'update' @ L272
+[2026-10-29T09:44:45.371Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc914 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+[2026-10-29T09:44:45.456Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc915 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, evaluation error at L272:24 for 'update' @ L272, false for 'create' @ L246
+[2026-10-29T09:44:45.537Z]  @firebase/firestore: Firestore (12.19.0): GrpcConnection RPC 'Write' stream 0x459cc916 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+false for 'create' @ L246, false for 'update' @ L272
+[harness:stage1-candidate-masked] rows=88 deny-rows=82 deny-violations=0 allow-rows=6 allow-violations=0 mode=gate
+GATE PASS (stage1-candidate-masked)

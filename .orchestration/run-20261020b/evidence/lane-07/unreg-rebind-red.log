@@ -1,0 +1,50 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/Desktop/Burgonomics/functions
+
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 1. owner deletes the token doc and scrubs EVERY holder incl. other lists (counted, bounded query) 13ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 2. foreign uid: zero mutation, holders query never runs, constant response 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 3. missing uid: zero mutation even against a registered token 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 4. unknown token + own uid listing it: self-scrub ONLY, not counted, no holders query 2ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 5. unknown token + foreign uid listing it: own-entry self-scrub, owner untouched, constant response 2ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 6. existence-oracle control: foreign-registered response is byte-identical to unknown-token response 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 7. TOCTOU: concurrent re-register flipping the doc owner inside the transaction blocks delete+scrub 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 8. legacy ownerless doc: fail-closed (no delete by anyone), own list scrubbed, distinct warn 2ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 9. legacy doc with non-string userId: still fail-closed, own list scrubbed, constant response 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 10. holders cap (20 hit by 25 holders): truncates at 20 and warns about the remainder 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 11. holders query failure AFTER the token delete: logout still succeeds (warn, constant response) 1ms
+ Γ£ô tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 12. caller without any users profile + unknown token: silent idempotent success (NOT_FOUND tolerated) 1ms
+ ├ù tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 13. rebind race: a scrub outside the delete transaction would erase the NEW owner's fresh membership 14ms
+   ΓåÆ expected [ 'tkn_attackerowntokenffffffffff' ] to include 'tkn_realregistrationtokenvictimstring'
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 1 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/notifications.token-ownership.test.ts > unregisterDeviceToken token ownership > 13. rebind race: a scrub 
+outside the delete transaction would erase the NEW owner's fresh membership
+AssertionError: expected [ 'tkn_attackerowntokenffffffffff' ] to include 'tkn_realregistrationtokenvictimstring'
+ Γ¥» tests/notifications.token-ownership.test.ts:389:52
+    387|     // The rebind owns the token now; the detach must not touch its liΓÇª
+    388|     expect(h.store.tokens.get(TOKEN)!.userId).toBe(ATTACKER);
+    389|     expect(h.store.users.get(ATTACKER)!.fcmTokens).toContain(TOKEN);
+       |                                                    ^
+    390|     // A rebind landed between the delete and the holders read, so theΓÇª
+    391|     // must skip wholesale ΓÇö the new registration prunes stale lists iΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/1]ΓÄ»
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 12 passed (13)
+   Start at  05:42:34
+   Duration  744ms (transform 61%, import 18%, tests 16%, worker 5%)
+

@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "changedFiles": [
+    "src/features/home/components/UpcomingBranches.test.tsx",
+    "src/features/home/components/UpcomingBranches.tsx",
+    "src/routes/cart.empty-state.test.tsx",
+    "src/routes/cart.tsx"
+  ],
+  "capturedInputs": 627,
+  "allOtherCapturedInputsUnchanged": true,
+  "sourceUnchangedAfterUnitTests": true,
+  "manifests": {
+    "delivery-source-final-trim-before.json": "627893dde270811ddbc7564ff253b95d32e912b260e708c22bbd08c9e94cfbe2",
+    "delivery-source-final-trim-pre.json": "0e531d4c2038615687fba8e91e438cfe4337b634ed44806f9622170a0b5a1f4f",
+    "delivery-source-final-trim-post-unit.json": "d472fec5c3ef3e37058db2827074f7bf2befc5a30d30d0fc1be5e67434f3f341"
+  },
+  "limits": "Explicit captured inputs only; no claim for dependencies, credentials, providers or uncaptured filesystem paths"
+}

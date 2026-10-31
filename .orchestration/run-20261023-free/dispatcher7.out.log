@@ -1,0 +1,2 @@
+{"at":"2026-10-23T04:37:30.452Z","kind":"prepared","tasks":12,"primary":"opencode/deepseek-v4.1-flash-free#default","fallback":"opencode/glm-5.3-flash-free#default","concurrency":"root+customer+partner"}
+{"at":"2026-10-23T04:37:30.507Z","kind":"recovering_active_task","task":"customer-menu-a11y-closeout"}

@@ -1,0 +1,56 @@
+{
+  "repo": "root",
+  "head": "81e20d169dc4aba5ab581aea3830a49b1928f385",
+  "frozenAt": "2026-10-23T04:09:39.652Z",
+  "entries": [
+    {
+      "path": "scripts/validate-mobile-hosting.cjs",
+      "sha256": "5dc174dac6d76e41bfdc457594914bd84ef93dbf1b848389b59dcf791e7ba727",
+      "bytes": 21239,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": "scripts/validate-mobile-hosting.test.cjs",
+      "sha256": "4a7e9d303169e9a361e4bf92116313d3f679ac98ca25e8f18b0ddbe916b8a333",
+      "bytes": 16653,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": ".github/workflows/functions-ci.yml",
+      "sha256": "9e073a07ee36a9769be2d45404da3c6f3be941815402a251f57b3c41ef62cafc",
+      "bytes": 2154,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "9ec6f407d96b6a33bff27048092eb95a556b899ffbb22427e4ac2abcd13f291d",
+      "bytes": 954,
+      "trackedAtHead": true,
+      "headBlob": "c2d10bfb649d659da50d9f259d1ad67e605db92d"
+    },
+    {
+      "path": "firebase.json",
+      "sha256": "1c50faa3150545addac016a93ee6515da663aff05b18b5e9144891a473c7871e",
+      "bytes": 6900,
+      "trackedAtHead": true,
+      "headBlob": "423243bc30e9b2df72ca4e55da0757e2f6c5ecb9"
+    },
+    {
+      "path": "R15-android-release-signing-repair.md",
+      "sha256": "1479ffe5a1e685a35158d0c986c9e87e068d0a9db32f381c59c263addcb37607",
+      "bytes": 7306,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": "R18-ios-release-preparation.md",
+      "sha256": "44b4c8f476423e2d85ec98de980a02688f9402647d803e80666315b456e5797f",
+      "bytes": 20562,
+      "trackedAtHead": false,
+      "headBlob": null
+    }
+  ]
+}

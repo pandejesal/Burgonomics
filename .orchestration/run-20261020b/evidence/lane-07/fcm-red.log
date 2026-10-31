@@ -1,0 +1,521 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/AppData/Local/Temp/opencode/lane07-fcm-red/functions
+
+stdout | tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps transport pruning to the filtered token, never to a withheld token
+[FCM Prune] Removed 1 dead token(s)
+
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > sends a token whose current device-token owner is the recipient 12ms
+   ΓåÆ expected "vi.fn()" to be called with arguments: [ { id: 'unit_owned', ΓÇª(1) } ]
+
+Number of calls: 0
+
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > withholds a token rebound to B even when A's stale profile still lists it 3ms
+   ΓåÆ expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "notification": Object {
+          "body": "Your order is ready.",
+          "title": "Order update",
+        },
+        "tokens": Array [
+          "unit_rebound",
+        ],
+      },
+    ]
+
+
+Number of calls: 1
+
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > filters foreign, unknown and ownerless tokens while delivering to a proven owner 5ms
+   ΓåÆ expected "vi.fn()" to be called with arguments: [ { notification: { ΓÇª(2) }, ΓÇª(1) } ]
+
+Received:
+
+  1st vi.fn() call:
+
+@@ -3,9 +3,12 @@
+      "notification": {
+        "body": "Your order is ready.",
+        "title": "Order update",
+      },
+      "tokens": [
++       "unit_foreign",
+        "unit_owned",
++       "unit_missing",
++       "unit_ownerless",
+      ],
+    },
+  ]
+
+
+Number of calls: 1
+
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > fails closed on an ownership lookup failure rather than sending unverified tokens 1ms
+   ΓåÆ expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "notification": Object {
+          "body": "Your order is ready.",
+          "title": "Order update",
+        },
+        "tokens": Array [
+          "unit_unverified",
+        ],
+      },
+    ]
+
+
+Number of calls: 1
+
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > does not report success for a critical message with no owned destination 6ms
+   ΓåÆ promise resolved "{ successCount: 1, ΓÇª(2) }" instead of rejecting
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > bounds a stalled ledger read and never sends the unverified destination 5ms
+   ΓåÆ expected { successCount: 1, ΓÇª(2) } to deeply equal { successCount: +0, ΓÇª(2) }
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > does not treat an explicitly empty recipient as an unbound broadcast 1ms
+   ΓåÆ expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "notification": Object {
+          "body": "Your order is ready.",
+          "title": "Order update",
+        },
+        "tokens": Array [
+          "unit_ownerless",
+        ],
+      },
+    ]
+
+
+Number of calls: 1
+
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > preserves the trusted server's explicit generic multicast contract when UID is omitted 1ms
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps transport pruning to the filtered token, never to a withheld token 3ms
+   ΓåÆ expected "vi.fn()" to be called with arguments: [ { notification: { ΓÇª(2) }, ΓÇª(1) } ]
+
+Received:
+
+  1st vi.fn() call:
+
+@@ -3,9 +3,10 @@
+      "notification": {
+        "body": "Your order is ready.",
+        "title": "Order update",
+      },
+      "tokens": [
++       "unit_foreign",
+        "unit_owned",
+      ],
+    },
+  ]
+
+
+Number of calls: 1
+
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > verifies and sends each real FCM chunk without exceeding 500 targets 2ms
+   ΓåÆ expected [] to deeply equal [ 500, 1 ]
+ ├ù tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > keeps a withheld customer's message in A's inbox without pushing it to B 2ms
+   ΓåÆ expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "android": Object {
+          "notification": Object {
+            "channelId": "burgonomics_updates_channel",
+            "sound": "default",
+          },
+          "priority": "high",
+        },
+        "apns": Object {
+          "payload": Object {
+            "aps": Object {
+              "badge": 1,
+              "contentAvailable": true,
+              "sound": "default",
+            },
+          },
+        },
+        "data": Object {
+          "orderId": "unit_order",
+        },
+        "notification": Object {
+          "body": "Your order is ready.",
+          "title": "Order update",
+        },
+        "tokens": Array [
+          "unit_rebound",
+        ],
+        "webpush": Object {
+          "headers": Object {
+            "Urgency": "high",
+          },
+          "notification": Object {
+            "badge": "/brand/badge-icon.png",
+            "body": "Your order is ready.",
+            "icon": "/brand/burgonomics-logo.png",
+            "title": "Order update",
+          },
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 10 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > sends a 
+token whose current device-token owner is the recipient
+AssertionError: expected "vi.fn()" to be called with arguments: [ { id: 'unit_owned', ΓÇª(1) } ]
+
+Number of calls: 0
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:97:22
+     95|     const result = await sendMulticastFcm(["unit_owned"], payload, A);
+     96|     expect(result).toEqual({ successCount: 1, failureCount: 0, prunedTΓÇª
+     97|     expect(h.getAll).toHaveBeenCalledWith({ id: "unit_owned", path: "dΓÇª
+       |                      ^
+     98|     expect(h.send).toHaveBeenCalledWith({ ...payload, tokens: ["unit_oΓÇª
+     99|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > withholds 
+a token rebound to B even when A's stale profile still lists it
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "notification": Object {
+          "body": "Your order is ready.",
+          "title": "Order update",
+        },
+        "tokens": Array [
+          "unit_rebound",
+        ],
+      },
+    ]
+
+
+Number of calls: 1
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:105:24
+    103|     h.profiles.set(A, ["unit_rebound"]);
+    104|     const result = await sendMulticastFcm(h.profiles.get(A)!, payload,ΓÇª
+    105|     expect(h.send).not.toHaveBeenCalled();
+       |                        ^
+    106|     expect(result).toEqual({ successCount: 0, failureCount: 1, prunedTΓÇª
+    107|     // Withholding is not permission to mutate B's membership or pruneΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > filters 
+foreign, unknown and ownerless tokens while delivering to a proven owner
+AssertionError: expected "vi.fn()" to be called with arguments: [ { notification: { ΓÇª(2) }, ΓÇª(1) } ]
+
+Received:
+
+  1st vi.fn() call:
+
+@@ -3,9 +3,12 @@
+      "notification": {
+        "body": "Your order is ready.",
+        "title": "Order update",
+      },
+      "tokens": [
++       "unit_foreign",
+        "unit_owned",
++       "unit_missing",
++       "unit_ownerless",
+      ],
+    },
+  ]
+
+
+Number of calls: 1
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:121:20
+    119|     );
+    120|     expect(h.send).toHaveBeenCalledOnce();
+    121|     expect(h.send).toHaveBeenCalledWith({ ...payload, tokens: ["unit_oΓÇª
+       |                    ^
+    122|     expect(result).toEqual({ successCount: 1, failureCount: 3, prunedTΓÇª
+    123|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[3/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > fails 
+closed on an ownership lookup failure rather than sending unverified tokens
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "notification": Object {
+          "body": "Your order is ready.",
+          "title": "Order update",
+        },
+        "tokens": Array [
+          "unit_unverified",
+        ],
+      },
+    ]
+
+
+Number of calls: 1
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:128:24
+    126|     h.getAll.mockRejectedValueOnce(new Error("unit ownership read unavΓÇª
+    127|     const result = await sendMulticastFcm(["unit_unverified"], payloadΓÇª
+    128|     expect(h.send).not.toHaveBeenCalled();
+       |                        ^
+    129|     expect(result).toEqual({ successCount: 0, failureCount: 1, prunedTΓÇª
+    130|     expect(h.update).not.toHaveBeenCalled();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[4/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > does not 
+report success for a critical message with no owned destination
+AssertionError: promise resolved "{ successCount: 1, ΓÇª(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "failureCount": 0,
++   "prunedTokens": [],
++   "successCount": 1,
+  }
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:135:85
+    133|   it("does not report success for a critical message with no owned desΓÇª
+    134|     h.owners.set("unit_foreign", B);
+    135|     await expect(sendMulticastFcm(["unit_foreign"], payload, A, { critΓÇª
+       |                                                                                     ^
+    136|       .rejects.toThrow(/critical|ownership|owned/i);
+    137|     expect(h.send).not.toHaveBeenCalled();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[5/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > bounds a 
+stalled ledger read and never sends the unverified destination
+AssertionError: expected { successCount: 1, ΓÇª(2) } to deeply equal { successCount: +0, ΓÇª(2) }
+
+- Expected
++ Received
+
+  {
+-   "failureCount": 1,
++   "failureCount": 0,
+    "prunedTokens": [],
+-   "successCount": 0,
++   "successCount": 1,
+  }
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:145:27
+    143|     const pending = sendMulticastFcm(["unit_stalled"], payload, A);
+    144|     await vi.advanceTimersByTimeAsync(FCM_SEND_TIMEOUT_MS + 1);
+    145|     expect(await pending).toEqual({ successCount: 0, failureCount: 1, ΓÇª
+       |                           ^
+    146|     expect(h.send).not.toHaveBeenCalled();
+    147|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[6/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > does not 
+treat an explicitly empty recipient as an unbound broadcast
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "notification": Object {
+          "body": "Your order is ready.",
+          "title": "Order update",
+        },
+        "tokens": Array [
+          "unit_ownerless",
+        ],
+      },
+    ]
+
+
+Number of calls: 1
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:152:24
+    150|     h.owners.set("unit_ownerless", undefined);
+    151|     const result = await sendMulticastFcm(["unit_ownerless"], payload,ΓÇª
+    152|     expect(h.send).not.toHaveBeenCalled();
+       |                        ^
+    153|     expect(result.successCount).toBe(0);
+    154|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[7/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps 
+transport pruning to the filtered token, never to a withheld token
+AssertionError: expected "vi.fn()" to be called with arguments: [ { notification: { ΓÇª(2) }, ΓÇª(1) } ]
+
+Received:
+
+  1st vi.fn() call:
+
+@@ -3,9 +3,10 @@
+      "notification": {
+        "body": "Your order is ready.",
+        "title": "Order update",
+      },
+      "tokens": [
++       "unit_foreign",
+        "unit_owned",
+      ],
+    },
+  ]
+
+
+Number of calls: 1
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:172:20
+    170|     });
+    171|     const result = await sendMulticastFcm(["unit_foreign", "unit_ownedΓÇª
+    172|     expect(h.send).toHaveBeenCalledWith({ ...payload, tokens: ["unit_oΓÇª
+       |                    ^
+    173|     expect(result.prunedTokens).toEqual(["unit_owned"]);
+
+ Test Files  1 failed (1)
+      Tests  10 failed | 1 passed (11)
+   Start at  06:34:39
+   Duration  523ms (transform 57%, tests 21%, import 18%, worker 4%)
+
+    174|     expect(result.failureCount).toBe(2);
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[8/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > verifies 
+and sends each real FCM chunk without exceeding 500 targets
+AssertionError: expected [] to deeply equal [ 500, 1 ]
+
+- Expected
++ Received
+
+- [
+-   500,
+-   1,
+- ]
++ []
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:182:58
+    180|     tokens.forEach(t => h.owners.set(t, A));
+    181|     const result = await sendMulticastFcm(tokens, payload, A);
+    182|     expect(h.getAll.mock.calls.map(args => args.length)).toEqual([500,ΓÇª
+       |                                                          ^
+    183|     expect(h.send.mock.calls.map(args => args[0].tokens.length)).toEquΓÇª
+    184|     expect(result.successCount).toBe(501);
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[9/10]ΓÄ»
+
+ FAIL  tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > keeps a 
+withheld customer's message in A's inbox without pushing it to B
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "android": Object {
+          "notification": Object {
+            "channelId": "burgonomics_updates_channel",
+            "sound": "default",
+          },
+          "priority": "high",
+        },
+        "apns": Object {
+          "payload": Object {
+            "aps": Object {
+              "badge": 1,
+              "contentAvailable": true,
+              "sound": "default",
+            },
+          },
+        },
+        "data": Object {
+          "orderId": "unit_order",
+        },
+        "notification": Object {
+          "body": "Your order is ready.",
+          "title": "Order update",
+        },
+        "tokens": Array [
+          "unit_rebound",
+        ],
+        "webpush": Object {
+          "headers": Object {
+            "Urgency": "high",
+          },
+          "notification": Object {
+            "badge": "/brand/badge-icon.png",
+            "body": "Your order is ready.",
+            "icon": "/brand/burgonomics-logo.png",
+            "title": "Order update",
+          },
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+ Γ¥» tests/fcm.recipient-ownership.test.ts:192:24
+    190|     h.profiles.set(A, ["unit_rebound"]);
+    191|     await pushToCustomer(A, "Order update", "Your order is ready.", { ΓÇª
+    192|     expect(h.send).not.toHaveBeenCalled();
+       |                        ^
+    193|     expect(h.inbox).toHaveLength(1);
+    194|     expect(h.inbox[0].uid).toBe(A);
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[10/10]ΓÄ»
+

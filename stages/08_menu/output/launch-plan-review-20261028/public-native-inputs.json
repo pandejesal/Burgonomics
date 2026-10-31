@@ -1,0 +1,115 @@
+{
+  "observedAt": "2026-10-28T10:59:20+05:30",
+  "scope": "public source metadata only, no native build/store/signing/private-key checks",
+  "native": [
+    {
+      "repository": "burgonomics-foundation-core",
+      "appIdSource": "com.burgonomics",
+      "androidSdkFields": {
+        "minSdkVersion": "24",
+        "compileSdkVersion": "36",
+        "targetSdkVersion": "36"
+      },
+      "androidPublicVersionFields": {
+        "VERSION_CODE": "1",
+        "VERSION_NAME": "1.0.0"
+      },
+      "iosDeploymentTargets": [
+        "15.0",
+        "16.0"
+      ],
+      "iosCodeSignStyles": [
+        "Manual"
+      ],
+      "aasaHasTEAMIDPlaceholder": true,
+      "nativeFirebasePlistDiscovered": false,
+      "signingCustodyVerified": false,
+      "storeIdentityVerified": false,
+      "sourceFingerprints": [
+        {
+          "file": "burgonomics-foundation-core/capacitor.config.ts",
+          "sha256": "56cdc22181420b26dda8441bce6118209ac90e740e390bae916d475555adda11"
+        },
+        {
+          "file": "burgonomics-foundation-core/android/variables.gradle",
+          "sha256": "83d502c9ed8fcf1dd4791482067abeedbebae49fafe9cd14a8a1f5891deb0d88"
+        },
+        {
+          "file": "burgonomics-foundation-core/android/version.properties",
+          "sha256": "1d77d467ec6fc5123b0f9ce355fe93351482740388b9f894a12b7ec9034e947b"
+        },
+        {
+          "file": "burgonomics-foundation-core/ios/App/App.xcodeproj/project.pbxproj",
+          "sha256": "823a9076e07f34392ef98146cd0f6b9ccd23266b3270db2225adf7b1c74e276a"
+        },
+        {
+          "file": "burgonomics-foundation-core/public/.well-known/apple-app-site-association",
+          "sha256": "121f6f621e013eeaeb3dc1e0534740bafcdf9f6609fbc30f28d5d9eb8d1a706d"
+        }
+      ]
+    },
+    {
+      "repository": "burgonomics-partner",
+      "appIdSource": "com.burgonomics.partner",
+      "androidSdkFields": {
+        "minSdkVersion": "24",
+        "compileSdkVersion": "36",
+        "targetSdkVersion": "36"
+      },
+      "androidPublicVersionFields": {
+        "VERSION_CODE": "1",
+        "VERSION_NAME": "1.0.0"
+      },
+      "iosDeploymentTargets": [
+        "15.0"
+      ],
+      "iosCodeSignStyles": [
+        "Automatic"
+      ],
+      "aasaHasTEAMIDPlaceholder": true,
+      "nativeFirebasePlistDiscovered": false,
+      "signingCustodyVerified": false,
+      "storeIdentityVerified": false,
+      "sourceFingerprints": [
+        {
+          "file": "burgonomics-partner/capacitor.config.ts",
+          "sha256": "342bab3c51d4995ae62e3ded23bcdda919d73afa0432cebf12dc16f4d744c410"
+        },
+        {
+          "file": "burgonomics-partner/android/variables.gradle",
+          "sha256": "83d502c9ed8fcf1dd4791482067abeedbebae49fafe9cd14a8a1f5891deb0d88"
+        },
+        {
+          "file": "burgonomics-partner/android/version.properties",
+          "sha256": "7bb0f52f418eaca59c95d021480caa974774b5a7a8d6e7a8edf0230ba60d3c3c"
+        },
+        {
+          "file": "burgonomics-partner/ios/App/App.xcodeproj/project.pbxproj",
+          "sha256": "d162bf7bdfb09ebe4a4b149b05ea3ed7a16478d7a321846eff4340d921e45a73"
+        },
+        {
+          "file": "burgonomics-partner/public/.well-known/apple-app-site-association",
+          "sha256": "3192fa3a006f3483709fc44139e9bcabd1cb2847b04dd64b56327112ef8929e8"
+        }
+      ]
+    }
+  ],
+  "additionalReadOnlySourceInputs": [
+    {
+      "file": "burgonomics-foundation-core/src/features/home/state/homeStore.ts",
+      "sha256": "e63f79b736993966325322ba4546e81ed6bee8cd90e8ad868a72b584ec95ae45"
+    },
+    {
+      "file": "burgonomics-foundation-core/src/features/home/repositories/HomeRepository.ts",
+      "sha256": "edfc1bb22e29b3eb547718d9dfba7a3b1657a76b5e7ae61066a28f0744cfa5c9"
+    },
+    {
+      "file": "burgonomics-foundation-core/src/features/home/index.ts",
+      "sha256": "df53580d79335ce20b6de878d4d050d3dc304021d03348198e7715859b5b1d7f"
+    },
+    {
+      "file": "burgonomics-foundation-core/src/features/menu/components/CategoryPills.tsx",
+      "sha256": "563a5500a0ef82c0937cbfe159a95f5c6c88cb558629d86c05c06165048a1ff4"
+    }
+  ]
+}

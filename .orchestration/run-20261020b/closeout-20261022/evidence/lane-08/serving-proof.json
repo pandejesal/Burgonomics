@@ -1,0 +1,27 @@
+{
+  "source": "runtime opencode session DB, read-only (file:C:/Users/DELL/.local/share/opencode/opencode.db?mode=ro, table session_message)",
+  "captured_at_utc": "2026-10-22T01:47:00Z",
+  "note": "Pins/manifest declarations are not proof; these are the persisted assistant rows actually written by each child.",
+  "children": [
+    {
+      "role": "independent reviewer (DS)",
+      "session_id": "ses_e9ec42d0effeS2eUsXy12MXc5a",
+      "parent": "ses_ea5c87df5ffe7Vjpzr9yv5VLpA",
+      "rows": 29,
+      "assistant_rows": 24,
+      "model_counts": { "opencode/deepseek-v4.1-flash-free": 24 },
+      "mismatches": 0,
+      "verdicts": ["v1: APPROVE_WITH_CHANGES", "v2 final bytes: APPROVE"]
+    },
+    {
+      "role": "independent verifier (GLM)",
+      "session_id": "ses_e9ebbbd79ffewsYiBHoJ9VwePS",
+      "parent": "ses_ea5c87df5ffe7Vjpzr9yv5VLpA",
+      "rows": 14,
+      "assistant_rows": 11,
+      "model_counts": { "opencode/glm-5.3-flash-free": 11 },
+      "mismatches": 0,
+      "verdicts": ["VERIFIED on the 8 frozen blobs"]
+    }
+  ]
+}

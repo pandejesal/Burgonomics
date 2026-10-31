@@ -1,0 +1,29 @@
+[
+  {
+    "name": "razorpay-node",
+    "url": "https://github.com/razorpay/razorpay-node.git",
+    "commit": "b9e8527225a7322ba2671a3bc0b848fd019d2d8c",
+    "clean": true,
+    "path": "C:\\Users\\DELL\\Desktop\\Burgonomics\\developer-resources\\provider-toolkit-20261027\\repos\\razorpay-node",
+    "exit": 0,
+    "executed": false
+  },
+  {
+    "name": "razorpay-mcp-server",
+    "url": "https://github.com/razorpay/razorpay-mcp-server.git",
+    "commit": "5b87a0f962449c2e6c35f0d7d6ce0dc4db109f9d",
+    "clean": true,
+    "path": "C:\\Users\\DELL\\Desktop\\Burgonomics\\developer-resources\\provider-toolkit-20261027\\repos\\razorpay-mcp-server",
+    "exit": 0,
+    "executed": false
+  },
+  {
+    "name": "firebase-agent-skills",
+    "url": "https://github.com/firebase/agent-skills.git",
+    "commit": "92eed24c0976a79a66d5b8038e9eda8b441ef92d",
+    "clean": true,
+    "path": "C:\\Users\\DELL\\Desktop\\Burgonomics\\developer-resources\\provider-toolkit-20261027\\repos\\firebase-agent-skills",
+    "exit": 0,
+    "executed": false
+  }
+]

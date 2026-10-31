@@ -1,0 +1,57 @@
+{
+  "recordedAtUtc": "2026-10-27T19:12:07.756703+00:00",
+  "status": "ENABLED_LIVE_TELEMETRY_VERIFIED",
+  "plugin": {
+    "id": "burgonomics.chatgpt-autoquota",
+    "source": {
+      "type": "local",
+      "path": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.opencode\\plugins\\chatgpt-autoquota.js"
+    },
+    "features": {
+      "server": true
+    },
+    "state": {
+      "status": "active"
+    }
+  },
+  "mcpStatus": {
+    "code-review": "connected",
+    "context7": "connected",
+    "firebase": "connected",
+    "github": "needs_auth",
+    "mobile": "connected",
+    "playwright": "connected",
+    "shadcn": "connected",
+    "vera": "connected"
+  },
+  "gates": {
+    "typecheckExit": 0,
+    "pluginTestsPassed": 45,
+    "pluginTestsFailed": 0,
+    "buildExit": 0,
+    "toolkitChecksPassed": 11,
+    "toolkitChecksFailed": 0
+  },
+  "lastVerifiedQuotaObservation": {
+    "activeAccount": "second",
+    "observedAtMs": 1793126252564,
+    "remainingPercent": {
+      "primary": 61,
+      "secondary": 74
+    }
+  },
+  "liveThresholdCrossingForced": false,
+  "activationPath": "Hermetic adapter tests; no live exhaustion or manual switching",
+  "sourceWorktree": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\chatgpt-autoquota-20261027",
+  "runtime": "C:\\Users\\DELL\\AppData\\Local\\BurgonomicsDevTools\\chatgpt-autoquota-1.0.1",
+  "sha256": {
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\chatgpt-autoquota-20261027\\src\\index.ts": "271d9501b9bdd1953066f3b072c5a88a682e55d569180759e7b3cbdea3155ab5",
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\chatgpt-autoquota-20261027\\src\\quota.ts": "98e29f1eb83868f3ffc203de86e7f2e00540da9a7335e72728b904f1d004f86c",
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\chatgpt-autoquota-20261027\\tests\\plugin.test.ts": "f14b3555d21d7913d22aeb94540227e25a05a67db1a8db2c5f5c4f654e44fdb8",
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\chatgpt-autoquota-20261027\\tests\\quota.test.ts": "e2001ef5cc475455e5aa0804637f4ffaa02dfac75a33ce12e23d8b3bee6b75d8",
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\chatgpt-autoquota-20261027\\package-lock.json": "25a31fb60b62eebaf55dd8698ec80cd7634648596abdb726bbee554a1fbb85ce",
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\.opencode\\plugins\\chatgpt-autoquota.js": "c6e6cc620d7705566c2fb0ece2562c41eb16a19fa9f978acd8ce449269a7ab57",
+    "C:\\Users\\DELL\\AppData\\Local\\BurgonomicsDevTools\\chatgpt-autoquota-1.0.1\\dist\\index.js": "1730d45ab680583a59b4acc40c5c1dad68f90ce45ad3f6633712ce0a0ef816cf",
+    "C:\\Users\\DELL\\AppData\\Local\\BurgonomicsDevTools\\chatgpt-autoquota-1.0.1\\dist\\quota.js": "6918a191a568f1fa1de87c2741431479865d29b3d75ef3726d755cfa6a9bf79f"
+  }
+}

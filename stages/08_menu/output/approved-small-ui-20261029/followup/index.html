@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; frame-src 'self'; connect-src 'none'; form-action 'none'">
+  <title>Burgonomics — updated code preview</title>
+  <style>
+    @font-face{font-family:Montserrat;src:url('../fonts/MontserratVariable.woff2') format('woff2');font-weight:100 900;font-display:swap}
+    @font-face{font-family:MonstroSolid;src:url('../fonts/MonstroSolid.woff2') format('woff2');font-weight:400;font-display:swap}
+    :root{--paper:#fff;--ink:#111311;--muted:#526057;--line:#c9d3ca;--brand:#0e4825}
+    :root[data-theme=dark]{--paper:#000;--ink:#fff;--muted:#c2cbc5;--line:#526057;--brand:#86efac}
+    *{box-sizing:border-box}body{margin:0;padding:24px 16px;background:var(--paper);color:var(--ink);font:14px/1.6 Montserrat,sans-serif}
+    header{max-width:900px;margin:0 auto 24px}h1{font:400 28px/1.2 MonstroSolid,sans-serif;margin:0 0 12px}
+    p{margin:8px 0;color:var(--muted)}nav{display:flex;gap:20px;flex-wrap:wrap;margin-top:16px}a{color:var(--brand);font-weight:700}
+    a:focus-visible{outline:2px solid var(--brand);outline-offset:4px}main{display:flex;gap:24px;justify-content:center;align-items:flex-start;flex-wrap:wrap}
+    h2{font-size:16px;font-weight:700;margin:0 0 12px}iframe{display:block;width:390px;max-width:calc(100vw - 32px);height:820px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Updated app code preview</h1>
+    <p>Large Home cards, a larger banner and wordmark, compact awards, and no branch counter. Menu grid cards are now smaller, while list view and continuous categories stay intact.</p>
+    <p>These are inert HTML snapshots of the actual rendered code, with an explicitly sampled Cart and rail selection. No live orders, payments, courier or POS actions. Favourites are hidden when no entries are saved.</p>
+    <nav aria-label="Preview themes"><a href="?theme=light">Light</a><a href="?theme=dark">Dark</a><a href="./README.md">Scope and evidence</a><a href="../integration-readiness.md">Integration limitations</a></nav>
+  </header>
+  <main>
+    <section><h2>Menu — compact product grid</h2><iframe id="menu-frame" title="Actual compact Menu grid, static preview" src="../menu-light.html"></iframe></section>
+    <section><h2>Home — scroll for lower sections</h2><iframe id="home-frame" title="Actual Home code, static preview" src="../home-light.html"></iframe></section>
+    <section><h2>Cart — labelled sample basket</h2><iframe id="cart-frame" title="Actual Cart code, static preview" src="../cart-light.html"></iframe></section>
+  </main>
+  <script src="./preview.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "status": "PASS",
+  "position": "Explicit isolated-browser location 20 km from a public outlet; not phone GPS",
+  "providerAcceptance": false,
+  "cases": [
+    {
+      "mode": "takeaway",
+      "activeStoreStillNull": true,
+      "cartStillEmpty": true,
+      "targetRowRendered": true,
+      "overflow": 0
+    },
+    {
+      "mode": "dinein",
+      "activeStoreStillNull": true,
+      "cartStillEmpty": true,
+      "targetRowRendered": true,
+      "overflow": 0
+    }
+  ],
+  "pageErrors": [],
+  "blockedWrites": [],
+  "deliveryEmptyWithPickupReachable": true
+}

@@ -1,0 +1,154 @@
+{
+  "checkedAt": "2026-10-28T12:46:28+05:30",
+  "revision": "v2-r1",
+  "scope": "Owned mockup artifacts, partial source identity and static internal-review ZIP only; no app/native/provider/store gate",
+  "command": "python -B stages/08_menu/output/launch-plan-20261028/proposals/v2/validate-packet.py --revision r1",
+  "markdown": {
+    "files": 8,
+    "localLinks": 239,
+    "tables": 9
+  },
+  "states": 38,
+  "stateAndSamplePNGChecks": 89,
+  "boardPNGChecks": 10,
+  "retainedR0PNGChecks": 99,
+  "protectedTreeFileChecks": 54,
+  "selectedSourceEntries": 118,
+  "selectedSourceMatches": 118,
+  "additionalPublicSourceChecks": 14,
+  "inputPlanDocumentChecks": 4,
+  "repositoryMetadata": [
+    {
+      "group": "G-ROOT",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "trackedDirtyCount": 99,
+      "statusPathsUnchangedOutsideOwnedArtifacts": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "trackedDirtyCount": 9,
+      "statusPathsUnchangedOutsideOwnedArtifacts": true
+    },
+    {
+      "group": "G-PARTNER",
+      "headUnchanged": true,
+      "stagedCount": 0,
+      "trackedDirtyCount": 11,
+      "statusPathsUnchangedOutsideOwnedArtifacts": true
+    }
+  ],
+  "pythonASTFiles": 3,
+  "javascriptSyntax": [
+    {
+      "file": "catalog.js",
+      "command": "node --check catalog.js",
+      "exit": 0
+    },
+    {
+      "file": "mockups.js",
+      "command": "node --check mockups.js",
+      "exit": 0
+    }
+  ],
+  "scopedGitDiffCheckExit": 0,
+  "interruptionRecovery": {
+    "file": "resume-record-r1-1.json",
+    "sha256": "34354d3c3dee114c35cd82c8a4f3c339d9964a5a9f8c0a950dab89747c5138f9",
+    "existingCount": 45
+  },
+  "parentVisualInspectionR1": [
+    "D02-L",
+    "P18-L",
+    "P21-L-320-200",
+    "P06-D-390",
+    "D12-D-320-200",
+    "board-discovery",
+    "board-notes",
+    "board-feed",
+    "board-stock-dispatch"
+  ],
+  "visualInspectionLimits": "Bounded parent-only inspection of the named images; not every PNG, no independent/team/operator approval",
+  "package": {
+    "file": "burgonomics-proposed-v2-r1.zip",
+    "sha256": "9e27e3c99fede3ccae78f31d50580c0ce78494cb06ef87b62c2da7a5b6349c4f",
+    "bytes": 11587113,
+    "entries": 112,
+    "crcAndAllEntryBytesVerified": true,
+    "manifest": {
+      "file": "team-manifest-r1.json",
+      "sha256": "f443cbe2ce87e3dc6bfc604c1d1f0b62f682c4b89ecd81bd1864e5a24c951a1f"
+    }
+  },
+  "finalArtifactFingerprints": [
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/README.md",
+      "sha256": "0030c7bf1ba5d87a771c950de78ec568d25560ad9620b1f7604c8ea9945ab31c"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/brand-spec.md",
+      "sha256": "d4486779471c7156217375f925f95502c0f0fd46a8f3adf4844493d7ad9c20e6"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/catalog.js",
+      "sha256": "15a6deeb5ca599aaa42dc412244a521b2965252b9f6e39c6219509844240bf33"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/COVERAGE.md",
+      "sha256": "abbc2413367d8d23fda4208114a34195c9758a090573a5c96750f6ad2b0d612f"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/DESIGN.md",
+      "sha256": "f0b8a38dea6de5443c94acc597002f0f240ec00b971287180b55defb9ba9fb69"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/image-manifest-r1.json",
+      "sha256": "700f6867798bf7cd43ef9c69bf86b7460984ac689d2ee9716b2cd82c4cd29d8f"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/mockups.css",
+      "sha256": "f54e3bbb6841dbdf977c0d1d6e5f6f2eba46697c462e1666a8ab2e563eccc9c1"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/mockups.js",
+      "sha256": "f69c5bfcefa7f30bc20da0d9a513bcc5599bf430a2c612ba7c3ed19054c5f262"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/prepare-inputs.py",
+      "sha256": "cf7594f634bd634cdfe94a000e3b55d931195602af413cc48239d2d984781830"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/preview.html",
+      "sha256": "b9288e91d4d88e6c6c591f0fc6173e683705ea6063a8961ba000bf68dec6ee01"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/README.md",
+      "sha256": "c1ec40bfce868f42699d6e1aeab80d1de5b796771422494049571bfd70220a36"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/render-mockups.py",
+      "sha256": "253ce15b8665bf57841b002231009bdda21dacab6ef60a4b9c634be60d75d4a4"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/REVIEW-r0.md",
+      "sha256": "a2d25da1e1ef90d1c3058e2084099ae32a6940659bf429112b0cb5f73fbc4015"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/REVIEW-r1.md",
+      "sha256": "29e5fe65f04493d685cc3f6dcb007ada1ed5a87d6a4a11e04303f8babe68cc07"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/validate-packet.py",
+      "sha256": "449e7c7e2623b91e691f76f20a8577f67db247754bdd615cbe7ed1ff8fed064a"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/VALIDATION.md",
+      "sha256": "6e7a06041c113e905ed3e1bd58ca3d57535aa6af928d02079483d7fcb7f9ba1e"
+    }
+  ],
+  "limits": "Partial manifests/status only, not every unmanifested byte, full release provenance or human ownership. No application tests/builds, security/native/provider acceptance or store action.",
+  "errors": [],
+  "exit": 0
+}

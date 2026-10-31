@@ -1,0 +1,43 @@
+﻿{
+    "purpose":  "Native branch rotation before touching the rail; visually compare distinct announcement names",
+    "configuredWaitSeconds":  7,
+    "captures":  [
+                     {
+                         "file":  "phone-branches-auto-a.png",
+                         "device":  "RZCX51TXRKB",
+                         "capturedAt":  "2026-10-29T23:53:42.323754+00:00",
+                         "sha256":  "4e2744f7872d2cc994ceedf09ec5024b1ea1a1ec1d22109bc6332e161aee4ca4",
+                         "regionPhysicalPixels":  [
+                                                      0,
+                                                      1200,
+                                                      1080,
+                                                      2020
+                                                  ],
+                         "maskedPhysicalPixels":  [
+
+                                                  ],
+                         "foregroundCheckedBeforeAndAfter":  true,
+                         "rawScreenshotWritten":  false,
+                         "statusAndSystemNavigationExcluded":  true
+                     },
+                     {
+                         "file":  "phone-branches-auto-b.png",
+                         "device":  "RZCX51TXRKB",
+                         "capturedAt":  "2026-10-29T23:53:50.841451+00:00",
+                         "sha256":  "3bc25a958c9a53b88e0bd75c22113fcb7760428e3fec528812c9a8a511c21fed",
+                         "regionPhysicalPixels":  [
+                                                      0,
+                                                      1200,
+                                                      1080,
+                                                      2020
+                                                  ],
+                         "maskedPhysicalPixels":  [
+
+                                                  ],
+                         "foregroundCheckedBeforeAndAfter":  true,
+                         "rawScreenshotWritten":  false,
+                         "statusAndSystemNavigationExcluded":  true
+                     }
+                 ],
+    "nativeResultNotYetInterpreted":  true
+}

@@ -1,0 +1,19 @@
+{
+  "observedAt": "2026-10-22T01:00:25.770Z",
+  "proof": [
+    {
+      "id": "ses_e9efb6f73ffeX7EjqhU8MqK50m",
+      "parentID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+      "expected": "deepseek-v4.1-flash-free",
+      "assistantMessages": 31,
+      "mismatches": 0
+    },
+    {
+      "id": "ses_e9eefadd3fferIQBDmrE9QSWfS",
+      "parentID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+      "expected": "glm-5.3-flash-free",
+      "assistantMessages": 10,
+      "mismatches": 0
+    }
+  ]
+}

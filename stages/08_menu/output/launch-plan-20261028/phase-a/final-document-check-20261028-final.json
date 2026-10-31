@@ -1,0 +1,52 @@
+{
+  "checkedAt": "2026-10-28T16:05:05+05:30",
+  "command": "python -B <temp>/final-doc-check-20261028.py",
+  "scope": "Reconciled packet documents, local links, Markdown shape and frozen artifact identity. No app, native, provider or store check.",
+  "documentsChecked": 7,
+  "localLinks": 66,
+  "tables": 14,
+  "artifactHashes": [
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/image-manifest-r1.json",
+      "bytes": 223624,
+      "sha256": "700f6867798bf7cd43ef9c69bf86b7460984ac689d2ee9716b2cd82c4cd29d8f"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/REVIEW-r1.md",
+      "bytes": 8767,
+      "sha256": "29e5fe65f04493d685cc3f6dcb007ada1ed5a87d6a4a11e04303f8babe68cc07"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/proposals/v2/burgonomics-proposed-v2-r1.zip",
+      "bytes": 11587113,
+      "sha256": "9e27e3c99fede3ccae78f31d50580c0ce78494cb06ef87b62c2da7a5b6349c4f"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/device-review-20261028/image-manifest.json",
+      "bytes": 4578,
+      "sha256": "95c9fffbb71e4b5ae0b9dc697a7be497517b914d26fe498f216d802d98dcd91c"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/device-review-20261028/validation.json",
+      "bytes": 2570,
+      "sha256": "3e4a1ed3a38f013391be9b3b0e7975e9bb37acaca8e8f608a68509370c4d5d4f"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/provider-doc-review-20261028/local-inputs.json",
+      "bytes": 54517,
+      "sha256": "506e5054b9f4b1f9c371fab8dfaaa1f6df76da0cf2f4d0d34ab911578a7e4354"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/provider-doc-review-20261028/shadowfax-inputs.json",
+      "bytes": 32664,
+      "sha256": "5ffe0d8cea13008e6282ead78daccf391214661f4c64bee89a9af40f26d105c9"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/provider-doc-review-20261028/validation-current-2.json",
+      "bytes": 2359,
+      "sha256": "f1adad0721813a4013531caaf8f8edc44da44d5e1f6f622b2e305975b38f01ac"
+    }
+  ],
+  "errors": [],
+  "exit": 0
+}

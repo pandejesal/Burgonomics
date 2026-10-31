@@ -1,0 +1,5 @@
+HARNESS ERROR Error: Owned emulator readiness deadline exceeded
+    at waitPort (C:\Users\DELL\Desktop\Burgonomics\stages\08_menu\output\integration-acceptance-20261029\courier-qa\infrastructure.cjs:318:9)
+    at async startInfrastructure (C:\Users\DELL\Desktop\Burgonomics\stages\08_menu\output\integration-acceptance-20261029\courier-qa\infrastructure.cjs:336:5)
+    at async main (C:\Users\DELL\Desktop\Burgonomics\stages\08_menu\output\integration-acceptance-20261029\courier-qa\run-tests.cjs:98:13)
+RESULT {"mode":"final","scope":"dispatch","sourceAcceptance":false,"scopedChecksPassed":false,"statuses":[],"exitCode":1,"evidenceDir":"C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\evidence\\dispatch-final-04"}

@@ -1,0 +1,121 @@
+{
+  "createdAt": "2026-10-29T09:44:35.843Z",
+  "label": "pos-current-01",
+  "scope": "pos",
+  "acceptance": false,
+  "note": "Capture alone is NOT acceptance. Final checks require separately supplied owner-ready hashes. Only frozen copied bytes may execute.",
+  "dependenciesFrom": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\backend-email-contract-20261029\\functions\\package.json",
+  "candidates": {
+    "pos": {
+      "root": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\backend-email-contract-20261029",
+      "head": "31e82c3c415757064e3b33010ade4d2b0d8ebd6f",
+      "entries": [
+        "functions/src/modules/petpooja/orderPush.ts",
+        "functions/src/modules/petpooja/petpooja.scheduler.ts"
+      ],
+      "auxiliary": [
+        "functions/tests/petpooja.ambiguous-send.test.ts"
+      ]
+    }
+  },
+  "files": [
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/petpooja/orderPush.ts",
+      "sha256": "fdcc6167a03cb36a0018950fad66a0d71e1e2f83fdb643ca7721e2bfc9fa573f",
+      "bytes": 80775,
+      "sourceMtimeMs": 1793252426399.366
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/petpooja/petpooja.scheduler.ts",
+      "sha256": "07fdc211faadba1879a7366029dcd980f5bccd5ebda043e9c2f8c777d6878eac",
+      "bytes": 16512,
+      "sourceMtimeMs": 1793222327082.8733
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/core/firebase.ts",
+      "sha256": "902110a83604ebab3cff24eb50dbe0f026fe0ecaff44752f594bf06050104de7",
+      "bytes": 1474,
+      "sourceMtimeMs": 1793222259585.081
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/config/env.ts",
+      "sha256": "81905cf8e34c25f9fe715f79daab7988f85628f2a520e095a05384058edeef0f",
+      "bytes": 19233,
+      "sourceMtimeMs": 1793266974117.315
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/core/errors.ts",
+      "sha256": "49a35dc763c22c38daaadcb32d91b5d17c600ffcd9a744eabba87a28885b5e48",
+      "bytes": 9941,
+      "sourceMtimeMs": 1793222259584.0815
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/petpooja/client.ts",
+      "sha256": "99a87f2e70a451125aad03599f4335a94d7641c768d4d545f138706f3dae9e0c",
+      "bytes": 2547,
+      "sourceMtimeMs": 1793222259688.7485
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/core/middleware.ts",
+      "sha256": "1e8823a5d0575418ce19bc8a7f9192a4ff416a70b405b702626cf665d60689d1",
+      "bytes": 16037,
+      "sourceMtimeMs": 1793222259593.0815
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/petpooja/menuSyncWebhook.ts",
+      "sha256": "734877205d0407dbc9ce928c885fec1aece5e430db7aefa6e641091c27ae1006",
+      "bytes": 47579,
+      "sourceMtimeMs": 1793266974131.34
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/notifications/fcm.service.ts",
+      "sha256": "70162990335175ce2528dfa24df18a588a520734dfb936aa2182599118538c2e",
+      "bytes": 5588,
+      "sourceMtimeMs": 1793222259640.1685
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/core/security.ts",
+      "sha256": "ddd23bb80e1a7cb7832ef5cfb32227c4bfd6f54c2d64bb5d8715a50d01c59441",
+      "bytes": 3085,
+      "sourceMtimeMs": 1793222259596.8193
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/petpooja/item86ingSync.ts",
+      "sha256": "ada0ffcc320bf5ee67a05b4a6d0218b673890226bf19596857c4e4235f7a224c",
+      "bytes": 37536,
+      "sourceMtimeMs": 1793222327079.8757
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/notifications/templates.ts",
+      "sha256": "0f95770db3509a4205801a05e776fc3b775761113295ac183ddc34c243cbd57a",
+      "bytes": 10893,
+      "sourceMtimeMs": 1793222259644.171
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/notifications/fcmClient.ts",
+      "sha256": "e64ad6988f93c05955c7c1ba6462ec576ec386408cb42ca2e49454cbb49a7d19",
+      "bytes": 11248,
+      "sourceMtimeMs": 1793222259642.171
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/tests/petpooja.ambiguous-send.test.ts",
+      "sha256": "39f04ea8a6d8be3b8f2d400cdba9aeb702b7df9f4333cf6496e31a99dbaa7eec",
+      "bytes": 32618,
+      "auxiliaryNotExecuted": true
+    }
+  ]
+}

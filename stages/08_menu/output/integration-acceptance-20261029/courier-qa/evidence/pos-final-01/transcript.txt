@@ -1,0 +1,33 @@
+RUN infrastructure/native-fetch-loopback-recorder-and-network-refusal
+PASS infrastructure/native-fetch-loopback-recorder-and-network-refusal {"actualWireRequests":1,"nativeFetch":true,"tlsVerification":"synthetic localhost certificate trusted by child only","externalDestinationAndShared8080":"refused before connect"}
+RUN infrastructure/real-sdk-concurrent-transactions-and-read-before-write-control
+PASS infrastructure/real-sdk-concurrent-transactions-and-read-before-write-control {"counterAfterConcurrentIncrements":2,"invalidReadAfterWriteRejected":true,"noPartialWriteFromRejectedTransaction":true}
+RUN infrastructure/real-grpc-commit-fault-after-durable-state-and-restore
+PASS infrastructure/real-grpc-commit-fault-after-durable-state-and-restore {"realCommitRpcsDenied":2,"readsAvailableDuringFault":true,"initialDurableStatePreserved":true,"restoredWriteConfirmedByIndependentSdk":true}
+RUN POS/direct-legacy-pending-retry-timeout-without-claim-must-not-send
+[Petpooja KOT Push] Order qa-pos-direct-legacy-timeout is pending_retry WITHOUT positive pre-send evidence (legacy outcome unknown) — refusing direct POST; reconcile with Petpooja
+PASS POS/direct-legacy-pending-retry-timeout-without-claim-must-not-send {"outcome":{"ok":true,"value":false},"wireRequests":0,"statusAfter":"pending_retry"}
+RUN POS/ACK-all-later-Commit-RPCs-fail-restore-plus11min-no-resend
+[Petpooja KOT Push Error] Order qa-pos-ack-outage [possibly_sent] attempt b6ec26b6-b2ff-41fd-8bff-7c207ea2cf85: POS accepted the KOT (HTTP 200, id QA-POS-qa-pos-ack-outage) but persisting the acceptance failed: 7 PERMISSION_DENIED: QA all Commit RPCs denied after durable claim; synthetic local fault — the order may already be at the POS
+[Petpooja KOT Push] guarded failure write failed for order qa-pos-ack-outage: 7 PERMISSION_DENIED: QA all Commit RPCs denied after durable claim; synthetic local fault
+[Petpooja KOT Push] Order qa-pos-ack-outage outcome write failed — leaving durable send intent unresolved; manual reconciliation required
+[Petpooja KOT Push] Order qa-pos-ack-outage has an UNRESOLVED/UNKNOWN POS outcome (reconciliation_required) — refusing to POST again; reconcile with Petpooja by hand
+PASS POS/ACK-all-later-Commit-RPCs-fail-restore-plus11min-no-resend {"firstOutcome":{"ok":true,"value":false},"durableIntentObservedBeforeAck":true,"laterCommitRpcsDenied":2,"clockAdvancedMs":660000,"wireRequestsAcrossRestoreAndDirectRecall":1}
+RUN POS/documented-400-refusal-resolves-intent-without-automatic-replay
+[Petpooja KOT Push Error] Order qa-pos-documented-400 [rejected] attempt 04b13779-c590-49a4-81df-f6367453804d: There were some error in order details.
+PASS POS/documented-400-refusal-resolves-intent-without-automatic-replay {"documentedRefusal":"HTTP 400 / success:0 / SO_105","status":"failed","unresolved":false,"wireRequestsIncludingScheduler":1}
+RUN POS/multiple-scheduler-documents-real-SDK-reads-before-writes
+PASS POS/multiple-scheduler-documents-real-SDK-reads-before-writes {"schedulerResult":{"retriedCount":2,"failedCount":0},"wireOrderIds":["qa-pos-retry-a","qa-pos-retry-b"],"actualSdkReadAfterWriteNegativeControlRanEarlier":true}
+RUN POS/429-no-resend-no-redirect-follow
+[Petpooja KOT Push Error] Order qa-pos-429 [possibly_sent] attempt c50157df-1b56-44ce-aa64-8d6ca9c165a3: Petpooja KOT push HTTP 429 Too Many Requests — outcome unknown, the request may have reached the POS
+[Petpooja KOT Push] Order qa-pos-429 has an UNRESOLVED/UNKNOWN POS outcome (reconciliation_required) — refusing to POST again; reconcile with Petpooja by hand
+PASS POS/429-no-resend-no-redirect-follow {"status":"reconciliation_required","wireRequestsIncludingRecallAndScheduler":1,"redirectedRequests":0,"fabricatedPrinterProof":false,"manualEntryFcm":0}
+RUN POS/malformed-200-no-resend-no-redirect-follow
+[Petpooja KOT Push Error] Order qa-pos-malformed-200 [possibly_sent] attempt 71968082-1770-49e9-afc8-eef30cbf1037: Petpooja KOT push returned HTTP 200 but the acknowledgement could not be read (Unexpected token '<', "<html>Synt"... is not valid JSON) — the order may already be registered
+[Petpooja KOT Push] Order qa-pos-malformed-200 has an UNRESOLVED/UNKNOWN POS outcome (reconciliation_required) — refusing to POST again; reconcile with Petpooja by hand
+PASS POS/malformed-200-no-resend-no-redirect-follow {"status":"reconciliation_required","wireRequestsIncludingRecallAndScheduler":1,"redirectedRequests":0,"fabricatedPrinterProof":false,"manualEntryFcm":0}
+RUN POS/307-no-resend-no-redirect-follow
+[Petpooja KOT Push Error] Order qa-pos-307 [possibly_sent] attempt 6f4b88d5-3fb6-452a-872b-c9ef7d473a52: Petpooja KOT push transport error (outcome unknown): fetch failed
+[Petpooja KOT Push] Order qa-pos-307 has an UNRESOLVED/UNKNOWN POS outcome (reconciliation_required) — refusing to POST again; reconcile with Petpooja by hand
+PASS POS/307-no-resend-no-redirect-follow {"status":"reconciliation_required","wireRequestsIncludingRecallAndScheduler":1,"redirectedRequests":0,"fabricatedPrinterProof":false,"manualEntryFcm":0}
+RESULT {"mode":"final","scope":"pos","sourceAcceptance":false,"scopedChecksPassed":true,"statuses":[{"name":"infrastructure/native-fetch-loopback-recorder-and-network-refusal","status":"PASS"},{"name":"infrastructure/real-sdk-concurrent-transactions-and-read-before-write-control","status":"PASS"},{"name":"infrastructure/real-grpc-commit-fault-after-durable-state-and-restore","status":"PASS"},{"name":"POS/direct-legacy-pending-retry-timeout-without-claim-must-not-send","status":"PASS"},{"name":"POS/ACK-all-later-Commit-RPCs-fail-restore-plus11min-no-resend","status":"PASS"},{"name":"POS/documented-400-refusal-resolves-intent-without-automatic-replay","status":"PASS"},{"name":"POS/multiple-scheduler-documents-real-SDK-reads-before-writes","status":"PASS"},{"name":"POS/429-no-resend-no-redirect-follow","status":"PASS"},{"name":"POS/malformed-200-no-resend-no-redirect-follow","status":"PASS"},{"name":"POS/307-no-resend-no-redirect-follow","status":"PASS"}],"exitCode":0,"cleanupComplete":true,"evidenceDir":"C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\evidence\\pos-final-01"}

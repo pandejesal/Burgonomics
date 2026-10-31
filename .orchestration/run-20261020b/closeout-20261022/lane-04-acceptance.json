@@ -1,0 +1,38 @@
+{
+  "commit": "d3f37285aa4e22abd1b1856268625b97d29386a1",
+  "paths": [
+    "functions/src/modules/dispatch/dispatch.webhooks.ts",
+    "functions/tests/dispatch.webhook-boundary.fresh.test.ts",
+    "references/delivery_routing.md"
+  ],
+  "blobsVerified": {
+    "functions/src/modules/dispatch/dispatch.webhooks.ts": "51db3573702f07bc2c1aeb97e2268f8c87d6978a",
+    "functions/tests/dispatch.webhook-boundary.fresh.test.ts": "09f239eb077409c415d5884129e723d0ce86bd17",
+    "references/delivery_routing.md": "122f1e7764a3b4adc60ca92eda3a6ead97df24e6"
+  },
+  "reviews": {
+    "deepseek": "ses_e9edb8e2fffeUTqdlpvixpbn5H (64 rows, 0 mismatches, actual deepseek-v4.1-flash-free)",
+    "glm": "ses_e9ec321cdffeA7C2uhogmtyUVA (13 rows, 0 mismatches, actual glm-5.3-flash-free)"
+  },
+  "gate": {
+    "base": "4b6e4f6",
+    "typecheck": 0,
+    "passed": 939,
+    "skipped": 2,
+    "build": 0
+  },
+  "mainIndependentControls": {
+    "redAtPristine086b60d": "16 failed / 11 passed (27)",
+    "greenAtCommitted": "27 passed (27)",
+    "worktrees": [
+      "Temp/opencode/main-red-control-086b60d",
+      "Temp/opencode/main-green-control-d3f3728"
+    ]
+  },
+  "evidence": ".orchestration/run-20261020b/evidence/closeout-lane04-webhook-evidence.md",
+  "truthLabel": "LOCAL CODE VERIFIED",
+  "notes": [
+    "Owner disclosed and recorded a mixed-session reviewer call that was discarded for provenance; accepted chain uses a fresh DS session",
+    "Known debt: router-side torn-down-dispatch bindings (releaseClaimFailed / dispatchCancel) still hold stale bindings for the new order-ownership proof ? a follow-up packet is required before that path is considered closed"
+  ]
+}

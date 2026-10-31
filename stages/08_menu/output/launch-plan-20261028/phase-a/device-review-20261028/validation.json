@@ -1,0 +1,52 @@
+{
+  "checkedAt": "2026-10-28T14:15:52+05:30",
+  "command": "python -B stages/08_menu/output/launch-plan-20261028/phase-a/device-review-20261028/validate-observations.py",
+  "scope": "Only new observation documents/images/helper syntax and retained ZIP identity; no application/native/provider acceptance",
+  "markdownFiles": 3,
+  "localLinks": 37,
+  "tables": 7,
+  "preparedImageChecks": 5,
+  "rawImageHashChecks": 5,
+  "excludedInterruptedFrameChecked": true,
+  "pythonASTFiles": 2,
+  "scopedGitDiffCheckExit": 0,
+  "previousV2ReviewZipUnchanged": true,
+  "parentCropInspection": [
+    "delivery-home.png",
+    "delivery-banner-after.png",
+    "martinoz-home.png",
+    "lapinoz-home.png",
+    "lapinoz-menu.png"
+  ],
+  "privacyScope": "Five crops visually inspected; no personal header/greeting/status/favourites content retained. No raw hierarchy or operational records archived.",
+  "deviceScope": "One Android phone; two Delivery gestures and selected consumer views; Partner entry keywords only. No APK/source binding, iOS/native matrix or operational acceptance.",
+  "sourceAndApplicationGates": "Application source not edited. Existing 118-source/14-public-source results remain historical; not rerun here. No app typecheck, unit suite, build, emulator, live backend/payment/POS/dispatch/signing/store action.",
+  "fingerprints": [
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/device-review-20261028/README.md",
+      "sha256": "5ee90fde360f9e41c27624de33ae7e174c7c5dad801d8aca02671f20510f324f"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/README.md",
+      "sha256": "e9bcfbc39e72f2e26c6ead432a20764219cc253770cc40c1bb7c5759bdd60c90"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/ORIGINAL-BRIEF-RESUMPTION-20261028.md",
+      "sha256": "40becb906cb4110d225e7906e9a7f1fb44fbf041ec74b8e0117e9cfc7c8c802d"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/device-review-20261028/prepare-images.py",
+      "sha256": "396466b4d96b23421b52b35b115a60df4e13ea33f6ba8025113aa8c70b033f26"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/device-review-20261028/validate-observations.py",
+      "sha256": "37527bfb1c7af3db4c60b30f5c1b75355c68fad58811b6d1d9d6e042489ef5d9"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/device-review-20261028/image-manifest.json",
+      "sha256": "95c9fffbb71e4b5ae0b9dc697a7be497517b914d26fe498f216d802d98dcd91c"
+    }
+  ],
+  "errors": [],
+  "exit": 0
+}

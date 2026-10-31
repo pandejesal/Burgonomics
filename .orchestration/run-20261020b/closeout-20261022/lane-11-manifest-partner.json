@@ -1,0 +1,42 @@
+{
+  "repo": "partner",
+  "head": "6f81fbafa4ba907d8c6cd770a6f332ebd6222af2",
+  "frozenAt": "2026-10-22T01:40:27.828Z",
+  "entries": [
+    {
+      "path": "ios/App/App.xcodeproj/project.pbxproj",
+      "sha256": "d162bf7bdfb09ebe4a4b149b05ea3ed7a16478d7a321846eff4340d921e45a73",
+      "bytes": 16098,
+      "trackedAtHead": true,
+      "headBlob": "57c41eb262312056e24f476d01a48499ee1a39eb"
+    },
+    {
+      "path": "MAC_INSTRUCTIONS.txt",
+      "sha256": "f97ec2321376a0a8c68f1f1bfb03f1ebdc2bf6554605ae538f03e4b962315ec7",
+      "bytes": 3657,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": "public/.well-known/assetlinks.json",
+      "sha256": "c82e08ac05736025dfb58f2d98805de107421844d528ee6861cbb98a1fded063",
+      "bytes": 331,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": "scripts/select-xcode-toolchain.sh",
+      "sha256": "7917d3a3605a1252075099af119090b197cacfb87b6e49f9d897e333cc57baac",
+      "bytes": 9063,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": "scripts/validate-ios-workflow.test.cjs",
+      "sha256": "a603805353548c5fe3abc604ed4b6cb28c332e5d018da95c760bd5b3232c0c88",
+      "bytes": 18680,
+      "trackedAtHead": false,
+      "headBlob": null
+    }
+  ]
+}

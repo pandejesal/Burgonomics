@@ -1,0 +1,50 @@
+{
+  "checkedAt": "2026-10-28T15:12:54+05:30",
+  "command": "python -B stages/08_menu/output/launch-plan-20261028/phase-a/provider-doc-review-20261028/validate-review.py --output validation-current.json",
+  "outputFile": "validation-current.json",
+  "scope": "Local provider-document intake, redacted-view identity and review-document structure only; not vendor/merchant/API acceptance",
+  "reviewedProviders": [
+    "Petpooja",
+    "Borzo",
+    "Shadowfax official rider booking API",
+    "Shadowfax integration gap analysis"
+  ],
+  "excludedProviders": [
+    "Shadowfax"
+  ],
+  "originalDocumentsHashChecked": 4,
+  "redactedViewsHashChecked": 4,
+  "markdownFiles": 3,
+  "localLinks": 21,
+  "tables": 5,
+  "scopedGitDiffCheckExit": 0,
+  "credentialPatternHits": 0,
+  "providerCallsMade": 0,
+  "applicationSourceEdited": false,
+  "workspaceRollbackNote": "Earlier CONTRACT-REVIEW/Shadowfax/validation files were removed by an unexplained rollback; this pass validates only files recreated on disk and does not claim the lost records survived.",
+  "fingerprints": [
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/provider-doc-review-20261028/CONTRACT-REVIEW.md",
+      "sha256": "2a67ff3bda998bfafe40ae381a1d757ef6731be9f1a65cca0f32e737665f7fa9"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/provider-doc-review-20261028/README.md",
+      "sha256": "2136b3d4a2ea6b5edeb1a627eac3b334d9d1d2b9fb12c4ea3e87c6f4cae71069"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/provider-doc-review-20261028/inspect-local-docs.py",
+      "sha256": "9faec210f0b041ae10bced5ce3e824707d404e648d53615c109cd335b80a54a1"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/provider-doc-review-20261028/inspect-shadowfax-docs.py",
+      "sha256": "f8a4d404f26035b3fc4fb3e5ef594e411a4efded00b61ca7f5240abcb17c00b7"
+    },
+    {
+      "file": "stages/08_menu/output/launch-plan-20261028/phase-a/README.md",
+      "sha256": "3c6ca6737346d0e88ebdc3aed9acf5d0699bf9264b72780b5d6697af84f9f8b8"
+    }
+  ],
+  "limits": "User-supplied documents only. Publisher version, merchant entitlement, idempotency, callback authenticity and Shadowfax staging safety remain unverified. Adapter-gap claims are supplied analysis, not vendor statements.",
+  "errors": [],
+  "exit": 0
+}

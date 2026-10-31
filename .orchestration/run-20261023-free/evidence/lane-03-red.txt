@@ -1,0 +1,479 @@
+=== RED control: pristine ea1bc3f + only the 6 bundle test files (no production changes) ===
+command: npx vitest run --no-file-parallelism <6 bundle test files>
+
+ RUN  v5.0.1 C:/Users/DELL/AppData/Local/Temp/opencode/lane03-red-ea1bc3f
+
+ G�� src/features/menu/components/MenuProductCard.test.tsx (17 tests | 9 failed) 1119ms
+   G�� B04: MenuProductCard touch floors, roles and reflow tokens (9)
+     +� grid ADD is a 44px target (was 32px) and its row keeps the same 44px floor 272ms
+     +� price row wraps instead of overflowing (320px reflow) and price is never squeezed 40ms
+     +� sold out disables ADD and names the state instead of the action 37ms
+     +� card link exposes the full title and price in its accessible name 32ms
+     +� long titles/descriptions stay clamped but keep their full text available 43ms
+     +� in-cart row stepper: 44px +/- targets, quantity roles, and no ADD left behind 77ms
+     +� in-cart grid stepper: 32px +/- targets inside a 32px pill on the 44px row 63ms
+     +� keeps the R26 accent-token ADD pair and the MT-04 overlay badge untouched 76ms
+   G�� P1-12: prep-time meta renders only for a real positive value (3)
+     +� renders no prep badge for a non-positive value (no invented 15m/0m) 63ms
+ G�� src/features/favorites/components/FavoriteHeart.test.tsx (5 tests | 1 failed) 570ms
+   G�� B04: FavoriteHeart 44px target with an unchanged 36px disc (5)
+     +� keeps the visual disc/icon at 36px/16px while the button takes the 44px hit area 253ms
+ G�� src/features/menu/components/QuantityStepper.test.tsx (4 tests | 1 failed) 525ms
+   G�� B04: QuantityStepper markup, 44px targets and range (4)
+     +� renders a labelled group with 44px +/- targets and a wrapping container 351ms
+ G�� src/features/menu/components/CategoryNavRail.test.tsx (1 test | 1 failed) 293ms
+   G�� category rail alignment (1)
+     +� centres only the rail, provides end space, and does not fight manual scrolling on re-render 286ms
+ G�� tests/search-state-races.test.ts (9 tests | 9 failed) 5130ms
+   G�� search intent and stale response guards (9)
+     +� submits one repository call when Enter and debounce request the same intent 5033ms
+     +� does not resurrect results after the customer clears the query 48ms
+     +� discards the old response as soon as the query changes, before debounce submits 6ms
+     +� propagates the selected kind and keeps the newest results 6ms
+     +� permits resubmission after changing away from and back to an in-flight term 10ms
+     +� reset invalidates the outstanding search rather than restoring the old screen 6ms
+     +� does not restore old suggestions after clearing, and handles rejected suggestions 4ms
+     +� keeps the new store trending chips when the previous store resolves last 5ms
+     +� drops a previous store suggestion response that lands after the store switch 3ms
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻ Failed Tests 21 GĻGĻGĻGĻGĻGĻGĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > submits one repository call when Enter and debounce request the same intent
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ G�� tests/search-state-races.test.ts:19:3
+     17|
+     18| describe('search intent and stale response guards', () => {
+     19|   it('submits one repository call when Enter and debounce request the GǪ
+       |   ^
+     20|     const pending = deferred<ReturnType<typeof response>>();
+     21|     repository.search.mockReturnValue(pending.promise);
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[1/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > does not resurrect results after the customer clears the query
+AssertionError: expected { query: '', status: 'ready', GǪ(14) } to match object { query: '', results: [], GǪ(1) }
+(13 matching properties omitted from actual)
+System.Management.Automation.RemoteException
+- Expected
++ Received
+System.Management.Automation.RemoteException
+  {
+    "query": "",
+-   "results": [],
+-   "status": "idle",
++   "results": [
++     {
++       "id": "stale",
++       "name": "stale",
++     },
++   ],
++   "status": "ready",
+  }
+System.Management.Automation.RemoteException
+ G�� tests/search-state-races.test.ts:40:39
+     38|     pending.resolve(response('stale'));
+     39|     await request;
+     40|     expect(useSearchStore.getState()).toMatchObject({ query: '', resulGǪ
+       |                                       ^
+     41|   });
+     42|
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[2/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > discards the old response as soon as the query changes, before debounce submits
+AssertionError: expected [ { id: 'burger', name: 'burger' } ] to deeply equal []
+System.Management.Automation.RemoteException
+- Expected
++ Received
+System.Management.Automation.RemoteException
+- []
++ [
++   {
++     "id": "burger",
++     "name": "burger",
++   },
++ ]
+System.Management.Automation.RemoteException
+ G�� tests/search-state-races.test.ts:52:47
+     50|     pending.resolve(response('burger'));
+     51|     await request;
+     52|     expect(useSearchStore.getState().results).toEqual([]);
+       |                                               ^
+     53|   });
+     54|
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[3/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > propagates the selected kind and keeps the newest results
+AssertionError: expected last "vi.fn()" call to have been called with [ 'branch_a', 'burger', GǪ(1) ]
+System.Management.Automation.RemoteException
+- Expected
++ Received
+System.Management.Automation.RemoteException
+  [
+    "branch_a",
+    "burger",
+-   {
+-     "kind": "combo",
+-   },
+  ]
+System.Management.Automation.RemoteException
+ G�� tests/search-state-races.test.ts:65:31
+     63|     first.resolve(response('old_product'));
+     64|     await old;
+     65|     expect(repository.search).toHaveBeenLastCalledWith('branch_a', 'buGǪ
+       |                               ^
+     66|     expect(useSearchStore.getState().results[0].id).toBe('combo');
+     67|   });
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[4/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > permits resubmission after changing away from and back to an in-flight term
+AssertionError: expected 'obsolete' to be 'fresh' // Object.is equality
+System.Management.Automation.RemoteException
+Expected: "fresh"
+Received: "obsolete"
+System.Management.Automation.RemoteException
+ G�� tests/search-state-races.test.ts:81:53
+     79|     await obsolete;
+     80|     expect(repository.search).toHaveBeenCalledTimes(2);
+     81|     expect(useSearchStore.getState().results[0].id).toBe('fresh');
+       |                                                     ^
+     82|   });
+     83|
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[5/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > reset invalidates the outstanding search rather than restoring the old screen
+AssertionError: expected { query: '', status: 'ready', GǪ(14) } to match object { query: '', results: [], GǪ(1) }
+(13 matching properties omitted from actual)
+System.Management.Automation.RemoteException
+- Expected
++ Received
+System.Management.Automation.RemoteException
+  {
+    "query": "",
+-   "results": [],
+-   "status": "idle",
++   "results": [
++     {
++       "id": "stale",
++       "name": "stale",
++     },
++   ],
++   "status": "ready",
+  }
+System.Management.Automation.RemoteException
+ G�� tests/search-state-races.test.ts:92:39
+     90|     pending.resolve(response('stale'));
+     91|     await request;
+     92|     expect(useSearchStore.getState()).toMatchObject({ query: '', resulGǪ
+       |                                       ^
+     93|   });
+     94|
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[6/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > does not restore old suggestions after clearing, and handles rejected suggestions
+AssertionError: expected [ { id: 'stale', label: 'burger' } ] to deeply equal []
+System.Management.Automation.RemoteException
+- Expected
++ Received
+System.Management.Automation.RemoteException
+- []
++ [
++   {
++     "id": "stale",
++     "label": "burger",
++   },
++ ]
+System.Management.Automation.RemoteException
+ G�� tests/search-state-races.test.ts:104:51
+    102|     pending.resolve(ok([{ id: 'stale', label: 'burger' }]));
+    103|     await request;
+    104|     expect(useSearchStore.getState().suggestions).toEqual([]);
+       |                                                   ^
+    105|     store.setQuery('fries');
+    106|     repository.suggest.mockRejectedValueOnce(new Error('fixture offlinGǪ
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[7/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > keeps the new store trending chips when the previous store resolves last
+AssertionError: expected [ 'old_store_chip' ] to deeply equal [ 'new_store_chip' ]
+System.Management.Automation.RemoteException
+- Expected
++ Received
+System.Management.Automation.RemoteException
+  [
+-   "new_store_chip",
++   "old_store_chip",
+  ]
+System.Management.Automation.RemoteException
+ G�� tests/search-state-races.test.ts:122:71
+    120|     await switchedAway;
+    121|
+    122|     expect(useSearchStore.getState().trending.map((item) => item.id)).GǪ
+       |                                                                       ^
+    123|   });
+    124|
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[8/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  tests/search-state-races.test.ts > search intent and stale response guards > drops a previous store suggestion response that lands after the store switch
+AssertionError: expected [ 'old_store_suggestion' ] to deeply equal [ 'new_store_suggestion' ]
+System.Management.Automation.RemoteException
+- Expected
++ Received
+System.Management.Automation.RemoteException
+  [
+-   "new_store_suggestion",
++   "old_store_suggestion",
+  ]
+System.Management.Automation.RemoteException
+ G�� tests/search-state-races.test.ts:138:74
+    136|     await switchedAway;
+    137|
+    138|     expect(useSearchStore.getState().suggestions.map((item) => item.idGǪ
+       |                                                                          ^
+    139|       'new_store_suggestion',
+    140|     ]);
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[9/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/favorites/components/FavoriteHeart.test.tsx > B04: FavoriteHeart 44px target with an unchanged 36px disc > keeps the visual disc/icon at 36px/16px while the button takes the 44px hit area
+AssertionError: expected 'grid h-9 w-9 place-items-center roundGǪ' to contain 'h-11'
+System.Management.Automation.RemoteException
+Expected: "h-11"
+Received: "grid h-9 w-9 place-items-center rounded-full bg-surface/90 backdrop-blur border border-divider text-text-secondary hover:text-error"
+System.Management.Automation.RemoteException
+ G�� src/features/favorites/components/FavoriteHeart.test.tsx:74:30
+     72|     const button = el.querySelector<HTMLButtonElement>("button")!;
+     73|
+     74|     expect(button.className).toContain("h-11");
+       |                              ^
+     75|     expect(button.className).toContain("w-11");
+     76|
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[10/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/CategoryNavRail.test.tsx > category rail alignment > centres only the rail, provides end space, and does not fight manual scrolling on re-render
+AssertionError: expected '' to be '130px' // Object.is equality
+System.Management.Automation.RemoteException
+- Expected
++ Received
+System.Management.Automation.RemoteException
+- 130px
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/CategoryNavRail.test.tsx:30:36
+     28|     await act(async () => root.render(<CategoryNavRail categories={catGǪ
+     29|     const rail = container.querySelector<HTMLElement>("[role=tablist]"GǪ
+     30|     expect(rail.style.paddingLeft).toBe("130px");
+       |                                    ^
+     31|     expect(rail.style.paddingRight).toBe("130px");
+     32|     expect(scroll).toHaveBeenLastCalledWith({ left: 110, behavior: "inGǪ
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[11/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > B04: MenuProductCard touch floors, roles and reflow tokens > grid ADD is a 44px target (was 32px) and its row keeps the same 44px floor
+AssertionError: expected 'rounded-xl border-2 border-[#FF6600] GǪ' to contain 'min-h-[44px]'
+System.Management.Automation.RemoteException
+Expected: "min-h-[44px]"
+Received: "rounded-xl border-2 border-[#FF6600] font-black text-[#FF6600] bg-surface min-h-[32px] min-w-[50px] px-2 text-xs hover:bg-[#FF6600] hover:text-white active:scale-[0.95] transition duration-150 disabled:opacity-40 disabled:hover:bg-surface disabled:hover:text-[#FF6600] whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:192:27
+    190|     const add = addButton(host);
+    191|     expect(add).not.toBeNull();
+    192|     expect(add.className).toContain("min-h-[44px]");
+       |                           ^
+    193|     expect(add.className).toContain("min-w-[50px]");
+    194|     expect(add.className).not.toContain("min-h-[32px]");
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[12/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > B04: MenuProductCard touch floors, roles and reflow tokens > price row wraps instead of overflowing (320px reflow) and price is never squeezed
+AssertionError: expected 'mt-auto flex items-center justify-betGǪ' to contain 'flex-wrap'
+System.Management.Automation.RemoteException
+Expected: "flex-wrap"
+Received: "mt-auto flex items-center justify-between pt-2 gap-1 min-w-0"
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:214:34
+    212|       const add = addButton(host);
+    213|       const priceRow = add.parentElement!.parentElement!;
+    214|       expect(priceRow.className).toContain("flex-wrap");
+       |                                  ^
+    215|       expect(priceRow.firstElementChild!.className).toContain("shrink-GǪ
+    216|     }
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[13/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > B04: MenuProductCard touch floors, roles and reflow tokens > sold out disables ADD and names the state instead of the action
+AssertionError: expected 'Add Classic Smash Burger to cart' to be 'Classic Smash Burger is sold out' // Object.is equality
+System.Management.Automation.RemoteException
+Expected: "Classic Smash Burger is sold out"
+Received: "Add Classic Smash Burger to cart"
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:223:48
+    221|     const soldOut = host.querySelector<HTMLButtonElement>("button[disaGǪ
+    222|     expect(soldOut).not.toBeNull();
+    223|     expect(soldOut.getAttribute("aria-label")).toBe("Classic Smash BurGǪ
+       |                                                ^
+    224|     expect(soldOut.textContent).toBe("Sold Out");
+    225|     // Non-colour signal + accessible card name both carry the state.
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[14/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > B04: MenuProductCard touch floors, roles and reflow tokens > card link exposes the full title and price in its accessible name
+AssertionError: expected 'Classic Smash Burger' to be 'Classic Smash Burger, G�299.00' // Object.is equality
+System.Management.Automation.RemoteException
+Expected: "Classic Smash Burger, G�299.00"
+Received: "Classic Smash Burger"
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:234:65
+    232|   it("card link exposes the full title and price in its accessible namGǪ
+    233|     const host = render(<MenuProductCard product={product} layout="rowGǪ
+    234|     expect(host.querySelector("a")!.getAttribute("aria-label")).toBe("GǪ
+       |                                                                 ^
+    235|   });
+    236|
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[15/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > B04: MenuProductCard touch floors, roles and reflow tokens > long titles/descriptions stay clamped but keep their full text available
+AssertionError: expected null to be 'Classic Smash Burger With An UnreasonGǪ' // Object.is equality
+System.Management.Automation.RemoteException
+- Expected:
+"Classic Smash Burger With An Unreasonably Long Menu Title That Never Fits"
+System.Management.Automation.RemoteException
++ Received:
+null
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:244:41
+    242|     const title = Array.from(host.querySelectorAll("h5")).find((h) => GǪ
+    243|     expect(title.className).toContain("truncate");
+    244|     expect(title.getAttribute("title")).toBe(name);
+       |                                         ^
+    245|     expect(host.querySelector("a")!.getAttribute("aria-label")).toBe(`GǪ
+    246|
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[16/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > B04: MenuProductCard touch floors, roles and reflow tokens > in-cart row stepper: 44px +/- targets, quantity roles, and no ADD left behind
+AssertionError: expected 'relative flex items-center justify-ceGǪ' to contain 'min-h-[44px]'
+System.Management.Automation.RemoteException
+Expected: "min-h-[44px]"
+Received: "relative flex items-center justify-center rounded-md hover:bg-black/20 active:scale-90 transition font-bold cursor-pointer shrink-0 w-7 h-7 min-h-[28px] min-w-[28px]"
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:262:29
+    260|     expect(minus).not.toBeNull();
+    261|     expect(plus).not.toBeNull();
+    262|     expect(minus.className).toContain("min-h-[44px]");
+       |                             ^
+    263|     expect(minus.className).toContain("min-w-[44px]");
+    264|     expect(plus.className).toContain("min-w-[44px]");
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[17/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > B04: MenuProductCard touch floors, roles and reflow tokens > in-cart grid stepper: 32px +/- targets inside a 32px pill on the 44px row
+AssertionError: expected 'relative flex items-center justify-ceGǪ' to contain 'min-h-[32px]'
+System.Management.Automation.RemoteException
+Expected: "min-h-[32px]"
+Received: "relative flex items-center justify-center rounded-md hover:bg-black/20 active:scale-90 transition font-bold cursor-pointer shrink-0 w-6 h-6 min-h-[24px] min-w-[24px]"
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:276:29
+    274|     const minus = host.querySelector<HTMLButtonElement>('button[aria-lGǪ
+    275|     expect(minus).not.toBeNull();
+    276|     expect(minus.className).toContain("min-h-[32px]");
+       |                             ^
+    277|     expect(minus.className).toContain("min-w-[32px]");
+    278|     expect(minus.parentElement!.className).toContain("h-8");
+
+ Test Files  5 failed | 1 passed (6)
+      Tests  21 failed | 20 passed (41)
+   Start at  10:27:00
+   Duration  55.62s (environment 58%, import 22%, tests 15%, transform 4%)
+
+    Isolate  6 workers spawned -+ ~5.70s startup each (spawn + environment, per file)
+             at least ~28.48s faster with isolate: false G�� reuses workers across files instead of one per file
+
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[18/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > B04: MenuProductCard touch floors, roles and reflow tokens > keeps the R26 accent-token ADD pair and the MT-04 overlay badge untouched
+AssertionError: expected 'rounded-xl border-2 border-[#FF6600] GǪ' to contain 'border-accent'
+System.Management.Automation.RemoteException
+Expected: "border-accent"
+Received: "rounded-xl border-2 border-[#FF6600] font-black text-[#FF6600] bg-surface min-h-[32px] min-w-[50px] px-2 text-xs hover:bg-[#FF6600] hover:text-white active:scale-[0.95] transition duration-150 disabled:opacity-40 disabled:hover:bg-surface disabled:hover:text-[#FF6600] whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:289:27
+    287|     const add = host.querySelector<HTMLButtonElement>('button[aria-labGǪ
+    288|     expect(add).not.toBeNull();
+    289|     expect(add.className).toContain("border-accent");
+       |                           ^
+    290|     expect(add.className).toContain("dark:text-accent-foreground");
+    291|     expect(add.className).not.toContain("#FF6600");
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[19/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/MenuProductCard.test.tsx > P1-12: prep-time meta renders only for a real positive value > renders no prep badge for a non-positive value (no invented 15m/0m)
+AssertionError: expected <span GǪ(1)>GǪ(1)</span> to be undefined
+System.Management.Automation.RemoteException
+- Expected:
+undefined
+System.Management.Automation.RemoteException
++ Received:
+<span
+  class="inline-flex items-center gap-1 font-mono text-[11px]"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-clock h-3.5 w-3.5"
+    fill="none"
+    height="24"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="24"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <circle
+      cx="12"
+      cy="12"
+      r="10"
+    />
+    <path
+      d="M12 6v6l4 2"
+    />
+  </svg>
+   0m
+</span>
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/MenuProductCard.test.tsx:341:31
+    339|     for (const value of [0, -5, Number.NaN]) {
+    340|       const host = render(<MenuProductCard product={{ ...base, prepTimGǪ
+    341|       expect(prepBadge(host)).toBeUndefined();
+       |                               ^
+    342|     }
+    343|   });
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[20/21]GĻ
+System.Management.Automation.RemoteException
+ FAIL  src/features/menu/components/QuantityStepper.test.tsx > B04: QuantityStepper markup, 44px targets and range > renders a labelled group with 44px +/- targets and a wrapping container
+AssertionError: expected 'inline-flex items-center rounded-fullGǪ' to contain 'flex-wrap'
+System.Management.Automation.RemoteException
+Expected: "flex-wrap"
+Received: "inline-flex items-center rounded-full border border-divider bg-surface select-none shadow-sm"
+System.Management.Automation.RemoteException
+ G�� src/features/menu/components/QuantityStepper.test.tsx:46:29
+     44|     expect(group.getAttribute("aria-label")).toBe("Quantity");
+     45|     // Wraps rather than pushing horizontal overflow in a narrow 320pxGǪ
+     46|     expect(group.className).toContain("flex-wrap");
+       |                             ^
+     47|
+     48|     const [dec, inc] = buttons();
+System.Management.Automation.RemoteException
+GĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻGĻ[21/21]GĻ
+System.Management.Automation.RemoteException
+EXIT=1

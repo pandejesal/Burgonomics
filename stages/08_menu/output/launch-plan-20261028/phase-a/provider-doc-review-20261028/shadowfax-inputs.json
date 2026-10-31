@@ -1,0 +1,1157 @@
+{
+  "inspectedAt": "2026-10-28T15:12:19+05:30",
+  "scope": "Corrected Shadowfax intake only; the earlier rejected file stays excluded",
+  "documents": [
+    {
+      "label": "Shadowfax official rider booking API",
+      "source": "C:\\Users\\DELL\\Desktop\\Shadowfax - Official Rider Booking API Docs.txt",
+      "kind": "vendor-document",
+      "bytes": 37208,
+      "sha256": "3f82aaf144514c43ebae337f8494e196994b35aa9fba859728f4ece02819c760",
+      "encoding": "utf-8-sig",
+      "lines": 2091,
+      "redactedView": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\shadowfax-review-20261028-uw0c9vwe\\shadowfax---official-rider-booking-api-docs.redacted.txt",
+      "redactedViewSHA256": "589c65d203e03f0dd44d2640bdb4539daa39194c3882130247f6687947085078",
+      "conservativeRedactions": 87,
+      "urls": [
+        "https://developer.shadowfax.[REDACTED",
+        "https://www.getpostman.[REDACTED",
+        "https://hlbackend.staging.shadowfax.in",
+        "https://api.shadowfax.in",
+        "https://hlbackend.staging.shadowfax.in/oauth/token/",
+        "https://hlbackend.staging.shadowfax.[REDACTED",
+        "https://hlbackend.staging.shadowfax.in/api/v2/orders/",
+        "https://hlbackend.staging.shadowfax.in/api/v2/orders/{sfx_order_id}/status/",
+        "https://hlbackend.staging.shadowfax.in/api/v2/orders/{sfx_order_id}/edit/",
+        "https://hlbackend.staging.shadowfax.in/api/v2/orders/{sfx_order_id}/cancel/",
+        "https://hlbackend.staging.shadowfax.in/api/v2/orders/{coid}/dispatch-ready/",
+        "https://hlbackend.staging.shadowfax.in/api/v2/{coid}/post_closure_remarks/",
+        "https://order-tracking-hl.staging.shadowfax.in/track/[redacted-opaque-segment]",
+        "https://api.shadowfax.in/track/[redacted-opaque-segment]/",
+        "https://hlbackend.staging.shadowfax.in/app/v3/sandbox/order/{sfx_order_id}/update-rider-location/",
+        "https://dale.staging.shadowfax.in/api/v1/clients/token/",
+        "https://dale.staging.shadowfax.in/api",
+        "https://dale.staging.shadowfax.[REDACTED"
+      ],
+      "termIndex": {
+        "auth": [
+          {
+            "line": 58,
+            "text": "Authentication"
+          },
+          {
+            "line": 59,
+            "text": "Shadowfax Hyperlocal supports two authentication methods. Staging and production API keys are shared by the Shadowfax team via automated email."
+          },
+          {
+            "line": 60,
+            "text": "Token Authentication"
+          },
+          {
+            "line": 61,
+            "text": "\u2014 pass your API token in the"
+          },
+          {
+            "line": 62,
+            "text": "Authorization"
+          },
+          {
+            "line": 65,
+            "text": "Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 66,
+            "text": "OAuth2 Authentication"
+          },
+          {
+            "line": 67,
+            "text": "\u2014 exchange client credentials for a Bearer token (valid 24 hours):"
+          },
+          {
+            "line": 69,
+            "text": "Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 70,
+            "text": "To obtain an OAuth token:"
+          },
+          {
+            "line": 76,
+            "text": "https://hlbackend.staging.shadowfax.in/oauth/token/"
+          },
+          {
+            "line": 108,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 134,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 183,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 203,
+            "text": "Authentication"
+          },
+          {
+            "line": 260,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 381,
+            "text": "Invalid token"
+          },
+          {
+            "line": 382,
+            "text": "Authentication failed"
+          },
+          {
+            "line": 442,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 511,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 529,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 539,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 570,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 592,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 1490,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 1512,
+            "text": "\"Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 1720,
+            "text": "By default, Shadowfax uses signature-based RTS delivery."
+          },
+          {
+            "line": 1744,
+            "text": "Signature Based"
+          },
+          {
+            "line": 1853,
+            "text": "Authentication reference"
+          },
+          {
+            "line": 1863,
+            "text": "Authentication"
+          },
+          {
+            "line": 1872,
+            "text": "Authentication"
+          },
+          {
+            "line": 1877,
+            "text": ") supports two authentication methods: static Token Authentication and OAuth2 client-credentials. Which methods are available, how long an OAuth2 token lasts, and where credentials come from all vary by product \u2014 see the"
+          },
+          {
+            "line": 1878,
+            "text": "Token Authentication"
+          },
+          {
+            "line": 1879,
+            "text": "Pass your API token in the"
+          },
+          {
+            "line": 1880,
+            "text": "Authorization"
+          },
+          {
+            "line": 1883,
+            "text": "Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 1884,
+            "text": "The token is static and does not expire \u2014 no exchange or refresh step is needed. For most products, generate it from the"
+          },
+          {
+            "line": 1888,
+            "text": "Exchange your client credentials for a short-lived Bearer token, then pass that token on every subsequent request."
+          },
+          {
+            "line": 1889,
+            "text": "Generate a Token"
+          },
+          {
+            "line": 1894,
+            "text": "'https://dale.staging.shadowfax.in/api/v1/clients/token/'"
+          }
+        ],
+        "booking": [
+          {
+            "line": 10,
+            "text": "Rider booking: POST /api/v2/orders/"
+          },
+          {
+            "line": 18,
+            "text": "The general test-data page states staging orders do not dispatch real riders; the"
+          },
+          {
+            "line": 20,
+            "text": "before any booking. Marketplace and Dedicated Store are separate integration models."
+          },
+          {
+            "line": 560,
+            "text": "Dispatch Ready Indicator"
+          },
+          {
+            "line": 567,
+            "text": "https://hlbackend.staging.shadowfax.in/api/v2/orders/{coid}/dispatch-ready/"
+          },
+          {
+            "line": 604,
+            "text": "Place Order"
+          },
+          {
+            "line": 608,
+            "text": "Dispatch Ready"
+          },
+          {
+            "line": 619,
+            "text": "Dispatch Ready Indicator"
+          },
+          {
+            "line": 827,
+            "text": "DISPATCHED"
+          },
+          {
+            "line": 836,
+            "text": "\"DISPATCHED\""
+          },
+          {
+            "line": 882,
+            "text": "\"dispatch_time\""
+          },
+          {
+            "line": 906,
+            "text": "after dispatch. Both"
+          },
+          {
+            "line": 1397,
+            "text": "DISPATCHED"
+          },
+          {
+            "line": 1466,
+            "text": "DISPATCHED"
+          },
+          {
+            "line": 1758,
+            "text": "Place Order API"
+          },
+          {
+            "line": 1814,
+            "text": "Place orders with pickup and drop details per order. No upfront store creation at Shadowfax."
+          },
+          {
+            "line": 2072,
+            "text": "Orders in staging do not dispatch real riders. State transitions are simulated."
+          }
+        ],
+        "cancel": [
+          {
+            "line": 12,
+            "text": "Cancellation: PUT /api/v2/orders/{sfx_order_id}/cancel/"
+          },
+          {
+            "line": 399,
+            "text": "Orders and cancellation"
+          },
+          {
+            "line": 530,
+            "text": "Cancel an Order"
+          },
+          {
+            "line": 536,
+            "text": "https://hlbackend.staging.shadowfax.in/api/v2/orders/{sfx_order_id}/cancel/"
+          },
+          {
+            "line": 552,
+            "text": "Cancellation reason (max 128 characters)"
+          },
+          {
+            "line": 607,
+            "text": "Cancel Order"
+          },
+          {
+            "line": 618,
+            "text": "Cancel an Order"
+          },
+          {
+            "line": 1058,
+            "text": "CANCELLED"
+          },
+          {
+            "line": 1059,
+            "text": "Triggered when cancellation occurs before rider pickup."
+          },
+          {
+            "line": 1060,
+            "text": "cancel_reason"
+          },
+          {
+            "line": 1061,
+            "text": "cancel_reason_text"
+          },
+          {
+            "line": 1063,
+            "text": "Cancelled by Customer"
+          },
+          {
+            "line": 1075,
+            "text": "Cancelled by Seller"
+          },
+          {
+            "line": 1104,
+            "text": "\"CANCELLED\""
+          },
+          {
+            "line": 1146,
+            "text": "\"cancel_reason\""
+          },
+          {
+            "line": 1150,
+            "text": "\"cancel_reason_text\""
+          },
+          {
+            "line": 1154,
+            "text": "\"cancel_time\""
+          },
+          {
+            "line": 1170,
+            "text": "CANCELLED_BY_CUSTOMER"
+          },
+          {
+            "line": 1175,
+            "text": "Cancelled by Customer"
+          },
+          {
+            "line": 1187,
+            "text": "Cancelled by Seller"
+          },
+          {
+            "line": 1216,
+            "text": "\"CANCELLED_BY_CUSTOMER\""
+          },
+          {
+            "line": 1400,
+            "text": "CANCELLED"
+          },
+          {
+            "line": 1401,
+            "text": "CANCELLED_BY_CUSTOMER"
+          },
+          {
+            "line": 1477,
+            "text": "CANCELLED_BY_CUSTOMER"
+          },
+          {
+            "line": 1838,
+            "text": "Order placement, editing, cancellation, and tracking"
+          }
+        ],
+        "status": [
+          {
+            "line": 11,
+            "text": "Order status: GET /api/v2/orders/{sfx_order_id}/status/"
+          },
+          {
+            "line": 14,
+            "text": "This is native Shadowfax documentation, not AfterShip tracking or parcel-only APIs."
+          },
+          {
+            "line": 15,
+            "text": "Downloaded examples are illustrative. Credentials, merchant client_code and callback"
+          },
+          {
+            "line": 39,
+            "text": "Callbacks"
+          },
+          {
+            "line": 48,
+            "text": "Callbacks"
+          },
+          {
+            "line": 175,
+            "text": "3. Get Order Status"
+          },
+          {
+            "line": 176,
+            "text": "Poll order status or rely on callbacks for updates. Rider location in the response updates every 60 seconds."
+          },
+          {
+            "line": 180,
+            "text": "https://hlbackend.staging.shadowfax.in/api/v2/orders/{sfx_order_id}/status/"
+          },
+          {
+            "line": 184,
+            "text": "4. Set Up Callbacks"
+          },
+          {
+            "line": 185,
+            "text": "Share your callback URL with the Shadowfax team for production. In staging, use the"
+          },
+          {
+            "line": 187,
+            "text": "APIs to simulate status transitions and verify your webhook handler."
+          },
+          {
+            "line": 189,
+            "text": "Callbacks"
+          },
+          {
+            "line": 208,
+            "text": "3. Get Order Status"
+          },
+          {
+            "line": 209,
+            "text": "4. Set Up Callbacks"
+          },
+          {
+            "line": 228,
+            "text": "Callbacks"
+          },
+          {
+            "line": 237,
+            "text": "Callbacks"
+          },
+          {
+            "line": 414,
+            "text": "Callbacks"
+          },
+          {
+            "line": 423,
+            "text": "Callbacks"
+          },
+          {
+            "line": 495,
+            "text": "track_url"
+          },
+          {
+            "line": 496,
+            "text": "for live tracking."
+          },
+          {
+            "line": 522,
+            "text": "Retrieve current status and rider location (updated every 60 seconds)."
+          },
+          {
+            "line": 526,
+            "text": "https://hlbackend.staging.shadowfax.in/api/v2/orders/{sfx_order_id}/status/"
+          },
+          {
+            "line": 613,
+            "text": "Callbacks"
+          },
+          {
+            "line": 624,
+            "text": "Callbacks"
+          },
+          {
+            "line": 639,
+            "text": "Callbacks"
+          },
+          {
+            "line": 648,
+            "text": "Callbacks"
+          },
+          {
+            "line": 656,
+            "text": "Callbacks"
+          },
+          {
+            "line": 657,
+            "text": "Shadowfax sends HTTP callbacks to your configured URL when order status changes or rider location updates. Share your callback URL and optional custom headers with the Shadowfax team."
+          },
+          {
+            "line": 658,
+            "text": "Use this Postman collection to set up and test callbacks:"
+          },
+          {
+            "line": 659,
+            "text": "Callback Sandbox Collection"
+          },
+          {
+            "line": 660,
+            "text": "Callback Behavior"
+          },
+          {
+            "line": 681,
+            "text": "\u2014 duplicate callbacks must return success"
+          },
+          {
+            "line": 682,
+            "text": "If your callback endpoint is not idempotent, subsequent status updates may be blocked."
+          },
+          {
+            "line": 683,
+            "text": "Order Status Callbacks"
+          },
+          {
+            "line": 691,
+            "text": "\"order_status\""
+          },
+          {
+            "line": 739,
+            "text": "\"track_url\""
+          },
+          {
+            "line": 741,
+            "text": "\"https://order-tracking-hl.staging.shadowfax.in/track/[redacted-opaque-segment]\""
+          },
+          {
+            "line": 756,
+            "text": "Rider has arrived at the pickup location. This status is callback-only \u2014 it may not appear in the Get Order Details pull API response."
+          },
+          {
+            "line": 763,
+            "text": "\"order_status\""
+          },
+          {
+            "line": 811,
+            "text": "\"track_url\""
+          }
+        ],
+        "money": [
+          {
+            "line": 5,
+            "text": "Sandbox collection linked by the official docs: https://www.getpostman.[REDACTED OPAQUE VALUE]"
+          },
+          {
+            "line": 15,
+            "text": "Downloaded examples are illustrative. Credentials, merchant client_code and callback"
+          },
+          {
+            "line": 64,
+            "text": "Code"
+          },
+          {
+            "line": 68,
+            "text": "Code"
+          },
+          {
+            "line": 72,
+            "text": "Code"
+          },
+          {
+            "line": 101,
+            "text": "Code"
+          },
+          {
+            "line": 127,
+            "text": "Code"
+          },
+          {
+            "line": 141,
+            "text": "\"client_code\": \"merchant001\","
+          },
+          {
+            "line": 167,
+            "text": "\"price\": 259,"
+          },
+          {
+            "line": 178,
+            "text": "Code"
+          },
+          {
+            "line": 253,
+            "text": "Code"
+          },
+          {
+            "line": 297,
+            "text": "for COD,"
+          },
+          {
+            "line": 321,
+            "text": "Code"
+          },
+          {
+            "line": 347,
+            "text": "\"rain_surge_amount\""
+          },
+          {
+            "line": 352,
+            "text": "Code"
+          },
+          {
+            "line": 435,
+            "text": "Code"
+          },
+          {
+            "line": 449,
+            "text": "\"client_code\": \"merchant001\","
+          },
+          {
+            "line": 485,
+            "text": "\"price\": 259,"
+          },
+          {
+            "line": 504,
+            "text": "Code"
+          },
+          {
+            "line": 524,
+            "text": "Code"
+          },
+          {
+            "line": 532,
+            "text": "Code"
+          },
+          {
+            "line": 563,
+            "text": "Code"
+          },
+          {
+            "line": 585,
+            "text": "Code"
+          },
+          {
+            "line": 658,
+            "text": "Use this Postman collection to set up and test callbacks:"
+          },
+          {
+            "line": 659,
+            "text": "Callback Sandbox Collection"
+          },
+          {
+            "line": 685,
+            "text": "Code"
+          },
+          {
+            "line": 727,
+            "text": "\"rider_cod_limit\""
+          },
+          {
+            "line": 747,
+            "text": "\"rain_surge_amount\""
+          },
+          {
+            "line": 757,
+            "text": "Code"
+          },
+          {
+            "line": 799,
+            "text": "\"rider_cod_limit\""
+          },
+          {
+            "line": 819,
+            "text": "\"rain_surge_amount\""
+          },
+          {
+            "line": 828,
+            "text": "Code"
+          },
+          {
+            "line": 870,
+            "text": "\"rider_cod_limit\""
+          },
+          {
+            "line": 894,
+            "text": "\"rain_surge_amount\""
+          },
+          {
+            "line": 913,
+            "text": "Code"
+          },
+          {
+            "line": 955,
+            "text": "\"rider_cod_limit\""
+          },
+          {
+            "line": 975,
+            "text": "\"rain_surge_amount\""
+          },
+          {
+            "line": 984,
+            "text": "Code"
+          },
+          {
+            "line": 1026,
+            "text": "\"rider_cod_limit\""
+          },
+          {
+            "line": 1050,
+            "text": "\"rain_surge_amount\""
+          }
+        ],
+        "idempotency": [
+          {
+            "line": 4,
+            "text": "API reference: https://developer.shadowfax.[REDACTED OPAQUE VALUE]"
+          },
+          {
+            "line": 32,
+            "text": "Reference"
+          },
+          {
+            "line": 33,
+            "text": "API Reference"
+          },
+          {
+            "line": 196,
+            "text": "API Reference"
+          },
+          {
+            "line": 221,
+            "text": "Reference"
+          },
+          {
+            "line": 222,
+            "text": "API Reference"
+          },
+          {
+            "line": 407,
+            "text": "Reference"
+          },
+          {
+            "line": 408,
+            "text": "API Reference"
+          },
+          {
+            "line": 603,
+            "text": "API Reference"
+          },
+          {
+            "line": 621,
+            "text": "API Reference"
+          },
+          {
+            "line": 632,
+            "text": "Reference"
+          },
+          {
+            "line": 633,
+            "text": "API Reference"
+          },
+          {
+            "line": 679,
+            "text": "Idempotency"
+          },
+          {
+            "line": 681,
+            "text": "\u2014 duplicate callbacks must return success"
+          },
+          {
+            "line": 682,
+            "text": "If your callback endpoint is not idempotent, subsequent status updates may be blocked."
+          },
+          {
+            "line": 1069,
+            "text": "Duplicate Order"
+          },
+          {
+            "line": 1181,
+            "text": "Duplicate Order"
+          },
+          {
+            "line": 1376,
+            "text": "Implement idempotency using"
+          },
+          {
+            "line": 1423,
+            "text": "Reference"
+          },
+          {
+            "line": 1424,
+            "text": "API Reference"
+          },
+          {
+            "line": 1531,
+            "text": "API Reference"
+          },
+          {
+            "line": 1534,
+            "text": "of the API reference."
+          },
+          {
+            "line": 1547,
+            "text": "API Reference"
+          },
+          {
+            "line": 1558,
+            "text": "Reference"
+          },
+          {
+            "line": 1559,
+            "text": "API Reference"
+          },
+          {
+            "line": 1609,
+            "text": "HTTP method preference ("
+          },
+          {
+            "line": 1632,
+            "text": "Callback handler idempotent"
+          },
+          {
+            "line": 1665,
+            "text": "Reference"
+          },
+          {
+            "line": 1666,
+            "text": "API Reference"
+          },
+          {
+            "line": 1782,
+            "text": "Reference"
+          },
+          {
+            "line": 1783,
+            "text": "API Reference"
+          },
+          {
+            "line": 1830,
+            "text": "API Reference"
+          },
+          {
+            "line": 1834,
+            "text": "API Reference"
+          },
+          {
+            "line": 1853,
+            "text": "Authentication reference"
+          },
+          {
+            "line": 1861,
+            "text": "Reference"
+          },
+          {
+            "line": 1862,
+            "text": "API Reference"
+          },
+          {
+            "line": 1871,
+            "text": "Reference"
+          },
+          {
+            "line": 1976,
+            "text": "Test environment reference"
+          },
+          {
+            "line": 1984,
+            "text": "Reference"
+          },
+          {
+            "line": 1985,
+            "text": "API Reference"
+          }
+        ],
+        "notes": [
+          {
+            "line": 281,
+            "text": "Description"
+          },
+          {
+            "line": 458,
+            "text": "\"delivery_instruction\": {"
+          },
+          {
+            "line": 459,
+            "text": "\"drop_instruction_text\": \"Please come to the first floor.\","
+          },
+          {
+            "line": 518,
+            "text": "Note:"
+          },
+          {
+            "line": 550,
+            "text": "Description"
+          },
+          {
+            "line": 552,
+            "text": "Cancellation reason (max 128 characters)"
+          },
+          {
+            "line": 902,
+            "text": "Note:"
+          },
+          {
+            "line": 1734,
+            "text": "Description"
+          },
+          {
+            "line": 1811,
+            "text": "Description"
+          },
+          {
+            "line": 1937,
+            "text": "Notes"
+          },
+          {
+            "line": 2070,
+            "text": "Staging Notes"
+          },
+          {
+            "line": 2091,
+            "text": "Staging Notes"
+          }
+        ]
+      },
+      "authority": "vendor-supplied rider booking reference",
+      "limits": "Local reference only. Merchant entitlement, current version, approved host, credentials, SLA and production behaviour are not established."
+    },
+    {
+      "label": "Shadowfax integration gap analysis",
+      "source": "C:\\Users\\DELL\\Desktop\\Shadowfax - Integration Gap Analysis.md",
+      "kind": "supplied-analysis",
+      "bytes": 4242,
+      "sha256": "8089057361f112a920082fbe76082098ccc543d6ccc01f387a89a20f37457dcd",
+      "encoding": "utf-8-sig",
+      "lines": 89,
+      "redactedView": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\shadowfax-review-20261028-uw0c9vwe\\shadowfax---integration-gap-analysis.redacted.txt",
+      "redactedViewSHA256": "bdf7df9a6e1b465c83510c1a24d369bc24aef4a3a5229638d07f416ed6c21a35",
+      "conservativeRedactions": 7,
+      "urls": [
+        "https://developer.shadowfax.[REDACTED",
+        "https://hlbackend.staging.shadowfax.in",
+        "https://api.shadowfax.in"
+      ],
+      "termIndex": {
+        "auth": [
+          {
+            "line": 15,
+            "text": "- Auth: `Authorization: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 34,
+            "text": "- Token authentication"
+          },
+          {
+            "line": 59,
+            "text": "4. **Callback authentication wording**"
+          },
+          {
+            "line": 61,
+            "text": "   preference. They do **not** specify an HMAC or a native signature header."
+          },
+          {
+            "line": 62,
+            "text": "   Our `x-shadowfax-signature` static-secret check is a private arrangement"
+          }
+        ],
+        "booking": [
+          {
+            "line": 9,
+            "text": "`Shadowfax - Official Rider Booking API Docs.txt`."
+          },
+          {
+            "line": 17,
+            "text": "- Place order: `POST /api/v2/orders/`"
+          },
+          {
+            "line": 20,
+            "text": "- Dispatch ready: `PUT /api/v2/orders/{coid}/dispatch-ready/`"
+          },
+          {
+            "line": 21,
+            "text": "- Order callbacks: `ALLOTTED`, `ARRIVED`, `DISPATCHED`,"
+          },
+          {
+            "line": 41,
+            "text": "- ALLOTTED / ARRIVED / DISPATCHED / ARRIVED_CUSTOMER_DOORSTEP / DELIVERED"
+          },
+          {
+            "line": 43,
+            "text": "- Ambiguous-booking protection when no `sfx_order_id` is returned"
+          },
+          {
+            "line": 48,
+            "text": "   `dispatch.router.ts` treats Borzo and Shadowfax cancellation as"
+          },
+          {
+            "line": 53,
+            "text": "2. **Dispatch-ready signal**"
+          },
+          {
+            "line": 54,
+            "text": "   We never call `PUT /api/v2/orders/{coid}/dispatch-ready/`. Shadowfax cannot"
+          },
+          {
+            "line": 66,
+            "text": "   dispatch real riders in the test-data section. That section explicitly covers"
+          },
+          {
+            "line": 68,
+            "text": "   confirmation for Hyperlocal staging before allowing any booking."
+          },
+          {
+            "line": 77,
+            "text": "- Live quoting/booking remains blocked by missing credentials and the"
+          }
+        ],
+        "cancel": [
+          {
+            "line": 19,
+            "text": "- Cancel: `PUT /api/v2/orders/{sfx_order_id}/cancel/`"
+          },
+          {
+            "line": 22,
+            "text": "  `ARRIVED_CUSTOMER_DOORSTEP`, `DELIVERED`, `CANCELLED`,"
+          },
+          {
+            "line": 23,
+            "text": "  `CANCELLED_BY_CUSTOMER`, `RETURNED_TO_SELLER`"
+          },
+          {
+            "line": 47,
+            "text": "1. **Cancellation**"
+          },
+          {
+            "line": 48,
+            "text": "   `dispatch.router.ts` treats Borzo and Shadowfax cancellation as"
+          },
+          {
+            "line": 49,
+            "text": "   `manual-required` and says no provider cancel API is documented. Both now"
+          },
+          {
+            "line": 50,
+            "text": "   have documented cancel APIs. The local release also retires the active"
+          },
+          {
+            "line": 51,
+            "text": "   binding before the courier is actually cancelled, which can leave a rider"
+          },
+          {
+            "line": 85,
+            "text": "Borzo's supplied documentation confirms a native `cancel-order` endpoint and"
+          },
+          {
+            "line": 87,
+            "text": "releases Borzo locally as `manual-required`, so the same cancellation gap"
+          }
+        ],
+        "status": [
+          {
+            "line": 5,
+            "text": "Provider: **Hyperlocal Marketplace** (not AfterShip tracking, not Shadowfax360 parcel)"
+          },
+          {
+            "line": 7,
+            "text": "The supplied `ShadowFax API Docs.txt` was an AfterShip tracking wrapper. It has"
+          },
+          {
+            "line": 18,
+            "text": "- Order status: `GET /api/v2/orders/{sfx_order_id}/status/`"
+          },
+          {
+            "line": 21,
+            "text": "- Order callbacks: `ALLOTTED`, `ARRIVED`, `DISPATCHED`,"
+          },
+          {
+            "line": 24,
+            "text": "- Rider-location callbacks use a separate configured URL. `order_id` there is"
+          },
+          {
+            "line": 26,
+            "text": "- Sandbox status simulation endpoints exist under `/app/v3/sandbox/...`."
+          },
+          {
+            "line": 27,
+            "text": "- Retry policy: every 5 minutes, up to 7 attempts. Callback handlers must be"
+          },
+          {
+            "line": 40,
+            "text": "- `sfx_order_id` and `track_url` from the create response"
+          },
+          {
+            "line": 42,
+            "text": "  callback mapping"
+          },
+          {
+            "line": 56,
+            "text": "3. **Rider-location callbacks**"
+          },
+          {
+            "line": 57,
+            "text": "   The official contract uses a separate callback URL and a distinct payload."
+          },
+          {
+            "line": 58,
+            "text": "   We only handle order-status callbacks."
+          },
+          {
+            "line": 59,
+            "text": "4. **Callback authentication wording**"
+          },
+          {
+            "line": 60,
+            "text": "   Official docs say callback URL, optional custom headers, and POST/PUT"
+          },
+          {
+            "line": 71,
+            "text": "   callback URLs, and IP whitelisting are provisioned by Shadowfax. We do not"
+          },
+          {
+            "line": 81,
+            "text": "  contract, staging credentials, callback headers, and the no-real-rider answer."
+          }
+        ],
+        "money": [
+          {
+            "line": 38,
+            "text": "- `client_code`, `order_details`, `pickup_details`, `drop_details`,"
+          },
+          {
+            "line": 45,
+            "text": "## Gaps that need code work"
+          },
+          {
+            "line": 70,
+            "text": "   Staging credentials, the Postman collection, merchant `client_code`,"
+          },
+          {
+            "line": 86,
+            "text": "COD fields (`taking_amount`, `[REDACTED OPAQUE VALUE]`). Our router still"
+          },
+          {
+            "line": 88,
+            "text": "applies. COD fields should not be added until the payment/settlement policy is"
+          },
+          {
+            "line": 89,
+            "text": "decided; prepaid orders must not request cash collection."
+          }
+        ],
+        "idempotency": [
+          {
+            "line": 28,
+            "text": "  idempotent."
+          },
+          {
+            "line": 61,
+            "text": "   preference. They do **not** specify an HMAC or a native signature header."
+          }
+        ],
+        "notes": [
+          {
+            "line": 83,
+            "text": "## Borzo note"
+          }
+        ]
+      },
+      "authority": "supplied analysis; claims require independent vendor confirmation",
+      "limits": "Local reference only. Merchant entitlement, current version, approved host, credentials, SLA and production behaviour are not established."
+    }
+  ],
+  "helperSHA256": "f8a4d404f26035b3fc4fb3e5ef594e411a4efded00b61ca7f5240abcb17c00b7",
+  "privacy": "Raw originals stay on Desktop. No raw copy or credential value stored in the repository; URL queries/userinfo stripped."
+}

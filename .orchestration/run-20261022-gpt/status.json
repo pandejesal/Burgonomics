@@ -1,0 +1,111 @@
+{
+  "runId": "run-20261022-gpt",
+  "deadline": "2026-10-22T10:25:30Z",
+  "admissions": 1,
+  "acceptedAutomatically": false,
+  "items": {
+    "fcm-recipient-ownership": {
+      "lane": 7,
+      "sessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+      "phase": "queued",
+      "actualModels": [
+        "openai/gpt-5.5"
+      ],
+      "assistantRows": 1,
+      "previousAttempts": [
+        {
+          "admittedAt": "2026-10-22T05:41:43.418Z",
+          "finishedAt": "2026-10-22T05:41:48.764Z",
+          "error": {
+            "type": "provider.invalid-request",
+            "status": 400
+          },
+          "phase": "blocked",
+          "model": "openai/gpt-5.5#low"
+        }
+      ]
+    },
+    "restaurant-dispatch-choice": {
+      "lane": 2,
+      "sessionID": "ses_ea5c8a2daffekU3r3U5bPrJspn",
+      "phase": "queued"
+    },
+    "customer-payment-truth": {
+      "lane": 8,
+      "sessionID": "ses_ea5c87df5ffe7Vjpzr9yv5VLpA",
+      "phase": "queued"
+    },
+    "dispatch-teardown-binding": {
+      "lane": 4,
+      "sessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+      "phase": "queued"
+    },
+    "customer-address-server-truth": {
+      "lane": 1,
+      "sessionID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+      "phase": "queued"
+    },
+    "petpooja-zero-fabrication": {
+      "lane": 6,
+      "sessionID": "ses_ea5c885c0ffeujhkJzdpAtUFJb",
+      "phase": "queued"
+    },
+    "customer-menu-a11y-closeout": {
+      "lane": 3,
+      "sessionID": "ses_ea5c8a0adffeoN03VVsv7saRMK",
+      "phase": "queued"
+    },
+    "release-infra-closeout": {
+      "lane": 11,
+      "sessionID": "ses_ea5c87669ffeLD1vE6kugwmFVm",
+      "phase": "queued"
+    },
+    "references-porter-drift": {
+      "lane": 5,
+      "sessionID": "ses_ea5c88b2fffeMMzjFL6tYZzs5W",
+      "phase": "queued"
+    },
+    "shadowfax-fail-closed-verification": {
+      "lane": 10,
+      "sessionID": "ses_ea5c878abffemS4Xy9icDiSjo8",
+      "phase": "queued"
+    },
+    "qa-reconciled-commits": {
+      "lane": 9,
+      "sessionID": "ses_ea5c87a64ffecPa7h3J8Zxpw6h",
+      "phase": "queued"
+    },
+    "qa-release-readiness": {
+      "lane": 12,
+      "sessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+      "phase": "queued"
+    }
+  },
+  "updatedAt": "2026-10-22T05:45:02.073Z",
+  "lastAdmissionAt": "2026-10-22T05:41:43.418Z",
+  "modelCorrections": [
+    {
+      "at": "2026-10-22T05:44:22.859Z",
+      "from": "openai/gpt-5.5#low",
+      "to": "openai/gpt-6.1-sol#low",
+      "reason": "first catalogue-listed GPT5.5 call unsupported for ChatGPT OAuth; coordinatorGPT6.1Sol currentlyserving",
+      "priorAdmission": {
+        "lane": 7,
+        "sessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+        "phase": "blocked",
+        "admittedAt": "2026-10-22T05:41:43.418Z",
+        "messageID": "msg_162212b87001Bcd387WE0Hb4Yl",
+        "error": {
+          "type": "provider.invalid-request",
+          "status": 400
+        },
+        "actualModels": [
+          "openai/gpt-5.5"
+        ],
+        "assistantRows": 1,
+        "finishedAt": "2026-10-22T05:41:48.764Z"
+      },
+      "admissionBudgetChange": "12 to13 retains failed first admission, one supported replacement for lane07"
+    }
+  ]
+}

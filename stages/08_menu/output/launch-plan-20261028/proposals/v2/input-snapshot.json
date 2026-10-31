@@ -1,0 +1,4115 @@
+{
+  "capturedAt": "2026-10-28T12:18:23+05:30",
+  "scope": "v2 artifact input identity only; no baseline adoption or private material",
+  "protectedTrees": [
+    {
+      "directory": "stages/08_menu/output/launch-plan-20261028/proposals/v1",
+      "files": [
+        {
+          "file": "asset-manifest.json",
+          "sha256": "e31883ebaaf94e51faa94a27d3b839732bb910dfb83f8569409866fa22b42f47"
+        },
+        {
+          "file": "assets/burger.jpg",
+          "sha256": "192f5ba9c2c09f75e102ee92c1a7bd944ad168d12608940281ccddecf4a8b512"
+        },
+        {
+          "file": "assets/fries.jpg",
+          "sha256": "f047f667859bc0e15a70d2926983132c111a0cfd7d78a3363f190a1b8539c810"
+        },
+        {
+          "file": "assets/Inter-OFL.txt",
+          "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+        },
+        {
+          "file": "assets/InterVariable.woff2",
+          "sha256": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3"
+        },
+        {
+          "file": "assets/mascot.png",
+          "sha256": "c46d756df38c5b6998ce7b59c2fef280ea0043142625d6cba216cdd37833f264"
+        },
+        {
+          "file": "assets/shake.jpg",
+          "sha256": "2de54c45237a8c8e43ee80cee5296a35cadfeb88526fc18791e81bd178191acd"
+        },
+        {
+          "file": "brand-spec.md",
+          "sha256": "c79c1bba8c5a3e0ba77b1e4f669d8fe01b38ad70d152acbab01310266b9e882c"
+        },
+        {
+          "file": "DESIGN.md",
+          "sha256": "53b0fda5b11675a67d4d5bc9935faf05fe201922e7d4ccfa1567a062d8ace80f"
+        },
+        {
+          "file": "image-manifest-r1.json",
+          "sha256": "797a1c1592fc9648372c338bd4087abd2e9a79c205c3c52b127ed440362b6b92"
+        },
+        {
+          "file": "image-manifest.json",
+          "sha256": "dcd5eca93ee672ba4cb8c57f93f9d50428c4d1e5c23c18d0782c0f098ce9a0f3"
+        },
+        {
+          "file": "mockups.css",
+          "sha256": "2096dae142dc9725ce9488cdec4c7e027e80a36bb5c64694e750434dffec53ca"
+        },
+        {
+          "file": "mockups.js",
+          "sha256": "b9e2e77bd8165974a3e5c6ed49d28dafb29e507cae23e75fbaf1bdcebb89c1d4"
+        },
+        {
+          "file": "prepare-assets.py",
+          "sha256": "69e65c75913abdaf42f75ed9b14517ffe12481b21e4760b68f7c52e703951922"
+        },
+        {
+          "file": "preview.html",
+          "sha256": "aa5e98258e9907bd18ac1aec75569cd4f448f3be2a162ed7bf73fa57365614c7"
+        },
+        {
+          "file": "README.md",
+          "sha256": "7ce2dc5ecf8a344bf85c1669f5ccc809894be643386dd6cf8b02ae2e1712efaa"
+        },
+        {
+          "file": "render-mockups.py",
+          "sha256": "e4b8220516c96700bc036a5045961bd5682645d0fb356e8929dd40f0ccb77fe1"
+        },
+        {
+          "file": "screenshots/D01-320.png",
+          "sha256": "82836d828d9e0dd3efbed03321b1e948169b6a6d295650a1705c97477e933b2e"
+        },
+        {
+          "file": "screenshots/D01-768.png",
+          "sha256": "4a0884af3642ab442c94c6955d7d181964399c32cf1b53008578584dbc78f4cb"
+        },
+        {
+          "file": "screenshots/D01.png",
+          "sha256": "dd98ca4530e0809e97c63a57d91b9898a3561143266effb4b263e548c361bfd1"
+        },
+        {
+          "file": "screenshots/D02.png",
+          "sha256": "53f653e93642d6d90987b24e1b9ccc5865546dc8bffd5d58b23961647649d17e"
+        },
+        {
+          "file": "screenshots/D03.png",
+          "sha256": "a2c90164b9774574b451aad2431728d5232f6690dcd2b0f90b65bc5b7930b1ef"
+        },
+        {
+          "file": "screenshots/D04.png",
+          "sha256": "44940d689550b5c40b22453b8bebc6d4ec599e1f1e1feb4fa04f7928f1179b0d"
+        },
+        {
+          "file": "screenshots/D05-320-200.png",
+          "sha256": "38b330fdc49d13f3e7b7146295f3be22d120903c210663487817a39ff625b420"
+        },
+        {
+          "file": "screenshots/D05.png",
+          "sha256": "9fadf97f97bcb0a84581bbe14dc9cbea687851a8de46bd0d8d714f90be162810"
+        },
+        {
+          "file": "screenshots/delivery-overview.png",
+          "sha256": "086aead2e79fa75dc148bed9de05853e4177df07614b5aea2fa4d52bf1f3abb0"
+        },
+        {
+          "file": "screenshots/P01-320.png",
+          "sha256": "4efda6c6c5945b9b286944ea1273335e7f5c7b29ef9c85f26dc3c54756f3d297"
+        },
+        {
+          "file": "screenshots/P01.png",
+          "sha256": "a803cc86500220c11616c7a52ca13fbcf2b348590b7c904968f07b76a72ff4ab"
+        },
+        {
+          "file": "screenshots/P02.png",
+          "sha256": "8215405e64062c09ec592b49b098c7675d815a4931463b8f18044b9d372bc032"
+        },
+        {
+          "file": "screenshots/partner-overview.png",
+          "sha256": "cf9364399386d4584d2a952128370e8b513e7573dfadb9530ec7de654411a666"
+        },
+        {
+          "file": "screenshots-r1/D01-320.png",
+          "sha256": "42336ee9a63d6e6a7138d316aa015bafd05a6567bd6262e07f245c994fb720e4"
+        },
+        {
+          "file": "screenshots-r1/D01-768.png",
+          "sha256": "cf5d0d9db5b0146292b135e89af1803886264f0980e38f9cb9a2d4b1e33ebaee"
+        },
+        {
+          "file": "screenshots-r1/D01.png",
+          "sha256": "ab7a799a7f9e9bda9dac08e6c5a048889a22f1e9c71d69568100a7fd8c71cd17"
+        },
+        {
+          "file": "screenshots-r1/D02.png",
+          "sha256": "4b27dc4b5a4dbf767e8050d0627acb2e74f0873b9a6f524df22df0864fef38b9"
+        },
+        {
+          "file": "screenshots-r1/D03.png",
+          "sha256": "a2c90164b9774574b451aad2431728d5232f6690dcd2b0f90b65bc5b7930b1ef"
+        },
+        {
+          "file": "screenshots-r1/D04.png",
+          "sha256": "44940d689550b5c40b22453b8bebc6d4ec599e1f1e1feb4fa04f7928f1179b0d"
+        },
+        {
+          "file": "screenshots-r1/D05-320-200.png",
+          "sha256": "38b330fdc49d13f3e7b7146295f3be22d120903c210663487817a39ff625b420"
+        },
+        {
+          "file": "screenshots-r1/D05.png",
+          "sha256": "9fadf97f97bcb0a84581bbe14dc9cbea687851a8de46bd0d8d714f90be162810"
+        },
+        {
+          "file": "screenshots-r1/delivery-overview.png",
+          "sha256": "2fb48691dbc6f93a016b89d045746bb9a5efd72265044446a07e0801d03c5082"
+        },
+        {
+          "file": "screenshots-r1/P01-320.png",
+          "sha256": "4efda6c6c5945b9b286944ea1273335e7f5c7b29ef9c85f26dc3c54756f3d297"
+        },
+        {
+          "file": "screenshots-r1/P01.png",
+          "sha256": "a803cc86500220c11616c7a52ca13fbcf2b348590b7c904968f07b76a72ff4ab"
+        },
+        {
+          "file": "screenshots-r1/P02.png",
+          "sha256": "8215405e64062c09ec592b49b098c7675d815a4931463b8f18044b9d372bc032"
+        },
+        {
+          "file": "screenshots-r1/partner-overview.png",
+          "sha256": "cf9364399386d4584d2a952128370e8b513e7573dfadb9530ec7de654411a666"
+        }
+      ]
+    },
+    {
+      "directory": "stages/08_menu/output/launch-plan-review-20261028",
+      "files": [
+        {
+          "file": "01-FRESH-FACTS.md",
+          "sha256": "9eecc4e404a59364de1507e3ab5477e5e4f910090992c8236064efd73207ed02"
+        },
+        {
+          "file": "02-MODEL-REVIEWS.md",
+          "sha256": "f95b6532a7669292adfa49189bd0095c570037d4c118595b6bdefde4a6f0f63c"
+        },
+        {
+          "file": "03-PLAN-CORRECTIONS.md",
+          "sha256": "7acb5b694812c90f9eb7a39f94074db294ac462d82bbd82cd5946bf3f6b31ab2"
+        },
+        {
+          "file": "04-SCHEDULE-AND-NEXT-APPROVAL.md",
+          "sha256": "c804881703991fb1cb533898910ef3ab04902fad00792a2a57c9ffaafc826dd3"
+        },
+        {
+          "file": "05-VALIDATION.md",
+          "sha256": "c824806bec5cd6a6eca1dbd4b4bfb2728d4d0ef97992a28586152f3e93201603"
+        },
+        {
+          "file": "fresh-observations.json",
+          "sha256": "625f8ff79d982920fb82301868116df17699abdb81879e3cf64bc3cb8408c117"
+        },
+        {
+          "file": "public-native-inputs.json",
+          "sha256": "6e8ad524a3fea656e8630f49ecba17e911d14150f169574aed19c156a29a17e1"
+        },
+        {
+          "file": "README.md",
+          "sha256": "00181d44bea690743fd4eea6e1e803d44c3070449fc5f4bffea2f812fbb8820a"
+        },
+        {
+          "file": "review-inputs.json",
+          "sha256": "4f255413b3270c62b27d10187961e4b784a869cb581d17dc42b0db584c8f53ec"
+        },
+        {
+          "file": "validate-review.py",
+          "sha256": "2523ddd2088715d513da833d7165f53ce8f258f57ae465feb9df92b7b5d01047"
+        },
+        {
+          "file": "validation.json",
+          "sha256": "d3b1edc4afef1575870df2b80d807f8ae128c9977c9e1f9a2ea7dbb0af2ddafa"
+        }
+      ]
+    }
+  ],
+  "selectedSource": [
+    {
+      "group": "G-ROOT",
+      "path": "firebase.json",
+      "expected": "1C50FAA3150545ADDAC016A93EE6515DA663AFF05B18B5E9144891A473C7871E",
+      "observed": "1C50FAA3150545ADDAC016A93EE6515DA663AFF05B18B5E9144891A473C7871E",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "firestore.rules",
+      "expected": "113FA5EA407F2792DC40E5DB2E4302FC3B2ECD0C21E6A203C64C3AE58BBADCFC",
+      "observed": "113FA5EA407F2792DC40E5DB2E4302FC3B2ECD0C21E6A203C64C3AE58BBADCFC",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/package.json",
+      "expected": "2A572E25D17034E7E8887B7C5471F4AD16C34D57E3E4B6EBF7507503249B997F",
+      "observed": "2A572E25D17034E7E8887B7C5471F4AD16C34D57E3E4B6EBF7507503249B997F",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/package-lock.json",
+      "expected": "A3ECCB563C14491C4324F922A7C340033D9A78C1772DC1D11CA8D6940BB1830F",
+      "observed": "A3ECCB563C14491C4324F922A7C340033D9A78C1772DC1D11CA8D6940BB1830F",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/core/middleware.ts",
+      "expected": "1E8823A5D0575418CE19BC8A7F9192A4FF416A70B405B702626CF665D60689D1",
+      "observed": "1E8823A5D0575418CE19BC8A7F9192A4FF416A70B405B702626CF665D60689D1",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/index.ts",
+      "expected": "6C51C0BD2A4484F714514DD5773415B6E331310E64786EEBDADFDBA0999FE11F",
+      "observed": "6C51C0BD2A4484F714514DD5773415B6E331310E64786EEBDADFDBA0999FE11F",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/auth/claimsManager.ts",
+      "expected": "166E049CD35114C63A2F65D299CDC77C9EAF5C7793A0A44E6424A661C1A8F233",
+      "observed": "166E049CD35114C63A2F65D299CDC77C9EAF5C7793A0A44E6424A661C1A8F233",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/auth/staffInvite.ts",
+      "expected": "57EA967A217AE29E09E08D9E371C9A2E5CE5476B66C7506C50BCE0C85E7198D3",
+      "observed": "57EA967A217AE29E09E08D9E371C9A2E5CE5476B66C7506C50BCE0C85E7198D3",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/customers/customerCoins.ts",
+      "expected": "895791FCEBD480AC0A1860676ED04C2D406D670439B4AD8FB3CA5ED660E5646E",
+      "observed": "895791FCEBD480AC0A1860676ED04C2D406D670439B4AD8FB3CA5ED660E5646E",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/dispatch/dispatch.router.ts",
+      "expected": "F7160D7853C8813D2B262318AB38AB78F5ADAD825B75DCDDCB2582E93F00E58F",
+      "observed": "F7160D7853C8813D2B262318AB38AB78F5ADAD825B75DCDDCB2582E93F00E58F",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/dispatch/dispatch.webhooks.ts",
+      "expected": "289B258FAEC99C06EFC636ADCB51E355561E1AE1CB5FF07D8592744AF377B96E",
+      "observed": "289B258FAEC99C06EFC636ADCB51E355561E1AE1CB5FF07D8592744AF377B96E",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/dispatch/providers/borzo.adapter.ts",
+      "expected": "6EEE7DBBABC4AA48664272B48C84891C824064170EFFFC2F84D3519C0E012FDF",
+      "observed": "6EEE7DBBABC4AA48664272B48C84891C824064170EFFFC2F84D3519C0E012FDF",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/dispatch/providers/shadowfax.adapter.ts",
+      "expected": "454D0E771627341C1E056FADCA5807B500D67FA24264706202030E597DAE92C0",
+      "observed": "454D0E771627341C1E056FADCA5807B500D67FA24264706202030E597DAE92C0",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/dispatch/readiness.ts",
+      "expected": "089D9C3FEB58200473ADA4C6E5D61BA6C2188ECDD1F224C81D47099AB467A2CA",
+      "observed": "089D9C3FEB58200473ADA4C6E5D61BA6C2188ECDD1F224C81D47099AB467A2CA",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/payments/pricing.engine.ts",
+      "expected": "79663E6727F9CA4D3897A286D3728C538750FF465A861E7AD845207C8F05807E",
+      "observed": "79663E6727F9CA4D3897A286D3728C538750FF465A861E7AD845207C8F05807E",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/payments/razorpay.service.ts",
+      "expected": "EC486F8EB93218674F3B5A4FD8336410E81FADDB774E964043C167F245D0328A",
+      "observed": "EC486F8EB93218674F3B5A4FD8336410E81FADDB774E964043C167F245D0328A",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/payments/reconciliation.ts",
+      "expected": "43A1D8B33AD580F72B01EEBBAAD166167FF7396493A7FCFA2EC1F647C8ADCBE9",
+      "observed": "43A1D8B33AD580F72B01EEBBAAD166167FF7396493A7FCFA2EC1F647C8ADCBE9",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/payments/refundRequests.ts",
+      "expected": "F5C5EB361E8B90F41624BBCA71191515A87DD1B38AE68A12A5BBD69D430029BA",
+      "observed": "F5C5EB361E8B90F41624BBCA71191515A87DD1B38AE68A12A5BBD69D430029BA",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/payments/webhookHandler.ts",
+      "expected": "58EEB95A66B69CAAD77C4CEAA11F9C5244650C53D724795C3D5336682B1D03D3",
+      "observed": "58EEB95A66B69CAAD77C4CEAA11F9C5244650C53D724795C3D5336682B1D03D3",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/petpooja/item86ingSync.ts",
+      "expected": "4069969D31478A955C42DB48F426F434E1472922E00B134456B76BE4B7A02132",
+      "observed": "4069969D31478A955C42DB48F426F434E1472922E00B134456B76BE4B7A02132",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/petpooja/orderPush.ts",
+      "expected": "E5EB93EE293F613ACA6A49F87C72507C0DF5D972AA6A9161376F173767D97F1F",
+      "observed": "E5EB93EE293F613ACA6A49F87C72507C0DF5D972AA6A9161376F173767D97F1F",
+      "matches": true
+    },
+    {
+      "group": "G-ROOT",
+      "path": "functions/src/modules/petpooja/petpooja.scheduler.ts",
+      "expected": "B5C16AC56577123C560771015D7E99C89003891D610FD9866ECEBB0F23262F98",
+      "observed": "B5C16AC56577123C560771015D7E99C89003891D610FD9866ECEBB0F23262F98",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": ".github/workflows/android-build.yml",
+      "expected": "2057F847849DD59B99F7BE61E4BA523726E67A76FF8E292B6A0026C569151164",
+      "observed": "2057F847849DD59B99F7BE61E4BA523726E67A76FF8E292B6A0026C569151164",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": ".github/workflows/ci.yml",
+      "expected": "6698A5A2BED5CCBEAB968F36D0ADF80A9DEAD891D23548ABA2F591DBA6556D81",
+      "observed": "6698A5A2BED5CCBEAB968F36D0ADF80A9DEAD891D23548ABA2F591DBA6556D81",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": ".github/workflows/ios-build.yml",
+      "expected": "34954F83ECE13E0FD1E628402D0C8767DD817AF09D6041BE0A808E55DE3A032B",
+      "observed": "34954F83ECE13E0FD1E628402D0C8767DD817AF09D6041BE0A808E55DE3A032B",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "android/app/build.gradle",
+      "expected": "0C6A5DF40D0A7212E0E407DF5CD6A09D72E3E8D2D26FAAC5C7FF4A611261EDA7",
+      "observed": "0C6A5DF40D0A7212E0E407DF5CD6A09D72E3E8D2D26FAAC5C7FF4A611261EDA7",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "android/variables.gradle",
+      "expected": "83D502C9ED8FCF1DD4791482067ABEEDBEBAE49FAFE9CD14A8A1F5891DEB0D88",
+      "observed": "83D502C9ED8FCF1DD4791482067ABEEDBEBAE49FAFE9CD14A8A1F5891DEB0D88",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "android/version.properties",
+      "expected": "1D77D467EC6FC5123B0F9CE355FE93351482740388B9F894A12B7EC9034E947B",
+      "observed": "1D77D467EC6FC5123B0F9CE355FE93351482740388B9F894A12B7EC9034E947B",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "capacitor.config.ts",
+      "expected": "56CDC22181420B26DDA8441BCE6118209AC90E740E390BAE916D475555ADDA11",
+      "observed": "56CDC22181420B26DDA8441BCE6118209AC90E740E390BAE916D475555ADDA11",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "firebase.json",
+      "expected": "10D5D35CA3288DD64F177AD48F8B742A124F629BE1BC003CBF814A98A039D0EC",
+      "observed": "10D5D35CA3288DD64F177AD48F8B742A124F629BE1BC003CBF814A98A039D0EC",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "firestore.rules",
+      "expected": "BF491F4CC46C8D1E1A9678A20456755155D56F7A6BD9E7CCEF3E2EDAAB600282",
+      "observed": "BF491F4CC46C8D1E1A9678A20456755155D56F7A6BD9E7CCEF3E2EDAAB600282",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "ios/App/App.xcodeproj/project.pbxproj",
+      "expected": "823A9076E07F34392EF98146CD0F6B9CCD23266B3270DB2225ADF7B1C74E276A",
+      "observed": "823A9076E07F34392EF98146CD0F6B9CCD23266B3270DB2225ADF7B1C74E276A",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "ios/App/App/App.entitlements",
+      "expected": "20FC1001BE801A089EF9FA290C68DAD608C6EF97F63F179AAED8DBBF33A2238A",
+      "observed": "20FC1001BE801A089EF9FA290C68DAD608C6EF97F63F179AAED8DBBF33A2238A",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "ios/App/App/Info.plist",
+      "expected": "C7CA2F11E54411C37EF4DD3F5DCFFD8806463F392C21461547B6115CC9DA3C77",
+      "observed": "C7CA2F11E54411C37EF4DD3F5DCFFD8806463F392C21461547B6115CC9DA3C77",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "ios/App/CapApp-SPM/Package.swift",
+      "expected": "DD2099D46D3650082E6EBD0CEC5B0D0CDDE9CD15763086EB398A10BD7B404074",
+      "observed": "DD2099D46D3650082E6EBD0CEC5B0D0CDDE9CD15763086EB398A10BD7B404074",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "package.json",
+      "expected": "4975AE61EF78DB91DE68D9FCDAC2B51CB305E594E2AD5EDCAD60461B1F11B1D9",
+      "observed": "4975AE61EF78DB91DE68D9FCDAC2B51CB305E594E2AD5EDCAD60461B1F11B1D9",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "package-lock.json",
+      "expected": "EFD9EE28EE94B274F474F214E2F61A22E5EDE26EC376072D902084D64A36C21C",
+      "observed": "EFD9EE28EE94B274F474F214E2F61A22E5EDE26EC376072D902084D64A36C21C",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "public/.well-known/apple-app-site-association",
+      "expected": "121F6F621E013EEAEB3DC1E0534740BAFCDF9F6609FBC30F28D5D9EB8D1A706D",
+      "observed": "121F6F621E013EEAEB3DC1E0534740BAFCDF9F6609FBC30F28D5D9EB8D1A706D",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "public/.well-known/assetlinks.json",
+      "expected": "FA8F20E29B51B250F876AC15560374DD69DB4D6FB67D52FB813D99F06B40204B",
+      "observed": "FA8F20E29B51B250F876AC15560374DD69DB4D6FB67D52FB813D99F06B40204B",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "scripts/test-rules.mjs",
+      "expected": "3EBFBB51CC9A2EDD068A4CB05F2926C5AE19F7A11E690F079FAB49D56B857368",
+      "observed": "3EBFBB51CC9A2EDD068A4CB05F2926C5AE19F7A11E690F079FAB49D56B857368",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/cart/components/CartItemRow.tsx",
+      "expected": "E034554A40D14C2CB94085727D131B15BF8BB4E109027EACC97927B99E9E7399",
+      "observed": "E034554A40D14C2CB94085727D131B15BF8BB4E109027EACC97927B99E9E7399",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/cart/state/cartStore.ts",
+      "expected": "7A7829EC5022DD20A8F33726C0D5BA1DEFCDB01A42AC9642C1E2CA6D337F9FD0",
+      "observed": "7A7829EC5022DD20A8F33726C0D5BA1DEFCDB01A42AC9642C1E2CA6D337F9FD0",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/checkout/state/checkoutStore.ts",
+      "expected": "532569DBB09C75DA7C7352EFE9DA41D09282E938435A4874D1A225A36FF3B681",
+      "observed": "532569DBB09C75DA7C7352EFE9DA41D09282E938435A4874D1A225A36FF3B681",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/home/components/BannerCarousel.tsx",
+      "expected": "EF5057FCEB12D1A964BD47A5B563A2E0F0E3B805A89A29B7FE12B31DE2493D25",
+      "observed": "EF5057FCEB12D1A964BD47A5B563A2E0F0E3B805A89A29B7FE12B31DE2493D25",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/home/components/CategoryGrid.tsx",
+      "expected": "C0A9096204713B9D6159F91BD12C37D6FE194C2529468076EFAFDD49E13E82FC",
+      "observed": "C0A9096204713B9D6159F91BD12C37D6FE194C2529468076EFAFDD49E13E82FC",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/home/components/QuickReorderRail.tsx",
+      "expected": "D464C16D9B0CA62D8BF37FE4E560B676126C56A504874DBA67F8FF70D0A99FF9",
+      "observed": "D464C16D9B0CA62D8BF37FE4E560B676126C56A504874DBA67F8FF70D0A99FF9",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/home/services/homeService.ts",
+      "expected": "FBDB365840A0633BAF60E1CF11D4343052B4B85D3F7826F1289D052FE0FFE83E",
+      "observed": "FBDB365840A0633BAF60E1CF11D4343052B4B85D3F7826F1289D052FE0FFE83E",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/menu/components/CategoryNavRail.tsx",
+      "expected": "4A2908861B4B35DBF6667799986D828CA884829DCE0AB53B730FB9D097094CA1",
+      "observed": "4A2908861B4B35DBF6667799986D828CA884829DCE0AB53B730FB9D097094CA1",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/menu/repositories/MenuRepository.ts",
+      "expected": "291D691B59CC39FDAD62A8B8A658039C585C0B900402FA6C33FF0237748C6FC7",
+      "observed": "291D691B59CC39FDAD62A8B8A658039C585C0B900402FA6C33FF0237748C6FC7",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/menu/services/menuService.ts",
+      "expected": "F62FEF7D1F69F3E6ECA019EA6AAC1CF55E35D38F7AF01951E5B4DA5B1BFC4455",
+      "observed": "F62FEF7D1F69F3E6ECA019EA6AAC1CF55E35D38F7AF01951E5B4DA5B1BFC4455",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/menu/state/menuStore.ts",
+      "expected": "860358A0661D70C7D30EACEB6E0D08D61D47D06EE26A20010F65F5266E827006",
+      "observed": "860358A0661D70C7D30EACEB6E0D08D61D47D06EE26A20010F65F5266E827006",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/orders/hooks/useReorderItems.ts",
+      "expected": "A0445E823D89E6AE2C99C871DDFCB37291C3123114FED686235CC062C2926273",
+      "observed": "A0445E823D89E6AE2C99C871DDFCB37291C3123114FED686235CC062C2926273",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/orders/repositories/OrderRepository.ts",
+      "expected": "48B9C304176E7EFE5ADFAB33B44368EA27285BD45CD7116D9BF4D78150D33DF5",
+      "observed": "48B9C304176E7EFE5ADFAB33B44368EA27285BD45CD7116D9BF4D78150D33DF5",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/settings/models/index.ts",
+      "expected": "91FBF3FCA4B633E995CF0726601BA1F469E6DC7354644C07C9CE8F30ACB5BAF9",
+      "observed": "91FBF3FCA4B633E995CF0726601BA1F469E6DC7354644C07C9CE8F30ACB5BAF9",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/settings/repositories/SettingsRepository.ts",
+      "expected": "CB0FD053CD5958E2687E82AC82EFC8010CA75A0E57A9AD6D59AF5B670E53267B",
+      "observed": "CB0FD053CD5958E2687E82AC82EFC8010CA75A0E57A9AD6D59AF5B670E53267B",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/features/settings/state/settingsStore.ts",
+      "expected": "E314044FDF98507668B3161C0DEE0F37D6DD1FF8056AEE94BDE3DCE65486D03E",
+      "observed": "E314044FDF98507668B3161C0DEE0F37D6DD1FF8056AEE94BDE3DCE65486D03E",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/routes/cart.tsx",
+      "expected": "FE6F4672A9C3F0E39A0C01EAC961DC10B135EDDFBBBF6D97F2D8CD02A441BF0C",
+      "observed": "FE6F4672A9C3F0E39A0C01EAC961DC10B135EDDFBBBF6D97F2D8CD02A441BF0C",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/routes/checkout.tsx",
+      "expected": "31F5A2383270A58F544C5312D467F1F882E63F539CA7F2500BE82A3A2B3CEE01",
+      "observed": "31F5A2383270A58F544C5312D467F1F882E63F539CA7F2500BE82A3A2B3CEE01",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/routes/home.tsx",
+      "expected": "8914390492C3F61F062A1C0444BFA29925F8564867D8191BE08C3F26685BA9FA",
+      "observed": "8914390492C3F61F062A1C0444BFA29925F8564867D8191BE08C3F26685BA9FA",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/routes/menu.index.tsx",
+      "expected": "FE59365F9C7E5591FBC50F0CFDF5711BCFD1029885DEAA1D174A26D4C674127A",
+      "observed": "FE59365F9C7E5591FBC50F0CFDF5711BCFD1029885DEAA1D174A26D4C674127A",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/routes/profile.settings.tsx",
+      "expected": "62C32586D91B7A5040672360D8612A9E15C8A5FA79C97C7BEED8FDE0B01F8B76",
+      "observed": "62C32586D91B7A5040672360D8612A9E15C8A5FA79C97C7BEED8FDE0B01F8B76",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "src/styles.css",
+      "expected": "8F1BC233D060320A17905E4700EF41A60054B90EA33F8F7933F6ED7FF367ABEF",
+      "observed": "8F1BC233D060320A17905E4700EF41A60054B90EA33F8F7933F6ED7FF367ABEF",
+      "matches": true
+    },
+    {
+      "group": "G-DELIVERY",
+      "path": "tests/rules/firestore.rules.test.ts",
+      "expected": "66AA75E105283984925AC5D1E7B09781224A69325DC011C843813B5048DB4128",
+      "observed": "66AA75E105283984925AC5D1E7B09781224A69325DC011C843813B5048DB4128",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": ".github/workflows/ci.yml",
+      "expected": "2196C0BE450FDD69EBDBDE955E3C259508D8015914D35C4660FC92BB506DF283",
+      "observed": "2196C0BE450FDD69EBDBDE955E3C259508D8015914D35C4660FC92BB506DF283",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "android/app/build.gradle",
+      "expected": "341AADD4FD52E298BE4AF666A6D9464ED1C575509C9C4F844D57488DEB4A2328",
+      "observed": "341AADD4FD52E298BE4AF666A6D9464ED1C575509C9C4F844D57488DEB4A2328",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "android/variables.gradle",
+      "expected": "83D502C9ED8FCF1DD4791482067ABEEDBEBAE49FAFE9CD14A8A1F5891DEB0D88",
+      "observed": "83D502C9ED8FCF1DD4791482067ABEEDBEBAE49FAFE9CD14A8A1F5891DEB0D88",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "android/version.properties",
+      "expected": "7BB0F52F418EACA59C95D021480CAA974774B5A7A8D6E7A8EDF0230BA60D3C3C",
+      "observed": "7BB0F52F418EACA59C95D021480CAA974774B5A7A8D6E7A8EDF0230BA60D3C3C",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "capacitor.config.ts",
+      "expected": "342BAB3C51D4995AE62E3DED23BCDDA919D73AFA0432CEBF12DC16F4D744C410",
+      "observed": "342BAB3C51D4995AE62E3DED23BCDDA919D73AFA0432CEBF12DC16F4D744C410",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "firestore.rules",
+      "expected": "113FA5EA407F2792DC40E5DB2E4302FC3B2ECD0C21E6A203C64C3AE58BBADCFC",
+      "observed": "113FA5EA407F2792DC40E5DB2E4302FC3B2ECD0C21E6A203C64C3AE58BBADCFC",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "ios/App/App.xcodeproj/project.pbxproj",
+      "expected": "D162BF7BDFB09EBE4A4B149B05EA3ED7A16478D7A321846EFF4340D921E45A73",
+      "observed": "D162BF7BDFB09EBE4A4B149B05EA3ED7A16478D7A321846EFF4340D921E45A73",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "ios/App/App/App.entitlements",
+      "expected": "E14758E6068EBC29373C7906ECE74BB4CC4F3C594E87C7F2988C81FA147819D0",
+      "observed": "E14758E6068EBC29373C7906ECE74BB4CC4F3C594E87C7F2988C81FA147819D0",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "ios/App/App/Info.plist",
+      "expected": "5231005AC63D1D413AE80BACBD96BF72DD5953A47D711E55DA01C5BFB961675C",
+      "observed": "5231005AC63D1D413AE80BACBD96BF72DD5953A47D711E55DA01C5BFB961675C",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "package.json",
+      "expected": "B8C641913F4F96557DE4C9AC9C23238EBE7EFCE7CC13902A369FEB8EA43F1199",
+      "observed": "B8C641913F4F96557DE4C9AC9C23238EBE7EFCE7CC13902A369FEB8EA43F1199",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "package-lock.json",
+      "expected": "CEDF62F2AD47BE8935633FF101831D4A4142E72B0AD7DC98E1ABD819B6502C57",
+      "observed": "CEDF62F2AD47BE8935633FF101831D4A4142E72B0AD7DC98E1ABD819B6502C57",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "public/.well-known/apple-app-site-association",
+      "expected": "3192FA3A006F3483709FC44139E9BCABD1CB2847B04DD64B56327112EF8929E8",
+      "observed": "3192FA3A006F3483709FC44139E9BCABD1CB2847B04DD64B56327112EF8929E8",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "public/.well-known/assetlinks.json",
+      "expected": "C82E08AC05736025DFB58F2D98805DE107421844D528EE6861CBB98A1FDED063",
+      "observed": "C82E08AC05736025DFB58F2D98805DE107421844D528EE6861CBB98A1FDED063",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/admin/theme/ThemeContext.tsx",
+      "expected": "AC525BBEC901E6878C32B6BFE6ED020C198B70C30F5C3E72D977B1C212A51D8C",
+      "observed": "AC525BBEC901E6878C32B6BFE6ED020C198B70C30F5C3E72D977B1C212A51D8C",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/App.tsx",
+      "expected": "457D5D837BC55B354A232C248D4EAB66D287A2A34CB416EA47B8F48A6AE643D8",
+      "observed": "457D5D837BC55B354A232C248D4EAB66D287A2A34CB416EA47B8F48A6AE643D8",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/components/layout/Header.tsx",
+      "expected": "3D8EFB71B9C599CF4223ECEA5FCF3E9B2DAA79A2B98FACAC1963D235E16B333E",
+      "observed": "3D8EFB71B9C599CF4223ECEA5FCF3E9B2DAA79A2B98FACAC1963D235E16B333E",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/components/layout/Sidebar.tsx",
+      "expected": "4B651F3F423B499DB9393F3F48D8FF1F345C54418EFD8E10B9A6735DE7410F71",
+      "observed": "4B651F3F423B499DB9393F3F48D8FF1F345C54418EFD8E10B9A6735DE7410F71",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/core/auth/AuthContext.tsx",
+      "expected": "11681D1F696B9385823614AB0EA8357E857B4E2EC3294F6FD236E995C9244EE1",
+      "observed": "11681D1F696B9385823614AB0EA8357E857B4E2EC3294F6FD236E995C9244EE1",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/core/auth/ProtectedRoute.tsx",
+      "expected": "8AB05566B54EBBA8B53D234E3002883436AB238345A6B1619980B9E6FBCF58EC",
+      "observed": "8AB05566B54EBBA8B53D234E3002883436AB238345A6B1619980B9E6FBCF58EC",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/core/auth/routePolicy.ts",
+      "expected": "500DED7730B7E9AB2BB276090AD6BC430E0BE6E8D0ABA59306A89ED338DC681B",
+      "observed": "500DED7730B7E9AB2BB276090AD6BC430E0BE6E8D0ABA59306A89ED338DC681B",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/features/kds/components/KDSOrderCard.tsx",
+      "expected": "6987574EE3582AB05BC92016DD06C35689069E7EB63C72C174D238527A794A14",
+      "observed": "6987574EE3582AB05BC92016DD06C35689069E7EB63C72C174D238527A794A14",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/features/kds/components/KDSQuick86Drawer.tsx",
+      "expected": "1306089BFA980D02C12BAA8DDB3DAD23D406816FE9A4D807C07E22DB89490418",
+      "observed": "1306089BFA980D02C12BAA8DDB3DAD23D406816FE9A4D807C07E22DB89490418",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/features/kds/hooks/useKDSRealtimeStream.ts",
+      "expected": "39AB8530FFCEC35F16291F3295DECA0C2C1CA77446C0522759FBD52BD66D3543",
+      "observed": "39AB8530FFCEC35F16291F3295DECA0C2C1CA77446C0522759FBD52BD66D3543",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/features/menu/hooks/useBranchMenu.ts",
+      "expected": "D3FF8119F1B482AE67782F189E80794D1D4A6FCAC1DA49D5BA99F5DF04A9A37F",
+      "observed": "D3FF8119F1B482AE67782F189E80794D1D4A6FCAC1DA49D5BA99F5DF04A9A37F",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/hooks/useMenu.ts",
+      "expected": "BF44F7863B5B8ABBBC5CFD4F4F497637924FE33F05F7443CE30C427ACA2B380D",
+      "observed": "BF44F7863B5B8ABBBC5CFD4F4F497637924FE33F05F7443CE30C427ACA2B380D",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/index.css",
+      "expected": "68AF3C39E628EE6AAFCB6C609AEB2E7A6B2C16FB015CD4ACCB71B1F46057D13B",
+      "observed": "68AF3C39E628EE6AAFCB6C609AEB2E7A6B2C16FB015CD4ACCB71B1F46057D13B",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/pages/DashboardPage.tsx",
+      "expected": "768F31EB4BCDEE50E990DB812126E92838327E103D2951EFCEC67B34A4FBDA72",
+      "observed": "768F31EB4BCDEE50E990DB812126E92838327E103D2951EFCEC67B34A4FBDA72",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/pages/DeliveryQueuePage.tsx",
+      "expected": "575896ADDD06D2C3B9A810B5023FE057F5C4293604E4E7DFBC877CA9DC661376",
+      "observed": "575896ADDD06D2C3B9A810B5023FE057F5C4293604E4E7DFBC877CA9DC661376",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/pages/KDSPage.tsx",
+      "expected": "DE36CB68FE2DD1F5C2A9B730E6D4221BC52A13E6BA66CDA3CBDA2D26139C2374",
+      "observed": "DE36CB68FE2DD1F5C2A9B730E6D4221BC52A13E6BA66CDA3CBDA2D26139C2374",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/pages/MenuPage.tsx",
+      "expected": "7E1F5314EC85B3F27ECDE4B3E0A29B97B08BE833DAEEBE062E5BF0F32BE44289",
+      "observed": "7E1F5314EC85B3F27ECDE4B3E0A29B97B08BE833DAEEBE062E5BF0F32BE44289",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/pages/OrderDetailPage.tsx",
+      "expected": "5ED7C60E07C9DF71976A692FDC4559710D3282687D7F9D8AC637DC2CD22E3186",
+      "observed": "5ED7C60E07C9DF71976A692FDC4559710D3282687D7F9D8AC637DC2CD22E3186",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/pages/OrdersPage.tsx",
+      "expected": "05BFB51C34F6D899A6A09C4B80E3FF4B3002798B61D938772FA8C0108D369FCA",
+      "observed": "05BFB51C34F6D899A6A09C4B80E3FF4B3002798B61D938772FA8C0108D369FCA",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/pages/SettingsPage.tsx",
+      "expected": "0640EB61E630A8555BEC3FDFDF88651F29906B7F0379206DF3D72AC8780E749B",
+      "observed": "0640EB61E630A8555BEC3FDFDF88651F29906B7F0379206DF3D72AC8780E749B",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/services/partnerFunctionsApi.ts",
+      "expected": "9A2CBFD58B3134534C426E6AC074D32C103D30B5BDD04A38D81187A01702D125",
+      "observed": "9A2CBFD58B3134534C426E6AC074D32C103D30B5BDD04A38D81187A01702D125",
+      "matches": true
+    },
+    {
+      "group": "G-PARTNER",
+      "path": "src/utils/kdsAudio.ts",
+      "expected": "F58BF7FA4F3B63AEEA81294599F47D082FB9AE73E4CC1DE1AEF0BC73B86E07FA",
+      "observed": "F58BF7FA4F3B63AEEA81294599F47D082FB9AE73E4CC1DE1AEF0BC73B86E07FA",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "firestore.indexes.json",
+      "expected": "A6578704ED7ACA6703FD02167291D5844B977BB6F2B9C609386FBBA24153B042",
+      "observed": "A6578704ED7ACA6703FD02167291D5844B977BB6F2B9C609386FBBA24153B042",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "functions/src/config/env.ts",
+      "expected": "D1504B1DC24C572E02251FEEA25B94E8FB0C24FC8B62409603715AB8B7006443",
+      "observed": "D1504B1DC24C572E02251FEEA25B94E8FB0C24FC8B62409603715AB8B7006443",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "functions/vitest.config.ts",
+      "expected": "376B180B61B3F84C22066C3B594B48CB054A13C6BE01214982878235BC539542",
+      "observed": "376B180B61B3F84C22066C3B594B48CB054A13C6BE01214982878235BC539542",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "functions/tests/wire.env.setup.ts",
+      "expected": "CF99A5994617FB35623E9FDD917CB4470E2E4D35D51C77EB31FC0483490F9E77",
+      "observed": "CF99A5994617FB35623E9FDD917CB4470E2E4D35D51C77EB31FC0483490F9E77",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "functions/src/modules/petpooja/menuSyncWebhook.ts",
+      "expected": "A668058C3AD7E4B42B22D661CE1879208257B0604D9A98FFA0C24D2B226079E7",
+      "observed": "A668058C3AD7E4B42B22D661CE1879208257B0604D9A98FFA0C24D2B226079E7",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "functions/src/modules/petpooja/webhookAudit.ts",
+      "expected": "74DEB56283F680607BD25F6F95300F907AFF676F45C58E899012AB5A6906CB55",
+      "observed": "74DEB56283F680607BD25F6F95300F907AFF676F45C58E899012AB5A6906CB55",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "functions/src/modules/petpooja/client.ts",
+      "expected": "99A87F2E70A451125AAD03599F4335A94D7641C768D4D545F138706F3DAE9E0C",
+      "observed": "99A87F2E70A451125AAD03599F4335A94D7641C768D4D545F138706F3DAE9E0C",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "functions/src/modules/orders/orderStatus.ts",
+      "expected": "1EC5B31CC7ACC3DF0C8E207891F511C195C9C5A403E7561212BFCA9A38500900",
+      "observed": "1EC5B31CC7ACC3DF0C8E207891F511C195C9C5A403E7561212BFCA9A38500900",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "functions/src/modules/notifications/triggers.ts",
+      "expected": "DA82479C15F7A1C0F6737E39E3BCE07436D080A58E0E6E63668A81EB6EC7C026",
+      "observed": "DA82479C15F7A1C0F6737E39E3BCE07436D080A58E0E6E63668A81EB6EC7C026",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-foundation-core/src/routes/__root.tsx",
+      "expected": "DD097424DFCDE42B15C2654AC24444FE9B1FDDC27E2EDC5F6DE027DDB0D780B0",
+      "observed": "DD097424DFCDE42B15C2654AC24444FE9B1FDDC27E2EDC5F6DE027DDB0D780B0",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-foundation-core/src/shared/pricing/pricingEngine.ts",
+      "expected": "0D67BC5B734319FEC2D6DBF531AB262E055353556D1D851D599E997C8AC50CEB",
+      "observed": "0D67BC5B734319FEC2D6DBF531AB262E055353556D1D851D599E997C8AC50CEB",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-foundation-core/src/features/home/models/index.ts",
+      "expected": "AA56EDDEC1A0F54911283CF618C7E165BB88F165400E81EA695FC89FC52E6CE2",
+      "observed": "AA56EDDEC1A0F54911283CF618C7E165BB88F165400E81EA695FC89FC52E6CE2",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-foundation-core/src/features/orders/utils/reorderValidation.ts",
+      "expected": "294408625E2800E7C961BA1721D5370AD2AA7B1A1BF56128E8652E11C010B9AF",
+      "observed": "294408625E2800E7C961BA1721D5370AD2AA7B1A1BF56128E8652E11C010B9AF",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-partner/src/main.tsx",
+      "expected": "12BF456BCF726C7D66AED7FD69154210BF0C09B3B78237F354BBF6588C2C3FAA",
+      "observed": "12BF456BCF726C7D66AED7FD69154210BF0C09B3B78237F354BBF6588C2C3FAA",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-partner/src/pages/admin/AdminRoutes.tsx",
+      "expected": "D1B1FE0E2B27BC6C8D94D960A4405E64F21CB0CBBE7E4C67457C2047192E1E93",
+      "observed": "D1B1FE0E2B27BC6C8D94D960A4405E64F21CB0CBBE7E4C67457C2047192E1E93",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-partner/src/admin/layouts/AdminLayout.tsx",
+      "expected": "AB5C2E94C2568DE6D5473A215C01690A31370BB44A38D45922DC477E4C0A9302",
+      "observed": "AB5C2E94C2568DE6D5473A215C01690A31370BB44A38D45922DC477E4C0A9302",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-partner/src/admin/layouts/petpoojaAlerts.ts",
+      "expected": "3D211FAB681BDA33E76D099E2E7F71264A8F528A308D3FE18B990DDDD4351D63",
+      "observed": "3D211FAB681BDA33E76D099E2E7F71264A8F528A308D3FE18B990DDDD4351D63",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-partner/src/stores/authStore.ts",
+      "expected": "7B0E9E2EAE63CD72DF98D6F1F9A7FC98CD0F4315267831C24A62AB3D8B7ABA5C",
+      "observed": "7B0E9E2EAE63CD72DF98D6F1F9A7FC98CD0F4315267831C24A62AB3D8B7ABA5C",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-partner/vitest.config.ts",
+      "expected": "66A8C9D9FA21B92A36710ED346A9DE27C92747A03D118789FE5A017226CEA124",
+      "observed": "66A8C9D9FA21B92A36710ED346A9DE27C92747A03D118789FE5A017226CEA124",
+      "matches": true
+    },
+    {
+      "group": "supplemental",
+      "path": "burgonomics-partner/ios/App/CapApp-SPM/Package.swift",
+      "expected": "265BC66DE8A70F31FA1165027EA75FBA32F237F49E192608387A7E7800FE3679",
+      "observed": "265BC66DE8A70F31FA1165027EA75FBA32F237F49E192608387A7E7800FE3679",
+      "matches": true
+    }
+  ],
+  "additionalPublicSource": [
+    {
+      "file": "burgonomics-foundation-core/src/features/home/state/homeStore.ts",
+      "sha256": "e63f79b736993966325322ba4546e81ed6bee8cd90e8ad868a72b584ec95ae45"
+    },
+    {
+      "file": "burgonomics-foundation-core/src/features/home/repositories/HomeRepository.ts",
+      "sha256": "edfc1bb22e29b3eb547718d9dfba7a3b1657a76b5e7ae61066a28f0744cfa5c9"
+    },
+    {
+      "file": "burgonomics-foundation-core/src/features/home/index.ts",
+      "sha256": "df53580d79335ce20b6de878d4d050d3dc304021d03348198e7715859b5b1d7f"
+    },
+    {
+      "file": "burgonomics-foundation-core/src/features/menu/components/CategoryPills.tsx",
+      "sha256": "563a5500a0ef82c0937cbfe159a95f5c6c88cb558629d86c05c06165048a1ff4"
+    },
+    {
+      "file": "burgonomics-foundation-core/capacitor.config.ts",
+      "sha256": "56cdc22181420b26dda8441bce6118209ac90e740e390bae916d475555adda11"
+    },
+    {
+      "file": "burgonomics-foundation-core/android/variables.gradle",
+      "sha256": "83d502c9ed8fcf1dd4791482067abeedbebae49fafe9cd14a8a1f5891deb0d88"
+    },
+    {
+      "file": "burgonomics-foundation-core/android/version.properties",
+      "sha256": "1d77d467ec6fc5123b0f9ce355fe93351482740388b9f894a12b7ec9034e947b"
+    },
+    {
+      "file": "burgonomics-foundation-core/ios/App/App.xcodeproj/project.pbxproj",
+      "sha256": "823a9076e07f34392ef98146cd0f6b9ccd23266b3270db2225adf7b1c74e276a"
+    },
+    {
+      "file": "burgonomics-foundation-core/public/.well-known/apple-app-site-association",
+      "sha256": "121f6f621e013eeaeb3dc1e0534740bafcdf9f6609fbc30f28d5d9eb8d1a706d"
+    },
+    {
+      "file": "burgonomics-partner/capacitor.config.ts",
+      "sha256": "342bab3c51d4995ae62e3ded23bcdda919d73afa0432cebf12dc16f4d744c410"
+    },
+    {
+      "file": "burgonomics-partner/android/variables.gradle",
+      "sha256": "83d502c9ed8fcf1dd4791482067abeedbebae49fafe9cd14a8a1f5891deb0d88"
+    },
+    {
+      "file": "burgonomics-partner/android/version.properties",
+      "sha256": "7bb0f52f418eaca59c95d021480caa974774b5a7a8d6e7a8edf0230ba60d3c3c"
+    },
+    {
+      "file": "burgonomics-partner/ios/App/App.xcodeproj/project.pbxproj",
+      "sha256": "d162bf7bdfb09ebe4a4b149b05ea3ed7a16478d7a321846eff4340d921e45a73"
+    },
+    {
+      "file": "burgonomics-partner/public/.well-known/apple-app-site-association",
+      "sha256": "3192fa3a006f3483709fc44139e9bcabd1cb2847b04dd64b56327112ef8929e8"
+    }
+  ],
+  "repositories": [
+    {
+      "group": "G-ROOT",
+      "head": "31e82c3c415757064e3b33010ade4d2b0d8ebd6f",
+      "stagedCount": 0,
+      "trackedDirtyCount": 99,
+      "dirtyPaths": [
+        {
+          "status": " M",
+          "path": ".orchestration/run-20261020b/controller/queue.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "AGENTS.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "GEMINI.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "LOOP_PROMPT_120.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "UI_SWEEP_STATE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "_config/coding_standards.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "_config/design_system.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "firestore.rules",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/core/deviceTokenRegister.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/core/geo.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/core/middleware.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/core/utils/pickupCoords.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/core/validation.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/auth/guestMigration.schema.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/auth/guestMigration.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/dispatch.router.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/dispatch.webhooks.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/index.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/providers/borzo.adapter.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/providers/porter.adapter.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/providers/shadowfax.adapter.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/providers/shared.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/readiness.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/dispatch/types.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/notifications/fcmClient.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/notifications/unregisterToken.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/orders/bumpRouteErrors.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/orders/orderStatus.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/payments/razorpay.service.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/payments/reconciliation.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/payments/routeTransfers.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/payments/webhookHandler.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/petpooja/index.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/petpooja/item86ingSync.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/petpooja/menuSyncWebhook.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/petpooja/orderPush.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/petpooja/petpooja.scheduler.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/petpooja/testRunner.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/petpooja/testRunner.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/petpooja/webhookAudit.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/porter/porter.service.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/src/modules/tickets/ticketRouteErrors.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/alerts.timeout.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/auth.guestMigration.route-schema.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/auth.guestMigration.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/auth.migrateGuest.route-wiring.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/captured-payment-binding.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.autoRebook.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.borzo-contact-phone.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.borzo-duplicate-book.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.porter-paste.claim.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.porter-retired-guard.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.porter-retired.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.provider-contract.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.readiness.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.router-guards.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.router.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.shadowfax-contract-gates.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.teardown-binding.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.webhook-boundary.fresh.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.webhooks-hardening.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/dispatch.wire.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/e2e-fixture.contract.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/e2e.flow.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/env.numeric-guards.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/env.staging-readiness.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/fcm.recipient-ownership.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/fixtures/e2e-isolated-test-records.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/fixtures/petpooja-menupush-sample.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/notification.escalation.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/notifications.token-ownership.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/orderBump.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/orders.branch-resolution.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/orders.bump-route-errors.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/payment-confirmation-concurrency.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/payment-confirmation-webhook-concurrency.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/payments.contract.spec.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/payments.intent-reuse-order-binding.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/payments.partial-refund-state.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/payments.route-account-shape.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/petpooja.evidence-truth.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/petpooja.kot-race.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/petpooja.menu-fetch.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/petpooja.service.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/petpooja.webhook-terminal.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/pricing.eligibility.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/registerToken.ownership.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/tickets.branch-scope.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/tickets.notify.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/tickets.resolve-race.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/tickets.route-errors.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/tickets.service.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/tickets.spam-guard.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/unregisterToken.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "functions/tests/wire.env.setup.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "references/ui_ux_spec.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "scripts/petpooja-sandbox-5scenarios.mjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "stages/08_menu/CONTEXT.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "stages/08_menu/output/stage_summary.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".merge_file_ZPdkGb",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/BASELINE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/CONTRACT.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/LANES.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/SUPERVISION.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/AUTONOMOUS_WINDOW.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/CONTRACT.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/PRODUCTION_ACTION_PLAN.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/QUOTA_STOP.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/SESSION_LEDGER.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/SUMMARY.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/fixed-hook.snapshot.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/gate-build.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/gate-test.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/green-hook.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/manifest-v1.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/manifest-v2.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/phaseB-focused.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/phaseB-manifest-v1.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/red-prefix-hook.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/evidence/lane-08/serving-proof.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/human-production-checklist.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-01-address-debt-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-01-address-debt.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-01-final-serving-proof.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-01-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-01.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-02-delivery-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-03-menu-a11y-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-03.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-04-acceptance.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-04-teardown-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-04-teardown.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-04-webhook-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-04.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-05-references-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-06-petpooja-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-07-fcm-send-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-07-fcm-send.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-07-rules-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-07-serving-proof.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-07-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-07.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-08-payments-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-10-shadowfax-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-11-freeze.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-11-manifest-customer.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-11-manifest-partner.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-11-manifest-root.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-11-release-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-11.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-12-qa-porter-task.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/lane-reconciliation.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/model-provenance-audit.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/qa-customer-address-closeout.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/sessions.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/closeout-20261022/snapshot.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/controller/events.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/controller/state.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/controller/status.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/closeout-lane04-red1-v1packet.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/closeout-lane04-webhook-evidence.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/closeout-lane04-webhook-final-green.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-03/directional-scroll.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-gate4.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-paste-green.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-paste-green2.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-paste-green3.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-paste-red.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-plan.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-race-green.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-race-green2.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-race-red.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-teardown-red.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-test-run1.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-test-run2.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-test-run3.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-test-run4-neighbours.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-test-run5.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-test-run6-neighbours.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-test-run7.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green2.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green3.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green4.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green5.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green6.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green7.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green8.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-green9.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-tickets-red.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-typecheck.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-typecheck2.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-04-unregister-standalone.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-06/testrunner-accepted-no-id.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/announce-gate.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/announce-green-dir.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/announce-red.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/branch-announcements.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/fcm-fanout-bypass.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/fcm-gate3.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/fcm-green-final.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/fcm-green.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/fcm-green4.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/fcm-mutation.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/fcm-red.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/fcm-tickets-red.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/gate-bundle.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/lease-gate-final.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/lease-red-state.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/pre-fix-repro.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/red-state-full-suite.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/ticket-resolution-lease.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/unreg-gate-final.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/unreg-gate.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/unreg-green2.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/unreg-green3.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/unreg-rebind-red.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-07/unreg-red.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-09/_verifier-fresh.diff",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-09/adapter-vs-head.diff",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-09/contact-phone.test.ts.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-09/defect.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-09/dup-book.test.ts.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/lane-11/android-release-signing-gate.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/evidence/main-ticket-workflow-status.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-01.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-02.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-03.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-04-ticket-lease-resume.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-04.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-05.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-06.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-07.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-08.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-09.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-10.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-11.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/lane-12.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/qa/README.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/qa/evidence-matrix.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/qa/gate-log.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/qa/review-prompt-template.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/qa/review-queue.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/qa/spot-checks.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/supervisor-a.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261020b/supervisor-b.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/POLICY.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/dispatcher.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/dispatcher.lock",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/dispatcher.test.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/events.jsonl",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/observe-first.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/prepared.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/status.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261022-gpt/tasks.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/ANTIGRAVITY.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/POLICY.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/agy-review-lane04.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/agy-review-lane07.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/agy-review-lane11.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/customer-address-server-truth.report.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/customer-menu-a11y-closeout.report.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatch-teardown-binding.report.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher.err.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher.out.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher.test.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher2.err.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher2.out.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher3.err.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher3.out.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher4.err.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher4.out.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher5.err.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher5.out.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher6.err.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher6.out.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher7.err.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/dispatcher7.out.log",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/events.jsonl",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/lane-03-gate-build.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/lane-03-gate-test.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/lane-03-gate-typecheck.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/lane-03-red.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/lane-04-gate-build.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/lane-04-gate-test.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/lane-04-gate-typecheck.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/lane-04-teardown-red-final.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/evidence/manifest.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/fcm-recipient-ownership.report.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/frozen/lane-04-teardown/MANIFEST.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/frozen/lane-04-teardown/dispatch.router.ts.frozen",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/frozen/lane-04-teardown/dispatch.teardown-binding.test.ts.frozen",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/frozen/lane-04-teardown/dispatch.webhooks.ts.frozen",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/observe-lane11.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/observe.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/queues.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/release-infra-closeout.report.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/restaurant-dispatch-choice.report.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": ".orchestration/run-20261023-free/serving-proof.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "A08-financial-safety-review.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "AGENTS.md.bak-20261023-100129",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "NIGHT_DONE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "R24-paid-order-finalization-repair.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "R25-device-menu-ux-review.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "STORE_LISTINGS_DRAFT.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "WORKLOG.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "client-handover/release-builds/burgonomics-customer-v1.0.0-20261017.aab",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "client-handover/release-builds/burgonomics-partner-v1.0.0-20261017.aab",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/AUTOQUOTA-VALIDATION.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/EXTRAS-VALIDATION.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/README.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/VALIDATION.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/autoquota-status.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/borzo-business-api.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/borzo-integration.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/firebase-mcp.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/petpooja-integrations.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/petpooja-online-ordering.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/razorpay-mcp-local.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/razorpay-mcp.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/razorpay-webhook-practices.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/razorpay-webhook-validation.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/shadcn-mcp.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/docs/shadowfax-platform.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/documentation-manifest.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/extras-status.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/mcp-status.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/repos/firebase-agent-skills/",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/repos/razorpay-mcp-server/",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/repos/razorpay-node/",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "developer-resources/provider-toolkit-20261027/repositories.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "functions/tests/dispatch.manual-assignment-race.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "functions/tests/payments.webhook-stale-claim.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "functions/tests/petpooja.relay-truth.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "functions/tests/petpooja.retry-lifecycle.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "functions/tests/petpooja.stock-consistency.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "functions/tests/routeTransfers.lease-race.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "opencode.jsonc",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "output.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "rea/",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/01-APPROVED-DECISIONS.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/02-DELIVERY-UX.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/03-PARTNER-UX.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/04-BACKEND-SECURITY.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/05-REELO-INVESTIGATION.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/06-RELEASE-ACCEPTANCE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/07-EVIDENCE-AND-WORKSPACE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/08-NEW-SESSION-PROMPT.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-handoff-20261028/README.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/01-DECISIONS-AND-OWNERSHIP.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/02-CURRENT-EVIDENCE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/03-DELIVERY-DESIGN.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/04-PARTNER-DESIGN.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/05-BACKEND-SECURITY.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/06-RELEASE-INFRASTRUCTURE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/07-REELO-FEASIBILITY.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/08-SCHEDULE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/09-ACCEPTANCE-MATRIX.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/10-SOURCE-FINGERPRINTS.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/11-VALIDATION-AND-NEXT-APPROVAL.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/README.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/evidence/delivery-empty-cart.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/evidence/delivery-home.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/evidence/delivery-menu.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/evidence/lapinoz-update-gate.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/evidence/martinoz-home.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/evidence/partner-dashboard.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/ACCOUNT-READINESS.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/BASELINE-REGISTER.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/OWNER-WHATSAPP.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/PROMPT-RECONCILIATION.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/README.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/SESSION-HANDOFF-20261028.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/VALIDATION.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/baseline-snapshot.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/capture-baseline.py",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/session-handoff-receipt.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/validate-phase-a.py",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/validation-handoff.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/phase-a/validation.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/DESIGN.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/README.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/asset-manifest.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/assets/Inter-OFL.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/assets/InterVariable.woff2",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/assets/burger.jpg",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/assets/fries.jpg",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/assets/mascot.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/assets/shake.jpg",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/brand-spec.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/image-manifest-r1.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/image-manifest.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/mockups.css",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/mockups.js",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/prepare-assets.py",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/preview.html",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/render-mockups.py",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/D01-320.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/D01-768.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/D01.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/D02.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/D03.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/D04.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/D05-320-200.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/D05.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/P01-320.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/P01.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/P02.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/delivery-overview.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots-r1/partner-overview.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/D01-320.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/D01-768.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/D01.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/D02.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/D03.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/D04.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/D05-320-200.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/D05.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/P01-320.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/P01.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/P02.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/delivery-overview.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v1/screenshots/partner-overview.png",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/COVERAGE.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/DESIGN.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/brand-spec.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/catalog.js",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/mockups.css",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/mockups.js",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/prepare-inputs.py",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/preview.html",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-20261028/proposals/v2/render-mockups.py",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/01-FRESH-FACTS.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/02-MODEL-REVIEWS.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/03-PLAN-CORRECTIONS.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/04-SCHEDULE-AND-NEXT-APPROVAL.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/05-VALIDATION.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/README.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/fresh-observations.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/public-native-inputs.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/review-inputs.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/validate-review.py",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "stages/08_menu/output/launch-plan-review-20261028/validation.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        }
+      ]
+    },
+    {
+      "group": "G-DELIVERY",
+      "head": "7affdf698576110a64e008a492f2d8380abe2d58",
+      "stagedCount": 0,
+      "trackedDirtyCount": 9,
+      "dirtyPaths": [
+        {
+          "status": " M",
+          "path": ".github/workflows/android-build.yml",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": ".github/workflows/ios-build.yml",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "MAC_INSTRUCTIONS.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "mac-build.sh",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "public/.well-known/assetlinks.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "scripts/patch-ios-spm.js",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/shared/components/common/ConsumerRouteTransition.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/styles.css",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "tests/rules/firestore.rules.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "scripts/select-xcode-toolchain.sh",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-ios-workflow.test.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "src/features/menu/utils/probe-import.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "src/shared/components/common/AppButton.test.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "src/shared/components/common/ConsumerRouteTransition.test.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "test-results/.last-run.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/playwright/app-button-harness.html",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/playwright/build-harness.mjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/playwright/ui-a11y-gestures.config.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/playwright/ui-a11y-gestures.spec.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/primary-cta-contrast.test.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/token-accessibility.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        }
+      ]
+    },
+    {
+      "group": "G-PARTNER",
+      "head": "7374d3e183f7272b91c19749fc192eaddee9e3ae",
+      "stagedCount": 0,
+      "trackedDirtyCount": 11,
+      "dirtyPaths": [
+        {
+          "status": " M",
+          "path": ".github/workflows/ci.yml",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "firestore.rules",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "ios/App/App.xcodeproj/project.pbxproj",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/components/layout/Header.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/components/layout/Sidebar.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/features/kds/hooks/useKDSRealtimeStream.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/hooks/useMenu.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/index.css",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/pages/KDSPage.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/pages/MenuPage.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": " M",
+          "path": "src/pages/admin/AdminRoutes.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "MAC_INSTRUCTIONS.txt",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "public/.well-known/assetlinks.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "scripts/select-xcode-toolchain.sh",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-ios-workflow.test.cjs",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "src/hooks/useMenu.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "test-results/.last-run.json",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/admin-authoritative-routes.test.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/kds-stream-degradation.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/partner-menu-seed-honesty-guard.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/partner-sidebar-navigation.test.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/partnerops-bump-status-forwarding.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/partnerops-walkin-payment-truth.test.tsx",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/playwright/README.md",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/playwright/ui-a11y-gestures.config.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/playwright/ui-a11y-gestures.spec.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        },
+        {
+          "status": "??",
+          "path": "tests/token-accessibility.test.ts",
+          "owner": "unresolved; status is not authorship or authorisation",
+          "contentExcluded": false
+        }
+      ]
+    }
+  ],
+  "planInputs": [
+    {
+      "file": "03-DELIVERY-DESIGN.md",
+      "sha256": "4be4b612ddad8caee2c86383e1d926387ffd9b2c5eb1a81c6b0271fd71372f18"
+    },
+    {
+      "file": "04-PARTNER-DESIGN.md",
+      "sha256": "09c24226f8e709f0a38685d3b0bdaaa6aa206bc9d5be1f6b50c736b193a37ce0"
+    },
+    {
+      "file": "01-DECISIONS-AND-OWNERSHIP.md",
+      "sha256": "eb38f5f71543e6202dbea3bceac00e7a3d35725d1dc0051e877d9455b0b4ac47"
+    },
+    {
+      "file": "05-BACKEND-SECURITY.md",
+      "sha256": "04f1819712e770aee443e4ef793ab9a5f0ff5abc3d073ea2d25535c6c2791d18"
+    }
+  ],
+  "limits": "Partial source manifests and Git metadata, not proof of every unmanifested byte or human ownership. No source/worktree is adopted."
+}

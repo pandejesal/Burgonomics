@@ -1,0 +1,84 @@
+{
+  "runLabel": "dispatch-final-05",
+  "mode": "final",
+  "scope": "dispatch",
+  "projectId": "demo-burgonomics-qa-20261028",
+  "startedAt": "2026-10-29T09:16:23.816Z",
+  "command": [
+    "C:\\Program Files\\nodejs\\node.exe",
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\run-tests.cjs",
+    "--snapshot",
+    "dispatch-current-01",
+    "--scope",
+    "dispatch",
+    "--mode",
+    "final",
+    "--expected",
+    ".\\dispatch-current-01.expected.json",
+    "--run",
+    "dispatch-final-05"
+  ],
+  "snapshotLabel": "dispatch-current-01",
+  "snapshotManifestSha256": "07b49dc931b7ae15e97b31f40edaf0d5a7e7908b33ea8ea0169c6c124913b88b",
+  "entryHashes": [
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/dispatch.router.ts",
+      "sha256": "794f8ae61ff3cd2cae1156332721e0383f943b60700f093a17b77d4daacf4d49",
+      "bytes": 97482,
+      "sourceMtimeMs": 1793222327064.3535
+    },
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/types.ts",
+      "sha256": "e23999e87159a34fb748d7a2c0e0e7bc837858f5266f86ea2d62f18040c9f5c3",
+      "bytes": 8199,
+      "sourceMtimeMs": 1793222327075.8784
+    },
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/providers/shared.ts",
+      "sha256": "371d1dda0b6618f2720d94d5b55b25d91040a69104fbdc3239bec42395526601",
+      "bytes": 12118,
+      "sourceMtimeMs": 1793222327073.8777
+    },
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/providers/borzo.adapter.ts",
+      "sha256": "472490fe64fc3cb9e0de214ff39c2fa7ce0d68515830acf201ce8941766b255c",
+      "bytes": 29535,
+      "sourceMtimeMs": 1793222327069.877
+    },
+    {
+      "candidate": "dispatch",
+      "relativePath": "functions/src/modules/dispatch/providers/shadowfax.adapter.ts",
+      "sha256": "96cf79151715eecd9d9f2d198a2c69e3dd8c6c8a53ec9a983230a26774b37fcd",
+      "bytes": 28526,
+      "sourceMtimeMs": 1793222327071.8813
+    }
+  ],
+  "sourceAcceptance": false,
+  "results": [],
+  "limitations": [
+    "Local real SDK/emulator and native TLS fetch only; never provider, deployment or production evidence.",
+    "No application files changed. Copied TypeScript executes via transpileModule; this is not a full package typecheck/build or Functions HTTP routing test.",
+    "Core Firebase initialization is replaced with the actual isolated Firestore SDK. Auth token verification, FCM, developer alerts are inert explicit boundaries; no payment module executes.",
+    "Commit-fault proxy produces non-retryable gRPC code 7 after the durable claim, not a packet-loss/timing or emulator restart/crash test.",
+    "Admin SDK bypasses Firestore Security Rules; authorization/rules coverage is not claimed.",
+    "Single-process concurrency crosses real SDK transaction RPCs; not multi-Functions-host latency/load testing.",
+    "Local emulator does not enforce production composite-index requirements.",
+    "Observed runtime is Node 24.18.0; package declares Node 22. No installed Node 22 runtime was selected."
+  ],
+  "harnessHashes": {
+    "snapshot.cjs": "3c26771b572ccf5ba7295048cc58d96147daebd719b8a8a0cd77d2e100b6afb4",
+    "infrastructure.cjs": "2659ab933c4553117295c5dc57a8d07c403dca13266f4ba05b1ae263bf2353bc",
+    "run-tests.cjs": "dbe3d68518f5bf1b472cd3d34a7243e375f1899302c924ea8d4dd32a53472055"
+  },
+  "harnessError": {
+    "message": "Owned emulator readiness deadline exceeded",
+    "stack": "Error: Owned emulator readiness deadline exceeded\n    at waitPort (C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\infrastructure.cjs:318:9)\n    at async startInfrastructure (C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\infrastructure.cjs:336:5)\n    at async main (C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\run-tests.cjs:98:13)"
+  },
+  "finishedAt": "2026-10-29T09:16:50.116Z",
+  "exitCode": 1,
+  "scopedChecksPassed": false
+}

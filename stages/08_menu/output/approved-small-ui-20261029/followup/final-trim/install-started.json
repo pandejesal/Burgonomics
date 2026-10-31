@@ -1,0 +1,10 @@
+{
+  "device": "RZCX51TXRKB",
+  "package": "com.burgonomics",
+  "startedAt": "2026-10-29T23:45:10.750959+00:00",
+  "operation": "adb install -r only",
+  "candidateSha256": "78fcda40841eb6ddb778af05f910a0aeeb065e31e0529a51f77333c9b1b9ae66",
+  "uninstallAuthorised": false,
+  "clearDataAuthorised": false,
+  "downgradeAuthorised": false
+}

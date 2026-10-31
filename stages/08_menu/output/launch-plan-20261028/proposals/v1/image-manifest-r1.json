@@ -1,0 +1,1045 @@
+{
+  "revision": "v0-r1",
+  "capturedAt": "2026-10-28T09:51:42+05:30",
+  "scope": "isolated local mockup render only; not browser/native/provider/app acceptance",
+  "playwright": "1.61.0",
+  "chromium": "149.0.7827.55",
+  "sourceFingerprints": [
+    {
+      "file": "preview.html",
+      "sha256": "aa5e98258e9907bd18ac1aec75569cd4f448f3be2a162ed7bf73fa57365614c7"
+    },
+    {
+      "file": "mockups.css",
+      "sha256": "2096dae142dc9725ce9488cdec4c7e027e80a36bb5c64694e750434dffec53ca"
+    },
+    {
+      "file": "mockups.js",
+      "sha256": "b9e2e77bd8165974a3e5c6ed49d28dafb29e507cae23e75fbaf1bdcebb89c1d4"
+    },
+    {
+      "file": "render-mockups.py",
+      "sha256": "e4b8220516c96700bc036a5045961bd5682645d0fb356e8929dd40f0ccb77fe1"
+    },
+    {
+      "file": "asset-manifest.json",
+      "sha256": "e31883ebaaf94e51faa94a27d3b839732bb910dfb83f8569409866fa22b42f47"
+    }
+  ],
+  "screenshots": [
+    {
+      "id": "D01",
+      "file": "screenshots-r1/D01.png",
+      "screen": "home",
+      "theme": "light",
+      "viewportWidth": 390,
+      "textScale": 1,
+      "pixelDimensions": [
+        390,
+        1032
+      ],
+      "sha256": "ab7a799a7f9e9bda9dac08e6c5a048889a22f1e9c71d69568100a7fd8c71cd17",
+      "layoutObservation": {
+        "width": 390,
+        "pageWidth": 390,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDD01 \u00b7 v0 \u00b7 Home / lightInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": [
+          {
+            "width": 169,
+            "height": 169
+          },
+          {
+            "width": 169,
+            "height": 169
+          },
+          {
+            "width": 169,
+            "height": 169
+          },
+          {
+            "width": 169,
+            "height": 169
+          }
+        ]
+      }
+    },
+    {
+      "id": "D02",
+      "file": "screenshots-r1/D02.png",
+      "screen": "home",
+      "theme": "dark",
+      "viewportWidth": 390,
+      "textScale": 1,
+      "pixelDimensions": [
+        390,
+        1032
+      ],
+      "sha256": "4b27dc4b5a4dbf767e8050d0627acb2e74f0873b9a6f524df22df0864fef38b9",
+      "layoutObservation": {
+        "width": 390,
+        "pageWidth": 390,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDD02 \u00b7 v0 \u00b7 Home / darkInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": [
+          {
+            "width": 169,
+            "height": 169
+          },
+          {
+            "width": 169,
+            "height": 169
+          },
+          {
+            "width": 169,
+            "height": 169
+          },
+          {
+            "width": 169,
+            "height": 169
+          }
+        ]
+      }
+    },
+    {
+      "id": "D03",
+      "file": "screenshots-r1/D03.png",
+      "screen": "menu",
+      "theme": "light",
+      "viewportWidth": 390,
+      "textScale": 1,
+      "pixelDimensions": [
+        390,
+        1046
+      ],
+      "sha256": "a2c90164b9774574b451aad2431728d5232f6690dcd2b0f90b65bc5b7930b1ef",
+      "layoutObservation": {
+        "width": 390,
+        "pageWidth": 390,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDD03 \u00b7 v0 \u00b7 Continuous menu / lightInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": []
+      }
+    },
+    {
+      "id": "D04",
+      "file": "screenshots-r1/D04.png",
+      "screen": "cart-empty",
+      "theme": "light",
+      "viewportWidth": 390,
+      "textScale": 1,
+      "pixelDimensions": [
+        390,
+        902
+      ],
+      "sha256": "44940d689550b5c40b22453b8bebc6d4ec599e1f1e1feb4fa04f7928f1179b0d",
+      "layoutObservation": {
+        "width": 390,
+        "pageWidth": 390,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDD04 \u00b7 v0 \u00b7 Empty Cart / returning-user exampleInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": []
+      }
+    },
+    {
+      "id": "D05",
+      "file": "screenshots-r1/D05.png",
+      "screen": "cart-note",
+      "theme": "dark",
+      "viewportWidth": 390,
+      "textScale": 1,
+      "pixelDimensions": [
+        390,
+        1159
+      ],
+      "sha256": "9fadf97f97bcb0a84581bbe14dc9cbea687851a8de46bd0d8d714f90be162810",
+      "layoutObservation": {
+        "width": 390,
+        "pageWidth": 390,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDD05 \u00b7 v0 \u00b7 Cart / one expanded cooking note / darkInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 1,
+        "categories": []
+      }
+    },
+    {
+      "id": "P01",
+      "file": "screenshots-r1/P01.png",
+      "screen": "kds",
+      "theme": "dark",
+      "viewportWidth": 768,
+      "textScale": 1,
+      "pixelDimensions": [
+        768,
+        1073
+      ],
+      "sha256": "a803cc86500220c11616c7a52ca13fbcf2b348590b7c904968f07b76a72ff4ab",
+      "layoutObservation": {
+        "width": 768,
+        "pageWidth": 768,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDP01 \u00b7 v0 \u00b7 Partner KDS / stale + muted examples / darkInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": []
+      }
+    },
+    {
+      "id": "P02",
+      "file": "screenshots-r1/P02.png",
+      "screen": "sign-in",
+      "theme": "light",
+      "viewportWidth": 390,
+      "textScale": 1,
+      "pixelDimensions": [
+        390,
+        858
+      ],
+      "sha256": "8215405e64062c09ec592b49b098c7675d815a4931463b8f18044b9d372bc032",
+      "layoutObservation": {
+        "width": 390,
+        "pageWidth": 390,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDP02 \u00b7 v0 \u00b7 Partner sign-in / invitation-only / lightInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": []
+      }
+    },
+    {
+      "id": "D01-320",
+      "file": "screenshots-r1/D01-320.png",
+      "screen": "home",
+      "theme": "light",
+      "viewportWidth": 320,
+      "textScale": 1,
+      "pixelDimensions": [
+        320,
+        991
+      ],
+      "sha256": "42336ee9a63d6e6a7138d316aa015bafd05a6567bd6262e07f245c994fb720e4",
+      "layoutObservation": {
+        "width": 320,
+        "pageWidth": 320,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDD01-320 \u00b7 v0 \u00b7 Home / lightInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": [
+          {
+            "width": 138,
+            "height": 138
+          },
+          {
+            "width": 138,
+            "height": 138
+          },
+          {
+            "width": 138,
+            "height": 138
+          },
+          {
+            "width": 138,
+            "height": 138
+          }
+        ]
+      }
+    },
+    {
+      "id": "D01-768",
+      "file": "screenshots-r1/D01-768.png",
+      "screen": "home",
+      "theme": "light",
+      "viewportWidth": 768,
+      "textScale": 1,
+      "pixelDimensions": [
+        768,
+        1162
+      ],
+      "sha256": "cf5d0d9db5b0146292b135e89af1803886264f0980e38f9cb9a2d4b1e33ebaee",
+      "layoutObservation": {
+        "width": 768,
+        "pageWidth": 768,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDD01-768 \u00b7 v0 \u00b7 Home / lightInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": [
+          {
+            "width": 234,
+            "height": 234
+          },
+          {
+            "width": 234,
+            "height": 234
+          },
+          {
+            "width": 234,
+            "height": 234
+          },
+          {
+            "width": 234,
+            "height": 234
+          }
+        ]
+      }
+    },
+    {
+      "id": "D05-320-200",
+      "file": "screenshots-r1/D05-320-200.png",
+      "screen": "cart-note",
+      "theme": "dark",
+      "viewportWidth": 320,
+      "textScale": 2,
+      "pixelDimensions": [
+        320,
+        2732
+      ],
+      "sha256": "38b330fdc49d13f3e7b7146295f3be22d120903c210663487817a39ff625b420",
+      "layoutObservation": {
+        "width": 320,
+        "pageWidth": 320,
+        "interLoaded": true,
+        "textScale": "32px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDD05-320-200 \u00b7 v0 \u00b7 Cart / one expanded cooking note / darkInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 1,
+        "categories": []
+      }
+    },
+    {
+      "id": "P01-320",
+      "file": "screenshots-r1/P01-320.png",
+      "screen": "kds",
+      "theme": "dark",
+      "viewportWidth": 320,
+      "textScale": 1,
+      "pixelDimensions": [
+        320,
+        1859
+      ],
+      "sha256": "4efda6c6c5945b9b286944ea1273335e7f5c7b29ef9c85f26dc3c54756f3d297",
+      "layoutObservation": {
+        "width": 320,
+        "pageWidth": 320,
+        "interLoaded": true,
+        "textScale": "16px",
+        "disclaimer": "PROPOSED \u2014 NOT IMPLEMENTEDP01-320 \u00b7 v0 \u00b7 Partner KDS / stale + muted examples / darkInternal review. Example data; no live services.",
+        "clipping": [],
+        "smallTargets": [],
+        "placeholderOcclusion": [],
+        "noteFields": 0,
+        "categories": []
+      }
+    }
+  ],
+  "contactSheets": [
+    {
+      "file": "screenshots-r1/delivery-overview.png",
+      "sha256": "2fb48691dbc6f93a016b89d045746bb9a5efd72265044446a07e0801d03c5082",
+      "pixelDimensions": [
+        1424,
+        865
+      ]
+    },
+    {
+      "file": "screenshots-r1/partner-overview.png",
+      "sha256": "cf9364399386d4584d2a952128370e8b513e7573dfadb9530ec7de654411a666",
+      "pixelDimensions": [
+        1024,
+        912
+      ]
+    }
+  ],
+  "contrastTokenChecks": {
+    "light": [
+      {
+        "foreground": "ink",
+        "background": "canvas",
+        "ratio": 15.49388952886079,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "ink",
+        "background": "surface",
+        "ratio": 14.391105034923674,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "ink",
+        "background": "elevated",
+        "ratio": 15.49388952886079,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "muted",
+        "background": "canvas",
+        "ratio": 5.695803314121886,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "muted",
+        "background": "surface",
+        "ratio": 5.290401974217593,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "muted",
+        "background": "elevated",
+        "ratio": 5.695803314121886,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "on-primary",
+        "background": "primary",
+        "ratio": 10.647291132233486,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "primary-text",
+        "background": "canvas",
+        "ratio": 10.647291132233486,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "accent",
+        "background": "canvas",
+        "ratio": 5.178415705888697,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "warning-ink",
+        "background": "warning-surface",
+        "ratio": 7.802847986985038,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "positive-ink",
+        "background": "positive-surface",
+        "ratio": 9.648276526343217,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "control-line",
+        "background": "canvas",
+        "ratio": 4.110693744583041,
+        "threshold": 3,
+        "passes": true
+      },
+      {
+        "foreground": "control-line",
+        "background": "surface",
+        "ratio": 3.8181132848859214,
+        "threshold": 3,
+        "passes": true
+      },
+      {
+        "foreground": "focus",
+        "background": "canvas",
+        "ratio": 10.647291132233486,
+        "threshold": 3,
+        "passes": true
+      }
+    ],
+    "dark": [
+      {
+        "foreground": "ink",
+        "background": "canvas",
+        "ratio": 21.0,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "ink",
+        "background": "surface",
+        "ratio": 18.422536070011546,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "ink",
+        "background": "elevated",
+        "ratio": 17.40432753274219,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "muted",
+        "background": "canvas",
+        "ratio": 11.085118694075758,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "muted",
+        "background": "surface",
+        "ratio": 9.724571380093806,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "muted",
+        "background": "elevated",
+        "ratio": 9.187096975762756,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "on-primary",
+        "background": "primary",
+        "ratio": 10.647291132233486,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "primary-text",
+        "background": "canvas",
+        "ratio": 12.051382166595278,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "accent",
+        "background": "canvas",
+        "ratio": 8.374552214884856,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "warning-ink",
+        "background": "warning-surface",
+        "ratio": 10.238172163433124,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "positive-ink",
+        "background": "positive-surface",
+        "ratio": 9.527686422886942,
+        "threshold": 4.5,
+        "passes": true
+      },
+      {
+        "foreground": "control-line",
+        "background": "canvas",
+        "ratio": 6.584064136038431,
+        "threshold": 3,
+        "passes": true
+      },
+      {
+        "foreground": "control-line",
+        "background": "surface",
+        "ratio": 5.775959953973209,
+        "threshold": 3,
+        "passes": true
+      },
+      {
+        "foreground": "focus",
+        "background": "canvas",
+        "ratio": 12.051382166595278,
+        "threshold": 3,
+        "passes": true
+      }
+    ]
+  },
+  "requests": [
+    {
+      "case": "D01",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "D01",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "D01",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "D01",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "D01",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D01",
+      "method": "GET",
+      "path": "/assets/burger.jpg",
+      "local": true
+    },
+    {
+      "case": "D01",
+      "method": "GET",
+      "path": "/assets/fries.jpg",
+      "local": true
+    },
+    {
+      "case": "D01",
+      "method": "GET",
+      "path": "/assets/shake.jpg",
+      "local": true
+    },
+    {
+      "case": "D02",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "D02",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "D02",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "D02",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "D02",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D02",
+      "method": "GET",
+      "path": "/assets/burger.jpg",
+      "local": true
+    },
+    {
+      "case": "D02",
+      "method": "GET",
+      "path": "/assets/fries.jpg",
+      "local": true
+    },
+    {
+      "case": "D02",
+      "method": "GET",
+      "path": "/assets/shake.jpg",
+      "local": true
+    },
+    {
+      "case": "D03",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "D03",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "D03",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "D03",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "D03",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D03",
+      "method": "GET",
+      "path": "/assets/burger.jpg",
+      "local": true
+    },
+    {
+      "case": "D03",
+      "method": "GET",
+      "path": "/assets/fries.jpg",
+      "local": true
+    },
+    {
+      "case": "D04",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "D04",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "D04",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "D04",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "D04",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D04",
+      "method": "GET",
+      "path": "/assets/burger.jpg",
+      "local": true
+    },
+    {
+      "case": "D05",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "D05",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "D05",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "D05",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "D05",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D05",
+      "method": "GET",
+      "path": "/assets/burger.jpg",
+      "local": true
+    },
+    {
+      "case": "D05",
+      "method": "GET",
+      "path": "/assets/fries.jpg",
+      "local": true
+    },
+    {
+      "case": "P01",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "P01",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "P01",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "P01",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "P01",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "P02",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "P02",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "P02",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "P02",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "P02",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D01-320",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "D01-320",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "D01-320",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "D01-320",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "D01-320",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D01-320",
+      "method": "GET",
+      "path": "/assets/burger.jpg",
+      "local": true
+    },
+    {
+      "case": "D01-320",
+      "method": "GET",
+      "path": "/assets/fries.jpg",
+      "local": true
+    },
+    {
+      "case": "D01-320",
+      "method": "GET",
+      "path": "/assets/shake.jpg",
+      "local": true
+    },
+    {
+      "case": "D01-768",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "D01-768",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "D01-768",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "D01-768",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "D01-768",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D01-768",
+      "method": "GET",
+      "path": "/assets/burger.jpg",
+      "local": true
+    },
+    {
+      "case": "D01-768",
+      "method": "GET",
+      "path": "/assets/fries.jpg",
+      "local": true
+    },
+    {
+      "case": "D01-768",
+      "method": "GET",
+      "path": "/assets/shake.jpg",
+      "local": true
+    },
+    {
+      "case": "D05-320-200",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "D05-320-200",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "D05-320-200",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "D05-320-200",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "D05-320-200",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    },
+    {
+      "case": "D05-320-200",
+      "method": "GET",
+      "path": "/assets/burger.jpg",
+      "local": true
+    },
+    {
+      "case": "D05-320-200",
+      "method": "GET",
+      "path": "/assets/fries.jpg",
+      "local": true
+    },
+    {
+      "case": "P01-320",
+      "method": "GET",
+      "path": "/preview.html",
+      "local": true
+    },
+    {
+      "case": "P01-320",
+      "method": "GET",
+      "path": "/mockups.css",
+      "local": true
+    },
+    {
+      "case": "P01-320",
+      "method": "GET",
+      "path": "/mockups.js",
+      "local": true
+    },
+    {
+      "case": "P01-320",
+      "method": "GET",
+      "path": "/assets/InterVariable.woff2",
+      "local": true
+    },
+    {
+      "case": "P01-320",
+      "method": "GET",
+      "path": "/assets/mascot.png",
+      "local": true
+    }
+  ],
+  "externalRequestsBlocked": [],
+  "pageErrors": [],
+  "appSourcesLoaded": false,
+  "ownerAccountsOpened": false,
+  "limitations": "v0 subset, static mock controls; no gesture/animation/auth/payment/live feed/keyboard/native/store verification"
+}

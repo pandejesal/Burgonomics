@@ -1,0 +1,87 @@
+[
+  {
+    "asset": "assets/brand/logo.png",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\burgonomics-logo.png",
+    "sha256": "c46d756df38c5b6998ce7b59c2fef280ea0043142625d6cba216cdd37833f264"
+  },
+  {
+    "asset": "assets/fonts/InterVariable.woff2",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\fonts\\InterVariable.woff2",
+    "sha256": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3"
+  },
+  {
+    "asset": "assets/fonts/Inter-OFL.txt",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\fonts\\Inter-OFL.txt",
+    "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+  },
+  {
+    "asset": "assets/food/hero.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\big-bang-burgers\\super-hero-burger.jpg",
+    "sha256": "940c97977ddef1a574cf66ae65ddbf292376e2eb5450a6595c199c527bf81f31"
+  },
+  {
+    "asset": "assets/food/burgers.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\classic-burgers\\hero-burger.jpg",
+    "sha256": "192f5ba9c2c09f75e102ee92c1a7bd944ad168d12608940281ccddecf4a8b512"
+  },
+  {
+    "asset": "assets/food/fries.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\fries\\salted-fries.jpg",
+    "sha256": "f047f667859bc0e15a70d2926983132c111a0cfd7d78a3363f190a1b8539c810"
+  },
+  {
+    "asset": "assets/food/shake.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\thick-shakes\\oreo-shake.jpg",
+    "sha256": "2de54c45237a8c8e43ee80cee5296a35cadfeb88526fc18791e81bd178191acd"
+  },
+  {
+    "asset": "assets/food/cheese-burst.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\big-bang-burgers\\cheese-burst-burger.jpg",
+    "sha256": "ff69eba3d97e23cd9261d51a6434c0fd84a351f6e4f0f2ecb925a23fcc347317"
+  },
+  {
+    "asset": "assets/food/great-indian.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\big-bang-burgers\\great-indian-burger.jpg",
+    "sha256": "465b784771b08ccf82b435866161abc55253a9ad94c8b0f1096884806ed7f314"
+  },
+  {
+    "asset": "assets/food/tandoori-paneer.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\big-bang-burgers\\tandoori-paneer-burger.jpg",
+    "sha256": "c53fbe1113e1f1b69c15f0394c521ce1abaea9681c807a83f973a60c3fd90b84"
+  },
+  {
+    "asset": "assets/food/big-bang-meal.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\combos\\big-bang-meal.jpg",
+    "sha256": "ead95b5b7bc23b27689e9c3abeb9b27673fb5a52b50ce94b984b7e7aa432564b"
+  },
+  {
+    "asset": "assets/food/classic-meal.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\combos\\classic-burger-meal.jpg",
+    "sha256": "ddb7e0c80af88760518d3e543f5a03d7a93f56ce36e11d5535adcb0a58f0d80e"
+  },
+  {
+    "asset": "assets/food/pink-pasta.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\pasta\\pink-sauce-pasta.jpg",
+    "sha256": "4fe1bfba5c55bb97723c18d3b579cade4b16e0652332de6b9c8e44408a3d71f7"
+  },
+  {
+    "asset": "assets/food/white-pasta.jpg",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\menu\\pasta\\alfredo-cheese-sauce-pasta.jpg",
+    "sha256": "75f42a15a898798a5cb7338e736aa9468d94af2be08b50b9e0dbe10c918ec8b0"
+  },
+  {
+    "asset": "assets/brand/ceremony.webp",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\brand\\food-connoisseurs-ceremony-2026.webp",
+    "sha256": "2795c79fde7e5e98d184dd79f922eb6582571a76f590dc705d285b165b0f048f"
+  },
+  {
+    "asset": "assets/brand/times.webp",
+    "source": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\delivery-launch-ui-20261028\\public\\images\\brand\\times-iconic-burger-2025.webp",
+    "sha256": "cdbc889a8b2265b4ef130ddfca62d052b2acafbf1dd3aa9f2c8d92cd6753aec3"
+  },
+  {
+    "asset": "assets/icons.svg",
+    "source": "installed lucide-react icon components (ISC)",
+    "sha256": "e3f5a981c1eec1074296f0f5b738486afa383303a4d5e38765691eaff4f2c529"
+  }
+]

@@ -1,0 +1,897 @@
+{
+  "outLabel": "stage1-gate-r3",
+  "rulesFile": "C:\\Users\\DELL\\Desktop\\Burgonomics\\.swarm-worktrees\\backend-email-contract-20261029\\firestore.rules",
+  "mode": "gate",
+  "host": "127.0.0.1",
+  "port": 8166,
+  "projectId": "demo-money-qa-20261029",
+  "ruleFileSha256": null,
+  "rowsTotal": 88,
+  "denyRows": 82,
+  "denyRowViolations": 0,
+  "allowRows": 6,
+  "allowRowViolations": 0,
+  "violations": [],
+  "rows": [
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "paymentStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "paymentStatus",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "paymentStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "paymentStatus",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "paymentStatus",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "payment",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "payment",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "payment",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "payment",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "payment",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "totals",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "totals",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "totals",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "totals",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "totals",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "pricingSnapshot",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "pricingSnapshot",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "pricingSnapshot",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "pricingSnapshot",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "pricingSnapshot",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "pricing",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "pricing",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "pricing",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "pricing",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "pricing",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "refundStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "refundStatus",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "refundStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "refundStatus",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "refundStatus",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "refundId",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "refundId",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "refundId",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "refundId",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "refundId",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "refundAmount",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "refundAmount",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "refundAmount",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "refundAmount",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "refundAmount",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "routeTransferStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "routeTransferStatus",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "routeTransferStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "routeTransferStatus",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "routeTransferStatus",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "deliveryOtpHash",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "deliveryOtpHash",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "deliveryOtpHash",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "deliveryOtpHash",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "deliveryOtpHash",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "update",
+      "field": "deliveryOtpAttempts",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "update",
+      "field": "deliveryOtpAttempts",
+      "docId": "orders_c",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "update",
+      "field": "deliveryOtpAttempts",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-missing-claims",
+      "op": "update",
+      "field": "deliveryOtpAttempts",
+      "docId": "orders_x",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "update",
+      "field": "deliveryOtpAttempts",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "paymentStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "paymentStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "payment",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "payment",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "totals",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "totals",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "pricingSnapshot",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "pricingSnapshot",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "pricing",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "pricing",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "refundStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "refundStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "refundId",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "refundId",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "refundAmount",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "refundAmount",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "routeTransferStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "routeTransferStatus",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "deliveryOtpHash",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "deliveryOtpHash",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "brand-owner",
+      "op": "update",
+      "field": "deliveryOtpAttempts",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "developer",
+      "op": "update",
+      "field": "deliveryOtpAttempts",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "read",
+      "field": "-",
+      "docId": "orders_shared",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "read",
+      "field": "-",
+      "docId": "orders_c",
+      "allowed": true,
+      "code": null,
+      "expect": "allow"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "foreign-branch-staff",
+      "op": "read",
+      "field": "-",
+      "docId": "orders_f",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "legit-status-update",
+      "field": "status",
+      "docId": "orders_shared",
+      "allowed": true,
+      "code": null,
+      "expect": "allow"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "legit-cancel",
+      "field": "status",
+      "docId": "orders_c",
+      "allowed": true,
+      "code": null,
+      "expect": "allow"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "legit-whatsapp-optin",
+      "field": "whatsappOptIn",
+      "docId": "orders_c",
+      "allowed": true,
+      "code": null,
+      "expect": "allow"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "legit-walkin-create",
+      "field": "-",
+      "docId": "orders_walkin_1",
+      "allowed": true,
+      "code": null,
+      "expect": "allow"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "legit-customer-create",
+      "field": "-",
+      "docId": "orders_c_new",
+      "allowed": true,
+      "code": null,
+      "expect": "allow"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "customer",
+      "op": "banned-plant-create",
+      "field": "refundStatus",
+      "docId": "orders_c_evil",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "branch-staff-own",
+      "op": "banned-plant-create",
+      "field": "petpoojaOrderId",
+      "docId": "orders_s_evil",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    },
+    {
+      "stage": "stage1-gate-r3",
+      "role": "anon",
+      "op": "banned-plant-create",
+      "field": "paymentStatus",
+      "docId": "orders_a_evil",
+      "allowed": false,
+      "code": "permission-denied",
+      "expect": "deny"
+    }
+  ]
+}

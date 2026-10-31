@@ -1,0 +1,1592 @@
+{
+  "inspectedAt": "2026-10-28T14:45:37+05:30",
+  "scope": "Local user-supplied provider-document intake only; no provider/account calls, code changes or baseline adoption",
+  "documents": [
+    {
+      "provider": "Petpooja",
+      "source": "C:\\Users\\DELL\\Desktop\\PETPOOJA API Docs.txt",
+      "bytes": 254679,
+      "sha256": "ff6abc5801ed836eb45f2d7f35f4a7dd5bd6fd4407ebb0f6430001f5216e20ea",
+      "encoding": "utf-8-sig",
+      "lines": 9950,
+      "redactedView": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\provider-doc-review-20261028-xn7osssy\\petpooja.redacted.txt",
+      "redactedViewSHA256": "e34122a585511bf9c354285301ec071343adab0261fe9c33703e7cf44a544911",
+      "conservativeRedactions": 283,
+      "urls": [
+        "https://developerapi.petpooja.com/",
+        "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.[REDACTED",
+        "https://47pfzh5sf2.execute-api.ap-southeast-1.amazonaws.com/V1/save_order",
+        "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_order_status",
+        "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/rider_status_update",
+        "http://json-schema.org/draft-07/schema",
+        "https://onlineorderingapisv210.docs.apiary.io/"
+      ],
+      "termIndex": {
+        "version": [
+          {
+            "line": 1,
+            "text": "PetpoojaOnlineOrdering APIs - V2.1.0"
+          }
+        ],
+        "auth": [
+          {
+            "line": 243,
+            "text": "app_secret"
+          },
+          {
+            "line": 244,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 247,
+            "text": "access_token"
+          },
+          {
+            "line": 307,
+            "text": "app_secret"
+          },
+          {
+            "line": 308,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 311,
+            "text": "access_token"
+          },
+          {
+            "line": 371,
+            "text": "app_secret"
+          },
+          {
+            "line": 372,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 375,
+            "text": "access_token"
+          },
+          {
+            "line": 435,
+            "text": "app_secret"
+          },
+          {
+            "line": 436,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 439,
+            "text": "access_token"
+          },
+          {
+            "line": 543,
+            "text": "app_secret"
+          },
+          {
+            "line": 544,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 547,
+            "text": "access_token"
+          },
+          {
+            "line": 580,
+            "text": "app_secret"
+          },
+          {
+            "line": 581,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 584,
+            "text": "access_token"
+          },
+          {
+            "line": 623,
+            "text": "app_secret"
+          },
+          {
+            "line": 624,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 627,
+            "text": "access_token"
+          },
+          {
+            "line": 655,
+            "text": "app_secret"
+          },
+          {
+            "line": 656,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 659,
+            "text": "access_token"
+          },
+          {
+            "line": 4611,
+            "text": "app-secret: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 4612,
+            "text": "access-token: \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 4642,
+            "text": "request.setRequestHeader('app-secret', 'xxxxxxxxxxxxxxxxxxxxx');"
+          },
+          {
+            "line": 4643,
+            "text": "request.setRequestHeader('access-token', 'xxxxxxxxxxxxxxxxxxxxx');"
+          },
+          {
+            "line": 5309,
+            "text": "    \"app_secret\": \"[REDACTED VALUE]\","
+          },
+          {
+            "line": 5310,
+            "text": "    \"access_token\": \"[REDACTED VALUE]\","
+          },
+          {
+            "line": 5560,
+            "text": "    \"app_secret\": \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 5563,
+            "text": "    \"access_token\": \"[REDACTED VALUE]\""
+          },
+          {
+            "line": 5886,
+            "text": "    \"app_secret\","
+          },
+          {
+            "line": 5887,
+            "text": "    \"access_token\","
+          },
+          {
+            "line": 5912,
+            "text": "  \"app_secret\": \"[REDACTED VALUE]\",\\"
+          }
+        ],
+        "lifecycle": [
+          {
+            "line": 505,
+            "text": "Unique client order id which is used to update order status at client side."
+          },
+          {
+            "line": 636,
+            "text": "Unique thirdparty order id / Client Order ID"
+          },
+          {
+            "line": 639,
+            "text": "external_order_id"
+          },
+          {
+            "line": 668,
+            "text": "Unique thirdparty order id / Client Order ID"
+          },
+          {
+            "line": 671,
+            "text": "external_order_id"
+          },
+          {
+            "line": 9160,
+            "text": "    \"external_order_id\" : \"\"   // pass this blank"
+          },
+          {
+            "line": 9183,
+            "text": "    \"external_order_id\": {"
+          },
+          {
+            "line": 9239,
+            "text": "    \"external_order_id\" : \"\"   // pass this blank\\"
+          },
+          {
+            "line": 9283,
+            "text": "    \"external_order_id\" : \"\"   // pass this blank"
+          },
+          {
+            "line": 9306,
+            "text": "    \"external_order_id\": {"
+          },
+          {
+            "line": 9362,
+            "text": "    \"external_order_id\" : \"\"   // pass this blank\\"
+          }
+        ],
+        "callbacks": [
+          {
+            "line": 493,
+            "text": "Order Callback Request/Response"
+          },
+          {
+            "line": 496,
+            "text": "Integration partner has to pass this endpoint URL in every save order request. [Ex: \"callback_url\": xxxxxxxxxxxxxxxx]"
+          },
+          {
+            "line": 498,
+            "text": "Callback Request"
+          },
+          {
+            "line": 611,
+            "text": "Rider Information - Webhook"
+          },
+          {
+            "line": 612,
+            "text": "This is the webhook to update the rider information for Petpooja POS in order to update the order delivery status at our end without continuously polling with check order status. This has to be provided by third party."
+          },
+          {
+            "line": 5380,
+            "text": "              \"callback_url\": \"https.xyz.abc\","
+          },
+          {
+            "line": 5667,
+            "text": "        \"callback_url\": {"
+          },
+          {
+            "line": 5983,
+            "text": "          \"callback_url\": \"https.xyz.abc\",\\"
+          },
+          {
+            "line": 6255,
+            "text": "              \"callback_url\": \"https.xyz.abc\","
+          },
+          {
+            "line": 6542,
+            "text": "        \"callback_url\": {"
+          },
+          {
+            "line": 6858,
+            "text": "          \"callback_url\": \"https.xyz.abc\",\\"
+          },
+          {
+            "line": 7133,
+            "text": "              \"callback_url\": \"https.xyz.abc\","
+          },
+          {
+            "line": 7420,
+            "text": "        \"callback_url\": {"
+          },
+          {
+            "line": 7736,
+            "text": "          \"callback_url\": \"https.xyz.abc\",\\"
+          },
+          {
+            "line": 8011,
+            "text": "              \"callback_url\": \"https.xyz.abc\","
+          },
+          {
+            "line": 8298,
+            "text": "        \"callback_url\": {"
+          },
+          {
+            "line": 8614,
+            "text": "          \"callback_url\": \"https.xyz.abc\",\\"
+          },
+          {
+            "line": 8804,
+            "text": "Order Callback Request/Response"
+          },
+          {
+            "line": 8805,
+            "text": "Callback Request"
+          },
+          {
+            "line": 8810,
+            "text": "https:[REDACTED OPAQUE VALUE].com/callback"
+          },
+          {
+            "line": 8868,
+            "text": "request.open('POST', 'https:[REDACTED OPAQUE VALUE].com/callback');"
+          },
+          {
+            "line": 9137,
+            "text": "Rider Information - Webhook"
+          },
+          {
+            "line": 9143,
+            "text": "https:[REDACTED OPAQUE VALUE].com/rider_info_webhook"
+          },
+          {
+            "line": 9216,
+            "text": "request.open('POST', 'https:[REDACTED OPAQUE VALUE].com/rider_info_webhook');"
+          },
+          {
+            "line": 9260,
+            "text": "Rider Information - Webhook"
+          },
+          {
+            "line": 9266,
+            "text": "https:[REDACTED OPAQUE VALUE].com/rider_info_webhook"
+          },
+          {
+            "line": 9339,
+            "text": "request.open('POST', 'https:[REDACTED OPAQUE VALUE].com/rider_info_webhook');"
+          }
+        ],
+        "dispatch": [
+          {
+            "line": 494,
+            "text": "Online order integration partner must implement this endpoint to allow PoS patner to notify about order status updates post successfull order relay."
+          },
+          {
+            "line": 505,
+            "text": "Unique client order id which is used to update order status at client side."
+          },
+          {
+            "line": 521,
+            "text": "Incase of self-delivery, restaurant will share the rider details along with order status 4 (Dispactched)."
+          },
+          {
+            "line": 525,
+            "text": "Incase of self-delivery, restaurant will share the rider details along with order status 4 (Dispactched)."
+          },
+          {
+            "line": 531,
+            "text": "Update Order Status"
+          },
+          {
+            "line": 532,
+            "text": "Integration partner can send updated order status to PoS partner by calling this endpoint. As of now, this endpoint can be used to send only cancel order (-1) status."
+          },
+          {
+            "line": 534,
+            "text": "DEV URL: https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_order_status"
+          },
+          {
+            "line": 536,
+            "text": "Update Order Status"
+          },
+          {
+            "line": 612,
+            "text": "This is the webhook to update the rider information for Petpooja POS in order to update the order delivery status at our end without continuously polling with check order status. This has to be provided by third party."
+          },
+          {
+            "line": 7036,
+            "text": "    \"message\": \"There were some error in order details.\","
+          },
+          {
+            "line": 8792,
+            "text": "    \"message\": \"There were some error in order details.\","
+          },
+          {
+            "line": 8902,
+            "text": "Update Order Status"
+          },
+          {
+            "line": 8903,
+            "text": "Update Order Status"
+          },
+          {
+            "line": 9011,
+            "text": "    \"message\": \"Order status updated successfully.\","
+          },
+          {
+            "line": 9020,
+            "text": "Update Order Status"
+          },
+          {
+            "line": 9021,
+            "text": "Update Order Status"
+          },
+          {
+            "line": 9129,
+            "text": "  \"message\": \"There were some error in update order status.\","
+          }
+        ],
+        "money": [
+          {
+            "line": 18,
+            "text": "[REDACTED LONG NUMBER] - Added \"gst_type\" key to item details in Menu API"
+          },
+          {
+            "line": 26,
+            "text": "[REDACTED LONG NUMBER] - Added \"tax_inclusive\" key to menu push/fetch API"
+          },
+          {
+            "line": 38,
+            "text": "[REDACTED LONG NUMBER] - Added \"dc_tax_percentage\" and \"pc_tax_percentage\" keys to oder.details object in the 'Save Order' API"
+          },
+          {
+            "line": 40,
+            "text": "[REDACTED LONG NUMBER] - Added \"tax_inclusive\" key to oderItem.details object in the 'Save Order' API"
+          },
+          {
+            "line": 42,
+            "text": "[REDACTED LONG NUMBER] - Added \"tax_percentage\" key to orderItem.details.item_tax object in the 'Save Order' API"
+          },
+          {
+            "line": 44,
+            "text": "[REDACTED LONG NUMBER] - Introduced BOGO, BXGY and Freebie discounts to menu APIs."
+          },
+          {
+            "line": 98,
+            "text": "taxes"
+          },
+          {
+            "line": 99,
+            "text": "Contains information for Taxes"
+          },
+          {
+            "line": 103,
+            "text": "taxid, taxname, tax, ..."
+          },
+          {
+            "line": 104,
+            "text": "discounts"
+          },
+          {
+            "line": 105,
+            "text": "Contains information for Discounts"
+          },
+          {
+            "line": 109,
+            "text": "discountid, discountname, ..."
+          },
+          {
+            "line": 179,
+            "text": "taxes"
+          },
+          {
+            "line": 180,
+            "text": "Contains information for Taxes"
+          },
+          {
+            "line": 184,
+            "text": "taxid, taxname, tax, ..."
+          },
+          {
+            "line": 185,
+            "text": "discounts"
+          },
+          {
+            "line": 186,
+            "text": "Contains information for Discounts"
+          },
+          {
+            "line": 190,
+            "text": "discountid, discountname, ..."
+          },
+          {
+            "line": 240,
+            "text": "Unique code which allows you to track and identify application.[32 characters]"
+          },
+          {
+            "line": 244,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 248,
+            "text": "Unique Code.[40 characters]"
+          },
+          {
+            "line": 278,
+            "text": "id, name, tax_inclusive, ..."
+          },
+          {
+            "line": 284,
+            "text": "OrderInfo/Tax"
+          },
+          {
+            "line": 288,
+            "text": "id, title, type, price, tax, ..."
+          },
+          {
+            "line": 289,
+            "text": "OrderInfo/ Discount"
+          },
+          {
+            "line": 304,
+            "text": "Unique code which allows you to track and identify application.[32 characters]"
+          },
+          {
+            "line": 308,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 312,
+            "text": "Unique Code.[40 characters]"
+          },
+          {
+            "line": 342,
+            "text": "id, name, tax_inclusive, ..."
+          },
+          {
+            "line": 348,
+            "text": "OrderInfo/Tax"
+          },
+          {
+            "line": 352,
+            "text": "id, title, type, price, tax, ..."
+          },
+          {
+            "line": 353,
+            "text": "OrderInfo/ Discount"
+          },
+          {
+            "line": 368,
+            "text": "Unique code which allows you to track and identify application.[32 characters]"
+          },
+          {
+            "line": 372,
+            "text": "Unique code for transfer secret data.[40 characters]"
+          },
+          {
+            "line": 376,
+            "text": "Unique Code.[40 characters]"
+          }
+        ],
+        "notes": [
+          {
+            "line": 974,
+            "text": "      \"itemdescription\": \"\","
+          },
+          {
+            "line": 1113,
+            "text": "      \"itemdescription\": \"\","
+          },
+          {
+            "line": 1210,
+            "text": "          \"itemdescription\": \"\","
+          },
+          {
+            "line": 1358,
+            "text": "          \"description\": \"\","
+          },
+          {
+            "line": 1401,
+            "text": "          \"description\": \"\""
+          },
+          {
+            "line": 1414,
+            "text": "          \"description\": \"\""
+          },
+          {
+            "line": 1427,
+            "text": "          \"description\": \"\""
+          },
+          {
+            "line": 1440,
+            "text": "          \"description\": \"\""
+          },
+          {
+            "line": 1619,
+            "text": "        \"itemdescription\": {"
+          },
+          {
+            "line": 1895,
+            "text": "        \"description\": {"
+          },
+          {
+            "line": 2226,
+            "text": "      \"itemdescription\": \"\",\\"
+          },
+          {
+            "line": 2365,
+            "text": "      \"itemdescription\": \"\",\\"
+          },
+          {
+            "line": 2462,
+            "text": "          \"itemdescription\": \"\",\\"
+          },
+          {
+            "line": 2610,
+            "text": "          \"description\": \"\",\\"
+          },
+          {
+            "line": 2653,
+            "text": "          \"description\": \"\"\\"
+          },
+          {
+            "line": 2666,
+            "text": "          \"description\": \"\"\\"
+          },
+          {
+            "line": 2679,
+            "text": "          \"description\": \"\"\\"
+          },
+          {
+            "line": 2692,
+            "text": "          \"description\": \"\"\\"
+          },
+          {
+            "line": 2869,
+            "text": "          \"itemdescription\": \"\","
+          },
+          {
+            "line": 2991,
+            "text": "          \"itemdescription\": \"\","
+          },
+          {
+            "line": 3099,
+            "text": "          \"itemdescription\": \"\","
+          },
+          {
+            "line": 3247,
+            "text": "          \"description\": \"\","
+          },
+          {
+            "line": 3290,
+            "text": "          \"description\": \"\""
+          },
+          {
+            "line": 3303,
+            "text": "          \"description\": \"\""
+          },
+          {
+            "line": 3316,
+            "text": "          \"description\": \"\""
+          },
+          {
+            "line": 3329,
+            "text": "          \"description\": \"\""
+          },
+          {
+            "line": 3508,
+            "text": "        \"itemdescription\": {"
+          },
+          {
+            "line": 3784,
+            "text": "        \"description\": {"
+          },
+          {
+            "line": 4114,
+            "text": "          \"itemdescription\": \"\",\\"
+          },
+          {
+            "line": 4236,
+            "text": "          \"itemdescription\": \"\",\\"
+          },
+          {
+            "line": 4344,
+            "text": "          \"itemdescription\": \"\",\\"
+          },
+          {
+            "line": 4492,
+            "text": "          \"description\": \"\",\\"
+          },
+          {
+            "line": 4535,
+            "text": "          \"description\": \"\"\\"
+          },
+          {
+            "line": 4548,
+            "text": "          \"description\": \"\"\\"
+          },
+          {
+            "line": 4561,
+            "text": "          \"description\": \"\"\\"
+          }
+        ]
+      },
+      "limits": "User-supplied local reference; publisher/version/merchant applicability require reconciliation. Redactions can include public samples and schema prose; not proof of live credentials or complete secret detection."
+    },
+    {
+      "provider": "Borzo",
+      "source": "C:\\Users\\DELL\\Desktop\\Borzo API Docs.txt",
+      "bytes": 223039,
+      "sha256": "c74fbe21023c80932a80c0b9d67a6b8049ad77eaf4d491c670219cf37a8bbd78",
+      "encoding": "utf-8-sig",
+      "lines": 7246,
+      "redactedView": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\provider-doc-review-20261028-xn7osssy\\borzo.redacted.txt",
+      "redactedViewSHA256": "f91b0f057bb1239cc69de92f4b64142436079b43a86384810f40b29539973e13",
+      "conservativeRedactions": 536,
+      "urls": [
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8",
+        "https://robot-in.borzodelivery.com/api/business/1.8",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/calculate-order",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/cancel-order",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/orders",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/courier",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/client",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/bank-cards",
+        "https://robotapitest-in.borzodelivery.com/api/business/1.8/labels"
+      ],
+      "termIndex": {
+        "version": [
+          {
+            "line": 12,
+            "text": "URL for test requests: https://robotapitest-in.borzodelivery.com/api/business/1.8"
+          },
+          {
+            "line": 14,
+            "text": "URL for production requests: https://robot-in.borzodelivery.com/api/business/1.8"
+          },
+          {
+            "line": 51,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8'); "
+          },
+          {
+            "line": 93,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\", New Delhi, Delhi\",\"contact_person\":{\"phone\":\"[REDACTED VALUE]\"}},{}]}' 'https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order' "
+          },
+          {
+            "line": 157,
+            "text": "POST https://robotapitest-in.borzodelivery.com/api/business/1.8/calculate-order"
+          },
+          {
+            "line": 673,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"address\":\"[REDACTED VALUE]\"},{\"address\":\"[REDACTED VALUE]\"}]}' 'https://robotapitest-in.borzodelivery.com/api/business/1.8/calculate-order' "
+          },
+          {
+            "line": 809,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/calculate-order'); "
+          },
+          {
+            "line": 962,
+            "text": "POST https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order"
+          },
+          {
+            "line": 1565,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"phone\":\"[REDACTED VALUE]\"}},{\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"phone\":\"[REDACTED VALUE"
+          },
+          {
+            "line": 1689,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order'); "
+          },
+          {
+            "line": 1839,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"payment_method\":\"bank_card\",\"bank_card_id\":80,\"points\":[{\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"phone\":\"[REDACTED VALUE]\"}},{\"address\":\"[REDACTED VAL"
+          },
+          {
+            "line": 1963,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order'); "
+          },
+          {
+            "line": 2115,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"phone\":\"[REDACTED VALUE]\"}},{\"delivery_id\":11712,\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"pho"
+          },
+          {
+            "line": 2239,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order'); "
+          },
+          {
+            "line": 2387,
+            "text": "POST https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order"
+          },
+          {
+            "line": 2713,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"matter\":\"Flowers\",\"backpayment_details\":null}' 'https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order' "
+          },
+          {
+            "line": 2836,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order'); "
+          },
+          {
+            "line": 2973,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"point_id\":202685},{\"point_id\":202686,\"required_start_datetime\":\"2026-10-28T15:46:38+05:30\",\"required_finish_datetime\":\"2026-10-28T16:16:38+05:30\"},"
+          },
+          {
+            "line": 3133,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order'); "
+          },
+          {
+            "line": 3321,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"point_id\":202685},{\"point_id\":202686}]}' 'https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order' "
+          },
+          {
+            "line": 3444,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order'); "
+          },
+          {
+            "line": 3587,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"point_id\":202685, \"packages\": [{\"order_package_id\": 3632252}]},{\"point_id\":202686, \"packages\": [{\"order_package_id\": 3632253, \"items_count\": 3}]},{"
+          },
+          {
+            "line": 3759,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order'); "
+          },
+          {
+            "line": 3965,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"point_id\":202685},{\"point_id\":202686, \"[REDACTED OPAQUE VALUE]\": true, \"taking_amount\": 500.00},{\"point_id\": 202687, \"[REDACTED OPAQUE VALUE]\": fal"
+          },
+          {
+            "line": 3971,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/edit-order'); "
+          },
+          {
+            "line": 4153,
+            "text": "POST https://robotapitest-in.borzodelivery.com/api/business/1.8/cancel-order"
+          },
+          {
+            "line": 4466,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\"}' 'https://robotapitest-in.borzodelivery.com/api/business/1.8/cancel-order' "
+          },
+          {
+            "line": 4590,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/cancel-order'); "
+          },
+          {
+            "line": 4723,
+            "text": "GET https://robotapitest-in.borzodelivery.com/api/business/1.8/orders"
+          },
+          {
+            "line": 5288,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/orders'); "
+          },
+          {
+            "line": 5522,
+            "text": "GET https://robotapitest-in.borzodelivery.com/api/business/1.8/courier"
+          },
+          {
+            "line": 5597,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/courier'); "
+          },
+          {
+            "line": 5621,
+            "text": "GET https://robotapitest-in.borzodelivery.com/api/business/1.8/client"
+          },
+          {
+            "line": 5677,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/client'); "
+          },
+          {
+            "line": 5701,
+            "text": "GET https://robotapitest-in.borzodelivery.com/api/business/1.8/bank-cards"
+          }
+        ],
+        "auth": [
+          {
+            "line": 28,
+            "text": "Secret auth token. Must be sent as a HTTP header."
+          },
+          {
+            "line": 575,
+            "text": "Recipients signature photo when closing a point at the address."
+          },
+          {
+            "line": 1420,
+            "text": "Recipients signature photo when closing a point at the address."
+          },
+          {
+            "line": 2568,
+            "text": "Recipients signature photo when closing a point at the address."
+          },
+          {
+            "line": 4323,
+            "text": "Recipients signature photo when closing a point at the address."
+          },
+          {
+            "line": 4911,
+            "text": "Recipients signature photo when closing a point at the address."
+          },
+          {
+            "line": 6083,
+            "text": "X-DV-Signature string"
+          },
+          {
+            "line": 6084,
+            "text": "Signature of the request data. Use it to verify that the request actually came from our servers."
+          },
+          {
+            "line": 6086,
+            "text": "The signature will be sent as a HTTP header."
+          },
+          {
+            "line": 6088,
+            "text": "To verify the signature, calculate a HMAC hash using SHA256 and Callback Secret Key, which can be found in your Personal cabinet."
+          },
+          {
+            "line": 6251,
+            "text": "Recipients signature photo when closing a point at the address."
+          },
+          {
+            "line": 6396,
+            "text": "if (!isset($_SERVER['HTTP_X_DV_SIGNATURE'])) { "
+          },
+          {
+            "line": 6397,
+            "text": "    echo 'Error: Signature not found'; "
+          },
+          {
+            "line": 6403,
+            "text": "$signature = \"[REDACTED VALUE]\", $data, 'CALLBACK_SECRET_KEY'); "
+          },
+          {
+            "line": 6404,
+            "text": "if ($signature != $_SERVER['HTTP_X_DV_SIGNATURE']) { "
+          },
+          {
+            "line": 6405,
+            "text": "    echo 'Error: Signature is not valid'; "
+          },
+          {
+            "line": 6536,
+            "text": "X-DV-Signature string"
+          },
+          {
+            "line": 6537,
+            "text": "Signature of the request data. Use it to verify that the request actually came from our servers."
+          },
+          {
+            "line": 6539,
+            "text": "The signature will be sent as a HTTP header."
+          },
+          {
+            "line": 6541,
+            "text": "To verify the signature, calculate a HMAC hash using SHA256 and Callback Secret Key, which can be found in your Personal cabinet."
+          },
+          {
+            "line": 6738,
+            "text": "if (!isset($_SERVER['HTTP_X_DV_SIGNATURE'])) { "
+          },
+          {
+            "line": 6739,
+            "text": "    echo 'Error: Signature not found'; "
+          },
+          {
+            "line": 6745,
+            "text": "$signature = \"[REDACTED VALUE]\", $data, 'CALLBACK_SECRET_KEY'); "
+          },
+          {
+            "line": 6746,
+            "text": "if ($signature != $_SERVER['HTTP_X_DV_SIGNATURE']) { "
+          },
+          {
+            "line": 6747,
+            "text": "    echo 'Error: Signature is not valid'; "
+          },
+          {
+            "line": 6822,
+            "text": "We have different callbacks for deliveries and orders for more detailed tracking and completeness of information. In case of any changes in these entities, the system automatically sends callbacks with the necessary info"
+          }
+        ],
+        "lifecycle": [
+          {
+            "line": 291,
+            "text": "client_order_id string / null"
+          },
+          {
+            "line": 504,
+            "text": "client_order_id string / null"
+          },
+          {
+            "line": 698,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 734,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 855,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 891,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 1093,
+            "text": "client_order_id string / null"
+          },
+          {
+            "line": 1337,
+            "text": "client_order_id string / null"
+          },
+          {
+            "line": 1590,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 1626,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 1741,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 1777,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 1864,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 1900,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2017,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2053,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2140,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2176,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2292,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2328,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2485,
+            "text": "client_order_id string / null"
+          },
+          {
+            "line": 2738,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2774,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2876,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2912,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 2998,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3034,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3072,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3187,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3223,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3261,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3346,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3382,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3490,
+            "text": "            \"client_order_id\": null, "
+          },
+          {
+            "line": 3526,
+            "text": "            \"client_order_id\": null, "
+          }
+        ],
+        "callbacks": [
+          {
+            "line": 6074,
+            "text": "You may enter a Callback URL in your Personal cabinet and we will send notifications about order changes to that URL."
+          },
+          {
+            "line": 6088,
+            "text": "To verify the signature, calculate a HMAC hash using SHA256 and Callback Secret Key, which can be found in your Personal cabinet."
+          },
+          {
+            "line": 6391,
+            "text": "Example of a callback handler"
+          },
+          {
+            "line": 6403,
+            "text": "$signature = \"[REDACTED VALUE]\", $data, 'CALLBACK_SECRET_KEY'); "
+          },
+          {
+            "line": 6527,
+            "text": "You may enter a Callback URL and enable delivery callback in your Personal cabinet and we will send notifications about delivery changes to that URL."
+          },
+          {
+            "line": 6541,
+            "text": "To verify the signature, calculate a HMAC hash using SHA256 and Callback Secret Key, which can be found in your Personal cabinet."
+          },
+          {
+            "line": 6733,
+            "text": "Example of a callback handler"
+          },
+          {
+            "line": 6745,
+            "text": "$signature = \"[REDACTED VALUE]\", $data, 'CALLBACK_SECRET_KEY'); "
+          },
+          {
+            "line": 6819,
+            "text": "There are two options for tracking order/delivery changes. Automatic via callbacks and manual via request."
+          },
+          {
+            "line": 6822,
+            "text": "We have different callbacks for deliveries and orders for more detailed tracking and completeness of information. In case of any changes in these entities, the system automatically sends callbacks with the necessary info"
+          },
+          {
+            "line": 7133,
+            "text": "Added callbacks to deliveries (Notification about delivery changes)."
+          },
+          {
+            "line": 7214,
+            "text": "Order payment method has been renamed from non_cash to balance. The renaming affected the input and output parameters of the following methods Order price calculation, Placing an order and Order editing, output parameter"
+          }
+        ],
+        "dispatch": [
+          {
+            "line": 33,
+            "text": "If your token is compromised, it will be possible for anybody to place orders in your name."
+          },
+          {
+            "line": 93,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\", New Delhi, Delhi\",\"contact_person\":{\"phone\":\"[REDACTED VALUE]\"}},{}]}' 'https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order' "
+          },
+          {
+            "line": 157,
+            "text": "POST https://robotapitest-in.borzodelivery.com/api/business/1.8/calculate-order"
+          },
+          {
+            "line": 158,
+            "text": "Use this method to calculate order prices and validate parameters before actually placing the order. It is possible to calculate an incomplete order, but such calculations may be imprecise."
+          },
+          {
+            "line": 545,
+            "text": "response.calculate_order.params.points.packages.nomenclature_code"
+          },
+          {
+            "line": 673,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"address\":\"[REDACTED VALUE]\"},{\"address\":\"[REDACTED VALUE]\"}]}' 'https://robotapitest-in.borzodelivery.com/api/business/1.8/calculate-order' "
+          },
+          {
+            "line": 809,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/calculate-order'); "
+          },
+          {
+            "line": 962,
+            "text": "POST https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order"
+          },
+          {
+            "line": 1059,
+            "text": "Need to create order with return."
+          },
+          {
+            "line": 1295,
+            "text": "Order status."
+          },
+          {
+            "line": 1297,
+            "text": "Order statuses"
+          },
+          {
+            "line": 1300,
+            "text": "Order status description."
+          },
+          {
+            "line": 1561,
+            "text": "Example 1. Create order with default payment method."
+          },
+          {
+            "line": 1565,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"phone\":\"[REDACTED VALUE]\"}},{\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"phone\":\"[REDACTED VALUE"
+          },
+          {
+            "line": 1689,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order'); "
+          },
+          {
+            "line": 1835,
+            "text": "Example 2. Create order with bank_card payment method."
+          },
+          {
+            "line": 1839,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"payment_method\":\"bank_card\",\"bank_card_id\":80,\"points\":[{\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"phone\":\"[REDACTED VALUE]\"}},{\"address\":\"[REDACTED VAL"
+          },
+          {
+            "line": 1963,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order'); "
+          },
+          {
+            "line": 2111,
+            "text": "Example 3. Create order from draft deliveries. First point cannot be delivery."
+          },
+          {
+            "line": 2115,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\",\"points\":[{\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"phone\":\"[REDACTED VALUE]\"}},{\"delivery_id\":11712,\"address\":\"[REDACTED VALUE]\",\"contact_person\":{\"pho"
+          },
+          {
+            "line": 2239,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/create-order'); "
+          },
+          {
+            "line": 2388,
+            "text": "This API method can be used to edit an order in statuses: new, available, active or delayed (Order statuses)."
+          },
+          {
+            "line": 2443,
+            "text": "Order status."
+          },
+          {
+            "line": 2445,
+            "text": "Order statuses"
+          },
+          {
+            "line": 2448,
+            "text": "Order status description."
+          },
+          {
+            "line": 4153,
+            "text": "POST https://robotapitest-in.borzodelivery.com/api/business/1.8/cancel-order"
+          },
+          {
+            "line": 4154,
+            "text": "You may cancel an order in statuses: new, available, active or delayed (Order statuses). If a courier has visited any addresses, the order cannot be canceled."
+          },
+          {
+            "line": 4198,
+            "text": "Order status."
+          },
+          {
+            "line": 4200,
+            "text": "Order statuses"
+          },
+          {
+            "line": 4203,
+            "text": "Order status description."
+          },
+          {
+            "line": 4466,
+            "text": "curl --include --header 'X-DV-Auth-Token: \"[REDACTED VALUE]\"}' 'https://robotapitest-in.borzodelivery.com/api/business/1.8/cancel-order' "
+          },
+          {
+            "line": 4590,
+            "text": "curl_setopt($curl, CURLOPT_URL, 'https://robotapitest-in.borzodelivery.com/api/business/1.8/cancel-order'); "
+          },
+          {
+            "line": 4736,
+            "text": "Order statuses to search for."
+          },
+          {
+            "line": 4740,
+            "text": "Order statuses"
+          },
+          {
+            "line": 4786,
+            "text": "Order status."
+          }
+        ],
+        "money": [
+          {
+            "line": 4,
+            "text": "First you should register as a client at apitest.borzodelivery.com. If you are unable to receive the SMS code when registering, please ask for it at [REDACTED EMAIL], including your phone number in the email."
+          },
+          {
+            "line": 22,
+            "text": "All requests to Business API must be made via HTTPS. Only GET and POST request methods are supported. POST requests should send all parameters in the body of the request in JSON format and UTF-8 encoding; GET requests sh"
+          },
+          {
+            "line": 65,
+            "text": "Business API responses are in JSON format and UTF-8 encoding."
+          },
+          {
+            "line": 67,
+            "text": "Successful responses will have HTTP code 200 (OK). Response JSON will always have is_successful field."
+          },
+          {
+            "line": 74,
+            "text": "If there was an error, API response will have HTTP code 400 (Bad Request). The response JSON will have the following fields:"
+          },
+          {
+            "line": 82,
+            "text": "List of error codes."
+          },
+          {
+            "line": 84,
+            "text": "Request error codes"
+          },
+          {
+            "line": 87,
+            "text": "Error codes for request parameters. If errors field contains error code invalid_parameters, this field will have detailed parameter errors. Structure of this object corresponds to structure of the request."
+          },
+          {
+            "line": 89,
+            "text": "Parameter error codes"
+          },
+          {
+            "line": 252,
+            "text": "promo_code string / null"
+          },
+          {
+            "line": 253,
+            "text": "Promo code."
+          },
+          {
+            "line": 271,
+            "text": "We use Google Maps API to geocode addresses."
+          },
+          {
+            "line": 352,
+            "text": "intercom_code string / null"
+          },
+          {
+            "line": 353,
+            "text": "Intercom code."
+          },
+          {
+            "line": 388,
+            "text": "ware_code string"
+          },
+          {
+            "line": 389,
+            "text": "Vendor code. Maximum length is 255 characters."
+          },
+          {
+            "line": 408,
+            "text": "nomenclature_code string"
+          },
+          {
+            "line": 409,
+            "text": "Nomenclature code. Maximum length is 255 characters."
+          },
+          {
+            "line": 417,
+            "text": "checkin_code string / null"
+          },
+          {
+            "line": 418,
+            "text": "Courier's arrival pin code at the point. Maximum length is 255 characters."
+          },
+          {
+            "line": 532,
+            "text": "ware_code string"
+          },
+          {
+            "line": 533,
+            "text": "Vendor code."
+          },
+          {
+            "line": 544,
+            "text": "nomenclature_code string"
+          },
+          {
+            "line": 545,
+            "text": "response.calculate_order.params.points.packages.nomenclature_code"
+          },
+          {
+            "line": 559,
+            "text": "intercom_code string / null"
+          },
+          {
+            "line": 560,
+            "text": "Intercom code."
+          },
+          {
+            "line": 628,
+            "text": "promo_code_discount_amount money / null"
+          },
+          {
+            "line": 629,
+            "text": "Discount amount by promo code."
+          },
+          {
+            "line": 633,
+            "text": "cod_fee_amount money / null"
+          },
+          {
+            "line": 657,
+            "text": "applied_promo_code string / null"
+          },
+          {
+            "line": 658,
+            "text": "Applied promo code."
+          },
+          {
+            "line": 661,
+            "text": "Warnings. You will receive these warnings as error codes if you try to create an order with the same data you calculated it with. Empty list of warnings means the order data is valid."
+          },
+          {
+            "line": 663,
+            "text": "Request error codes"
+          },
+          {
+            "line": 666,
+            "text": "Parameter warnings. You will receive these warnings as parameter error codes if you try to create an order with the same data you calculated it with."
+          },
+          {
+            "line": 668,
+            "text": "Parameter error codes"
+          }
+        ],
+        "notes": [
+          {
+            "line": 181,
+            "text": "Try to make this description useful for the courier. For example, putting a category from your catalog here is better than only a concrete model number. If the item is fragile or oversized, please mention it here."
+          },
+          {
+            "line": 368,
+            "text": "Instruction to courier how to get to recipient at the address."
+          },
+          {
+            "line": 393,
+            "text": "description string"
+          },
+          {
+            "line": 394,
+            "text": "Description. Maximum length is 1000 characters."
+          },
+          {
+            "line": 535,
+            "text": "description string"
+          },
+          {
+            "line": 536,
+            "text": "Description."
+          },
+          {
+            "line": 569,
+            "text": "Instruction to courier how to get to recipient at the address."
+          },
+          {
+            "line": 688,
+            "text": "        \"status_description\": null, "
+          },
+          {
+            "line": 845,
+            "text": "        \"status_description\": null, "
+          },
+          {
+            "line": 984,
+            "text": "Try to make this description useful for the courier. For example, putting a category from your catalog here is better than only a concrete model number. If the item is fragile or oversized, please mention it here."
+          },
+          {
+            "line": 1170,
+            "text": "Instruction to courier how to get to recipient at the address."
+          },
+          {
+            "line": 1200,
+            "text": "description string"
+          },
+          {
+            "line": 1201,
+            "text": "Description. Maximum length is 1000 characters."
+          },
+          {
+            "line": 1299,
+            "text": "status_description string"
+          },
+          {
+            "line": 1300,
+            "text": "Order status description."
+          },
+          {
+            "line": 1380,
+            "text": "description string"
+          },
+          {
+            "line": 1381,
+            "text": "Description."
+          },
+          {
+            "line": 1414,
+            "text": "Instruction to courier how to get to recipient at the address."
+          },
+          {
+            "line": 1580,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 1731,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 1854,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 2007,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 2130,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 2282,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 2447,
+            "text": "status_description string"
+          },
+          {
+            "line": 2448,
+            "text": "Order status description."
+          },
+          {
+            "line": 2528,
+            "text": "description string"
+          },
+          {
+            "line": 2529,
+            "text": "Description."
+          },
+          {
+            "line": 2562,
+            "text": "Instruction to courier how to get to recipient at the address."
+          },
+          {
+            "line": 2728,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 2866,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 2988,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 3177,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 3336,
+            "text": "        \"status_description\": \"available\", "
+          },
+          {
+            "line": 3480,
+            "text": "        \"status_description\": \"available\", "
+          }
+        ]
+      },
+      "limits": "User-supplied local reference; publisher/version/merchant applicability require reconciliation. Redactions can include public samples and schema prose; not proof of live credentials or complete secret detection."
+    }
+  ],
+  "excludedDocuments": [
+    {
+      "provider": "Shadowfax",
+      "source": "C:\\Users\\DELL\\Desktop\\ShadowFax API Docs.txt",
+      "status": "Rejected by user: wrong documentation; correct replacement pending",
+      "usedForContract": false,
+      "contentReadByThisHelper": false,
+      "scope": "Earlier size/hash inventory is not approval; do not read, copy, summarize or implement this document"
+    }
+  ],
+  "helperSHA256": "9faec210f0b041ae10bced5ce3e824707d404e648d53615c109cd335b80a54a1",
+  "privacy": "Raw originals unchanged on Desktop; no raw copy in the repository. Local views redact credential-like/example/PII/opaque values and URL query/userinfo. Do not publish, execute embedded examples or infer credential entitlement."
+}

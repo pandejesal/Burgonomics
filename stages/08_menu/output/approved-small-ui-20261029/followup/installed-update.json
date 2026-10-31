@@ -1,0 +1,14 @@
+﻿{
+    "previousSha256":  "b847f4d4ccb128125040a593d017b02f1e2752ccddbb0ae1927f96b7e12d7a47",
+    "versionCode":  1,
+    "uninstallPerformed":  false,
+    "packageVerified":  true,
+    "dataClearPerformed":  false,
+    "package":  "com.burgonomics",
+    "installedAt":  "2026-10-29T17:04:02.4909495Z",
+    "installationPerformed":  true,
+    "target":  "RZCX51TXRKB",
+    "installFlags":  "-r only",
+    "signerVerified":  true,
+    "installedSha256":  "d61afb91dff7483c3307ce67306eb9f29e9ca5c60df1a8e07cdc24fc3fc8cd12"
+}

@@ -1,0 +1,141 @@
+[
+  {
+    "id": "razorpay-mcp",
+    "url": "https://razorpay.com/docs/mcp-server",
+    "description": "Official Razorpay MCP overview",
+    "retrieved_at_utc": "2026-10-27T14:49:36.209983+00:00",
+    "http_status": 200,
+    "text_characters": 3729,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\razorpay-mcp.md",
+    "bytes": 4075,
+    "sha256": "10b4c276a3e0f0491e9ad77d02cf4c80b8d02052630b7c9cbcd1ecdec073e8a9"
+  },
+  {
+    "id": "razorpay-mcp-local",
+    "url": "https://razorpay.com/docs/mcp-server/local",
+    "description": "Official Razorpay local MCP setup",
+    "retrieved_at_utc": "2026-10-27T14:49:36.211381+00:00",
+    "http_status": 200,
+    "text_characters": 4117,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\razorpay-mcp-local.md",
+    "bytes": 4480,
+    "sha256": "49e43005134f0df771986faae8892cdcfb8dce75b41d4b6f6ceb938267f0af2a"
+  },
+  {
+    "id": "razorpay-webhook-validation",
+    "url": "https://razorpay.com/docs/webhooks/validate-test",
+    "description": "Official webhook validation and testing",
+    "retrieved_at_utc": "2026-10-27T14:49:36.213081+00:00",
+    "http_status": 200,
+    "text_characters": 7508,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\razorpay-webhook-validation.md",
+    "bytes": 7907,
+    "sha256": "de56cc4ad7c3aad604a1a9c70f8f30e9aba01d7c1c8865840e3c2ac6d35c34b5"
+  },
+  {
+    "id": "razorpay-webhook-practices",
+    "url": "https://razorpay.com/docs/webhooks/best-practices",
+    "description": "Official webhook best practices",
+    "retrieved_at_utc": "2026-10-27T14:49:36.729442+00:00",
+    "http_status": 200,
+    "text_characters": 4168,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\razorpay-webhook-practices.md",
+    "bytes": 4560,
+    "sha256": "50f2ffba1d490bcc635274af464225676033687285139b20a4827db5582a0522"
+  },
+  {
+    "id": "petpooja-online-ordering",
+    "url": "https://onlineorderingapisv210.docs.apiary.io/",
+    "description": "Petpooja V2.1.0 public API documentation; cross-check against the vendor-issued contract",
+    "retrieved_at_utc": "2026-10-27T14:49:36.736554+00:00",
+    "http_status": 200,
+    "text_characters": 362,
+    "status": "DOWNLOADED_RENDERED_TEXT",
+    "file": "docs\\petpooja-online-ordering.md",
+    "bytes": 21484,
+    "sha256": "cbcee2b888dcefc9e822e83dd16b54ab0f14ed1013499142f265e04b2903c8af",
+    "render_attempt": {
+      "method": "Scrapling DynamicFetcher, ephemeral public-page browser",
+      "retrieved_at_utc": "2026-10-27T15:01:06.609705+00:00",
+      "http_status": 200,
+      "text_characters": 21162,
+      "status": "DOWNLOADED"
+    }
+  },
+  {
+    "id": "petpooja-integrations",
+    "url": "https://www.petpooja.com/poss/restaurant-integrations",
+    "description": "Official integration overview, not an API schema",
+    "retrieved_at_utc": "2026-10-27T14:49:36.846716+00:00",
+    "http_status": 200,
+    "text_characters": 6152,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\petpooja-integrations.md",
+    "bytes": 6524,
+    "sha256": "ab34588d5d439a624c12d163b58b5429324ae3b1b24e178320459438cc19bf27"
+  },
+  {
+    "id": "borzo-business-api",
+    "url": "https://borzodelivery.com/in/business-api/doc",
+    "description": "Official Borzo India Business API documentation",
+    "retrieved_at_utc": "2026-10-27T14:49:37.058485+00:00",
+    "http_status": 200,
+    "text_characters": 177473,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\borzo-business-api.md",
+    "bytes": 181903,
+    "sha256": "2de6e25f2de6fe5efeb94ea4527597e478fb87cf7793162fa4698b98aac7f639"
+  },
+  {
+    "id": "borzo-integration",
+    "url": "https://borzodelivery.com/in/api-integration",
+    "description": "Official Borzo India integration overview",
+    "retrieved_at_utc": "2026-10-27T14:49:37.265274+00:00",
+    "http_status": 200,
+    "text_characters": 1163,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\borzo-integration.md",
+    "bytes": 1522,
+    "sha256": "97728fb45c81785dcc0240f530d42d6e0e598ed4c9defa60f85b4744c06404e4"
+  },
+  {
+    "id": "shadowfax-platform",
+    "url": "https://www.shadowfax.in/innovation",
+    "description": "Official platform overview only; not a confirmed Shadowfax API contract",
+    "retrieved_at_utc": "2026-10-27T14:49:37.591127+00:00",
+    "http_status": 200,
+    "text_characters": 9867,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\shadowfax-platform.md",
+    "bytes": 10280,
+    "sha256": "20a02fad0e9a8b6cda9c757229969e2bbf0fc645776f12692c1f6f606059bf93"
+  },
+  {
+    "id": "firebase-mcp",
+    "url": "https://firebase.google.com/docs/ai-assistance/mcp-server",
+    "description": "Official Firebase MCP documentation",
+    "retrieved_at_utc": "2026-10-27T14:49:37.860561+00:00",
+    "http_status": 200,
+    "text_characters": 22478,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\firebase-mcp.md",
+    "bytes": 22839,
+    "sha256": "b9e737a17cddc42e34184c78e9dca384edff243c206250552a725dc79c72586c"
+  },
+  {
+    "id": "shadcn-mcp",
+    "url": "https://ui.shadcn.com/docs/mcp",
+    "description": "Official shadcn MCP documentation",
+    "retrieved_at_utc": "2026-10-27T14:49:38.029716+00:00",
+    "http_status": 200,
+    "text_characters": 9667,
+    "status": "DOWNLOADED_TEXT",
+    "file": "docs\\shadcn-mcp.md",
+    "bytes": 9996,
+    "sha256": "c3ed0e78298c08db207dfe76d0152db300b72e2526291b7740b348b9b112f5b1"
+  }
+]

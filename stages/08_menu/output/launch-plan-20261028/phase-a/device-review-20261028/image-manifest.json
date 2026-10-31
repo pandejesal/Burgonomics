@@ -1,0 +1,130 @@
+{
+  "preparedAt": "2026-10-28T14:04:19+05:30",
+  "command": "python -B stages/08_menu/output/launch-plan-20261028/phase-a/device-review-20261028/prepare-images.py",
+  "rawCaptureRoot": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\burgonomics-ui-observations-20261028-3kntut4p",
+  "images": [
+    {
+      "file": "delivery-home.png",
+      "sha256": "545d81b6a026470c9ace57f688ff41ab2a000ee3bf7878b6e210a874916d8f7c",
+      "pixelDimensions": [
+        1080,
+        2187
+      ],
+      "package": "com.burgonomics",
+      "reaEvidenceId": "ev_a2ccd1fca0e0675cd735bae92dab108b5714d12c49d4653c21d4577f49d17791",
+      "rawRelativePath": "delivery-home/screen.png",
+      "rawSHA256": "b0ffd4e5da2a6468afa4c4e33ab9b59a0b2722633a46e204a0924f6b9fd9b791",
+      "rawDimensions": [
+        1080,
+        2340
+      ],
+      "cropLTRB": [
+        0,
+        285,
+        1080,
+        2280
+      ],
+      "captionBandsAdded": true,
+      "scope": "Current installed-app observation, not proposed/new-source/functional proof"
+    },
+    {
+      "file": "delivery-banner-after.png",
+      "sha256": "ac5bda521b203d70d0e227b642f46dfa67a8d4d0a6cb8d17b2d58560fab85e8e",
+      "pixelDimensions": [
+        1080,
+        2367
+      ],
+      "package": "com.burgonomics",
+      "reaEvidenceId": "ev_e7c0ad36896fbebf131d4fc1f40ac57c8af5e7414cbdae36a9c1365fc2406989",
+      "rawRelativePath": "delivery-banner-after/screen.png",
+      "rawSHA256": "a4a819ee6013185883072e04e8abe5510bc6984b15a4e52c15f84bd3ec76fa25",
+      "rawDimensions": [
+        1080,
+        2340
+      ],
+      "cropLTRB": [
+        0,
+        105,
+        1080,
+        2280
+      ],
+      "captionBandsAdded": true,
+      "scope": "Current installed-app observation, not proposed/new-source/functional proof"
+    },
+    {
+      "file": "martinoz-home.png",
+      "sha256": "a720e4256ef47789cc1a5ea42cc5576ffd5cc77739f876629de5e47fa300c22b",
+      "pixelDimensions": [
+        1080,
+        1942
+      ],
+      "package": "app.martinoz.pizza",
+      "reaEvidenceId": "ev_da1ec1c41defc3f3bb7181240d305aa68c60e3c92613e95247656f7e49a2600d",
+      "rawRelativePath": "martinoz-home/screen.png",
+      "rawSHA256": "acf3ff4bb0dc323c88b97835dc8e16c95e9f9f8b8f3279725cd30b5761dda155",
+      "rawDimensions": [
+        1080,
+        2340
+      ],
+      "cropLTRB": [
+        0,
+        500,
+        1080,
+        2250
+      ],
+      "captionBandsAdded": true,
+      "scope": "Current installed-app observation, not proposed/new-source/functional proof"
+    },
+    {
+      "file": "lapinoz-home.png",
+      "sha256": "97d332c0828867409ef42a998eeea7632763a3f86f28562d2575ec79ae9246e2",
+      "pixelDimensions": [
+        1080,
+        1873
+      ],
+      "package": "com.app.uengage.lapinoz",
+      "reaEvidenceId": "ev_0218fb866d955996d3e714b50e72d8356271ecd42d06eb032204595dc09b7db4",
+      "rawRelativePath": "lapinoz-home/screen.png",
+      "rawSHA256": "865c8686b2e0053c01d1316b8d166fcf8899bd7f8032f9bac24dff3eab8abb07",
+      "rawDimensions": [
+        1080,
+        2340
+      ],
+      "cropLTRB": [
+        0,
+        599,
+        1080,
+        2280
+      ],
+      "captionBandsAdded": true,
+      "scope": "Current installed-app observation, not proposed/new-source/functional proof"
+    },
+    {
+      "file": "lapinoz-menu.png",
+      "sha256": "1c782c7712155333eac27ae47c1277acb9be1b1226155514e1253f50dd553f07",
+      "pixelDimensions": [
+        1080,
+        1332
+      ],
+      "package": "com.app.uengage.lapinoz",
+      "reaEvidenceId": "ev_5e06d75db07ff4d14fc00fbb225bca4d752d07b7d9f67092ea9448763dd240cd",
+      "rawRelativePath": "lapinoz-menu/screen.png",
+      "rawSHA256": "748b46141028981579c6ea78d4ef82090eb2bc1d239596d5e2f9cf20e3f82dd2",
+      "rawDimensions": [
+        1080,
+        2340
+      ],
+      "cropLTRB": [
+        0,
+        540,
+        1080,
+        1680
+      ],
+      "captionBandsAdded": true,
+      "scope": "Current installed-app observation, not proposed/new-source/functional proof"
+    }
+  ],
+  "privacy": "Raw frames stay in the approved temporary directory. Retained crops omit personal header/greeting/status-bar content; the La Pino'z menu crop excludes the personalised favourites section. Inspect the crops before sharing internally.",
+  "limits": "Single Android device; package inventory only, no APK identity/source binding. No payment/POS/auth/stock/dispatch/native release acceptance. The excluded black frame is not evidence of a startup defect; user explained closing the app.",
+  "helperSHA256": "396466b4d96b23421b52b35b115a60df4e13ea33f6ba8025113aa8c70b033f26"
+}

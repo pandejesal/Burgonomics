@@ -1,0 +1,50 @@
+{
+  "scope": "non-production internal mockups",
+  "interCommit": "353b61b9f4430d5f420d56605a6e7993e0941470",
+  "assets": [
+    {
+      "file": "assets/mascot.png",
+      "bytes": 734941,
+      "sha256": "c46d756df38c5b6998ce7b59c2fef280ea0043142625d6cba216cdd37833f264",
+      "source": "burgonomics-foundation-core/public/burgonomics-logo.png",
+      "scope": "user-approved internal v0 only; not public/store approval"
+    },
+    {
+      "file": "assets/burger.jpg",
+      "bytes": 137884,
+      "sha256": "192f5ba9c2c09f75e102ee92c1a7bd944ad168d12608940281ccddecf4a8b512",
+      "source": "burgonomics-foundation-core/public/images/menu/classic-burgers/hero-burger.jpg",
+      "scope": "user-approved internal v0 only; not public/store approval"
+    },
+    {
+      "file": "assets/fries.jpg",
+      "bytes": 156487,
+      "sha256": "f047f667859bc0e15a70d2926983132c111a0cfd7d78a3363f190a1b8539c810",
+      "source": "burgonomics-foundation-core/public/images/menu/fries/salted-fries.jpg",
+      "scope": "user-approved internal v0 only; not public/store approval"
+    },
+    {
+      "file": "assets/shake.jpg",
+      "bytes": 168596,
+      "sha256": "2de54c45237a8c8e43ee80cee5296a35cadfeb88526fc18791e81bd178191acd",
+      "source": "burgonomics-foundation-core/public/images/menu/thick-shakes/oreo-shake.jpg",
+      "scope": "user-approved internal v0 only; not public/store approval"
+    },
+    {
+      "file": "assets/InterVariable.woff2",
+      "bytes": 352240,
+      "sha256": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3",
+      "source": "https://raw.githubusercontent.com/rsms/inter/353b61b9f4430d5f420d56605a6e7993e0941470/docs/font-files/InterVariable.woff2",
+      "gitBlobSha1": "5a8d3e72ad7ffb62af3b146e1b1f54ab5813a212",
+      "license": "SIL Open Font License 1.1; see Inter-OFL.txt"
+    },
+    {
+      "file": "assets/Inter-OFL.txt",
+      "bytes": 4380,
+      "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a",
+      "source": "https://raw.githubusercontent.com/rsms/inter/353b61b9f4430d5f420d56605a6e7993e0941470/LICENSE.txt",
+      "gitBlobSha1": "9b2ca37b3ffc77391d8b2ebef4a974ef32bf46ea",
+      "license": "SIL Open Font License 1.1; see Inter-OFL.txt"
+    }
+  ]
+}

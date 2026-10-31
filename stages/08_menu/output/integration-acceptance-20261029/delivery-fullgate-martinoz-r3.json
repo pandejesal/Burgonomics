@@ -1,0 +1,9 @@
+﻿{
+    "Started":  "2026-10-29T11:19:12.3265371Z",
+    "Typecheck":  0,
+    "Unit":  0,
+    "WebBuild":  0,
+    "SourceComparison":  0,
+    "UnitScope":  "All unit files, with the existing package exclusion tests/rules/**; actual rules-emulator evidence is separate",
+    "Completed":  "2026-10-29T11:30:56.4912342Z"
+}

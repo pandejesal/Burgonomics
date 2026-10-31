@@ -1,0 +1,42 @@
+[
+  {
+    "name": "razorpay-node",
+    "publisher": "Razorpay",
+    "url": "https://github.com/razorpay/razorpay-node.git",
+    "commit": "b9e8527225a7322ba2671a3bc0b848fd019d2d8c",
+    "clean": true,
+    "shallow": true,
+    "executed": false,
+    "path": "C:\\Users\\DELL\\Desktop\\Burgonomics\\developer-resources\\provider-toolkit-20261029\\repos\\razorpay-node"
+  },
+  {
+    "name": "razorpay-mcp-server",
+    "publisher": "Razorpay",
+    "url": "https://github.com/razorpay/razorpay-mcp-server.git",
+    "commit": "5b87a0f962449c2e6c35f0d7d6ce0dc4db109f9d",
+    "clean": true,
+    "shallow": true,
+    "executed": false,
+    "path": "C:\\Users\\DELL\\Desktop\\Burgonomics\\developer-resources\\provider-toolkit-20261029\\repos\\razorpay-mcp-server"
+  },
+  {
+    "name": "firebase-agent-skills",
+    "publisher": "Firebase",
+    "url": "https://github.com/firebase/agent-skills.git",
+    "commit": "629709b2d1193043d5508f6f1f3aa9993021da0f",
+    "clean": true,
+    "shallow": true,
+    "executed": false,
+    "path": "C:\\Users\\DELL\\Desktop\\Burgonomics\\developer-resources\\provider-toolkit-20261029\\repos\\firebase-agent-skills"
+  },
+  {
+    "name": "petpooja-profile",
+    "publisher": "API Evangelist (independent third-party profile of Petpooja's public API surface; NOT Petpooja)",
+    "url": "https://github.com/api-evangelist/petpooja.git",
+    "commit": "700a211dd7bdeeeebe74d2932ab0b5190df5c9eb",
+    "clean": true,
+    "shallow": true,
+    "executed": false,
+    "path": "C:\\Users\\DELL\\Desktop\\Burgonomics\\developer-resources\\provider-toolkit-20261029\\repos\\petpooja-profile"
+  }
+]

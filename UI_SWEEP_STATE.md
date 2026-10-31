@@ -262,3 +262,69 @@
 **Suite baseline moved:** 47/234 → 48/241 (B7 pushLogs +3, T5 storeDirectoryAccess +4).
 
 **Partner status: P0 5/5, P1 15/15 done. Next: P2 (findings 21-27, 7) + #28/#29/#30/#31, then core queue (P1-12/13/14 + info notes), screenshot QA, APK.**
+
+---
+
+## Iteration 18 - 2026-10-16 sweep (core P1-12/13/14 + V1-a/V1-b, partner P2-H*, round-2 honesty)
+
+Full live board: `audit-results/polish-2026-10-14/sprint-2026-10-16/SPRINT_STATUS.md`.
+
+**Core (`burgonomics-foundation-core`), commits on `ui-sweep` (scoped, no push):**
+- `0c48597` V1-a: payment-failure copy no longer promises a refund or asserts "no money charged"; both claims made conditional; tests pin the removals across all branches.
+- `1cece8e` P1-13: raw Firebase/auth/offer/support error text mapped to safe copy via `userMessages.ts` (namespaced `auth/*` table + fail-closed string recovery with an authored-copy allow-list + anchored cooldown regex); 5 route/component surfaces + a login-screen integration test pinning both the toast and the inline banner.
+- `096ad8d` P1-14: broad `*.error.message` UI surfaces mapped (curated-code allow-lists; closed 5 extra raw catch leaks) across cart / orders / profile / promo.
+- P1-12 (menu prep-time `|| 15` fabrication) + V1-b (address-form discard-confirm) are FIXED but land in files carrying the user's pre-existing Oct-wave hunks → left uncommitted by policy (see board).
+- Gates (frozen tree): tsc 0 / build 0 / vitest **640 passed | 55 skipped | 0 failed** (81 files; baseline 80/605).
+
+**Partner (`burgonomics-partner`), commits on `ui-sweep` (scoped, no push):**
+- `e6b0244` P2-C · `22fd090` P2-H3b · `9fcba59` P2-H2 · `f940cba` P2-D · `ed06c55` P2-H4 — admin shell clearance/touch targets, fabricated audit fixtures removed, honest Petpooja status/metrics/feed provenance, confirmed-snapshot rollback + gated save toasts, DEV-only simulated log stream + honest system standbys.
+- Round 2: `c971c25` severity-aware menu feedback + honest POS-sync claims; `59ddb23` await clipboard writes before reporting success; `57b9b85` branch count matches its filter + log-console a11y + truthful labels.
+- Gates: 63 files/404 → 65/419 → **66 files / 422 tests passed**; tsc 0, build 0.
+
+**SME process:** deepseek-v4.1-flash tiers were unfunded this window ("Insufficient account funds" / "Go requires a credential") → coder/reviewer lanes ran on gpt-6.1-sol; agy/Opus quota exhausted until ~20:00 local. Multiple environment restarts killed shells/subagents; all gates re-run on a frozen tree, long gates launched detached with a DONE marker.
+
+**Round-2 follow-ups (documented on the board):** core authStore structured-code preservation (Med), profile.addresses device-local honesty (Med), PaymentRepository preflight raw-text passthrough (Low), C1/C5 mixed-file per-hunk staging; info: dormant GlobalAlerts, mapProductDoc honesty test.
+
+**Owner-pending:** Petpooja credential rotation + sandbox `save_order` blocker/email (`.opencode/BLOCKED.md`), git-convention registration, `antigravity_bridge.py` CLI-arg patch.
+
+---
+
+## Iteration 19 - 2026-10-16 wave 1 (deep two-app re-audit + 5 reviewed fix commits)
+
+Full live board: `audit-results/polish-2026-10-14/sprint-2026-10-16/SPRINT_STATUS.md`.
+
+Trigger: "Use all agents to improve the codebase, review everything and use subagents, deepseek v4.1 flash free." Every lane in this wave ran on **`opencode/deepseek-v4.1-flash-free`** (the correct id; the earlier paid/gated deepseek mis-route is closed).
+
+**Audits (4 read-only lanes)**: ~8 High / ~26 Med / ~24 Low across both apps - artifacts `audit-core-routes.md`, `audit-core-features.md`, `audit-partner-admin.md`, `audit-partner-app.md`. Highest-value classes: fabricated derived data (order ETA, dietary labels, health/diagnostics, KYC/settlement, reconciliation), false success claims (4 add-to-cart toasts, unconditional kitchen-POS sentence), cross-account data leak (favorites under one global key), and one real contrast bug (FAQ `text-white` on a white surface).
+
+**Fix lanes (5 coders + 5 independent reviewers, all APPROVED)**, each with a bite-proof (same tests red against pre-fix source) and `tsc --noEmit` 0:
+- Core `b8bace7` real store ETAs retained + kitchen-POS sentence gated on actual `petpoojaStatus` + offers read failure no longer `ok([])`.
+- Core `708717b` favorites uid-scoped + cleared on auth change, honest guest copy, all four dietary surfaces branch on the real veg flag.
+- Core `9a5dfb7` readable FAQ text on tokens, honest product-page cart toast, order refresh clears its prior error.
+- Partner `9429dc8` case-insensitive cancelled/refunded revenue exclusion, real discrepancy read (unavailable, never "balanced"), canonical reconciliation roles.
+- Partner `ecaa45e` royalty badges from real linkage, role-gated honest diagnostics modal, analytics error panel with retry.
+
+**Gates (frozen tree, detached):** core tsc 0 / build 0 / vitest **88 files, 696 passed | 55 skipped | 0 failed**; partner tsc 0 / build 0 / vitest **69 files, 464 passed**.
+
+**Held back by the no-foreign-hunks rule** (fixed + gated, uncommitted, owner shares the file with in-flight Oct-wave work): core `ordersService.ts` (ETA derivation), `menu.index.tsx`, `search.tsx`, `tests/order-eta-honesty.test.ts`, `src/routes/core-routes.polish.test.tsx`; partner `AdminRefundsPage.tsx` + `tests/admin-financial-evidence.test.tsx`. Commit-integrity was checked first: every committed test resolves only to committed sources.
+
+**Wave-1 backlog (next pass):** core CR-M3 checkout stale totals + CR-M5 raw gateway text (both in MIXED files), core medium/low set (dead `SORTS`/`setSort`, unlabeled search input, colour-only tabs, 40px refresh target, undefined `neutral-850` token); partner admin mediums (`Utilities.tsx` dialog semantics, duplicate-payment classification, reconciliation page coherence), partner app mediums (heatmap fabrication, inert audio tester, hardcoded franchise capital, fail-open regional scope, KOT print claims, margin badge) and lows (`|| 7` km, `|| 'Surat Adajan'`).
+
+---
+
+## Iteration 20 - 2026-10-17 wave 2 (the remaining Medium/Low backlog, both repos)
+
+Full live board: `audit-results/polish-2026-10-14/sprint-2026-10-16/SPRINT_STATUS.md`. Every lane again on **`opencode/deepseek-v4.1-flash-free`**.
+
+**Wave 1 hold-backs resolved first (owner decision: split).** The 4 mixed files were committed as an "owner WIP" commit plus the wave-1 fix on top: core `5d7db8b` + `eb9b792` (ETA derivation, honest menu/search cart toasts, 2 held tests), partner `5bccbc5` + `7c73674` (refund failure shows the recorded gateway status, not an invented diagnosis). The split used per-hunk reverse-apply with byte-identical restore, so the gated tree was never altered.
+
+**Wave 2 (8 coder lanes + 4 reviewers + 3 fix lanes).** Core: honest support-surface load/error/retry states, dead `SORTS` removed, accessible search label + real tab state + 44px refresh target, existing hover token, legible FAQ legend/stars; checkout and payment stop paying/reading against a bill they could not compute and stop showing a fabricated `INR 0.00` (raw gateway text now mapped through the curated mapper); invoice/gST claim, payment mode, store address, address state/contact/phone and store capabilities no longer fabricated (unknown store capability = deny-by-default, per owner); modifier options/loyalty switch/carousel/tip targets/best-seller quantity made keyboard- and touch-correct. Partner: missing status is "Unknown", duplicate evidence-gated, undated orders excluded from intervals, store filters from the real directory, awaited clipboard writes, offer drafts not "Active", no claimed CRM, reconciled search/loading/empty/error, exact capture-reason mapping, awaited health refresh, `Promise.allSettled` per-store status; the shared confirmation now awaits `onConfirm` and closes only on success, tables got `aria-sort`/accessible names/page clamping; the peak-hour heatmap no longer invents a peak/SLA/staffing plan, franchise capital shows recorded bands, regional-manager scope fails closed, the margin verdict requires margin data, branch/geography values are no longer invented, the audio tester no longer claims a tone/FCM push it did not send, KOT preview no longer claims Petpooja printed, and settings/order toggles/replies surface real failures.
+
+**Gates (frozen tree, detached):** core tsc 0 / build 0 / vitest **96 files, 731 passed | 55 skipped | 0 failed**; partner tsc 0 / build 0 / vitest **78 files, 518 passed**.
+
+**Commits:** core `854371e` (owner WIP for the 3 mixed files) -> `7003231` (routes/payments) -> `06b8b60` (features/a11y); partner `42ccd07` (admin) -> `3a5438a` (app). Local `ui-sweep` only, no pushes, no foreign hunks staged.
+
+**Left open (documented, not defects we introduced):** the reviewer nits listed in `SPRINT_STATUS.md` - notably `useBranches.ts` still persists `|| 7` km / `|| 5.0` % on create, `AdminOffersPage` rows still say "Active", the M10 async-confirm contract is not repo-wide, and a few lint/contrast nits.
+
+**Owner-pending (unchanged):** Petpooja credential rotation + sandbox `save_order` (`.opencode/BLOCKED.md`), git-convention registration, `antigravity_bridge.py` CLI-arg patch, agy/Opus quota.
+

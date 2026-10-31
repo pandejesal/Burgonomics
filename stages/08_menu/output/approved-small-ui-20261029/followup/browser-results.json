@@ -1,0 +1,94 @@
+{
+  "samples": [
+    {
+      "mode": "Dine-in",
+      "width": 320,
+      "tileWidths": [
+        139,
+        139,
+        139
+      ],
+      "heroHeight": 180,
+      "firstTitle": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "wordmarkSize": 24,
+      "overflow": 0,
+      "wraps": false,
+      "lowerRowClearWhenScrolled": true
+    },
+    {
+      "mode": "Delivery",
+      "width": 320,
+      "tileWidths": [
+        139,
+        139,
+        139
+      ],
+      "heroHeight": 180,
+      "firstTitle": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "wordmarkSize": 24,
+      "overflow": 0,
+      "wraps": false,
+      "lowerRowClearWhenScrolled": true
+    },
+    {
+      "mode": "Dine-in",
+      "width": 390,
+      "tileWidths": [
+        174,
+        174,
+        174
+      ],
+      "heroHeight": 180,
+      "firstTitle": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "wordmarkSize": 24,
+      "overflow": 0,
+      "wraps": false,
+      "lowerRowClearWhenScrolled": true
+    },
+    {
+      "mode": "Delivery",
+      "width": 390,
+      "tileWidths": [
+        174,
+        174,
+        174
+      ],
+      "heroHeight": 180,
+      "firstTitle": "Big Bang Burgers",
+      "headlineLeft": 32,
+      "wordmarkSize": 24,
+      "overflow": 0,
+      "wraps": false,
+      "lowerRowClearWhenScrolled": true
+    }
+  ],
+  "failures": [],
+  "pageErrors": [],
+  "blockedWrites": [],
+  "locationFixture": "public outlet coordinates; not device GPS",
+  "providerAcceptance": false,
+  "physicalDeviceAcceptance": false,
+  "storesLoadedWithoutRetry": true,
+  "falseEmptyAtLoadedState": false,
+  "radiusVisibility": {
+    "farStoresChecked": 11,
+    "farStoresRendered": []
+  },
+  "emptyFavoritesHidden": true,
+  "populatedFavoritesVisible": true,
+  "clearedFavoritesHidden": true,
+  "awardPhotoRatio": 3.000287604256543,
+  "branchCounterAbsent": true,
+  "emptyCartHasNoInstructions": true,
+  "searchFocus": {
+    "inputOutline": "none",
+    "wrapperOutline": "solid",
+    "wrapperWidth": "2px",
+    "radius": 16,
+    "overflow": 0
+  },
+  "status": "PASS"
+}

@@ -1,0 +1,89 @@
+{
+  "status": "PASS",
+  "snapshots": [
+    {
+      "file": "home-light.html",
+      "dark": false,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    },
+    {
+      "file": "home-dark.html",
+      "dark": true,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    },
+    {
+      "file": "menu-light.html",
+      "dark": false,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    },
+    {
+      "file": "menu-dark.html",
+      "dark": true,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    },
+    {
+      "file": "cart-light.html",
+      "dark": false,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    },
+    {
+      "file": "cart-dark.html",
+      "dark": true,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    }
+  ],
+  "menuFilesCompared": 47,
+  "menuChanges": [
+    "src/features/menu/components/MenuCategorySection.compact-grid.test.tsx",
+    "src/features/menu/components/MenuCategorySection.tsx",
+    "src/features/menu/components/MenuProductCard.compact-grid.test.tsx",
+    "src/features/menu/components/MenuProductCard.test.tsx",
+    "src/features/menu/components/MenuProductCard.tsx",
+    "src/routes/menu.continuous.test.tsx",
+    "src/routes/menu.index.tsx"
+  ],
+  "explicitOwnerMenuScope": [
+    "src/routes/menu.index.tsx",
+    "src/routes/menu.continuous.test.tsx",
+    "src/features/menu/components/MenuProductCard.tsx",
+    "src/features/menu/components/MenuCategorySection.tsx",
+    "src/features/menu/components/MenuProductCard.test.tsx",
+    "src/features/menu/components/MenuProductCard.compact-grid.test.tsx",
+    "src/features/menu/components/MenuCategorySection.compact-grid.test.tsx"
+  ],
+  "unexpectedMenuChanges": [],
+  "menuBaseline": "previous bounded UI source; only explicitly allowed latest-owner compact-grid changes permitted",
+  "currentSourceManifest": "C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\delivery-source-menu-grid-r2-pre.json",
+  "physicalDeviceAcceptance": false,
+  "providerAcceptance": false
+}

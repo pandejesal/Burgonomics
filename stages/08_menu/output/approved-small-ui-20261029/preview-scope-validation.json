@@ -1,0 +1,50 @@
+{
+  "status": "PASS",
+  "snapshots": [
+    {
+      "file": "home-light.html",
+      "dark": false,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    },
+    {
+      "file": "home-dark.html",
+      "dark": true,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    },
+    {
+      "file": "cart-light.html",
+      "dark": false,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    },
+    {
+      "file": "cart-dark.html",
+      "dark": true,
+      "activeEmbedsOrScripts": 0,
+      "navigationOrFormActions": 0,
+      "localImagesPresent": true,
+      "newFontPresent": true,
+      "networkAndScriptsBlocked": true,
+      "pass": true
+    }
+  ],
+  "menuFilesCompared": 45,
+  "menuChanges": [],
+  "menuBaseline": "previous bounded UI source; no new Menu source edits",
+  "physicalDeviceAcceptance": false,
+  "providerAcceptance": false
+}

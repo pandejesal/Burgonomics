@@ -1,0 +1,244 @@
+{
+  "runLabel": "pos-final-04",
+  "mode": "final",
+  "scope": "pos",
+  "projectId": "demo-burgonomics-qa-20261028",
+  "startedAt": "2026-10-29T09:47:43.413Z",
+  "command": [
+    "C:\\Program Files\\nodejs\\node.exe",
+    "C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\run-tests.cjs",
+    "--snapshot",
+    "pos-current-01",
+    "--scope",
+    "pos",
+    "--mode",
+    "final",
+    "--expected",
+    ".\\pos-current-01.expected.json",
+    "--run",
+    "pos-final-04"
+  ],
+  "snapshotLabel": "pos-current-01",
+  "snapshotManifestSha256": "c53266063a210db578a15f289054572f61479d82fb3835bbd0f86df2a6132d69",
+  "entryHashes": [
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/petpooja/orderPush.ts",
+      "sha256": "fdcc6167a03cb36a0018950fad66a0d71e1e2f83fdb643ca7721e2bfc9fa573f",
+      "bytes": 80775,
+      "sourceMtimeMs": 1793252426399.366
+    },
+    {
+      "candidate": "pos",
+      "relativePath": "functions/src/modules/petpooja/petpooja.scheduler.ts",
+      "sha256": "07fdc211faadba1879a7366029dcd980f5bccd5ebda043e9c2f8c777d6878eac",
+      "bytes": 16512,
+      "sourceMtimeMs": 1793222327082.8733
+    }
+  ],
+  "sourceAcceptance": false,
+  "results": [
+    {
+      "name": "infrastructure/native-fetch-loopback-recorder-and-network-refusal",
+      "status": "PASS",
+      "durationMs": 407,
+      "evidence": {
+        "actualWireRequests": 1,
+        "nativeFetch": true,
+        "tlsVerification": "synthetic localhost certificate trusted by child only",
+        "externalDestinationAndShared8080": "refused before connect"
+      }
+    },
+    {
+      "name": "infrastructure/real-sdk-concurrent-transactions-and-read-before-write-control",
+      "status": "PASS",
+      "durationMs": 11007,
+      "evidence": {
+        "counterAfterConcurrentIncrements": 2,
+        "invalidReadAfterWriteRejected": true,
+        "noPartialWriteFromRejectedTransaction": true
+      }
+    },
+    {
+      "name": "infrastructure/real-grpc-commit-fault-after-durable-state-and-restore",
+      "status": "PASS",
+      "durationMs": 239,
+      "evidence": {
+        "realCommitRpcsDenied": 2,
+        "readsAvailableDuringFault": true,
+        "initialDurableStatePreserved": true,
+        "restoredWriteConfirmedByIndependentSdk": true
+      }
+    },
+    {
+      "name": "POS/direct-legacy-pending-retry-timeout-without-claim-must-not-send",
+      "status": "PASS",
+      "durationMs": 139,
+      "evidence": {
+        "outcome": {
+          "ok": true,
+          "value": false
+        },
+        "wireRequests": 0,
+        "statusAfter": "pending_retry"
+      }
+    },
+    {
+      "name": "POS/ACK-all-later-Commit-RPCs-fail-restore-plus11min-no-resend",
+      "status": "PASS",
+      "durationMs": 565,
+      "evidence": {
+        "firstOutcome": {
+          "ok": true,
+          "value": false
+        },
+        "durableIntentObservedBeforeAck": true,
+        "laterCommitRpcsDenied": 2,
+        "clockAdvancedMs": 660000,
+        "wireRequestsAcrossRestoreAndDirectRecall": 1
+      }
+    },
+    {
+      "name": "POS/documented-400-refusal-resolves-intent-without-automatic-replay",
+      "status": "PASS",
+      "durationMs": 1138,
+      "evidence": {
+        "documentedRefusal": "HTTP 400 / success:0 / SO_105",
+        "status": "failed",
+        "unresolved": false,
+        "wireRequestsIncludingScheduler": 1
+      }
+    },
+    {
+      "name": "POS/multiple-scheduler-documents-real-SDK-reads-before-writes",
+      "status": "PASS",
+      "durationMs": 604,
+      "evidence": {
+        "schedulerResult": {
+          "retriedCount": 2,
+          "failedCount": 0
+        },
+        "wireOrderIds": [
+          "qa-pos-retry-a",
+          "qa-pos-retry-b"
+        ],
+        "actualSdkReadAfterWriteNegativeControlRanEarlier": true
+      }
+    },
+    {
+      "name": "POS/429-no-resend-no-redirect-follow",
+      "status": "PASS",
+      "durationMs": 376,
+      "evidence": {
+        "status": "reconciliation_required",
+        "wireRequestsIncludingRecallAndScheduler": 1,
+        "redirectedRequests": 0,
+        "fabricatedPrinterProof": false,
+        "manualEntryFcm": 0
+      }
+    },
+    {
+      "name": "POS/malformed-200-no-resend-no-redirect-follow",
+      "status": "PASS",
+      "durationMs": 328,
+      "evidence": {
+        "status": "reconciliation_required",
+        "wireRequestsIncludingRecallAndScheduler": 1,
+        "redirectedRequests": 0,
+        "fabricatedPrinterProof": false,
+        "manualEntryFcm": 0
+      }
+    },
+    {
+      "name": "POS/307-no-resend-no-redirect-follow",
+      "status": "PASS",
+      "durationMs": 313,
+      "evidence": {
+        "status": "reconciliation_required",
+        "wireRequestsIncludingRecallAndScheduler": 1,
+        "redirectedRequests": 0,
+        "fabricatedPrinterProof": false,
+        "manualEntryFcm": 0
+      }
+    },
+    {
+      "name": "POS/wire-payload-strict-money-contract",
+      "status": "PASS",
+      "durationMs": 220,
+      "evidence": {
+        "total": "105.00",
+        "taxTotal": "5.00",
+        "paymentType": "ONLINE",
+        "unitPrice": "100.00",
+        "finalPrice": "100.00",
+        "quantity": "1",
+        "taxInclusive": false,
+        "itemTaxIds": [
+          "QA-CGST",
+          "QA-SGST"
+        ],
+        "taxRowIds": [
+          "QA-CGST",
+          "QA-SGST"
+        ],
+        "restID": "QA-NOT-A-MERCHANT",
+        "wireRequests": 1
+      }
+    },
+    {
+      "name": "POS/concurrent-direct-pushes-one-wire-and-no-resent-kot",
+      "status": "PASS",
+      "durationMs": 3039,
+      "evidence": {
+        "outcomes": [
+          {
+            "ok": true,
+            "value": true
+          },
+          {
+            "ok": true,
+            "value": true
+          }
+        ],
+        "wireRequests": 1,
+        "acceptedPushes": 2,
+        "statusAfter": "synced",
+        "postAckRetryResult": true,
+        "postAckRetryWireRequests": 1
+      }
+    },
+    {
+      "name": "POS/branch-tax-provenance-mismatch-refused-pre-wire",
+      "status": "PASS",
+      "durationMs": 383,
+      "evidence": {
+        "outcome": {
+          "ok": true,
+          "value": false
+        },
+        "wireRequests": 0,
+        "statusAfter": "failed",
+        "error": "Petpooja payload cannot be represented: branch.petpoojaTaxes was captured for outlet OTHER-OUTLET, not QA-NOT-A-MERCHANT — refusing to apply another outlet's tax rows"
+      }
+    }
+  ],
+  "limitations": [
+    "Local real SDK/emulator and native TLS fetch only; never provider, deployment or production evidence.",
+    "No application files changed. Copied TypeScript executes via transpileModule; this is not a full package typecheck/build or Functions HTTP routing test.",
+    "Core Firebase initialization is replaced with the actual isolated Firestore SDK. Auth token verification, FCM, developer alerts are inert explicit boundaries; no payment module executes.",
+    "Commit-fault proxy produces non-retryable gRPC code 7 after the durable claim, not a packet-loss/timing or emulator restart/crash test.",
+    "Admin SDK bypasses Firestore Security Rules; authorization/rules coverage is not claimed.",
+    "Single-process concurrency crosses real SDK transaction RPCs; not multi-Functions-host latency/load testing.",
+    "Local emulator does not enforce production composite-index requirements.",
+    "Observed runtime is Node 24.18.0; package declares Node 22. No installed Node 22 runtime was selected."
+  ],
+  "harnessHashes": {
+    "snapshot.cjs": "b2b2d7fc1b7c6f58068ab48525cc88f3ce008ae399500222c695c6ebbbf2a599",
+    "infrastructure.cjs": "78286d41f623320477ed940ede6a2082b820fb9fcc29ef1e239a653fbb8aa723",
+    "run-tests.cjs": "19e3c52c35f707b6f4eccef8cc1803758ad517e22ff23431f780b9941539d19a"
+  },
+  "cleanupComplete": true,
+  "finishedAt": "2026-10-29T09:48:18.852Z",
+  "exitCode": 0,
+  "scopedChecksPassed": true
+}

@@ -1,0 +1,74 @@
+{
+  "task": "dispatch-teardown-binding",
+  "lane": "lane04",
+  "run": "20261023-free",
+  "revision": "v2 (v1 reviewed by GLM ses_e9959e39bffe, 31/31 actual glm; MED-1 manual-lane teardown + LOW-4 dedupe + LOW-5 released label + LOW-3 loud log applied; MED-2 Porter lane is out of packet scope and disclosed as residual)",
+  "baseHead": "636b90d79f3f653690abee21e0ad4ab268969b1a",
+  "frozenAt": "2026-10-23T02:59:16Z",
+  "authorModel": "opencode/deepseek-v4.1-flash-free",
+  "paths": [
+    {
+      "path": "functions/src/modules/dispatch/dispatch.router.ts",
+      "blob": "5e0d576a0c6fa24a551b9a48c6351dde0a8ca5ee",
+      "sha256": "743CEC8759C6D359FA9B491265F93B5F73DC5DC038C9D579623F515FA04B2CD3",
+      "bytes": 56123,
+      "frozenCopy": "dispatch.router.ts.frozen",
+      "status": "modified"
+    },
+    {
+      "path": "functions/src/modules/dispatch/dispatch.webhooks.ts",
+      "blob": "8137c2149e4641356353abf243e9230470183be3",
+      "sha256": "2B49DC01411F7850843CA0B0C0F33C4A63E2EA7510F4CA409836FF4B82841A3C",
+      "bytes": 58397,
+      "frozenCopy": "dispatch.webhooks.ts.frozen",
+      "status": "modified"
+    },
+    {
+      "path": "functions/tests/dispatch.teardown-binding.test.ts",
+      "blob": "4931e49101d30aa6e53da3a4f19e790624bc8115",
+      "sha256": "3CA29ACBE63FC2EEFB16DBC7610514E79C5DD5860B7EFD8ED4A876C699FC7F67",
+      "bytes": 19026,
+      "frozenCopy": "dispatch.teardown-binding.test.ts.frozen",
+      "status": "new"
+    }
+  ],
+  "notChanged": [
+    "references/delivery_routing.md (no documented invariant text changed; the packet adds an operational mechanism, existing invariants stay word-for-word)"
+  ],
+  "red": {
+    "base": "636b90d",
+    "suite": "functions/tests/dispatch.teardown-binding.test.ts (final v2 bytes)",
+    "result": "6 failed / 1 passed (7), exit 1",
+    "evidence": "../evidence/lane-04-teardown-red-final.txt"
+  },
+  "green": {
+    "focused": "7/7 new + 105/105 seven dispatch neighbour files, tsc --noEmit exit 0 (dirty main tree)",
+    "result": "vitest 7 passed; 105 passed"
+  },
+  "reviews": [
+    {
+      "leg": 1,
+      "session": "ses_e9959e39bffe1GFuEe0kZ13EoK",
+      "model": "opencode/glm-5.3-flash-free",
+      "servingProof": "31/31 assistant rows actual glm-5.3-flash-free",
+      "verdict": "APPROVE_WITH_CHANGES",
+      "on": "v1 blobs fd3d14e8 / d160159a / 8891651f",
+      "applied": ["MED-1 manual_pending lane teardown", "LOW-3 loud log on release-write failure", "LOW-4 same-binding dedupe before the 5-slot bound", "LOW-5 released reason at the mismatch park sites"],
+      "disclosedNotFixed": ["MED-2 porter.service.ts cancelPorterBooking + porter webhook fence (outside packet paths, Porter retired/opt-in)"],
+      "notFixed": ["LOW-3 lost-update race between concurrent teardowns (documented; field nulling is the actual fence)"]
+    },
+    {
+      "leg": 2,
+      "session": "ses_e994ca103ffeL4bks1xhFqXEFJ",
+      "model": "opencode/glm-5.3-flash-free",
+      "servingProof": "20/20 assistant rows actual glm-5.3-flash-free",
+      "verdict": "APPROVE",
+      "on": "v2 blobs 5e0d576a / 8137c214 / 4931e491",
+      "closed": ["MED-1", "LOW-3", "LOW-4", "LOW-5"],
+      "newDisclosedNotFixed": [
+        "LOW: a successful fresh book overwrites a legacy superseded binding without appending it to released history (base-636b90d semantics; park label degrades to order_id_conflict, still fail-closed)",
+        "INFO: no dedicated test pins the same-binding dedupe / 5-slot bound (code-verified only)"
+      ]
+    }
+  ]
+}

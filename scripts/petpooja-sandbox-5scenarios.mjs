@@ -283,8 +283,8 @@ async function main() {
       scenarioId: scenario.id,
       title: scenario.title,
       orderID,
-      total: payload.orderinfo?.Order?.total,
-      tax_total: payload.orderinfo?.Order?.tax_total,
+      total: payload.orderinfo?.OrderInfo?.Order?.details?.total,
+      tax_total: payload.orderinfo?.OrderInfo?.Order?.details?.tax_total,
       httpStatus: null,
       response: null,
       petpoojaOrderId: null,
@@ -345,7 +345,7 @@ async function main() {
       console.log(
         `--- ${scenario.id} (${scenario.title}) ---\n` +
           `  orderID : ${orderID}\n` +
-          `  total   : ${payload.orderinfo?.Order?.total}  tax_total: ${payload.orderinfo?.Order?.tax_total}\n` +
+          `  total   : ${payload.orderinfo?.OrderInfo?.Order?.details?.total}  tax_total: ${payload.orderinfo?.OrderInfo?.Order?.details?.tax_total}\n` +
           `  HTTP    : ${res.status}\n` +
           `  body    : ${typeof row.response === "string" ? row.response : JSON.stringify(row.response)}\n` +
           `  verdict : ${

@@ -44,3 +44,27 @@ scripts/petpooja-sandbox-evidence.json
 
 # Autonomous audit artifacts (local evidence: ledger, bug register, logs, screenshots)
 audit-results/
+
+# Nested third-party checkouts (own git history; manifests stay tracked)
+rea/
+developer-resources/**/repos/
+
+# Release binaries and generated bundles (built locally, not source)
+*.apk
+*.aab
+*.ipa
+stages/08_menu/output/**/*.map
+stages/08_menu/output/**/*.zip
+client-handover/release-builds/*.apk
+client-handover/release-builds/*.aab
+
+# Screenshot evidence stays local; the markdown reports cite it
+stages/08_menu/output/**/*.png
+stages/08_menu/output/**/*.jpg
+
+# Generated browser/preview caches
+stages/08_menu/output/**/.vite-cache-*/
+
+# Merge leftovers and editor backups
+.merge_file_*
+*.bak-*

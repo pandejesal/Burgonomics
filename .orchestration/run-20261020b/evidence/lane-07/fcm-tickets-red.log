@@ -1,0 +1,89 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/AppData/Local/Temp/opencode/lane07-fcm-red/functions
+
+ Γ£ô tests/tickets.notify.test.ts > PII-free push contract (H17) > truncatePushText caps bodies at ~120 chars 7ms
+ Γ£ô tests/tickets.notify.test.ts > PII-free push contract (H17) > buildTicketAlertMessage never renders the subject 2ms
+ Γ£ô tests/tickets.notify.test.ts > PII-free push contract (H17) > escalation dispatcher keeps subject out of all tiers + reminder 4ms
+ Γ£ô tests/tickets.notify.test.ts > PII-free push contract (H17) > parity helper omits badge when uncounted, sets it when counted 1ms
+ Γ£ô tests/tickets.notify.test.ts > ticket create -> escalate -> push flow (honest + PII-free) > honors explicit urgent priority (never downgrades) 5ms
+ Γ£ô tests/tickets.notify.test.ts > ticket create -> escalate -> push flow (honest + PII-free) > derives high priority for payment issues only when unspecified 1ms
+ Γ£ô tests/tickets.notify.test.ts > ticket create -> escalate -> push flow (honest + PII-free) > creates, escalates, resolves with a PII-free customer push 7ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > denies escalate/resolve for non-staff callers even when routed 5ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > derives reply identity from the verified caller, not the body 2ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > rejects empty reply text 1ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > binds create identity to the verified caller, ignoring body customerId 1ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > binds resolve/escalate actor to the verified caller, ignoring body ids 2ms
+ Γ£ô tests/tickets.notify.test.ts > markRead route intake (MOP-S1) > accepts empty body (whole-inbox mark) and a bounded id list 6ms
+ Γ£ô tests/tickets.notify.test.ts > markRead route intake (MOP-S1) > rejects non-array ids and lists over 200 3ms
+ Γ£ô tests/tickets.notify.test.ts > ticket spam guards (M14 follow-up) > rate-limits burst creation per customer with a user-safe copy 2ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > getUnreadCount counts unread inbox docs, capped at 99 3ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > dispatchFCM sets badge = unread count + 1 for the incoming doc 2ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > markNotificationsRead with explicit ids marks only those (route ids? path) 2ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > markNotificationsRead returns 0 when nothing is unread 1ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > markNotificationsRead flips inbox + pushes silent badge-0 4ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > pushToCustomer truncates long bodies and carries parity payloads 1ms
+ Γ£ô tests/tickets.notify.test.ts > user-safe error copy (H36) > never leaks technical detail to clients 1ms
+ ├ù tests/tickets.notify.test.ts > recipient ownership at send time (device_tokens ledger) > withholds a profile token with no ledger entry and keeps the message in the owner's inbox 37ms
+   ΓåÆ expected [ { notification: { ΓÇª(2) }, ΓÇª(5) } ] to have a length of +0 but got 1
+ ├ù tests/tickets.notify.test.ts > recipient ownership at send time (device_tokens ledger) > withholds a token whose ledger owner is another account without mutating either profile 4ms
+   ΓåÆ expected [ { notification: { ΓÇª(2) }, ΓÇª(5) } ] to have a length of +0 but got 1
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 2 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/tickets.notify.test.ts > recipient ownership at send time (device_tokens ledger) > withholds a profile 
+token with no ledger entry and keeps the message in the owner's inbox
+AssertionError: expected [ { notification: { ΓÇª(2) }, ΓÇª(5) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ Γ¥» tests/tickets.notify.test.ts:514:28
+    512|
+    513|     // Unverifiable destination: never handed to the transport, never ΓÇª
+    514|     expect(multicastCalls).toHaveLength(0);
+       |                            ^
+    515|     expect(store["users/u_unledgered"].fcmTokens).toEqual(["tok_unledgΓÇª
+    516|     const inbox = Object.keys(store).filter((k) => k.startsWith("usersΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/2]ΓÄ»
+
+ FAIL  tests/tickets.notify.test.ts > recipient ownership at send time (device_tokens ledger) > withholds a token 
+whose ledger owner is another account without mutating either profile
+AssertionError: expected [ { notification: { ΓÇª(2) }, ΓÇª(5) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ Γ¥» tests/tickets.notify.test.ts:527:28
+    525|     await pushToCustomer("u_victim", "T", "Body", { type: "t" });
+    526|
+    527|     expect(multicastCalls).toHaveLength(0);
+       |                            ^
+    528|     expect(store["users/u_victim"].fcmTokens).toEqual(["tok_rebound"]);
+    529|     expect(store["users/u_new_owner"].fcmTokens).toEqual(["tok_reboundΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/2]ΓÄ»
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 22 passed (24)
+   Start at  05:50:30
+   Duration  1.87s (transform 56%, import 35%, tests 8%, worker 1%)
+

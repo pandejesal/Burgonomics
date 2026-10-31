@@ -1,0 +1,20 @@
+﻿{
+    "target":  "RZCX51TXRKB",
+    "package":  "com.burgonomics",
+    "installedSha256":  "035f65964391ac73f8ab84a5b8daf5a35dcb7f3147422a937f32a61dbb098f1a",
+    "previousSha256":  "d61afb91dff7483c3307ce67306eb9f29e9ca5c60df1a8e07cdc24fc3fc8cd12",
+    "packageVerified":  true,
+    "signerVerified":  true,
+    "versionCode":  1,
+    "installationPerformed":  true,
+    "installFlags":  "-r only",
+    "uninstallPerformed":  false,
+    "dataClearPerformed":  false,
+    "metadata":  [
+                     "versionCode=1 minSdk=24 targetSdk=36",
+                     "versionName=1.0.0",
+                     "lastUpdateTime=2026-10-30 00:17:55",
+                     "firstInstallTime=2026-10-27 11:32:45"
+                 ],
+    "installedAt":  "2026-10-29T18:47:55.7040053Z"
+}

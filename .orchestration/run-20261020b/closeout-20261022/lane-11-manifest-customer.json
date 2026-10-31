@@ -1,0 +1,63 @@
+{
+  "repo": "customer",
+  "head": "ea1bc3f14990f2a484c0480043d786f3e632c4c7",
+  "frozenAt": "2026-10-23T04:09:41.460Z",
+  "entries": [
+    {
+      "path": ".github/workflows/android-build.yml",
+      "sha256": "2057f847849dd59b99f7be61e4ba523726e67a76ff8e292b6a0026c569151164",
+      "bytes": 3636,
+      "trackedAtHead": true,
+      "headBlob": "6ed4145575008324902e9a6119502df34dd9be16"
+    },
+    {
+      "path": ".github/workflows/ios-build.yml",
+      "sha256": "34954f83ece13e0fd1e628402d0c8767dd817af09d6041be0a808e55de3a032b",
+      "bytes": 7614,
+      "trackedAtHead": true,
+      "headBlob": "22f92b64aece1885f455c6718440fe86eca4786b"
+    },
+    {
+      "path": "MAC_INSTRUCTIONS.txt",
+      "sha256": "a6edaddecabeeb14587bb03e4d7b3ba2e4bf76053269585975e5b526c0ae993d",
+      "bytes": 4859,
+      "trackedAtHead": true,
+      "headBlob": "3a6501b5198c951ecd1ed9a1cc6b5d10a1cade10"
+    },
+    {
+      "path": "mac-build.sh",
+      "sha256": "3f2623d333e72fa379ae7fc940b2b0d468c9bfede89e21d7652c164b120890d1",
+      "bytes": 3469,
+      "trackedAtHead": true,
+      "headBlob": "10aea673f1abaa4787286933cc61ebb485f52f02"
+    },
+    {
+      "path": "scripts/patch-ios-spm.js",
+      "sha256": "69629763ee5c88d0c0252093b8f54f237e62c96f2f41a42f5ec5a688b5b3e835",
+      "bytes": 58116,
+      "trackedAtHead": true,
+      "headBlob": "1165c693dcf36fde9ce16eb412e610601505ba34"
+    },
+    {
+      "path": "scripts/select-xcode-toolchain.sh",
+      "sha256": "7917d3a3605a1252075099af119090b197cacfb87b6e49f9d897e333cc57baac",
+      "bytes": 9063,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": "scripts/validate-ios-workflow.test.cjs",
+      "sha256": "68280396365f4b22dfe4502937ffbbd94346e88b32cc00774cfeed0101b9eb24",
+      "bytes": 13492,
+      "trackedAtHead": false,
+      "headBlob": null
+    },
+    {
+      "path": "public/.well-known/assetlinks.json",
+      "sha256": "fa8f20e29b51b250f876ac15560374dd69db4d6fb67d52fb813d99f06b40204b",
+      "bytes": 323,
+      "trackedAtHead": true,
+      "headBlob": "b9bdc364953068ead240552a71c5f09ebbd208cd"
+    }
+  ]
+}

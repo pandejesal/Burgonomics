@@ -1,0 +1,146 @@
+{
+  "runId": "run-20261023-free",
+  "startedAt": "2026-10-23T00:15:00Z",
+  "deadline": "2026-10-23T12:15:00Z",
+  "primary": { "providerID": "opencode", "id": "deepseek-v4.1-flash-free", "variant": "default" },
+  "fallback": { "providerID": "opencode", "id": "glm-5.3-flash-free", "variant": "default" },
+  "freePool": [
+    { "providerID": "google", "id": "antigravity-gemini-3.8-flash-high", "variant": "default" },
+    { "providerID": "google", "id": "antigravity-gemini-3.8-flash-low", "variant": "default" },
+    { "providerID": "opencode", "id": "big-pickle", "variant": "default" },
+    { "providerID": "opencode", "id": "mimo-v2.6-flash-free", "variant": "default" }
+  ],
+  "maxAdmissions": 60,
+  "serialOrder": [
+    "dispatch-teardown-binding",
+    "customer-address-server-truth",
+    "restaurant-dispatch-choice",
+    "release-infra-closeout",
+    "customer-menu-a11y-closeout",
+    "references-porter-drift",
+    "shadowfax-fail-closed-verification",
+    "petpooja-zero-fabrication",
+    "qa-reconciled-commits",
+    "qa-release-readiness"
+  ],
+  "queues": {
+    "root": [
+      "fcm-recipient-ownership",
+      "dispatch-teardown-binding",
+      "release-infra-closeout",
+      "references-porter-drift",
+      "shadowfax-fail-closed-verification",
+      "petpooja-zero-fabrication"
+    ],
+    "customer": [
+      "customer-payment-truth",
+      "customer-address-server-truth",
+      "customer-menu-a11y-closeout"
+    ],
+    "partner": [
+      "restaurant-dispatch-choice"
+    ],
+    "qa": [
+      "qa-reconciled-commits",
+      "qa-release-readiness"
+    ]
+  },
+  "tasks": {
+    "fcm-recipient-ownership": {
+      "lane": 7,
+      "sessionID": "ses_ea5c88140ffeqstoAT9sWrRWFE",
+      "brief": "lane-07-fcm-send-task.md",
+      "repos": ["root"],
+      "review": "two",
+      "note": "Resume the existing FCM recipient-ownership packet. Final scope is four reviewed paths: functions/src/modules/notifications/fcmClient.ts and functions/tests/tickets.notify.test.ts as the explicit test extension, plus any two already-frozen FCM source/test paths from your snapshot. The test change may only seed the real device_tokens owner ledger in positive push fixtures and add missing-owner and foreign-owner negatives. Never weaken recipient ownership, never treat a simulated send or HTTP 200 as delivery, and do not edit rules, auth, or registerToken. The committed full gate previously failed three notification fixtures; fix the fixtures to model the production contract, not the assertion. Run the isolated exact-bundle Functions gate. Commit locally only after independent review on frozen blobs."
+    },
+    "dispatch-teardown-binding": {
+      "lane": 4,
+      "sessionID": "ses_ea5c89e34ffeE5jJ0PRSjVSH2k",
+      "brief": "lane-04-teardown-task.md",
+      "repos": ["root"],
+      "review": "two",
+      "note": "Reproduce the late-webhook binding defect before changing anything. Staff cancel currently means local/manual-required provider cancellation, not proved remote cancellation, so do not assume every retained binding is invalid. Preserve audit and reconciliation history and any legitimately fulfilled booking. Choose narrow explicit lifecycle/fence semantics and add positive and negative tests for late events after cancel or failure. Scope is the dispatch router/webhooks plus only the named existing dispatch tests and at most one new regression test. Do not adopt broad functions/tests/dispatch.* files. Run the isolated Functions gate and commit locally after independent review."
+    },
+    "release-infra-closeout": {
+      "lane": 11,
+      "sessionID": "ses_ea5c87669ffeLD1vE6kugwmFVm",
+      "brief": "lane-11-release-task.md",
+      "repos": ["root"],
+      "review": "one",
+      "note": "Finish the existing static release-readiness snapshot. Do not commit an AAB without verified provenance. Root firebase.json is permitted only for the existing validate-mobile-hosting structural fixes; report the exact hunk. No force worktree deletion, key copying, or generated key commits. Local node suites prove static properties only, not GitHub Actions, Xcode, signing, device, or store success. Run the isolated root gate and commit only reviewed files."
+    },
+    "references-porter-drift": {
+      "lane": 5,
+      "sessionID": "ses_ea5c88b2fffeMMzjFL6tYZzs5W",
+      "brief": "lane-05-references-task.md",
+      "repos": ["root"],
+      "review": "one",
+      "note": "Finish the paused reference/docs packet, not a fresh integration research audit. Preserve historical reports and dates. Verify claims against committed source, not foreign dirty patches. Exclude delivery_routing, push_notifications, and petpooja references. Do not invent vendor promises or configuration success. Root docs only; no unrelated global files. Commit locally after independent review."
+    },
+    "shadowfax-fail-closed-verification": {
+      "lane": 10,
+      "sessionID": "ses_ea5c878abffemS4Xy9icDiSjo8",
+      "brief": "lane-10-shadowfax-task.md",
+      "repos": ["root"],
+      "review": "none",
+      "note": "Read-only evidence packet. Finish the drafted Shadowfax fail-closed verification report. Do not edit source or tests and make no provider or network calls. At most two concise independent free-model reviews if genuinely pending; otherwise report the remaining verdict gap honestly. Static or local test results are not a live rider booking proof. Write only the named report/evidence files; no product commits."
+    },
+    "petpooja-zero-fabrication": {
+      "lane": 6,
+      "sessionID": "ses_ea5c885c0ffeujhkJzdpAtUFJb",
+      "brief": "lane-06-petpooja-task.md",
+      "repos": ["root", "partner"],
+      "review": "two",
+      "note": "Adopt the existing four-path Petpooja packet. The production behavior must refuse demo catalog writes; no live vendor calls and no invented S3 root cause. Partner and root gates run serially at their current HEADs, with separate exact local commits per repository. Partner is idle when you start, but confirm no active Partner session before writing. If the Partner tree still has foreign dirty changes, isolate your exact paths and do not stage them. Run both gates and record the exact blocking evidence if the dirty test remains."
+    },
+    "customer-payment-truth": {
+      "lane": 8,
+      "sessionID": "ses_ea5c87df5ffe7Vjpzr9yv5VLpA",
+      "brief": "lane-08-payments-task.md",
+      "repos": ["customer"],
+      "review": "two",
+      "note": "Finish the existing customer payment recovery snapshot before any new audit. Verify the actual review verdicts on the final blobs. Current customer HEAD includes accepted commit 6e25a0c, not stale 2f47cef. Missing finalization is not a payment failure and does not grant recharge permission. For root Phase B, run only the two existing money-safety test pins as a separate commit and gate. No live payment, refund, or client-paid claim. Run the isolated Customer gate and commit locally after independent review."
+    },
+    "customer-address-server-truth": {
+      "lane": 1,
+      "sessionID": "ses_ea5c8a548ffex6hMqeB90XmuF0",
+      "brief": "lane-01-address-debt-task.md",
+      "repos": ["customer"],
+      "review": "one",
+      "note": "Do not redo accepted commit 6e25a0c. Close only proven server-readback and default-promotion gaps in the exact address scope. Slow hydration must not overwrite newer mutations or account B state. Treat the existing /addresses/create handling as verification, not an invented defect. AddressFormModal.a11y.test.tsx is exclusively yours for this admission; lane 03 must not touch it. Run the isolated Customer gate at current HEAD and commit locally after independent review."
+    },
+    "customer-menu-a11y-closeout": {
+      "lane": 3,
+      "sessionID": "ses_ea5c8a0adffeoN03VVsv7saRMK",
+      "brief": "lane-03-menu-a11y-task.md",
+      "repos": ["customer"],
+      "review": "one",
+      "note": "Adopt the existing customer menu/gesture/search packet; no redesign and no duplicate audit. Exclude AddressFormModal.a11y.test.tsx because lane 01 owns it. Do not edit address production files, payment files, or Partner files. Inspect probe-import.test.ts before deciding anything; do not delete or include user scratch blindly. Use current Customer HEAD. If time or scope is tight, deliver a coherent reviewed subset and record the remaining paths precisely. Run the isolated Customer gate and commit locally after independent review."
+    },
+    "restaurant-dispatch-choice": {
+      "lane": 2,
+      "sessionID": "ses_ea5c8a2daffekU3r3U5bPrJspn",
+      "brief": "lane-02-delivery-task.md",
+      "repos": ["partner"],
+      "review": "one",
+      "note": "Resume at the missing independent verification step. Transfer an existing DeepSeek review only if the final blobs match exactly. Scope is the six owned Partner delivery paths only; no parked cycle-4 menu/KDS changes. Isolate at current Partner HEAD, not the foreign broken petpoojaSync.test.ts. Assignment is not pickup proof, and a failed assignment must retain the modal input. Run the isolated Partner gate and commit locally after independent free-model review."
+    },
+    "qa-reconciled-commits": {
+      "lane": 9,
+      "sessionID": "ses_ea5c87a64ffecPa7h3J8Zxpw6h",
+      "brief": null,
+      "repos": ["root"],
+      "review": "none",
+      "note": "Your prior customer QA and Borzo work are complete. New bounded read-only task: reconcile the local commits reported by this free-model run using .orchestration/run-20261023-free/status.json, git scope and blob identity, actual reviewer models, and gate logs. Write only .orchestration/run-20261023-free/qa-reconciled-commits.md. Flag every mismatch; do not accept an owner's COMPLETE claim automatically. No product source or test writes and no broad gate rerun unless a named evidence gap requires it. Twelve assistant turns maximum."
+    },
+    "qa-release-readiness": {
+      "lane": 12,
+      "sessionID": "ses_ea5c87413ffeBOyHpHeVPuHIoW",
+      "brief": "lane-12-qa-porter-task.md",
+      "repos": ["root"],
+      "review": "none",
+      "note": "Finish the Porter QA report where evidence exists, then produce the final committed-versus-dirty release matrix from this run plus lane 09 findings. Do not duplicate a complete audit or broad gates. Write only the existing qa-porter-retirement.md and .orchestration/run-20261023-free/RELEASE_HANDOFF.md. Include exact SHAs, local debt, and external blockers. No deployed, provider, device, or live-readiness claim. No source writes and no review-of-review children. Main accepts, not QA. Sixteen assistant turns maximum."
+    }
+  }
+}

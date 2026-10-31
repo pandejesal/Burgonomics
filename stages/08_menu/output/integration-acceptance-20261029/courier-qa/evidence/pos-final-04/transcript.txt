@@ -1,0 +1,42 @@
+RUN infrastructure/native-fetch-loopback-recorder-and-network-refusal
+PASS infrastructure/native-fetch-loopback-recorder-and-network-refusal {"actualWireRequests":1,"nativeFetch":true,"tlsVerification":"synthetic localhost certificate trusted by child only","externalDestinationAndShared8080":"refused before connect"}
+RUN infrastructure/real-sdk-concurrent-transactions-and-read-before-write-control
+PASS infrastructure/real-sdk-concurrent-transactions-and-read-before-write-control {"counterAfterConcurrentIncrements":2,"invalidReadAfterWriteRejected":true,"noPartialWriteFromRejectedTransaction":true}
+RUN infrastructure/real-grpc-commit-fault-after-durable-state-and-restore
+PASS infrastructure/real-grpc-commit-fault-after-durable-state-and-restore {"realCommitRpcsDenied":2,"readsAvailableDuringFault":true,"initialDurableStatePreserved":true,"restoredWriteConfirmedByIndependentSdk":true}
+RUN POS/direct-legacy-pending-retry-timeout-without-claim-must-not-send
+[Petpooja KOT Push] Order qa-pos-direct-legacy-timeout is pending_retry WITHOUT positive pre-send evidence (legacy outcome unknown) — refusing direct POST; reconcile with Petpooja
+PASS POS/direct-legacy-pending-retry-timeout-without-claim-must-not-send {"outcome":{"ok":true,"value":false},"wireRequests":0,"statusAfter":"pending_retry"}
+RUN POS/ACK-all-later-Commit-RPCs-fail-restore-plus11min-no-resend
+[Petpooja KOT Push Error] Order qa-pos-ack-outage [possibly_sent] attempt 49b1f2d7-df4b-43ec-ba92-7866f5fa72c4: POS accepted the KOT (HTTP 200, id QA-POS-qa-pos-ack-outage) but persisting the acceptance failed: 7 PERMISSION_DENIED: QA all Commit RPCs denied after durable claim; synthetic local fault — the order may already be at the POS
+[Petpooja KOT Push] guarded failure write failed for order qa-pos-ack-outage: 7 PERMISSION_DENIED: QA all Commit RPCs denied after durable claim; synthetic local fault
+[Petpooja KOT Push] Order qa-pos-ack-outage outcome write failed — leaving durable send intent unresolved; manual reconciliation required
+[Petpooja KOT Push] Order qa-pos-ack-outage has an UNRESOLVED/UNKNOWN POS outcome (reconciliation_required) — refusing to POST again; reconcile with Petpooja by hand
+PASS POS/ACK-all-later-Commit-RPCs-fail-restore-plus11min-no-resend {"firstOutcome":{"ok":true,"value":false},"durableIntentObservedBeforeAck":true,"laterCommitRpcsDenied":2,"clockAdvancedMs":660000,"wireRequestsAcrossRestoreAndDirectRecall":1}
+RUN POS/documented-400-refusal-resolves-intent-without-automatic-replay
+[Petpooja KOT Push Error] Order qa-pos-documented-400 [rejected] attempt 14b26a5e-f2e9-435f-a936-00cd1ce4a1cf: There were some error in order details.
+PASS POS/documented-400-refusal-resolves-intent-without-automatic-replay {"documentedRefusal":"HTTP 400 / success:0 / SO_105","status":"failed","unresolved":false,"wireRequestsIncludingScheduler":1}
+RUN POS/multiple-scheduler-documents-real-SDK-reads-before-writes
+PASS POS/multiple-scheduler-documents-real-SDK-reads-before-writes {"schedulerResult":{"retriedCount":2,"failedCount":0},"wireOrderIds":["qa-pos-retry-a","qa-pos-retry-b"],"actualSdkReadAfterWriteNegativeControlRanEarlier":true}
+RUN POS/429-no-resend-no-redirect-follow
+[Petpooja KOT Push Error] Order qa-pos-429 [possibly_sent] attempt e82ad9dc-da0d-46c6-b7f8-468df5f26ab8: Petpooja KOT push HTTP 429 Too Many Requests — outcome unknown, the request may have reached the POS
+[Petpooja KOT Push] Order qa-pos-429 has an UNRESOLVED/UNKNOWN POS outcome (reconciliation_required) — refusing to POST again; reconcile with Petpooja by hand
+PASS POS/429-no-resend-no-redirect-follow {"status":"reconciliation_required","wireRequestsIncludingRecallAndScheduler":1,"redirectedRequests":0,"fabricatedPrinterProof":false,"manualEntryFcm":0}
+RUN POS/malformed-200-no-resend-no-redirect-follow
+[Petpooja KOT Push Error] Order qa-pos-malformed-200 [possibly_sent] attempt aa38f62c-8e3b-44c7-bb65-a4e8d7431d35: Petpooja KOT push returned HTTP 200 but the acknowledgement could not be read (Unexpected token '<', "<html>Synt"... is not valid JSON) — the order may already be registered
+[Petpooja KOT Push] Order qa-pos-malformed-200 has an UNRESOLVED/UNKNOWN POS outcome (reconciliation_required) — refusing to POST again; reconcile with Petpooja by hand
+PASS POS/malformed-200-no-resend-no-redirect-follow {"status":"reconciliation_required","wireRequestsIncludingRecallAndScheduler":1,"redirectedRequests":0,"fabricatedPrinterProof":false,"manualEntryFcm":0}
+RUN POS/307-no-resend-no-redirect-follow
+[Petpooja KOT Push Error] Order qa-pos-307 [possibly_sent] attempt 43d2bc8f-3d61-4913-85e0-25e3bfd356d2: Petpooja KOT push transport error (outcome unknown): fetch failed
+[Petpooja KOT Push] Order qa-pos-307 has an UNRESOLVED/UNKNOWN POS outcome (reconciliation_required) — refusing to POST again; reconcile with Petpooja by hand
+PASS POS/307-no-resend-no-redirect-follow {"status":"reconciliation_required","wireRequestsIncludingRecallAndScheduler":1,"redirectedRequests":0,"fabricatedPrinterProof":false,"manualEntryFcm":0}
+RUN POS/wire-payload-strict-money-contract
+PASS POS/wire-payload-strict-money-contract {"total":"105.00","taxTotal":"5.00","paymentType":"ONLINE","unitPrice":"100.00","finalPrice":"100.00","quantity":"1","taxInclusive":false,"itemTaxIds":["QA-CGST","QA-SGST"],"taxRowIds":["QA-CGST","QA-SGST"],"restID":"QA-NOT-A-MERCHANT","wireRequests":1}
+RUN POS/concurrent-direct-pushes-one-wire-and-no-resent-kot
+[Petpooja KOT Push] Order qa-pos-dedupe already pushed by a concurrent caller — deduped, no duplicate KOT
+[Petpooja KOT Push] Order qa-pos-dedupe already pushed (QA-POS-qa-pos-dedupe) — deduped, no duplicate KOT
+PASS POS/concurrent-direct-pushes-one-wire-and-no-resent-kot {"outcomes":[{"ok":true,"value":true},{"ok":true,"value":true}],"wireRequests":1,"acceptedPushes":2,"statusAfter":"synced","postAckRetryResult":true,"postAckRetryWireRequests":1}
+RUN POS/branch-tax-provenance-mismatch-refused-pre-wire
+[Petpooja KOT Push Error] Order qa-pos-tax-mismatch [pre_send_terminal] attempt 833dd068-9736-45da-81f1-0328c01f0e35: Petpooja payload cannot be represented: branch.petpoojaTaxes was captured for outlet OTHER-OUTLET, not QA-NOT-A-MERCHANT — refusing to apply another outlet's tax rows
+PASS POS/branch-tax-provenance-mismatch-refused-pre-wire {"outcome":{"ok":true,"value":false},"wireRequests":0,"statusAfter":"failed","error":"Petpooja payload cannot be represented: branch.petpoojaTaxes was captured for outlet OTHER-OUTLET, not QA-NOT-A-MERCHANT — refusing to apply another outlet's tax rows"}
+RESULT {"mode":"final","scope":"pos","sourceAcceptance":false,"scopedChecksPassed":true,"statuses":[{"name":"infrastructure/native-fetch-loopback-recorder-and-network-refusal","status":"PASS"},{"name":"infrastructure/real-sdk-concurrent-transactions-and-read-before-write-control","status":"PASS"},{"name":"infrastructure/real-grpc-commit-fault-after-durable-state-and-restore","status":"PASS"},{"name":"POS/direct-legacy-pending-retry-timeout-without-claim-must-not-send","status":"PASS"},{"name":"POS/ACK-all-later-Commit-RPCs-fail-restore-plus11min-no-resend","status":"PASS"},{"name":"POS/documented-400-refusal-resolves-intent-without-automatic-replay","status":"PASS"},{"name":"POS/multiple-scheduler-documents-real-SDK-reads-before-writes","status":"PASS"},{"name":"POS/429-no-resend-no-redirect-follow","status":"PASS"},{"name":"POS/malformed-200-no-resend-no-redirect-follow","status":"PASS"},{"name":"POS/307-no-resend-no-redirect-follow","status":"PASS"},{"name":"POS/wire-payload-strict-money-contract","status":"PASS"},{"name":"POS/concurrent-direct-pushes-one-wire-and-no-resent-kot","status":"PASS"},{"name":"POS/branch-tax-provenance-mismatch-refused-pre-wire","status":"PASS"}],"exitCode":0,"cleanupComplete":true,"evidenceDir":"C:\\Users\\DELL\\Desktop\\Burgonomics\\stages\\08_menu\\output\\integration-acceptance-20261029\\courier-qa\\evidence\\pos-final-04"}

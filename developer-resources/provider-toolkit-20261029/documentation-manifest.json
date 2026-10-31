@@ -1,0 +1,595 @@
+[
+  {
+    "id": "borzo-business-api",
+    "url": "https://borzodelivery.com/in/business-api/doc",
+    "description": "Official Borzo India Business API documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:57.298246+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 177473,
+    "file": "docs\\borzo-business-api.md",
+    "bytes": 181928,
+    "sha256": "f558112ed75f854cbe764ed7921e1921c8669674153c44b1664483a05a633550",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 177473,
+      "retrieved_at_utc": "2026-10-29T11:18:56.069349+00:00"
+    }
+  },
+  {
+    "id": "borzo-integration",
+    "url": "https://borzodelivery.com/in/api-integration",
+    "description": "Official Borzo India integration overview",
+    "retrieved_at_utc": "2026-10-29T11:18:56.976349+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 1163,
+    "file": "docs\\borzo-integration.md",
+    "bytes": 1547,
+    "sha256": "ca28d061438dc27d8e332d9afb032c8be7d4465798e9d5668c1571a1bbefd503",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 1163,
+      "retrieved_at_utc": "2026-10-29T11:18:56.466239+00:00"
+    }
+  },
+  {
+    "id": "firebase-cli",
+    "url": "https://firebase.google.com/docs/cli",
+    "description": "Official Firebase CLI documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:56.019599+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 47623,
+    "file": "docs\\firebase-cli.md",
+    "bytes": 47985,
+    "sha256": "fe2b8ebca76e4173f9b40a0fbbc82a4ff7df1ddd09446831bf71844f858703be",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 47623,
+      "retrieved_at_utc": "2026-10-29T11:18:54.313414+00:00"
+    }
+  },
+  {
+    "id": "firebase-fcm-server",
+    "url": "https://firebase.google.com/docs/cloud-messaging/server",
+    "description": "Official FCM server integration documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:57.093047+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 5802,
+    "file": "docs\\firebase-fcm-server.md",
+    "bytes": 6193,
+    "sha256": "6b0c9c24ab91b0d922e5e6dfdf3c1afb0028fed17abf090a21be43efbb60e006",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 5802,
+      "retrieved_at_utc": "2026-10-29T11:18:55.574232+00:00"
+    }
+  },
+  {
+    "id": "firebase-functions-get-started",
+    "url": "https://firebase.google.com/docs/functions/get-started",
+    "description": "Official Cloud Functions get-started documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:55.507017+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 24741,
+    "file": "docs\\firebase-functions-get-started.md",
+    "bytes": 25142,
+    "sha256": "a874207921bf35a52fbe3e2d2f6ebc9d3529ef3c384f88b31fa64e5e175f3f3f",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 24741,
+      "retrieved_at_utc": "2026-10-29T11:18:54.342658+00:00"
+    }
+  },
+  {
+    "id": "firebase-mcp",
+    "url": "https://firebase.google.com/docs/ai-assistance/mcp-server",
+    "description": "Official Firebase MCP documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:55.561084+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 22478,
+    "file": "docs\\firebase-mcp.md",
+    "bytes": 22864,
+    "sha256": "344446b7ef4a0cac282da89cd8a06bfb2db6bcd6f77212ea295aaf7efd32b007",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 22478,
+      "retrieved_at_utc": "2026-10-29T11:18:54.301583+00:00"
+    }
+  },
+  {
+    "id": "firebase-security-rules",
+    "url": "https://firebase.google.com/docs/firestore/security/get-started",
+    "description": "Official Firestore security rules documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:56.457931+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 10612,
+    "file": "docs\\firebase-security-rules.md",
+    "bytes": 11013,
+    "sha256": "c99cc60734f02abb992aa10570084f2395cac757928a7c7784f00bbdf9b0a384",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 10612,
+      "retrieved_at_utc": "2026-10-29T11:18:55.560693+00:00"
+    }
+  },
+  {
+    "id": "petpooja-integrations",
+    "url": "https://www.petpooja.com/poss/restaurant-integrations",
+    "description": "Official integration overview, not an API schema",
+    "retrieved_at_utc": "2026-10-29T11:18:57.950325+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 6152,
+    "file": "docs\\petpooja-integrations.md",
+    "bytes": 6549,
+    "sha256": "8a6d4ea462cea83d36826c8431c41d81ae26b7a9b1331dbed6ac3317e2ff4759",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 6152,
+      "retrieved_at_utc": "2026-10-29T11:18:57.524227+00:00"
+    }
+  },
+  {
+    "id": "petpooja-online-ordering",
+    "url": "https://onlineorderingapisv210.docs.apiary.io/",
+    "description": "Petpooja V2.1.0 public API documentation; cross-check against the vendor-issued contract",
+    "retrieved_at_utc": "2026-10-29T11:19:31.176400+00:00",
+    "method": "dynamic",
+    "status": "DOWNLOADED_DYNAMIC_TEXT",
+    "text_characters": 21162,
+    "file": "docs\\petpooja-online-ordering.md",
+    "bytes": 21593,
+    "sha256": "c172155f5504a4c13c96a0abc7b87e7aff99f2718a74d78c06c08f556c16da0a"
+  },
+  {
+    "id": "porter-website",
+    "url": "https://porter.in",
+    "description": "Official Porter marketing overview; claims API integration but no public REST contract verified",
+    "retrieved_at_utc": "2026-10-29T11:18:58.270644+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 7600,
+    "file": "docs\\porter-website.md",
+    "bytes": 8024,
+    "sha256": "a98c4866297f58f92f5495bc6c5e7875a6fac58f7c37cc9e5342c56137700117",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 7600,
+      "retrieved_at_utc": "2026-10-29T11:18:57.957739+00:00"
+    }
+  },
+  {
+    "id": "razorpay-mcp",
+    "url": "https://razorpay.com/docs/mcp-server",
+    "description": "Official Razorpay MCP overview",
+    "retrieved_at_utc": "2026-10-29T11:18:54.083988+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 3729,
+    "file": "docs\\razorpay-mcp.md",
+    "bytes": 4100,
+    "sha256": "6bd46622f2423e5fd73b35f7da316f0c7e477ad746d3a8f2767df19093cad265",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 3729,
+      "retrieved_at_utc": "2026-10-29T11:18:53.605543+00:00"
+    }
+  },
+  {
+    "id": "razorpay-mcp-local",
+    "url": "https://razorpay.com/docs/mcp-server/local",
+    "description": "Official Razorpay local MCP setup",
+    "retrieved_at_utc": "2026-10-29T11:18:54.091479+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 4117,
+    "file": "docs\\razorpay-mcp-local.md",
+    "bytes": 4505,
+    "sha256": "ee61b9e3466b3e827f9587b1177fde1154ddbcfd58064d4a23d3c218054e8929",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 4117,
+      "retrieved_at_utc": "2026-10-29T11:18:53.606449+00:00"
+    }
+  },
+  {
+    "id": "razorpay-orders-api",
+    "url": "https://razorpay.com/docs/api/orders",
+    "description": "Official Orders API documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:54.295433+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 1280,
+    "file": "docs\\razorpay-orders-api.md",
+    "bytes": 1648,
+    "sha256": "b6a5d753c3b9c2b82f1dfe6137da804a555c877f9eaf7960fac3aac6e51dd313",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 1280,
+      "retrieved_at_utc": "2026-10-29T11:18:54.104741+00:00"
+    }
+  },
+  {
+    "id": "razorpay-payments-api",
+    "url": "https://razorpay.com/docs/api/payments",
+    "description": "Official Payments API documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:54.338852+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 1884,
+    "file": "docs\\razorpay-payments-api.md",
+    "bytes": 2268,
+    "sha256": "e72ceedad478bd39b10215d749eabed60538a19e7fdccac32a7cd8d32fb4ddbd",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 1884,
+      "retrieved_at_utc": "2026-10-29T11:18:54.109899+00:00"
+    }
+  },
+  {
+    "id": "razorpay-webhook-practices",
+    "url": "https://razorpay.com/docs/webhooks/best-practices",
+    "description": "Official webhook best practices",
+    "retrieved_at_utc": "2026-10-29T11:18:54.307171+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 4168,
+    "file": "docs\\razorpay-webhook-practices.md",
+    "bytes": 4585,
+    "sha256": "e80a2e04b5b1cc97b084a3c5dd768b9d698b913767cd042038717707b006409d",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 4168,
+      "retrieved_at_utc": "2026-10-29T11:18:54.099387+00:00"
+    }
+  },
+  {
+    "id": "razorpay-webhook-validation",
+    "url": "https://razorpay.com/docs/webhooks/validate-test",
+    "description": "Official webhook validation and testing",
+    "retrieved_at_utc": "2026-10-29T11:18:54.095079+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 7508,
+    "file": "docs\\razorpay-webhook-validation.md",
+    "bytes": 7932,
+    "sha256": "718026fe90bfeda97a1a5df43fb95bbbfd33e250dc503488d3ed22d3bbe01e34",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 7508,
+      "retrieved_at_utc": "2026-10-29T11:18:53.607342+00:00"
+    }
+  },
+  {
+    "id": "reelo-pos-integration-api",
+    "url": "https://documenter.gw.postman.com/api/collections/14784368/TzzBov5g?segregateAuth=true&versionTag=latest (rendered from https://documenter.getpostman.com/view/14784368/TzzBov5g)",
+    "description": "OFFICIAL Reelo POS Integration API (Postman) documentation linked from reelo.io footer",
+    "retrieved_at_utc": "2026-10-29T11:22:22.723996+00:00",
+    "method": "json-render",
+    "status": "DOWNLOADED_FROM_JSON",
+    "text_characters": 16358,
+    "file": "docs\\reelo-pos-integration-api.md",
+    "bytes": 16941,
+    "sha256": "d024a6bca45b06e8957be616ad3c3ecbf47b989ec6bad5a24dc93adfec0de2c3",
+    "raw_file": "raw\\reelo-pos-integration-api.json",
+    "raw_sha256": "8c93f191dbdd0cf2d32e06eda6c0006eba1fb349790dc6e4e4a4ac1ceec804ac",
+    "requests_rendered": 10
+  },
+  {
+    "id": "reelo-pos-integration-api-json",
+    "url": "https://documenter.gw.postman.com/api/collections/14784368/TzzBov5g?segregateAuth=true&versionTag=latest",
+    "description": "Verbatim official Reelo POS Integration API Postman collection JSON (public documenter asset)",
+    "retrieved_at_utc": "2026-10-29T11:22:22.720365+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_JSON",
+    "file": "raw\\reelo-pos-integration-api.json",
+    "bytes": 54314,
+    "sha256": "8c93f191dbdd0cf2d32e06eda6c0006eba1fb349790dc6e4e4a4ac1ceec804ac"
+  },
+  {
+    "id": "reelo-website",
+    "url": "https://reelo.io",
+    "description": "Official Reelo restaurant CRM/loyalty marketing overview",
+    "retrieved_at_utc": "2026-10-29T11:19:49.392785+00:00",
+    "method": "dynamic",
+    "status": "DOWNLOADED_DYNAMIC_TEXT",
+    "text_characters": 7687,
+    "file": "docs\\reelo-website.md",
+    "bytes": 8079,
+    "sha256": "66a895e12f0fae3b5d4a1dee1768ab89880d2705cc05bfa4b75ee4b91aec5071"
+  },
+  {
+    "id": "shadcn-mcp",
+    "url": "https://ui.shadcn.com/docs/mcp",
+    "description": "Official shadcn MCP documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:58.786214+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 9667,
+    "file": "docs\\shadcn-mcp.md",
+    "bytes": 10021,
+    "sha256": "b1381e76e50f0048aadacacc3ea55d61be816462eb2c0d05afde7ef36becf13b",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 9667,
+      "retrieved_at_utc": "2026-10-29T11:18:58.085211+00:00"
+    }
+  },
+  {
+    "id": "shadowfax-api-hyperlocal-authentication",
+    "url": "https://developer.shadowfax.in/docs/api/hyperlocal-marketplace/authentication",
+    "description": "Official Shadowfax Hyperlocal authentication page (token + OAuth2)",
+    "retrieved_at_utc": "2026-10-29T11:22:20.756772+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 1419,
+    "file": "docs\\shadowfax-api-hyperlocal-authentication.md",
+    "bytes": 1873,
+    "sha256": "26614237c6e04b5b67f48217f7a3333044aaa357eb6621bbfc4885b1f11d6268",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 1419
+    }
+  },
+  {
+    "id": "shadowfax-api-hyperlocal-orders",
+    "url": "https://developer.shadowfax.in/docs/api/hyperlocal-marketplace/orders",
+    "description": "Official Shadowfax Hyperlocal orders API page (place/edit/dispatch/tracking/cancel)",
+    "retrieved_at_utc": "2026-10-29T11:22:20.806889+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 11418,
+    "file": "docs\\shadowfax-api-hyperlocal-orders.md",
+    "bytes": 11982,
+    "sha256": "91813ce59c733163f305f6a8c7fc8a77975e45cc6f0797a1721f38dc792db297",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 11418
+    }
+  },
+  {
+    "id": "shadowfax-api-hyperlocal-sandbox",
+    "url": "https://developer.shadowfax.in/docs/api/hyperlocal-marketplace/sandbox",
+    "description": "Official Shadowfax Hyperlocal sandbox simulation API page",
+    "retrieved_at_utc": "2026-10-29T11:22:21.172363+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 9823,
+    "file": "docs\\shadowfax-api-hyperlocal-sandbox.md",
+    "bytes": 10390,
+    "sha256": "d54ecf4e4a56749c8ef71bf3bfa2b140fdee4ebc460d91c1bd857181526dad2c",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 9823
+    }
+  },
+  {
+    "id": "shadowfax-api-hyperlocal-schemas",
+    "url": "https://developer.shadowfax.in/docs/api/hyperlocal-marketplace/~schemas",
+    "description": "Official Shadowfax Hyperlocal JSON schemas page",
+    "retrieved_at_utc": "2026-10-29T11:22:21.124754+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 5956,
+    "file": "docs\\shadowfax-api-hyperlocal-schemas.md",
+    "bytes": 6684,
+    "sha256": "a3b97985d8f363bb7a8845f3b550e4ca07c5284805b915b2b7631de54ae89c27",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 5956
+    }
+  },
+  {
+    "id": "shadowfax-api-hyperlocal-serviceability",
+    "url": "https://developer.shadowfax.in/docs/api/hyperlocal-marketplace/serviceability",
+    "description": "Official Shadowfax Hyperlocal serviceability API page",
+    "retrieved_at_utc": "2026-10-29T11:22:20.788219+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 2852,
+    "file": "docs\\shadowfax-api-hyperlocal-serviceability.md",
+    "bytes": 3325,
+    "sha256": "8068e7c093d8542d0758627471102c7b11e7281d1c7bfe8e6c78d362077d056f",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 2852
+    }
+  },
+  {
+    "id": "shadowfax-api-reference",
+    "url": "https://developer.shadowfax.in/docs/api-reference",
+    "description": "Official Shadowfax API reference index",
+    "retrieved_at_utc": "2026-10-29T11:22:21.351522+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 1772,
+    "file": "docs\\shadowfax-api-reference.md",
+    "bytes": 2158,
+    "sha256": "73948e260f4d5c6c57e4841fbbd52a46c971e9c19ae31dbceb570278a6a3be5c",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 1772
+    }
+  },
+  {
+    "id": "shadowfax-callbacks",
+    "url": "https://developer.shadowfax.in/docs/hyperlocal/marketplace/callbacks",
+    "description": "Official Shadowfax hyperlocal marketplace callbacks guide",
+    "retrieved_at_utc": "2026-10-29T11:22:21.092940+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 7980,
+    "file": "docs\\shadowfax-callbacks.md",
+    "bytes": 8402,
+    "sha256": "f81328ce9c0936fe6386b2fb341dedad52c92bac5cb7f206435114a12bb500ec",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 7980
+    }
+  },
+  {
+    "id": "shadowfax-dev-hyperlocal",
+    "url": "https://developer.shadowfax.in/docs/api/hyperlocal-marketplace",
+    "description": "OFFICIAL Shadowfax Hyperlocal Marketplace API developer documentation",
+    "retrieved_at_utc": "2026-10-29T11:18:57.384077+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 1979,
+    "file": "docs\\shadowfax-dev-hyperlocal.md",
+    "bytes": 2403,
+    "sha256": "d4a8d0bed6613fa44ed82e7f292040e8792c80f113a99bd4eebe74213c6c33a6",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 1979,
+      "retrieved_at_utc": "2026-10-29T11:18:56.979726+00:00"
+    }
+  },
+  {
+    "id": "shadowfax-dev-root",
+    "url": "https://developer.shadowfax.in/docs",
+    "description": "Official Shadowfax developer docs index",
+    "retrieved_at_utc": "2026-10-29T11:19:19.351317+00:00",
+    "method": "dynamic",
+    "status": "DOWNLOADED_DYNAMIC_TEXT",
+    "text_characters": 924,
+    "file": "docs\\shadowfax-dev-root.md",
+    "bytes": 1298,
+    "sha256": "b7d80c7750c688d1c7fe8b72d8e6752f1e71b96cc66ce4312e30b522494c14c2"
+  },
+  {
+    "id": "shadowfax-exchange-quickstart",
+    "url": "https://developer.shadowfax.in/docs/exchange/quickstart",
+    "description": "Official Shadowfax exchange quickstart",
+    "retrieved_at_utc": "2026-10-29T11:22:21.608255+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 3367,
+    "file": "docs\\shadowfax-exchange-quickstart.md",
+    "bytes": 3759,
+    "sha256": "1b13487ffa8baeb0bd29c9f7f60575486d279a637ed0edbfe00cf882652be2c8",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 3367
+    }
+  },
+  {
+    "id": "shadowfax-forward-logistics-quickstart",
+    "url": "https://developer.shadowfax.in/docs/forward-logistics/quickstart",
+    "description": "Official Shadowfax forward logistics quickstart",
+    "retrieved_at_utc": "2026-10-29T11:22:21.830801+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 4263,
+    "file": "docs\\shadowfax-forward-logistics-quickstart.md",
+    "bytes": 4691,
+    "sha256": "e45facc26648c8fafd2825c4c64f266bc0f5c56a34d4b0ad07baaa3262a26b24",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 4263
+    }
+  },
+  {
+    "id": "shadowfax-hyperlocal-overview",
+    "url": "https://developer.shadowfax.in/docs/hyperlocal/overview",
+    "description": "Official Shadowfax hyperlocal product overview",
+    "retrieved_at_utc": "2026-10-29T11:22:21.446222+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 1165,
+    "file": "docs\\shadowfax-hyperlocal-overview.md",
+    "bytes": 1557,
+    "sha256": "1c2aa20e2c5c8707ba8b22f920219a5a9c792e863667380821b6adc46781a592",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 1165
+    }
+  },
+  {
+    "id": "shadowfax-hyperlocal-web",
+    "url": "https://www.shadowfax.in/hyperlocal",
+    "description": "Official Shadowfax hyperlocal marketing page; not an API contract",
+    "retrieved_at_utc": "2026-10-29T11:18:57.570108+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 7108,
+    "file": "docs\\shadowfax-hyperlocal-web.md",
+    "bytes": 7536,
+    "sha256": "6ec460e9c0229c70bb34711a711dc5cb3ab37d59a47a472e1a74344e1524ad5f",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 7108,
+      "retrieved_at_utc": "2026-10-29T11:18:57.320549+00:00"
+    }
+  },
+  {
+    "id": "shadowfax-platform",
+    "url": "https://www.shadowfax.in/innovation",
+    "description": "Official platform overview only; not a confirmed Shadowfax API contract",
+    "retrieved_at_utc": "2026-10-29T11:18:57.519517+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 9867,
+    "file": "docs\\shadowfax-platform.md",
+    "bytes": 10305,
+    "sha256": "8f30d982fa7ed78b14d03d8bb6fc97cc94beafdb5df2ca0101c582953be8273a",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 9867,
+      "retrieved_at_utc": "2026-10-29T11:18:57.345593+00:00"
+    }
+  },
+  {
+    "id": "shadowfax-quick-commerce-overview",
+    "url": "https://developer.shadowfax.in/docs/quick-commerce/overview",
+    "description": "Official Shadowfax quick commerce overview",
+    "retrieved_at_utc": "2026-10-29T11:22:21.872627+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 1322,
+    "file": "docs\\shadowfax-quick-commerce-overview.md",
+    "bytes": 1724,
+    "sha256": "bd6767fa46dd39df57088c6b2f4413cff602b677b1355917daaae592bcf0e652",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 1322
+    }
+  },
+  {
+    "id": "shadowfax-reference-authentication",
+    "url": "https://developer.shadowfax.in/docs/reference/authentication",
+    "description": "Official Shadowfax reference authentication page",
+    "retrieved_at_utc": "2026-10-29T11:22:21.463282+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 2488,
+    "file": "docs\\shadowfax-reference-authentication.md",
+    "bytes": 2901,
+    "sha256": "5dc65d9fcbf2d44d7a153244438d831632aab014b5292476bc687f82aece3166",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 2488
+    }
+  },
+  {
+    "id": "shadowfax-reverse-logistics-quickstart",
+    "url": "https://developer.shadowfax.in/docs/reverse-logistics/quickstart",
+    "description": "Official Shadowfax reverse logistics quickstart",
+    "retrieved_at_utc": "2026-10-29T11:22:21.802596+00:00",
+    "method": "static",
+    "status": "DOWNLOADED_TEXT",
+    "text_characters": 3359,
+    "file": "docs\\shadowfax-reverse-logistics-quickstart.md",
+    "bytes": 3773,
+    "sha256": "65d713f9b2179793204940ca403fdd039222b28d1a29aab0997617c41628dbcc",
+    "static_attempt": {
+      "http_status": 200,
+      "text_characters": 3359
+    }
+  }
+]

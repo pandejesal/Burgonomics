@@ -1,0 +1,54 @@
+{
+  "scope": "non-production internal v2 mockups",
+  "interCommit": "353b61b9f4430d5f420d56605a6e7993e0941470",
+  "assets": [
+    {
+      "file": "assets/mascot.png",
+      "sha256": "c46d756df38c5b6998ce7b59c2fef280ea0043142625d6cba216cdd37833f264",
+      "bytes": 734941,
+      "copiedFrom": "../v1/assets/mascot.png",
+      "originalSource": "burgonomics-foundation-core/public/burgonomics-logo.png",
+      "scope": "Previously approved assets reused for internal mockups only; not public/store approval"
+    },
+    {
+      "file": "assets/burger.jpg",
+      "sha256": "192f5ba9c2c09f75e102ee92c1a7bd944ad168d12608940281ccddecf4a8b512",
+      "bytes": 137884,
+      "copiedFrom": "../v1/assets/burger.jpg",
+      "originalSource": "burgonomics-foundation-core/public/images/menu/classic-burgers/hero-burger.jpg",
+      "scope": "Previously approved assets reused for internal mockups only; not public/store approval"
+    },
+    {
+      "file": "assets/fries.jpg",
+      "sha256": "f047f667859bc0e15a70d2926983132c111a0cfd7d78a3363f190a1b8539c810",
+      "bytes": 156487,
+      "copiedFrom": "../v1/assets/fries.jpg",
+      "originalSource": "burgonomics-foundation-core/public/images/menu/fries/salted-fries.jpg",
+      "scope": "Previously approved assets reused for internal mockups only; not public/store approval"
+    },
+    {
+      "file": "assets/shake.jpg",
+      "sha256": "2de54c45237a8c8e43ee80cee5296a35cadfeb88526fc18791e81bd178191acd",
+      "bytes": 168596,
+      "copiedFrom": "../v1/assets/shake.jpg",
+      "originalSource": "burgonomics-foundation-core/public/images/menu/thick-shakes/oreo-shake.jpg",
+      "scope": "Previously approved assets reused for internal mockups only; not public/store approval"
+    },
+    {
+      "file": "assets/InterVariable.woff2",
+      "sha256": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3",
+      "bytes": 352240,
+      "copiedFrom": "../v1/assets/InterVariable.woff2",
+      "originalSource": "https://raw.githubusercontent.com/rsms/inter/353b61b9f4430d5f420d56605a6e7993e0941470/docs/font-files/InterVariable.woff2",
+      "scope": "Previously approved assets reused for internal mockups only; not public/store approval"
+    },
+    {
+      "file": "assets/Inter-OFL.txt",
+      "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a",
+      "bytes": 4380,
+      "copiedFrom": "../v1/assets/Inter-OFL.txt",
+      "originalSource": "https://raw.githubusercontent.com/rsms/inter/353b61b9f4430d5f420d56605a6e7993e0941470/LICENSE.txt",
+      "scope": "Previously approved assets reused for internal mockups only; not public/store approval"
+    }
+  ]
+}

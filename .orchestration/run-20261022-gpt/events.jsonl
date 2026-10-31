@@ -1,0 +1,2 @@
+{"at":"2026-10-22T05:41:43.574Z","kind":"admitted","lane":7,"task":"fcm-recipient-ownership"}
+{"at":"2026-10-22T05:41:48.766Z","kind":"observed","lane":7,"task":"fcm-recipient-ownership","phase":"blocked","actualModels":["openai/gpt-5.5"],"error":{"type":"provider.invalid-request","status":400}}

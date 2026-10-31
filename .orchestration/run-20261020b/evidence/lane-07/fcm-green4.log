@@ -1,0 +1,58 @@
+﻿node.exe : [33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned 
+to become the default in a future major version of Vite:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\DELL\AppData\Roaming\n ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m(!) Your V...ersion of Vite::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` 
+in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v5.0.1 C:/Users/DELL/Desktop/Burgonomics/functions
+
+stdout | tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps transport pruning to the filtered token, never to a withheld token
+[FCM Prune] Removed 1 dead token(s)
+
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > sends a token whose current device-token owner is the recipient 12ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > withholds a token rebound to B even when A's stale profile still lists it 3ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > filters foreign, unknown and ownerless tokens while delivering to a proven owner 4ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > fails closed on an ownership lookup failure rather than sending unverified tokens 2ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > does not report success for a critical message with no owned destination 5ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > bounds a stalled ledger read and never sends the unverified destination 14ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > does not treat an explicitly empty recipient as an unbound broadcast 1ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > preserves the trusted server's explicit generic multicast contract when UID is omitted 1ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > maps transport pruning to the filtered token, never to a withheld token 6ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > verifies and sends each real FCM chunk without exceeding 500 targets 26ms
+ Γ£ô tests/fcm.recipient-ownership.test.ts > recipient-bound FCM never trusts a stale profile token list > keeps a withheld customer's message in A's inbox without pushing it to B 6ms
+ Γ£ô tests/tickets.notify.test.ts > PII-free push contract (H17) > truncatePushText caps bodies at ~120 chars 7ms
+ Γ£ô tests/tickets.notify.test.ts > PII-free push contract (H17) > buildTicketAlertMessage never renders the subject 2ms
+ Γ£ô tests/tickets.notify.test.ts > PII-free push contract (H17) > escalation dispatcher keeps subject out of all tiers + reminder 4ms
+ Γ£ô tests/tickets.notify.test.ts > PII-free push contract (H17) > parity helper omits badge when uncounted, sets it when counted 1ms
+ Γ£ô tests/tickets.notify.test.ts > ticket create -> escalate -> push flow (honest + PII-free) > honors explicit urgent priority (never downgrades) 5ms
+ Γ£ô tests/tickets.notify.test.ts > ticket create -> escalate -> push flow (honest + PII-free) > derives high priority for payment issues only when unspecified 1ms
+ Γ£ô tests/tickets.notify.test.ts > ticket create -> escalate -> push flow (honest + PII-free) > creates, escalates, resolves with a PII-free customer push 8ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > denies escalate/resolve for non-staff callers even when routed 5ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > derives reply identity from the verified caller, not the body 1ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > rejects empty reply text 1ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > binds create identity to the verified caller, ignoring body customerId 1ms
+ Γ£ô tests/tickets.notify.test.ts > staff-only transitions + reply honesty > binds resolve/escalate actor to the verified caller, ignoring body ids 2ms
+ Γ£ô tests/tickets.notify.test.ts > markRead route intake (MOP-S1) > accepts empty body (whole-inbox mark) and a bounded id list 5ms
+ Γ£ô tests/tickets.notify.test.ts > markRead route intake (MOP-S1) > rejects non-array ids and lists over 200 21ms
+ Γ£ô tests/tickets.notify.test.ts > ticket spam guards (M14 follow-up) > rate-limits burst creation per customer with a user-safe copy 3ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > getUnreadCount counts unread inbox docs, capped at 99 2ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > dispatchFCM sets badge = unread count + 1 for the incoming doc 3ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > markNotificationsRead with explicit ids marks only those (route ids? path) 2ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > markNotificationsRead returns 0 when nothing is unread 1ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > markNotificationsRead flips inbox + pushes silent badge-0 4ms
+ Γ£ô tests/tickets.notify.test.ts > badge set/clear (H18) > pushToCustomer truncates long bodies and carries parity payloads 3ms
+ Γ£ô tests/tickets.notify.test.ts > user-safe error copy (H36) > never leaks technical detail to clients 1ms
+ Γ£ô tests/tickets.notify.test.ts > recipient ownership at send time (device_tokens ledger) > withholds a profile token with no ledger entry and keeps the message in the owner's inbox 5ms
+ Γ£ô tests/tickets.notify.test.ts > recipient ownership at send time (device_tokens ledger) > withholds a token whose ledger owner is another account without mutating either profile 3ms
+
+ Test Files  2 passed (2)
+      Tests  35 passed (35)
+   Start at  05:49:19
+   Duration  7.10s (import 59%, transform 31%, worker 5%, tests 4%)
+

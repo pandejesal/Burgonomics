@@ -1,0 +1,50 @@
+LANE-04 CHANGE #4 — ISOLATED GATE (ticket resolution lease)
+run:      2026-10-20b
+gate base: b9b2d9a0ed36b6dc8c6d984c28e07def6c66f8b3
+worktree:  %TEMP%/opencode/lane04-gate-4 (detached at base, node_modules junction)
+mode:      exact 7-path bundle copied over pristine base; nothing else dirty
+
+BUNDLE (only dirty paths in worktree — verified by `git status --porcelain`):
+  M functions/src/core/errors.ts
+  M functions/src/index.ts
+  M functions/src/modules/tickets/tickets.service.ts
+  M functions/tests/tickets.notify.test.ts
+  ?? functions/src/modules/tickets/ticketRouteErrors.ts
+  ?? functions/tests/tickets.resolve-race.test.ts
+  ?? functions/tests/tickets.route-errors.test.ts
+
+BYTE EQUALITY main tree vs gate worktree (SHA256, all 7): MATCH
+
+RESULTS
+  npm run typecheck : PASS (tsc --noEmit, 0 errors)
+  npm test          : PASS  73 files passed | 1 skipped (74)
+                            892 tests passed | 2 skipped (894)
+                            duration 17.54s
+  npm run build     : PASS (tsc, 0 errors)
+
+GATE-RUN 1 (same worktree, before fix): FAIL
+  src/modules/tickets/tickets.service.ts(745,9): error TS2322:
+    Type 'number | undefined' is not assignable to type 'number'.
+
+  Diagnosis: the pre-lease validation block narrows `amount` inside ITS OWN
+  `if (action === "loyalty_credit")` block only. At the credit site (a second,
+  later `if (action === "loyalty_credit")` block) the input destructure is back
+  to `number | undefined`. Base did not have this problem because base ran
+  `if (!amount)` / `Number.isInteger(amount)` INSIDE the credit site.
+
+  Fix (semantics preserved, no cast): extracted pure helper
+  `assertLoyaltyAmount(amount): number` that throws the SAME two errors in the
+  SAME order (TICKET_LOYALTY_NO_AMOUNT, then TICKET_LOYALTY_AMOUNT_INVALID) and
+  returns the narrowed number. Called twice:
+    - pre-lease  `if (action === "loyalty_credit") assertLoyaltyAmount(amount);`
+      (fail fast: a bad amount still burns no claim — the ratified ordering)
+    - credit site `amount: assertLoyaltyAmount(amount)` (re-narrows; fails
+      closed rather than crediting undefined)
+
+NOTE: this delta landed AFTER the DS/GLM review rounds on change #4, so it is
+re-submitted for a focused independent review before commit. The gate results
+above are for the final bytes (hash-matched to the main tree).
+
+FOREIGN (not mine, not in this bundle): functions/tests/unregisterToken.test.ts
+2 failures and razorpay.service.ts tsc errors observed in the main tree belong
+to other lanes' dirty files and are absent from this isolated gate.

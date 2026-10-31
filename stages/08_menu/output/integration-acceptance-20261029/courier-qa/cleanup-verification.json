@@ -1,0 +1,20 @@
+{
+    "checkedAt":  "2026-10-29T09:23:58.9135538Z",
+    "portsChecked":  [
+                         48381,
+                         48382,
+                         48383,
+                         48384,
+                         48385,
+                         48386
+                     ],
+    "firstCheck":  "One Java PID was still in SIGTERM teardown; it held no harness listener.",
+    "settledCheck":  "Zero Java processes and zero listeners on 48381-48386 after a 3s settle.",
+    "listenersAfterSettle":  [
+
+                             ],
+    "javaProcessesAfterSettle":  [
+
+                                 ],
+    "ownedRunCleanupComplete":  true
+}
