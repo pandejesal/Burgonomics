@@ -14,9 +14,11 @@ import { dispatchFCM } from "../notifications/fcm.service";
  *
  * This worker is read/alert-only. The existing Petpooja retry worker owns
  * retries and its leases; this worker only observes `pending_retry`,
- * `processing`, and `accepted_unconfirmed` orders and writes idempotency
- * markers. The accepted-but-id-less state is never retried (that would print a
- * duplicate KOT), so an operator alert is its only safety net.
+ * `processing`, `accepted_unconfirmed`, and `blocked_configuration` orders
+ * (the last one is a structural refusal — unverified POS ids — which nothing
+ * retries, so an operator alert is its only safety net) and writes
+ * idempotency markers. The accepted-but-id-less state is never retried (that
+ * would print a duplicate KOT), so an operator alert is its only safety net.
  */
 
 export const POS_PENDING_ALERT_MS = 2 * 60 * 1000;
@@ -67,7 +69,7 @@ function orderLabel(order: any, orderId: string): string {
 }
 
 async function scanStatus(
-  status: "pending_retry" | "processing" | "accepted_unconfirmed"
+  status: "pending_retry" | "processing" | "accepted_unconfirmed" | "blocked_configuration"
 ): Promise<any[]> {
   const snap = await db
     .collection("orders")
@@ -88,7 +90,12 @@ export async function posPendingAlertsWorker(): Promise<{
   // the age filter is applied in code. The retry worker still owns the
   // oldest-first retry ordering.
   const candidates = new Map<string, any>();
-  for (const status of ["pending_retry", "processing", "accepted_unconfirmed"] as const) {
+  for (const status of [
+    "pending_retry",
+    "processing",
+    "accepted_unconfirmed",
+    "blocked_configuration",
+  ] as const) {
     try {
       for (const doc of await scanStatus(status)) {
         candidates.set(doc.id, doc);

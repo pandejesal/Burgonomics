@@ -163,7 +163,16 @@ describe("Petpooja POS Bridge Service", () => {
             price: 235,
             quantity: 2,
             isVeg: true,
-            modifiers: [{ id: "bun_brioche", name: "Brioche Bun", price: 20 }],
+            modifiers: [
+              {
+                id: "bun_brioche",
+                name: "Brioche Bun",
+                price: 20,
+                // R4b: the POS only accepts its OWN ids.
+                petpoojaItemId: "201",
+                petpoojaGroupId: 7,
+              },
+            ],
           },
         ],
         // GST-INCLUSIVE (R1/R4): foodSubtotal 470 = 2 x 235, discount 50,
@@ -215,7 +224,9 @@ describe("Petpooja POS Bridge Service", () => {
       expect(orderDetails.order_type).toBe("H"); // H = home delivery
       // Petpooja accepts COD / CARD / ONLINE — "Prepaid" is not a valid value.
       expect(orderDetails.payment_type).toBe("ONLINE");
-      expect(orderDetails.total).toBe("475.00");
+      // R4b: restaurant due (420 net + 15 packing); the COURIER'S 40 is not
+      // restaurant revenue, so it stays in delivery_charges only.
+      expect(orderDetails.total).toBe("435.00");
       expect(orderDetails.tax_total).toBe("20.00");
       // The old `tax`/`discount` aliases are not in the sample.
       expect(orderDetails).not.toHaveProperty("tax");
@@ -289,11 +300,13 @@ describe("Petpooja POS Bridge Service", () => {
       // integer and quantity a string, per the sample.
       expect(line.AddonItem.details).toHaveLength(1);
       expect(line.AddonItem.details[0]).toMatchObject({
-        id: "bun_brioche",
+        // R4b: the POS's own addon id and group id — never the local cart id
+        // ("bun_brioche") or a fabricated group_id 0.
+        id: "201",
         name: "Brioche Bun",
         group_name: "Addons",
         price: "20.00",
-        group_id: 0,
+        group_id: 7,
         quantity: "1",
       });
       // The legacy duplicate spellings are gone.
@@ -355,11 +368,16 @@ describe("Petpooja POS Bridge Service", () => {
       ]);
 
       const details = info.Order.details;
-      // 575 (inclusive) + 15 packaging + 35 delivery — no tax added on top.
-      expect(details.total).toBe("625.00");
+      // R4b: the restaurant due is 575 inclusive + 15 packaging. The courier's
+      // 35 stays in delivery_charges and is NOT added to total.
+      expect(details.total).toBe("590.00");
       expect(details.tax_total).toBe("27.38");
       expect(details.delivery_charges).toBe("35.00");
       expect(details.packing_charges).toBe("15.00");
+      expect(details.enable_delivery).toBe(0);
+      expect(details.collect_cash).toBe("0.00");
+      // The vendor rule: total contains tax_total, never the other way round.
+      expect(Number(details.total)).toBeGreaterThan(Number(details.tax_total));
       // Packaging and delivery are outside the GST base: no tax on either.
       expect(details.dc_tax_amount).toBe("0.00");
       expect(details.pc_tax_amount).toBe("0.00");
@@ -419,11 +437,10 @@ describe("Petpooja POS Bridge Service", () => {
       expect(withVariant.variation_name).toBe("Half Dish");
     });
 
-    it("also resolves the legacy `variationId`/`variationName` cart-line spellings", () => {
-      // The relay reads `petpoojaVariationId || variationId` (and the matching
-      // name pair). CartLine documents in the app carry the short spelling, so
-      // a regression that kept only the prefixed one would silently strip the
-      // variant off every variation line while still passing the case above.
+    it("refuses the legacy `variationId`/`variationName` cart-line spellings instead of sending a local id", () => {
+      // R4b (corrected R4): a local cart variation value is NOT a POS id. The
+      // relay used to pass it through and the POS could print the wrong dish;
+      // it must refuse the relay and hand the operator a reason instead.
       const order = {
         id: "ord_var_02",
         orderNumber: "BUR-VAR-02",
@@ -443,9 +460,9 @@ describe("Petpooja POS Bridge Service", () => {
         pricing: { grandTotal: 200 },
       };
 
-      const payload = formatPetpoojaOrderPayload(order, null, "TEST_RES_ID");
-      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].variation_id).toBe("110");
-      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].variation_name).toBe("Full Dish");
+      expect(() =>
+        formatPetpoojaOrderPayload(order, null, "TEST_RES_ID", "branch_surat_01")
+      ).toThrow(/variation "Full Dish" without a verified Petpooja variation id/);
     });
 
     it("maps takeaway and dine-in fulfillment types correctly", () => {
@@ -554,21 +571,24 @@ describe("Petpooja POS Bridge Service", () => {
       );
     });
 
-    it("leaves the item id empty rather than inventing one when nothing resolves", () => {
-      const payload = formatPetpoojaOrderPayload(
-        {
-          id: "ord_2002",
-          fulfillmentType: "TAKEAWAY",
-          paymentMethod: "COD",
-          items: [{ lineId: "l1", productId: "prod_other_branch_9", unitPrice: 100, quantity: 1 }],
-          pricing: { grandTotal: 100 },
-        },
-        null,
-        "TEST_RES_ID",
-        "branch_surat_01"
-      );
-      // Wrong-branch prefix must NOT be stripped into a bogus id.
-      expect(payload.orderinfo.OrderInfo.OrderItem.details[0].id).toBe("");
+    it("refuses a line whose item id cannot be resolved rather than inventing one", () => {
+      // R4b: an empty id is a POS landmine ("which item?") — the relay refuses
+      // and parks the order for an operator instead of sending a blank id.
+      // Wrong-branch prefix must NOT be stripped into a bogus id either.
+      expect(() =>
+        formatPetpoojaOrderPayload(
+          {
+            id: "ord_2002",
+            fulfillmentType: "TAKEAWAY",
+            paymentMethod: "COD",
+            items: [{ lineId: "l1", productId: "prod_other_branch_9", unitPrice: 100, quantity: 1 }],
+            pricing: { grandTotal: 100 },
+          },
+          null,
+          "TEST_RES_ID",
+          "branch_surat_01"
+        )
+      ).toThrow(/no verified Petpooja item id/);
     });
   });
 

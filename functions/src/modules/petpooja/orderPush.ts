@@ -1,5 +1,7 @@
 import { db } from "../../core/firebase";
 import { findDeliveryFeeQuoteForOrder } from "../payments/deliveryQuotes";
+import { allocatePetpoojaTax, sumPetpoojaItemTax } from "./taxAmounts";
+import { petpoojaFinancials } from "./financials";
 import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
@@ -26,6 +28,42 @@ const DUMMY_PHONES = new Set(["1234567890", "9876543210", "0000000000", "1111111
 
 /** Petpooja's save_order payload prices are strings with 2 decimals. */
 const money = (n: number): string => (Number.isFinite(n) ? Number(n).toFixed(2) : "0.00");
+
+/**
+ * A payload that cannot be built truthfully (R4b): a line/add-on/variation has
+ * no VERIFIED POS id, so relaying would hand the POS a fabricated or empty id
+ * and land the food on the wrong item. The order is parked for an operator —
+ * there is nothing a blind retry could fix.
+ */
+export interface PetpoojaStructuralGap {
+  field: string;
+  reason: string;
+}
+
+export class PetpoojaStructuralError extends Error {
+  readonly code = "PETPOOJA_STRUCTURAL_BLOCK";
+  readonly gaps: PetpoojaStructuralGap[];
+
+  constructor(gaps: PetpoojaStructuralGap[]) {
+    super(
+      `KOT blocked: ${gaps.length} unverified POS mapping${
+        gaps.length === 1 ? "" : "s"
+      }. ${gaps.map((g) => `${g.field}: ${g.reason}`).join("; ")}`
+    );
+    this.name = "PetpoojaStructuralError";
+    this.gaps = gaps;
+  }
+}
+
+/** First non-empty explicit POS id from the given candidates (never a local id). */
+function firstPosId(candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null) continue;
+    const value = String(candidate).trim();
+    if (value !== "") return value;
+  }
+  return "";
+}
 
 /**
  * Per-line / per-order tax rows for the KOT.
@@ -240,33 +278,87 @@ export function formatPetpoojaOrderPayload(
   // order's tax total is known.
   const preItems = order.items || [];
   const preGst = Number(order?.pricing?.gst) || 0;
-  const preItemTotal = preItems.reduce(
-    (sum: number, it: any) => sum + lineUnitPrice(it) * (it.quantity || 1),
-    0
-  );
   const branchTaxes = outletTaxes(branch);
+  // R4b: the included GST is divided across lines in EXACT integer paise
+  // (largest remainder), so the Tax rows can be the literal sum of the
+  // serialized item_tax amounts instead of an independently rounded figure.
+  const itemGstAmounts = allocatePetpoojaTax(
+    preGst,
+    preItems.map((it: any) => lineUnitPrice(it) * (Number(it.quantity) || 1))
+  );
+  // Structural gaps (unverified POS ids) are collected for the WHOLE order and
+  // thrown once, so an operator sees every problem in one refusal.
+  const structuralGaps: PetpoojaStructuralGap[] = [];
 
-  const orderItems = (order.items || []).map((item: any) => {
+  const orderItems = (order.items || []).map((item: any, itemIndex: number) => {
     const unit = lineUnitPrice(item);
     const qty = Number(item.quantity) || 1;
-    const lineTotal = unit * qty;
-    // `CartLine.unitPrice` is ALL-IN: the cart stores base + modifier deltas in
-    // it, and PaymentRepository persists that same figure as `price`. Petpooja
-    // defines `price` as the per-unit value including add-ons, so the add-on
-    // rows below are descriptive only and must not be added a second time.
-    const addons = (item.modifiers || item.selectedAddons || []).map((mod: any) => ({
-      id: mod.id || mod.optionId || "addon",
-      name: mod.name,
-      group_name: mod.groupName || "Addons",
-      // CartModifier carries `priceDelta`; `price` is the legacy spelling.
-      price: money(mod.price ?? mod.priceDelta ?? 0),
-      // The vendor sample types group_id as an integer, not a string.
-      group_id: Number(mod.groupId ?? mod.group_id) || 0,
-      quantity: "1",
-    }));
+    const itemPosId = linePetpoojaItemId(item, firestoreBranchId);
+    if (itemPosId === "") {
+      structuralGaps.push({
+        field: `OrderItem.details[${itemIndex}].id`,
+        reason: `item "${item?.name ?? "(unnamed)"}" has no verified Petpooja item id (no menu-sync mapping)`,
+      });
+    }
+
+    // R4b: NEVER fabricate an id. An add-on goes out only with the POS's own
+    // addon id and numeric group id; the old `mod.id || "addon"` +
+    // `Number(...) || 0` fallbacks invented both.
+    const rawAddons = item.modifiers || item.selectedAddons || [];
+    const addons = rawAddons.map((mod: any) => {
+      const addonId = firstPosId([mod?.petpoojaItemId, mod?.petpoojaAddonId, mod?.petpoojaOptionId]);
+      const groupIdRaw = mod?.petpoojaGroupId ?? mod?.petpoojaGroup_id ?? mod?.posGroupId;
+      const groupId = Number(groupIdRaw);
+      const groupVerified =
+        groupIdRaw !== undefined &&
+        groupIdRaw !== null &&
+        groupIdRaw !== "" &&
+        Number.isInteger(groupId) &&
+        groupId > 0;
+      if (!addonId) {
+        structuralGaps.push({
+          field: `OrderItem.details[${itemIndex}].AddonItem.details[].id`,
+          reason: `add-on "${mod?.name ?? "(unnamed)"}" has no verified Petpooja addon id`,
+        });
+      }
+      if (!groupVerified) {
+        structuralGaps.push({
+          field: `OrderItem.details[${itemIndex}].AddonItem.details[].group_id`,
+          reason: `add-on "${mod?.name ?? "(unnamed)"}" has no verified Petpooja group id`,
+        });
+      }
+      return {
+        id: addonId,
+        name: mod.name,
+        group_name: mod.groupName || "Addons",
+        // CartModifier carries `priceDelta`; `price` is the legacy spelling.
+        price: money(mod.price ?? mod.priceDelta ?? 0),
+        // The vendor sample types group_id as an integer, not a string.
+        group_id: groupVerified ? groupId : 0,
+        quantity: "1",
+      };
+    });
+
+    // R4b: a variation without a verified POS id cannot be matched by the POS;
+    // sending the local name/id would print the wrong dish.
+    const variationId = firstPosId([item.petpoojaVariationId, item.posVariationId]);
+    const variationName = item.petpoojaVariationName || item.variationName || "";
+    if (variationName && !variationId) {
+      structuralGaps.push({
+        field: `OrderItem.details[${itemIndex}].variation_id`,
+        reason: `item "${item?.name ?? "(unnamed)"}" carries variation "${variationName}" without a verified Petpooja variation id`,
+      });
+    }
+
+    // Each line's included GST, split evenly (exactly, in paise) across the
+    // outlet's tax rows.
+    const lineGst = itemGstAmounts[itemIndex] ?? 0;
+    const lineTaxSplit = branchTaxes.length
+      ? allocatePetpoojaTax(lineGst, branchTaxes.map(() => 1))
+      : [];
 
     return {
-      id: linePetpoojaItemId(item, firestoreBranchId),
+      id: itemPosId,
       name: item.name,
       // Owner decision 2026-10-31 (pricing-contract.md R4): menu prices are
       // GST-INCLUSIVE. `price`/`final_price` below stay the inclusive menu
@@ -275,17 +367,11 @@ export function formatPetpoojaOrderPayload(
       // add the tax on top a second time.
       tax_inclusive: true,
       gst_liability: "restaurant",
-      item_tax: branchTaxes.map((t) => ({
+      item_tax: branchTaxes.map((t, taxIndex) => ({
         id: t.id,
         name: t.name,
         tax_percentage: String(t.rate),
-        amount: money(
-          // Each line's share of `pricing.gst` (the included amount), split
-          // evenly across the outlet's tax rows (CGST + SGST).
-          preItemTotal > 0 && branchTaxes.length > 0
-            ? (preGst * (lineTotal / preItemTotal)) / branchTaxes.length
-            : 0
-        ),
+        amount: money(lineTaxSplit[taxIndex] ?? 0),
       })),
       // No per-line discount exists in this order model; order-level discounts
       // travel as `discount_type` + `discount_total`. The vendor sample defines
@@ -296,11 +382,15 @@ export function formatPetpoojaOrderPayload(
       final_price: money(unit),
       quantity: String(qty),
       description: item.notes || item.specialInstructions || "",
-      variation_name: item.petpoojaVariationName || item.variationName || "",
-      variation_id: item.petpoojaVariationId || item.variationId || "",
+      variation_name: variationId ? variationName : "",
+      variation_id: variationId,
       AddonItem: { details: addons },
     };
   });
+
+  if (structuralGaps.length > 0) {
+    throw new PetpoojaStructuralError(structuralGaps);
+  }
 
   const pricing = order?.pricing;
   if (!pricing || !Number.isFinite(Number(pricing.grandTotal))) {
@@ -317,7 +407,32 @@ export function formatPetpoojaOrderPayload(
   const deliveryFee = Number(pricing.deliveryFee) || 0;
   const packagingFee = Number(pricing.packagingFee) || 0;
   const discountAmount = Number(pricing.discount) || 0;
+  const loyaltyDiscount = Number(pricing.loyaltyDiscount) || 0;
   const grandTotal = Number(pricing.grandTotal);
+
+  // R4b: the POS `total` is the RESTAURANT DUE, not what the customer paid.
+  // A third-party courier fee (Borzo/Shadowfax/Porter) is not restaurant
+  // revenue: it stays in delivery_charges and out of `total`. Only a
+  // restaurant's OWN rider (dispatchType manual_branch_terminal) is
+  // self-delivery. Our menu prices are GST-inclusive, so the item net already
+  // contains the tax and `taxIncluded: true` keeps it from being added twice.
+  const isDelivery = orderTypeLegacy === "1";
+  const restaurantDelivery =
+    isDelivery && String(order?.dispatchType || "") === "manual_branch_terminal";
+  const financials = petpoojaFinancials({
+    items: orderItems,
+    // Both the coupon discount and the coin (loyalty) discount reduce what the
+    // restaurant is owed, so the POS total still reconciles to the customer
+    // total minus any courier fee.
+    discount: discountAmount + loyaltyDiscount,
+    packagingFee,
+    deliveryFee,
+    customerTotal: grandTotal,
+    isDelivery,
+    restaurantDelivery,
+    paymentType,
+    taxIncluded: true,
+  });
 
   // Normalized (never invented) contact + the clock fields Save Order marks
   // required. Table number rides along whenever the order carries one —
@@ -391,7 +506,6 @@ export function formatPetpoojaOrderPayload(
   };
 
   const noOfPersons = order.guestCount ?? order.noOfPersons ?? 0;
-  const collectCash = paymentType === "COD" ? grandTotal : 0;
   const prepTimeMinutes = Number(
     order.prepTimeMinutes ?? branch?.defaultPrepTimeMinutes ?? 0
   );
@@ -439,18 +553,20 @@ export function formatPetpoojaOrderPayload(
     tax_total: money(gstAmount),
     // Discounts are sent as discount_type + discount_total (spec §8).
     discount_type: "F",
-    // R2/R4: exactly what the customer pays (inclusive food + fees).
-    total: money(grandTotal),
+    // R4b: RESTAURANT DUE — item net (already GST-inclusive) less discounts,
+    // plus packing, plus delivery ONLY when the restaurant delivers itself.
+    // A third-party courier fee is not restaurant revenue.
+    total: financials.total,
     description: order.notes || order.specialInstructions || "",
     created_on: createdOn,
-    // Riders are always third-party (Porter/Borzo/Shadowfax), never ours.
-    enable_delivery: 0,
+    // R4b: 1 only for restaurant self-delivery.
+    enable_delivery: financials.enable_delivery,
     min_prep_time: Number.isFinite(prepTimeMinutes) && prepTimeMinutes > 0 ? prepTimeMinutes : 0,
     // The POS reads the URL it POSTs order-status updates (Accept / Food Ready
     // / Reject) from Order.details.
     callback_url: getCallbackUrl(),
-    // COD: the rider collects the full order value. ONLINE: nothing to collect.
-    collect_cash: money(collectCash),
+    // R4b: the restaurant's own rider collects cash only on self-delivery COD.
+    collect_cash: financials.collect_cash,
     // Deliberately empty: the delivery OTP is the customer/rider verification
     // secret and must not be printed on a kitchen ticket.
     otp: "",
@@ -459,16 +575,19 @@ export function formatPetpoojaOrderPayload(
   // Official Tax[] shape: id / title / type / price / tax / restaurant_liable_amt.
   // The ids must name rows that exist on the outlet. `price` is the numeric
   // percentage, matching the vendor sample (not "2.5%").
-  const taxDetails = branchTaxes.map((t) => ({
-    id: t.id,
-    title: t.name,
-    type: "P",
-    price: String(t.rate),
-    tax: money(branchTaxes.length > 0 ? gstAmount / branchTaxes.length : 0),
-    restaurant_liable_amt: money(
-      branchTaxes.length > 0 ? gstAmount / branchTaxes.length : 0
-    ),
-  }));
+  // R4b: each row is the EXACT sum of the serialized item_tax amounts of that
+  // id, so the summary can never disagree with the lines.
+  const taxDetails = branchTaxes.map((t) => {
+    const rowTotal = sumPetpoojaItemTax(orderItems, t.id);
+    return {
+      id: t.id,
+      title: t.name,
+      type: "P",
+      price: String(t.rate),
+      tax: money(rowTotal),
+      restaurant_liable_amt: money(rowTotal),
+    };
+  });
 
   return {
     orderinfo: {
@@ -907,7 +1026,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     // off the same stale base. Releases our claim either way.
     let pushedByRacer = false;
     let parked = false;
-    const fallbackRetry = (order.petpoojaRetryCount || 0) + 1;
+    // R4b: a structural refusal (unverified POS ids) is NOT retryable — the
+    // mapping will not fix itself. Park it for an operator instead of feeding
+    // the retry worker a guaranteed failure.
+    const structural = err instanceof PetpoojaStructuralError ? err : null;
+    const parkedStatus = structural ? "blocked_configuration" : "pending_retry";
+    const fallbackRetry = structural ? (order.petpoojaRetryCount || 0) : (order.petpoojaRetryCount || 0) + 1;
     let retryForSnapshot = fallbackRetry;
     if (db && typeof (db as any).runTransaction === "function") {
       try {
@@ -925,15 +1049,18 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
             );
             return "won";
           }
-          const freshRetry = (Number(data?.petpoojaRetryCount) || 0) + 1;
+          const freshRetry = structural
+            ? Number(data?.petpoojaRetryCount) || 0
+            : (Number(data?.petpoojaRetryCount) || 0) + 1;
           retryForSnapshot = freshRetry;
           tx.set(
             orderDoc.ref,
             {
-              petpoojaStatus: "pending_retry",
-              petpoojaSyncStatus: "pending_retry",
+              petpoojaStatus: parkedStatus,
+              petpoojaSyncStatus: parkedStatus,
               petpoojaRetryCount: freshRetry,
               lastPetpoojaError: err.message,
+              ...(structural ? { kotSyncFailed: true } : {}),
               petpoojaPushClaimedAt: null,
               petpoojaClaimedAt: null,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -962,10 +1089,11 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     if (!parked) {
       await orderDoc.ref.set(
         {
-          petpoojaStatus: "pending_retry",
-          petpoojaSyncStatus: "pending_retry",
+          petpoojaStatus: parkedStatus,
+          petpoojaSyncStatus: parkedStatus,
           petpoojaRetryCount: fallbackRetry,
           lastPetpoojaError: err.message,
+          ...(structural ? { kotSyncFailed: true } : {}),
           petpoojaPushClaimedAt: null,
           petpoojaClaimedAt: null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -976,8 +1104,11 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
 
     await captureErrorSnapshot({
       source: "petpooja",
-      severity: "medium",
-      message: `Petpooja KOT Push failed for order ${orderId} (Attempt ${retryForSnapshot}): ${err.message}`,
+      // A structural refusal is an operator action, not a transient failure.
+      severity: structural ? "high" : "medium",
+      message: structural
+        ? `Petpooja KOT blocked for order ${orderId} — unverified POS ids: ${err.message}`
+        : `Petpooja KOT Push failed for order ${orderId} (Attempt ${retryForSnapshot}): ${err.message}`,
       orderId,
       branchId,
     });
