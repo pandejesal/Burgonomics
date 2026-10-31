@@ -19,6 +19,7 @@ import {
   staffErrorStatus,
   AuthenticatedRequest,
 } from "./core/middleware";
+import { corsOriginError } from "./core/cors";
 
 // Modules
 import {
@@ -208,31 +209,17 @@ app.use((req, res, next) => {
   }
 });
 
-// Whitelisted CORS origins (Strict 60-30-10 & Production Security)
-const allowedOrigins = [
-  "https://burgonomics.com",
-  "https://partner.burgonomics.com",
-  "https://burgonomics.netlify.app",
-  "capacitor://localhost",
-];
-
-// Plain-http dev origins must never be credentialed in production: auth is
-// Bearer-based (no cookies to steal), but there is no reason to widen the
-// surface. Preview deploys use the exact host below, not a wildcard.
-const devOrigins =
-  process.env.NODE_ENV === "production"
-    ? []
-    : ["http://localhost:8080", "http://localhost:5173", "http://localhost:3000"];
-
+// CORS allowlist and origin decision live in core/cors.ts (exact-match only;
+// no wildcard, no regex, no plain-http dev origin in production) so the policy
+// is unit-tested without booting this app.
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow non-browser agents (mobile apps, server curls) or whitelisted web origins
-      if (!origin || allowedOrigins.includes(origin) || devOrigins.includes(origin || "")) {
-        callback(null, true);
-      } else {
-        callback(new Error("CORS origin not allowed by Burgonomics security policy"));
-      }
+      // A rejected origin is answered 403 (the Error carries the status), not
+      // the 500 a nameless callback error used to produce.
+      const err = corsOriginError(origin);
+      if (err) callback(err);
+      else callback(null, true);
     },
     credentials: true,
   })
