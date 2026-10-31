@@ -103,7 +103,12 @@ export function computeItemUnitPrice(item: PricingLineItem): number {
 }
 
 /** Branch config (royalty/packaging) lives in the shared helper. */
-function applyCatalogBasePrice(item: PricingLineItem, catalogPrice: number): number {
+/**
+ * Unit price for a line from its AUTHORITATIVE catalog price plus its own
+ * add-on deltas (the engine's own rule). Exported for the POS relay (POS-11),
+ * which must price lines from the same source instead of the order document.
+ */
+export function applyCatalogBasePrice(item: PricingLineItem, catalogPrice: number): number {
   let base = catalogPrice;
   if (Array.isArray(item.customizations)) {
     for (const c of item.customizations) {

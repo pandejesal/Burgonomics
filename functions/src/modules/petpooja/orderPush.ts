@@ -5,7 +5,7 @@ import { petpoojaFinancials } from "./financials";
 import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
-import { calculateOrderPricing } from "../payments/pricing.engine";
+import { calculateOrderPricing, applyCatalogBasePrice } from "../payments/pricing.engine";
 import * as admin from "firebase-admin";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 
@@ -178,6 +178,75 @@ function lineUnitPrice(item: any): number {
   return Number(item?.basePrice ?? item?.price ?? item?.unitPrice ?? 0) || 0;
 }
 
+/**
+ * POS-11: the catalog prices for the order's lines, in order, or a structural
+ * refusal. The order document's price is CLIENT-WRITTEN and now flows into the
+ * POS `total` through the restaurant-due calculation, so it must never be the
+ * money: each line is priced from `products/{id}`, exactly like the engine.
+ *
+ * A line whose product cannot be read (missing, no numeric price, or a failed
+ * catalog read) parks the order — there is no fallback to the client's price.
+ */
+async function resolveCatalogLinePrices(order: any): Promise<number[]> {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  if (items.length === 0) return [];
+
+  const keyOf = (item: any): string => String(item?.productId || item?.id || "");
+  const wanted: string[] = Array.from(
+    new Set<string>(items.map(keyOf).filter((key: string) => key !== ""))
+  );
+  const priceByKey = new Map<string, number>();
+
+  if (wanted.length > 0 && db && typeof db.collection === "function") {
+    try {
+      if (typeof (db as any).getAll === "function") {
+        const refs = wanted.map((id) => db.collection("products").doc(id));
+        const snaps = await (db as any).getAll(...refs);
+        // getAll preserves request order; key by the requested id rather than
+        // trusting the snapshot's id field (absent on some datastore shims).
+        wanted.forEach((id, index) => {
+          const snap = snaps[index];
+          const data = snap?.data?.();
+          if (snap?.exists && typeof data?.price === "number") {
+            priceByKey.set(id, data.price);
+          }
+        });
+      } else {
+        for (const id of wanted) {
+          const snap = await db.collection("products").doc(id).get();
+          const data = snap?.data?.();
+          if (snap?.exists && typeof data?.price === "number") {
+            priceByKey.set(id, data.price);
+          }
+        }
+      }
+    } catch (err: any) {
+      throw new PetpoojaStructuralError([
+        {
+          field: "products",
+          reason: `catalog price read failed (${err?.message || err}) — refusing to price POS lines from the order document`,
+        },
+      ]);
+    }
+  }
+
+  const gaps: PetpoojaStructuralGap[] = [];
+  const prices = items.map((item: any, index: number) => {
+    const key = keyOf(item);
+    const catalogPrice = priceByKey.get(key);
+    if (catalogPrice === undefined) {
+      gaps.push({
+        field: `OrderItem.details[${index}].price`,
+        reason: `item "${item?.name ?? "(unnamed)"}" has no catalog price (product "${key || "(no id)"}") — refusing to relay the order document's price`,
+      });
+      return 0;
+    }
+    return applyCatalogBasePrice(item, catalogPrice);
+  });
+  if (gaps.length > 0) throw new PetpoojaStructuralError(gaps);
+  return prices;
+}
+
 /** Canonical order type for KOT/pricing purposes. */
 function kotOrderType(order: any): "delivery" | "takeaway" | "dinein" {
   const rawType = String(order?.fulfillmentType || order?.orderType || "delivery").toLowerCase();
@@ -332,7 +401,13 @@ export function formatPetpoojaOrderPayload(
    * Overrides `pricing.deliveryFee`; 0 is a real value (unverified quote) and
    * undefined means "not a delivery KOT — use the stored pricing".
    */
-  kotDeliveryFee?: number
+  kotDeliveryFee?: number,
+  /**
+   * POS-11: server-resolved unit price per line (index-aligned), from the SAME
+   * catalog source the pricing engine uses. The push path ALWAYS supplies it;
+   * `undefined` only for direct/fixture callers that have no catalog.
+   */
+  catalogLinePrices?: number[]
 ) {
   const fulfillment = (order.fulfillmentType || order.orderType || "DELIVERY").toUpperCase();
   // Official V2.1.0 order_type is a letter code: H (home delivery),
@@ -351,6 +426,22 @@ export function formatPetpoojaOrderPayload(
   // Hoisted so each line can carry its own share of the tax: Petpooja expects
   // `item_tax[]` on the line, and a line's share can only be derived once the
   // order's tax total is known.
+  //
+  // POS-11: every money figure below comes from the SERVER catalog line price
+  // (`catalogLinePrices`), never from the price written on the order document.
+  const lineUnit = (item: any, index: number): number => {
+    if (!catalogLinePrices) return lineUnitPrice(item);
+    const resolved = Number(catalogLinePrices[index]);
+    if (!Number.isFinite(resolved) || resolved < 0) {
+      throw new PetpoojaStructuralError([
+        {
+          field: `OrderItem.details[${index}].price`,
+          reason: `item "${item?.name ?? "(unnamed)"}" has no server catalog price`,
+        },
+      ]);
+    }
+    return resolved;
+  };
   const preItems = order.items || [];
   const preGst = Number(order?.pricing?.gst) || 0;
   const branchTaxes = outletTaxes(branch);
@@ -359,14 +450,15 @@ export function formatPetpoojaOrderPayload(
   // serialized item_tax amounts instead of an independently rounded figure.
   const itemGstAmounts = allocatePetpoojaTax(
     preGst,
-    preItems.map((it: any) => lineUnitPrice(it) * (Number(it.quantity) || 1))
+    preItems.map((it: any, index: number) => lineUnit(it, index) * (Number(it.quantity) || 1))
   );
   // Structural gaps (unverified POS ids) are collected for the WHOLE order and
   // thrown once, so an operator sees every problem in one refusal.
   const structuralGaps: PetpoojaStructuralGap[] = [];
 
   const orderItems = (order.items || []).map((item: any, itemIndex: number) => {
-    const unit = lineUnitPrice(item);
+    // POS-11: catalog-derived unit price, not the order document's price.
+    const unit = lineUnit(item, itemIndex);
     const qty = Number(item.quantity) || 1;
     const itemPosId = linePetpoojaItemId(item, firestoreBranchId);
     if (itemPosId === "") {
@@ -998,13 +1090,17 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       branchId,
       deliveryBinding
     );
+    // POS-11: price every POS line from the catalog, and park instead of
+    // relaying the order document's (client-written) price.
+    const catalogLinePrices = await resolveCatalogLinePrices(pricedOrder);
     const payload = formatPetpoojaOrderPayload(
       pricedOrder,
       branchData,
       resId,
       branchId,
       orderId,
-      deliveryBinding.fee
+      deliveryBinding.fee,
+      catalogLinePrices
     );
 
     // Debug visibility: missing contact or zero totals push a broken KOT that

@@ -137,6 +137,11 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       name: "Ahmedabad Main",
       petpoojaStoreId: "res_ahm_01",
     };
+    // POS-11: POS lines are priced from the catalog (a real order's products
+    // exist there). These tests exercise retry/lease mechanics, not money, so
+    // one catalog price per fixture line id is enough.
+    savedDocs["products/itm_1"] = { price: 200, inStock: true };
+    savedDocs["products/itm_2"] = { price: 180, inStock: true };
   });
 
   afterEach(() => {

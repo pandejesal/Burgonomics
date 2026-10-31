@@ -97,6 +97,8 @@ describe("KOT Truth & Relay Semantics (Review Finding 5 & Limitations)", () => {
       name: "Ahmedabad Truth Outlet",
       petpoojaStoreId: "res_truth_01",
     };
+    // POS-11: POS line prices come from the catalog.
+    savedDocs["products/itm_1"] = { price: 200, inStock: true };
 
     savedDocs["orders/ord_truth_1"] = {
       id: "ord_truth_1",

@@ -388,6 +388,9 @@ describe("R4b structural park (no relay)", () => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     savedDocs["branches/b1"] = { ...BRANCH };
+    // POS-11: the line must be priceable from the catalog so the test parks on
+    // the ADD-ON mapping (its actual subject), not on a missing product.
+    savedDocs["products/l1"] = { price: 235, inStock: true };
   });
 
   afterEach(() => {

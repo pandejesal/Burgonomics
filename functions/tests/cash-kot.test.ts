@@ -148,6 +148,9 @@ describe("CASH-KOT push on staff acceptance", () => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     savedDocs["branches/branch_a"] = { petpoojaStoreId: "res_a" };
+    // POS-11: POS lines are priced from the catalog, so the line's product
+    // must exist there (a real order always does).
+    savedDocs["products/itm_1"] = { price: 199, inStock: true };
     savedDocs["orders/ord_cash_1"] = {
       id: "ord_cash_1",
       branchId: "branch_a",

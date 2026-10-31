@@ -72,6 +72,8 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     savedDocs["branches/branch_k1"] = { petpoojaStoreId: "res_k1" };
+    // POS-11: POS lines are priced from the catalog.
+    savedDocs["products/itm_1"] = { price: 199, inStock: true };
     savedDocs["orders/kot_1"] = {
       id: "kot_1",
       branchId: "branch_k1",
