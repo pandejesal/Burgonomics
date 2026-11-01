@@ -395,9 +395,10 @@ describe("T3.4 — provider calls never inside a Firestore transaction (runtime 
     );
     expect(out).toMatchObject({ id: "rfnd_t34_live", payment_id: "pay_t34_R" });
     expect(monitor.violations).toEqual([]);
-    expect(monitor.providerCalls.some((c) => c.startsWith("https.request api.razorpay.in"))).toBe(
-      true
-    );
+    // Razorpay's documented host, and the one its own SDK uses. api.razorpay.in resolves to 127.0.0.1.
+    expect(
+      monitor.providerCalls.some((c) => c.startsWith("https.request api.razorpay.com/v1/payments/"))
+    ).toBe(true);
     expect(docs.get("orders/order_t34_r")!.data.refundStatus).toBe("refunded");
   });
 });
