@@ -138,6 +138,11 @@ describe("R4b restaurant due, delivery flags and cash collection", () => {
     expect(info.Order.details).toMatchObject({ order_type: "D", payment_type: "COD", collect_cash: "10.00", enable_delivery: 0, total: "10.00" });
   });
 
+  it("uses the customer app's address-only delivery contact", () => {
+    const info = details(order({ fulfillment: "delivery", customerName: undefined, customerPhone: undefined, deliveryAddress: undefined, address: { contactName: "Test Contact", contactPhone: "9825100001", line1: "Test Street" }, payment: { method: "cod" } }));
+    expect(info.Customer.details).toMatchObject({ name: "Test Contact", phone: "9825100001", address: "Test Street" });
+  });
+
   it("relays paid staff walk-in UPI and card tenders as CARD only", () => {
     for (const paymentMethod of ["upi", "razorpay"]) {
       const walkin = order({ customerId: "cust_walkin", userId: "staff_1", paymentStatus: "completed", orderType: "takeaway", paymentMethod, pricing: { grandTotal: 10, gst: 0 }, items: [{ itemId: "l1", petpoojaItemId: "101", name: "Item", price: 10, quantity: 1 }] });

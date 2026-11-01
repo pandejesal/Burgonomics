@@ -781,7 +781,7 @@ export function formatPetpoojaOrderPayload(
   // required. Table number rides along whenever the order carries one —
   // dine-in KOTs are useless to the floor without it.
   const customerPhone = normalizeCustomerPhone(
-    order.customerPhone || order.customer?.phone
+    order.customerPhone || order.customer?.phone || order.address?.contactPhone
   );
   const { preorderDate, preorderTime, createdOn } = petpoojaClock();
   const tableNo = order.tableNumber ? String(order.tableNumber).trim() : "";
@@ -834,13 +834,14 @@ export function formatPetpoojaOrderPayload(
         order.deliveryAddress?.line1 ||
         order.address?.street ||
         order.customerAddress ||
+        order.address?.line1 ||
         ""
       : "";
 
   const customerLat = order.deliveryAddress?.lat ?? order.address?.lat;
   const customerLng = order.deliveryAddress?.lng ?? order.address?.lng;
   const customerDetails = {
-    name: order.customerName || order.customer?.name || "Customer",
+    name: order.customerName || order.customer?.name || order.address?.contactName || "Customer",
     phone: customerPhone,
     address: customerAddress,
     email: order.customerEmail || order.customer?.email || "",
