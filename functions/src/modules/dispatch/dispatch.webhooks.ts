@@ -69,6 +69,13 @@ export type DispatchWebhookProvider = "borzo" | "shadowfax";
  * own retry loop alive, and parked events are re-attemptable by design (only
  * `processed` dedups).
  *
+ * THE WINDOW IS PER PROVIDER, and the difference is operationally huge:
+ *   - Borzo:   increasing intervals, up to 24h.
+ *   - Shadowfax: "5-minute intervals, up to 7 attempts" (callbacks page) — the
+ *     ladder is DEAD after ~35 minutes. Past that, nothing redelivers: the
+ *     Shadowfax reconciler (`shadowfax.reconcile.ts`, GET /status/) is the only
+ *     recovery, which is why it runs on the same 5-minute cadence.
+ *
  * Deliberately NOT thrown for terminal parks (id conflict, unsafe hint, unknown
  * event, no reference at all): retrying cannot change those, and 24h of retries
  * would be noise. This is a plain Error with a statusCode, so index.ts's
@@ -280,7 +287,8 @@ export function verifyDispatchWebhookSignature(
   // The vendor doc specifies "a HMAC hash using SHA256 and Callback Secret Key"
   // but NOT the encoding of the header value. Our verifier historically used
   // hex only, so a base64-sending Borzo would 401 forever and the status leg
-  // would silently die (their retry ladder gives up after 24h). Accept both
+  // would silently die (Borzo gives up after 24h; Shadowfax after 7 attempts /
+  // 35 minutes). Accept both
   // standard forms of the SAME digest plus the common `sha256=` prefix.
   // This is not an auth weakening: every accepted form must equal
   // HMAC-SHA256(rawBody, secret), which nobody without the secret can produce.
