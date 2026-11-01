@@ -220,7 +220,7 @@ function postRefundWithIdempotency(
   const keySecret = config.razorpay.keySecret;
   const body = JSON.stringify(refundPayload);
   const options = {
-    hostname: "api.razorpay.in",
+    hostname: "api.razorpay.com",
     path: `/v1/payments/${encodeURIComponent(razorpayPaymentId)}/refund`,
     method: "POST",
     headers: {
