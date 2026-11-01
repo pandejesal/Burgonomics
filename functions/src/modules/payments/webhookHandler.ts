@@ -8,6 +8,18 @@ import { markOrderReconciliation } from "./reconciliation";
 import { pushOrderToPetpooja } from "../petpooja";
 
 /**
+ * F5a: fields the webhook's confirm transaction must add so a settlement is
+ * never lost when the process dies between CONFIRMED and the split. Only when
+ * the order has no settlement lane yet — an existing lane (including a terminal
+ * one) is never rewritten by a confirmation.
+ */
+export function webhookConfirmSettlementFields(freshOrder: any): Record<string, any> {
+  const existing = freshOrder?.routeTransferStatus;
+  if (typeof existing === "string" && existing) return {};
+  return { routeTransferStatus: "pending_retry", routeTransferRetryCount: 0 };
+}
+
+/**
  * Handles incoming webhooks from Razorpay with signature verification & idempotent execution.
  */
 export async function handleRazorpayWebhook(req: Request, res: Response): Promise<void> {
@@ -573,6 +585,10 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             {
               ...basePayload,
               payment: settledPayment,
+              // F5a: durable settlement lane in the SAME transaction as
+              // CONFIRMED, so a crash before the split leaves an order the
+              // retry worker can finish.
+              ...webhookConfirmSettlementFields(fresh),
               ...(mintedOtp ? { deliveryOtpHash: mintedOtp.deliveryOtpHash } : {}),
             },
             { merge: true }
