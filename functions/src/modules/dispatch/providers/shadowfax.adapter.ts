@@ -22,29 +22,69 @@ import {
 } from "./shared";
 
 /**
- * Shadowfax adapter — Hyperlocal Marketplace API.
+ * Shadowfax adapter — Hyperlocal **Marketplace** API.
  *
- * CONTRACT STATUS: OFFICIAL DOCS CAPTURED 2026-10-29; live traffic remains
- * human-gated. The official developer portal now documents:
- *   - Auth: `Authorization: Token <token>` or OAuth2
- *     `POST /oauth/token/` (client credentials, 24h expiry).
+ * WHY MARKETPLACE AND NOT DEDICATED STORE — the ONE place this decision and its
+ * contract differences live (do NOT build the second model without an explicit
+ * product decision):
+ *
+ *   Shadowfax publishes two hyperlocal models. **Dedicated Store** is aimed at
+ *   fixed brick-and-mortar outlets: stores are pre-registered at Shadowfax and
+ *   an order names a static `store_code` (`PUT /api/v2/store_serviceability/`,
+ *   `POST /api/v2/stores/orders/`, serviceability answers
+ *   `available_rider_count` / `busy_rider_count`). **Marketplace** is per-order:
+ *   the pickup pin and its address travel with every order, identified by the
+ *   merchant-level `client_code` (serviceability `PUT /api/v1/order-serviceability/`,
+ *   booking `POST /api/v2/orders/`).
+ *
+ *   We implement MARKETPLACE because that is the model this whole codebase —
+ *   order schema, `client_code` env, contract-gate tests — was built and
+ *   reviewed against, and because switching models needs a Shadowfax-side store
+ *   onboarding step (`store_code` per branch) that does not exist yet. The
+ *   differences a future migration must re-derive rather than patch in place:
+ *
+ *     Dimension            | Marketplace (implemented)        | Dedicated Store
+ *     ---------------------|----------------------------------|---------------------------
+ *     Auth                 | Token or OAuth2 Bearer           | Token ONLY
+ *     Serviceability       | PUT /api/v1/order-serviceability/| PUT /api/v2/store_serviceability/
+ *     Serviceability input | pickup+drop lat/lng, paid, value | store_code, paid, value
+ *     Serviceability reply | delivery_cost, pickup_eta         | + available/busy rider count
+ *     Place order          | POST /api/v2/orders/             | POST /api/v2/stores/orders/
+ *     Place order body     | client_code + pickup/drop blocks | store_code + customer_details
+ *     `paid` type          | STRING enum "true"/"false"       | BOOLEAN
+ *     Address              | address, max 255 per block       | address_line_1/2
+ *     Edit order           | PUT /api/v2/orders/{id}/edit/     | PUT /api/v1/stores/edit-order/
+ *     Cancel order         | PUT /api/v2/orders/{id}/cancel/  | SAME endpoint
+ *
+ *   Everything below is Marketplace. Nothing here is model-agnostic enough to
+ *   reuse silently, which is exactly why the list is above instead of scattered.
+ *
+ * CONTRACT STATUS: OFFICIAL DOCS CAPTURED 2026-10-29 and re-verified 2026-11-02
+ * (orders, callbacks, schemas, order lifecycle, serviceability pages). Documented:
+ *   - Auth: `Authorization: Token <token>` or OAuth2 `POST /oauth/token/`
+ *     (client credentials, 24h expiry).
  *   - Quote = serviceability: `PUT /api/v1/order-serviceability/` →
  *     `{ serviceable, pickup_eta, delivery_cost }`. HTTP 400 (non-serviceable
  *     area) and a 200 body with `serviceable:false` both class not_serviced
  *     (DR3) — no fare is invented (DR2). No distance field → haversine.
  *   - Book: `POST /api/v2/orders/` with `client_code`
  *     (SHADOWFAX_CLIENT_CODE), `order_details` (paid is the STRING
- *     "true"/"false"), pickup/drop details (latitude/longitude as numbers),
- *     `order_items`. Response: `{ message, data: { sfx_order_id, track_url,
- *     rider_details, ... } }`. The rider arrives later via the ALLOTTED
- *     callback, so book falls back to a pending rider identity.
+ *     "true"/"false", `client_order_id` required), pickup/drop details
+ *     (`city`/`name`/`address`/`contact_number` and numeric lat/lng — city and
+ *     address are required, address maxLength 255), `order_items`. Response:
+ *     `{ message, data: { sfx_order_id, track_url, rider_details, ... } }`. The
+ *     rider arrives later via the ALLOTTED callback, so book falls back to a
+ *     pending rider identity.
  *   - Retry window: place the order within a couple of minutes of a successful
  *     serviceability check (the official docs state this; the router quotes
- *     immediately before booking, DR7).
+ *     immediately before booking, DR7). The CALLBACK window is separate and much
+ *     shorter — "5-minute intervals, up to 7 attempts" (35 min), which is why
+ *     `shadowfax.reconcile.ts` polls `GET .../status/` as the documented
+ *     reconciliation fallback.
  *
- * The paths/fields are no longer a guess, but the provider stays behind
- * SHADOWFAX_CONTRACT_VERIFIED until a human confirms the vendor-issued
- * integration packet and credentials. Credentials alone never enable live
+ * Delivery OTP is deliberately NOT sent (see `drop_details`). The provider stays
+ * behind SHADOWFAX_CONTRACT_VERIFIED until a human confirms the vendor-issued
+ * integration packet and live credentials; credentials alone never enable live
  * traffic.
  */
 
@@ -247,11 +287,24 @@ export async function markShadowfaxDispatchReady(clientOrderId: string, timestam
   assertProviderOk(response, "shadowfax");
 }
 
-/** Shadowfax `paid` is the string "true"/"false" (never a boolean). */
+/**
+ * Shadowfax `paid` is the documented STRING enum "true"/"false" (never a
+ * boolean — that is the Dedicated Store model's shape). Prepaid means the
+ * server already captured the money; anything else (COD, pending, absent) must
+ * say "false" so the rider collects: claiming "true" for an unpaid order would
+ * have the courier hand over goods the customer never paid for.
+ */
 function paidFlag(ctx: DispatchQuoteContext): string {
   const status = String(ctx.order?.paymentStatus || "").toLowerCase();
   return status === "completed" || status === "paid" ? "true" : "false";
 }
+
+/**
+ * `scheduled_time` is deliberately NOT sent: Burgonomics takes no pre-orders
+ * today (no scheduled-slot field exists on the order schema), and the docs say
+ * an absent value means "now". Sending a synthesized timestamp would move a
+ * live order into a future slot nobody asked for.
+ */
 
 /** Order value for serviceability/place-order payloads (INR, number). */
 function orderValueInr(ctx: DispatchQuoteContext): number {
@@ -534,6 +587,16 @@ export const shadowfaxAdapter: ProviderAdapter = {
             order_value: orderValueInr(ctx),
             paid: paidFlag(ctx),
             client_order_id: ctx.orderId,
+            // OTP FIELDS ARE DELIBERATELY ABSENT (DECIDED, not an oversight).
+            // The schema offers `order_details.pickup_otp`, `return_otp` and
+            // `drop_details.delivery_otp`, but our handover OTP exists to prove
+            // customer possession to OUR rider/branch — it is stored only as a
+            // HASH (`deliveryOtpHash`, porter.service.verifyDeliveryOtp) and the
+            // plaintext is never retained after issuance. Sending it would mean
+            // either storing a recoverable copy of a customer secret or
+            // transmitting a hashed nonce the rider cannot use. The courier
+            // therefore needs no OTP, and Burgonomics still verifies handover
+            // itself (verifyDeliveryOtp / the courier webhook).
           },
           pickup_details: {
             // Real branch snapshot locality; never invented, never empty (the
