@@ -618,6 +618,25 @@ describe("savePorterManualBooking (DR8 paste lane)", () => {
 });
 
 describe("dispatchCancel", () => {
+  it("cancels Shadowfax remotely before releasing its binding", async () => {
+    config.shadowfax.apiKey = "your_api_token";
+    config.shadowfax.baseUrl = "https://hlbackend.staging.shadowfax.in";
+    seedOrder("ord_sfx_cancel", { deliveryStatus: "dispatched", dispatchProvider: "shadowfax", dispatchOrderId: "21030620" });
+    fetchHandler = () => new Response(null, { status: 200 });
+    const res = await dispatchCancel({ orderId: "ord_sfx_cancel", staffName: "Ops" });
+    expect(fetchCalls[0].url).toBe("https://hlbackend.staging.shadowfax.in/api/v2/orders/21030620/cancel/");
+    expect(res.providerCancel).toBe("confirmed");
+    expect(docOf("ord_sfx_cancel").dispatchProviderCancel).toBe("confirmed");
+  });
+
+  it("keeps the Shadowfax binding when provider cancellation fails", async () => {
+    config.shadowfax.apiKey = "your_api_token";
+    config.shadowfax.baseUrl = "https://hlbackend.staging.shadowfax.in";
+    seedOrder("ord_sfx_failure", { deliveryStatus: "dispatched", dispatchProvider: "shadowfax", dispatchOrderId: "21030620" });
+    fetchHandler = () => new Response(null, { status: 500 });
+    await expect(dispatchCancel({ orderId: "ord_sfx_failure" })).rejects.toThrow();
+    expect(docOf("ord_sfx_failure").dispatchOrderId).toBe("21030620");
+  });
   it("409 NOTHING_TO_CANCEL when no dispatch is active", async () => {
     seedOrder("ord_cxl_no");
     await expect(dispatchCancel({ orderId: "ord_cxl_no" })).rejects.toMatchObject({

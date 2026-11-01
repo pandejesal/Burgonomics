@@ -32,7 +32,7 @@ import {
 } from "./types";
 import { fareConfirmCheck } from "./providers/shared";
 import { borzoAdapter } from "./providers/borzo.adapter";
-import { shadowfaxAdapter } from "./providers/shadowfax.adapter";
+import { shadowfaxAdapter, cancelShadowfaxOrder } from "./providers/shadowfax.adapter";
 import { porterAdapter } from "./providers/porter.adapter";
 import {
   assertDispatchReadinessIfRequired,
@@ -1817,13 +1817,11 @@ export interface DispatchCancelParams {
 }
 
 /**
- * POST /dispatch/cancel: LOCAL release only. No provider cancel API is
- * documented (Porter included — the previous "delegates to
- * cancelPorterBooking" wording was false for every provider), so this never
- * cancels the remote booking. It settles the order locally
+ * POST /dispatch/cancel: Shadowfax is cancelled remotely before local release;
+ * other providers require manual cancellation. It settles the order locally
  * (rider_cancelled + needsRebook, rebookTrigger "staff_cancelled"),
  * retires the active binding into `dispatchReleasedBindings` and sets
- * `dispatchProviderCancel:"manual-required"` — staff must confirm the
+ * `dispatchProviderCancel:"manual-required"` for other providers — staff must confirm the
  * cancellation in the provider dashboard (and a late provider callback for the
  * released booking parks for reconciliation instead of mutating the order).
  * 409 when nothing is active.
@@ -1851,15 +1849,22 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     throw err;
   }
 
+  const remoteShadowfaxId = order.dispatchProvider === "shadowfax"
+    ? String(order.dispatchOrderId || order.shadowfaxOrderId || "")
+    : null;
+  if (remoteShadowfaxId !== null) {
+    await cancelShadowfaxOrder(remoteShadowfaxId);
+  }
+
   const buildCancelPayload = (d: any, p: ProviderId | null) => ({
     deliveryStatus: "rider_cancelled",
     dispatchStatus: "cancelled_by_store",
-    dispatchProviderCancel: "manual-required",
+    dispatchProviderCancel: p === "shadowfax" ? "confirmed" : "manual-required",
     needsRebook: true,
     // Staff-initiated cancel: the auto-rebook worker must NEVER re-dispatch
     // this one (only carrier_cancelled / dispatch_failed triggers auto-rebook).
     rebookTrigger: "staff_cancelled",
-    riderCancellationReason: `Booking cancelled by ${staffName || "Branch Staff"} — confirm the cancellation in the ${p || "provider"} dashboard`,
+    riderCancellationReason: p === "shadowfax" ? `Booking cancelled by ${staffName || "Branch Staff"}` : `Booking cancelled by ${staffName || "Branch Staff"} — confirm the cancellation in the ${p || "provider"} dashboard`,
     cancelledBy: staffName || "Branch Staff",
     cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
     // LOCAL release only (no documented provider cancel API): retire the
@@ -1889,6 +1894,11 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
 
       if (!isActiveDispatch(d)) return { notActive: true as const };
 
+      if ((remoteShadowfaxId === null && d.dispatchProvider === "shadowfax") ||
+          (remoteShadowfaxId !== null && (d.dispatchProvider !== "shadowfax" || String(d.dispatchOrderId || d.shadowfaxOrderId || "") !== remoteShadowfaxId))) {
+        return { bindingChanged: true as const };
+      }
+
       const provider: ProviderId | null =
         (d.dispatchProvider as ProviderId) || (d.porterOrderId ? "porter" : null);
 
@@ -1898,6 +1908,12 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
 
     if (outcome?.missing) throw orderMissingError(orderId);
     if (outcome?.terminal) throw terminalError(outcome.terminal);
+    if (outcome?.bindingChanged) {
+      const err: any = new Error("Dispatch binding changed during Shadowfax cancellation; reconcile before retrying");
+      err.statusCode = 409;
+      err.code = "DISPATCH_BINDING_CHANGED";
+      throw err;
+    }
     if (outcome?.notActive) {
       const err: any = new Error("No active dispatch to cancel for this order.");
       err.statusCode = 409;
@@ -1910,9 +1926,9 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
       success: true,
       orderId,
       provider: outcome.provider,
-      providerCancel: "manual-required",
+      providerCancel: outcome.provider === "shadowfax" ? "confirmed" : "manual-required",
       message:
-        outcome.provider === "porter"
+        outcome.provider === "shadowfax" ? "Shadowfax confirmed cancellation." : outcome.provider === "porter"
           ? "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented."
           : "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented.",
     };
@@ -1928,9 +1944,9 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     success: true,
     orderId,
     provider,
-    providerCancel: "manual-required",
+    providerCancel: provider === "shadowfax" ? "confirmed" : "manual-required",
     message:
-      provider === "porter"
+      provider === "shadowfax" ? "Shadowfax confirmed cancellation." : provider === "porter"
         ? "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented."
         : "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented.",
   };
