@@ -140,6 +140,13 @@ afterEach(() => {
 });
 
 describe("P2 one documented packaging rule", () => {
+  it("honours captured NONE as zero instead of the branch fallback, without warning", async () => {
+    seedBranch({ ...DOC_PACKAGING, applicableOn: "NONE", charge: 0 }, { packagingFee: 12 });
+    for (const orderType of ["takeaway", "delivery", "dinein"] as const) {
+      expect(await computePackagingFee({ packaging: savedDocs[`branches/${BRANCH}`].packaging, branchFee: 12, orderType, branchId: BRANCH })).toBe(0);
+    }
+    expect(logs()).toHaveLength(0);
+  });
   it("23: ORDER/20/\"\" prices 20 for takeaway, delivery and 0 for dine-in (engine)", async () => {
     seedBranch(DOC_PACKAGING);
     const takeaway = await calculateOrderPricing(basket("takeaway"));

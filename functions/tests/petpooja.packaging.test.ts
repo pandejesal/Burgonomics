@@ -109,6 +109,13 @@ beforeEach(() => {
 });
 
 describe("P1 packaging capture", () => {
+  it("captures real NONE/blank/blank as understood zero without a warning", async () => {
+    const body = structuredClone(fixture);
+    Object.assign(body.restaurants[0].details, { packaging_applicable_on: "NONE", packaging_charge: "", packaging_charge_type: "" });
+    await syncPetpoojaMenu(BRANCH, undefined, body);
+    expect(savedDocs[`branches/${BRANCH}`].packaging).toMatchObject({ applicableOn: "NONE", charge: 0, understood: true });
+    expect(lastLog().packagingWarning).toBeFalsy();
+  });
   it("captures the outlet packaging contract from a push", async () => {
     await syncPetpoojaMenu(BRANCH, undefined, fixture);
     const branch = savedDocs[`branches/${BRANCH}`];

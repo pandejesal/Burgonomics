@@ -238,6 +238,8 @@ export async function computePackagingFee(
     const charge = Number(packaging.charge);
     const chargeOk = Number.isFinite(charge) && charge >= 0;
 
+    if (packaging.understood === true && applicableOn === "NONE" && chargeType === "" && packaging.charge === 0) return 0;
+
     if (packaging.understood === true && applicableOn === "ORDER" && chargeType === "" && chargeOk) {
       return Math.round(charge * 100) / 100;
     }

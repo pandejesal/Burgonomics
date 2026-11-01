@@ -75,17 +75,20 @@ export function interpretPackaging(details: any): PackagingInterpretation {
       : Number(chargeRaw);
   const chargeOk = charge !== null && Number.isFinite(charge) && charge >= 0;
 
-  const understood =
+  // Real outlet push (2026-11-01): NONE/blank/blank explicitly disables packing.
+  const noCharge = applicableOn.toUpperCase() === "NONE" &&
+    asTrimmedString(chargeRaw) === "" && chargeType === "";
+  const understood = noCharge || (
     KNOWN_APPLICABLE_ON.has(applicableOn.toUpperCase()) &&
     KNOWN_CHARGE_TYPES.has(chargeType.toUpperCase()) &&
-    chargeOk;
+    chargeOk);
 
   return {
     present: true,
     packaging: {
       source: "petpooja",
       applicableOn,
-      charge: chargeOk ? (charge as number) : null,
+      charge: noCharge ? 0 : chargeOk ? (charge as number) : null,
       chargeType,
       taxOnPacking: d.calculatetaxonpacking ?? null,
       pcTaxIds: d.pc_taxes_id ?? null,
