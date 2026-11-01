@@ -13,6 +13,7 @@
     "logs": "firebase functions:log",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:storage-rules": "firebase emulators:exec --only storage --project demo-burgonomics-storage-rules \"npx vitest run tests/storage.rules.test.ts\"",
     "backfill:orders": "tsc -p ../scripts/backfill/tsconfig.json && set \"NODE_PATH=node_modules\" && node ../scripts/backfill/dist/backfillOrders.js"
   },
   "engines": {

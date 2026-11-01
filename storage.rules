@@ -1,0 +1,62 @@
+rules_version = '2';
+
+// CANONICAL Firebase Storage rules for support-ticket photo evidence.
+//
+// Deployed to burgonomics-7faa8 (staging) and burgonomics-prod by the root
+// firebase.json storage config. Default deny: anything not matched below is
+// refused.
+//
+// Upload contract (customer app, src/features/support/services/supportService.ts
+// uploadEvidence, lines 298-319):
+//   path        support-evidence/{uid}/{ticketRef}/{Date.now()}_{name}
+//   files       max 3 per ticket (client-enforced, not security-relevant)
+//   contentType file.type || "image/jpeg"
+//   size        max 5 MB (CreateTicketForm.tsx line 70: 5 * 1024 * 1024)
+//
+// A customer may write into their OWN uid folder only, images only, at most
+// 5 MB, and may never overwrite, update, or delete. Reads are owner-only, so
+// evidence is never world-readable even though getDownloadURL is used: the
+// download token is created by the Storage SDK for the uploader, and the
+// object metadata read still requires this rule for the owning uid.
+//
+// Staff review of evidence runs through the Admin SDK in Cloud Functions, which
+// bypasses these rules by design; no client role is granted cross-customer read.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Explicit default deny. Firebase already denies unmatched paths; stating it
+    // keeps a future refactor from silently opening the bucket.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    match /support-evidence/{uid}/{ticketRef}/{file} {
+      // Owner-only create, images only, <= 5 MB. request.auth.uid must equal the
+      // uid path segment, so nobody can write into another customer's folder.
+      //
+      // `resource == null` is load-bearing, not decoration: in Cloud Storage for
+      // Firebase an upload to an EXISTING path is satisfied by either `create`
+      // or `update`, so an unguarded `allow create` lets the owner silently
+      // replace evidence already attached to a ticket. Requiring the object not
+      // to exist makes this a true create; the update arm stays false below.
+      //
+      // SVG is excluded from the image arm on purpose: image/svg+xml matches
+      // `image/.*` but is an executable document, and evidence is rendered in
+      // the partner console. Raster formats only.
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && resource == null
+        && request.resource.contentType.matches('image/.*')
+        && !request.resource.contentType.matches('image/svg.*')
+        && request.resource.size < 5 * 1024 * 1024;
+
+      // Owner-only read. No update, no delete — evidence is immutable once
+      // written, and removal is an administrative act (Admin SDK / console).
+      allow read: if request.auth != null
+        && request.auth.uid == uid;
+
+      allow update, delete: if false;
+    }
+  }
+}
