@@ -156,6 +156,7 @@ import {
   adjustCoinsSchema,
   createTicketSchema,
   ticketMessageSchema,
+  supportFeedbackSchema,
   resolveTicketSchema,
   escalateTicketSchema,
   resolveNoteSchema,
@@ -305,6 +306,7 @@ app.use(
     "/tickets/resolve",
     "/tickets/resolveNote",
     "/tickets/escalate",
+    "/support/feedback",
     "/notifications/dispatch",
     "/notifications/subscribe",
     "/notifications/unsubscribe",
@@ -1117,6 +1119,44 @@ app.post("/tickets/create", requireAuth, validateBody(createTicketSchema), async
     res.status(500).json({ error: err.message || "Failed to create support ticket" });
   }
 });
+
+// POST /support/feedback — the customer Help screen's star rating + comment.
+// The app previously posted to /v1/support/feedback, which never existed, so
+// feedback was dropped silently. customerId is taken from the verified token
+// ONLY (the body has no customerId field), so a caller cannot file feedback as
+// someone else. Written with the Admin SDK; firestore.rules default-denies
+// client access to support_feedback.
+app.post(
+  "/support/feedback",
+  requireAuth,
+  validateBody(supportFeedbackSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const customerId = req.user?.uid;
+      if (!customerId) {
+        // requireAuth should have refused already; belt and braces so a
+        // missing uid can never write an unattributed feedback row.
+        res.status(401).json({ error: "Sign in required" });
+        return;
+      }
+      const id = `fb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      // Lazy import matches every other route here (see /config/app): the
+      // Admin app is initialised once in core/firebase.
+      const { db } = await import("./core/firebase");
+      await db.collection("support_feedback").doc(id).set({
+        id,
+        customerId,
+        rating: req.body.rating,
+        comment: req.body.comment ?? "",
+        orderId: req.body.orderId ?? null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      res.status(201).json({ id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to record feedback" });
+    }
+  }
+);
 
 app.post("/tickets/message", requireAuth, validateBody(ticketMessageSchema), async (req: AuthenticatedRequest, res) => {
   try {

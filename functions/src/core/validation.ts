@@ -339,6 +339,17 @@ export const ticketMessageSchema = z.object({
   text: z.string().trim().min(1).max(2000),
 });
 
+// POST /support/feedback — customer star rating + optional comment.
+//
+// No customerId here on purpose: identity comes from the verified token at the
+// route (index.ts), so a caller cannot file feedback as somebody else. Lengths
+// are bounded at the boundary so unbounded free text never reaches Firestore.
+export const supportFeedbackSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().trim().max(2000).optional(),
+  orderId: z.string().trim().min(1).max(128).optional(),
+});
+
 export const resolveTicketSchema = z.object({
   ticketId: nonEmptyString,
   resolvedBy: z.string().min(1).max(128).optional(),
