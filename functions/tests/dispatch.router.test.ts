@@ -687,6 +687,16 @@ describe("dispatchCancel", () => {
 });
 
 describe("dispatch webhooks (DR10)", () => {
+  it("applies the official Shadowfax location callback to its current correlated booking", async () => {
+    config.shadowfax.webhookSecret = TEST_SFX_WEBHOOK_SECRET;
+    seedOrder("ord_location", { deliveryStatus: "dispatched", dispatchProvider: "shadowfax", dispatchOrderId: "21030620" });
+    savedDocs["dispatch_correlation_map/8145671314"] = { orderId: "ord_location", provider: "shadowfax", generation: 1, providerOrderId: "21030620" };
+    savedDocs["dispatch_order_map/21030620"] = { orderId: "ord_location", provider: "shadowfax" };
+    const payload = { order_id: "8145671314", rider_name: "Amit Kumar", rider_longitude: 77.66824096441269, time: "2017-11-30T09:25:17.000000Z", rider_latitude: 12.991595437657885, sfx_rider_id: 3419, location_accuracy: "31.0", pickup_eta: 3, drop_eta: 18 };
+    await handleDispatchWebhook("shadowfax", JSON.stringify(payload), TEST_SFX_WEBHOOK_SECRET, payload);
+    expect(docOf("ord_location").delivery.riderLocation).toEqual({ lat: payload.rider_latitude, lng: payload.rider_longitude });
+    expect(docOf("ord_location").deliveryStatus).toBe("dispatched");
+  });
   const borzoSig = (rawBody: string) => computeHmacSha256(rawBody, TEST_BORZO_WEBHOOK_SECRET);
 
   beforeEach(() => {

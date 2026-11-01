@@ -239,6 +239,7 @@ export function verifyDispatchWebhookSignature(
 }
 
 const EVENT_ALIASES: Record<string, string> = {
+  RIDER_LOCATION_UPDATE: "RIDER_LOCATION_UPDATE",
   DRIVER_ALLOCATED: "DRIVER_ALLOCATED",
   RIDER_ASSIGNED: "DRIVER_ALLOCATED",
   DRIVER_ASSIGNED: "DRIVER_ALLOCATED",
@@ -787,6 +788,9 @@ export async function handleDispatchWebhook(
   let scope: "order" | "delivery" | "generic" = "generic";
   let providerOrderId: string | number | null = null;
   let hintRaw: string | number | null = null;
+  const shadowfaxLocation = provider === "shadowfax" && !payload?.order_status &&
+    typeof payload?.order_id === "string" && typeof payload?.rider_latitude === "number" &&
+    typeof payload?.rider_longitude === "number";
 
   if (provider === "borzo") {
     const delivery = payload?.delivery;
@@ -819,20 +823,20 @@ export async function handleDispatchWebhook(
   } else {
     // shadowfax: `{order_status, sfx_order_id, client_order_id, rider_*}` —
     // generic `event`/`order_id` payloads still fall through for tests.
-    rawEvent =
+    rawEvent = shadowfaxLocation ? "RIDER_LOCATION_UPDATE" :
       payload?.order_status ||
       payload?.event ||
       payload?.event_type ||
       payload?.type ||
       payload?.status ||
       "";
-    providerOrderId =
+    providerOrderId = shadowfaxLocation ? null :
       payload?.sfx_order_id ??
       payload?.order_id ??
       payload?.provider_order_id ??
       payload?.delivery_id ??
       null;
-    hintRaw =
+    hintRaw = shadowfaxLocation ? payload.order_id :
       payload?.client_order_id ??
       payload?.COID ??
       payload?.request_id ??
@@ -848,6 +852,7 @@ export async function handleDispatchWebhook(
     generation: number;
     provider?: string;
     branchId?: string;
+    providerOrderId?: string | number;
   } | null = null;
 
   const rawToken = typeof hintRaw === "string" ? hintRaw.trim() : null;
@@ -862,12 +867,20 @@ export async function handleDispatchWebhook(
             generation: typeof cd.generation === "number" ? cd.generation : 1,
             provider: cd.provider,
             branchId: cd.branchId,
+            providerOrderId: cd.providerOrderId,
           };
         }
       }
     } catch {
       // Non-blocking lookup
     }
+  }
+
+  if (shadowfaxLocation) {
+    if (!correlationInfo || correlationInfo.provider !== "shadowfax" || !correlationInfo.providerOrderId) {
+      throw new DispatchWebhookRetryRequested("Shadowfax location callback is awaiting its booking correlation");
+    }
+    providerOrderId = correlationInfo.providerOrderId;
   }
 
   const orderIdHint = correlationInfo?.orderId ?? (typeof hintRaw === "string" ? hintRaw.replace(/^REQ-/, "") : null);
