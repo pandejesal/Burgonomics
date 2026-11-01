@@ -654,8 +654,10 @@ describe("shadowfax ambiguous booking (Borzo parity, dbd1626)", () => {
     borzoContext({
       order: {
         branchName: "Burgonomics CG Road",
-        store: { phone: "+91 98250 12345" },
-        deliveryAddress: { full: "Some street", lat: DROP.lat, lng: DROP.lng },
+        // `store` = the client's OrderStoreSnapshot; its `city` feeds the
+        // documented-required `pickup_details.city`.
+        store: { phone: "+91 98250 12345", city: "Ahmedabad" },
+        deliveryAddress: { full: "Some street", city: "Ahmedabad", lat: DROP.lat, lng: DROP.lng },
         customerPhone: "+91 90000 33333",
         ...order,
       },
@@ -812,7 +814,7 @@ describe("dispatchBook end-to-end: an account failure is never an address verdic
     expect(block.line).toBe("Some street in Surat");
   });
 
-  it("does not transmit an invented city to Shadowfax for a city-less drop", async () => {
+  it("refuses to transmit a city-less drop: the field is required, so it fails closed instead of inventing one", async () => {
     config.mock.shadowfaxDispatch = false;
     config.shadowfax.apiKey = "test_sfx_token";
     config.shadowfax.clientCode = "test_sfx_client";
@@ -833,6 +835,42 @@ describe("dispatchBook end-to-end: an account failure is never an address verdic
         deliveryAddress: { full: "Some street", lat: DROP.lat, lng: DROP.lng },
       },
     });
+    const err: any = await shadowfaxAdapter
+      .book({
+        ...ctx,
+        orderId: "ord_sfx",
+        quote: MOCK_QUOTE as any,
+      })
+      .catch((e: any) => e);
+
+    // Pins finding 6 AND mismatch #3: the drop city was once the literal
+    // "Ahmedabad", then an empty string. `drop_details.city` is REQUIRED by the
+    // published `LocationDetails` schema, so an empty value is a guaranteed
+    // provider 400 that this code would misread as a transient provider fault
+    // and fail over on. Neither is acceptable: refuse locally, send nothing.
+    expect(err.code).toBe("DISPATCH_LOCALITY_MISSING");
+    expect(err.statusCode).toBe(422);
+    expect(sent).toBeNull();
+  });
+
+  it("sends the branch's real city (never an invented one) for the pickup block", async () => {
+    config.mock.shadowfaxDispatch = false;
+    config.shadowfax.apiKey = "test_sfx_token";
+    config.shadowfax.clientCode = "test_sfx_client";
+    config.shadowfax.contractVerified = true;
+    let sent: any = null;
+    fetchHandler = (_url, init) => {
+      sent = JSON.parse(init.body);
+      return okJson({ sfx_order_id: "SFX-CONTRACT-1" });
+    };
+
+    const ctx = borzoContext({
+      order: {
+        branchName: "Burgonomics CG Road",
+        store: { phone: "+91 98250 12345", city: "Surat" },
+        deliveryAddress: { full: "Some street", city: "Surat", lat: DROP.lat, lng: DROP.lng },
+      },
+    });
     const book = await shadowfaxAdapter.book({
       ...ctx,
       orderId: "ord_sfx",
@@ -840,10 +878,11 @@ describe("dispatchBook end-to-end: an account failure is never an address verdic
     });
 
     expect(book.kind).toBe("booked");
-    // Pins finding 6: pre-fix the drop city was the literal "Ahmedabad", i.e. a
-    // drop pin in another city was geocoded to the wrong locality.
-    expect(sent.drop_details.city).toBe("");
-    expect(sent.drop_details.address).toBe("Some street");
-    expect(sent.pickup_details.city).toBe("Surat"); // the branch's real city
+    // The branch's real city from its own snapshot, and the drop's real city
+    // from the address snapshot — never the old hardcoded "Ahmedabad".
+    expect(sent.pickup_details.city).toBe("Surat");
+    expect(sent.drop_details.city).toBe("Surat");
+    // The address line composes street + city (+ pincode) from real fields only.
+    expect(sent.drop_details.address).toBe("Some street, Surat");
   });
 });

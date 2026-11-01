@@ -274,6 +274,29 @@ function contactDigits(raw: string | undefined, fallback?: string): string {
   return strip(raw) || strip(fallback) || "";
 }
 
+/**
+ * `LocationDetails.city` — documented REQUIRED on both the pickup and drop
+ * blocks. The adapter used to read `order.branchCity`, which real orders do not
+ * carry (`OrderStoreSnapshot` is `order.store`), so every real booking sent
+ * `""` to a required field = a guaranteed 400 classified transient = a silent
+ * walk to another courier for a LOCAL data gap.
+ *
+ * Sources are REAL order fields only, in snapshot-first order; nothing is
+ * invented (`city: ""` used to be "unknown", a hardcoded "Ahmedabad" geocoded a
+ * branch in another city to the wrong place — audit finding 6).
+ */
+function resolvePickupCity(order: Record<string, any>): string {
+  const candidates = [order.store?.city, order.branchCity, order.branch?.city];
+  const found = candidates.find((c) => typeof c === "string" && c.trim());
+  return found ? String(found).trim().slice(0, 80) : "";
+}
+
+function resolveDropCity(order: Record<string, any>, dropCity: string | undefined): string {
+  const candidates = [dropCity, order.deliveryAddress?.city, order.address?.city];
+  const found = candidates.find((c) => typeof c === "string" && c.trim());
+  return found ? String(found).trim().slice(0, 80) : "";
+}
+
 function serviceabilityPayload(ctx: DispatchQuoteContext): Record<string, any> {
   return {
     pickup_latitude: String(ctx.pickup.lat),
@@ -284,6 +307,11 @@ function serviceabilityPayload(ctx: DispatchQuoteContext): Record<string, any> {
     order_value: orderValueInr(ctx),
     ...(ctx.orderId ? { COID: ctx.orderId } : {}),
     stage_of_check: "pre_order",
+    // Documented OPTIONAL, stated explicitly. Burgonomics has no rain feed and
+    // no surge engine, so the honest values are false/0 — never a fabricated
+    // surge, and never an omitted field the provider might default upward.
+    rain_flag: false,
+    client_surge: 0,
   };
 }
 
@@ -468,6 +496,24 @@ export const shadowfaxAdapter: ProviderAdapter = {
       throw err;
     }
 
+    // `LocationDetails.city` is REQUIRED (docs: `city · required` on BOTH
+    // blocks). Same fail-closed rule as the contact gate: an empty required
+    // field is a guaranteed provider 400, which DR3 classifies as
+    // transient/not_serviced — a failover attempt for a LOCAL data gap. The
+    // city is never invented; a branch or address without one needs fixing.
+    const pickupCity = resolvePickupCity(order);
+    const dropCity = resolveDropCity(order, dropAddr.city);
+    if (!pickupCity || !dropCity) {
+      const err: any = new Error(
+        !pickupCity
+          ? "Shadowfax booking needs the pickup city - add the branch city to the branch profile, then retry dispatch."
+          : "Shadowfax booking needs the delivery city - add the city to the delivery address, then retry dispatch."
+      );
+      err.statusCode = 422;
+      err.code = "DISPATCH_LOCALITY_MISSING";
+      throw err;
+    }
+
     const orderItems = items.length
       ? items.slice(0, 50).map((it: any, i: number) => ({
           id: String(it.id || it.productId || `item_${i + 1}`),
@@ -490,10 +536,9 @@ export const shadowfaxAdapter: ProviderAdapter = {
             client_order_id: ctx.orderId,
           },
           pickup_details: {
-            // No invented locality: an empty city is "unknown", a hardcoded
-            // "Ahmedabad" geocodes a branch in another city to the wrong place
-            // (audit finding 6, the same defect the drop-side fix removed).
-            city: order.branchCity || "",
+            // Real branch snapshot locality; never invented, never empty (the
+            // gate above refuses a booking that cannot name one).
+            city: pickupCity,
             contact_number: pickupContactNumber,
             name: (pickup.name || "Burgonomics Branch").slice(0, 120),
             address: (pickupAddressBlock(order) || "Burgonomics Branch").slice(0, 255),
@@ -501,13 +546,9 @@ export const shadowfaxAdapter: ProviderAdapter = {
             longitude: ctx.pickup.lng,
           },
           drop_details: {
-            // No invented locality: an empty city is "unknown", a hardcoded
-            // "Ahmedabad" geocodes a drop pin in another city to the wrong place
-            // (audit finding 6). The official docs now describe this shape; the
-            // vendor packet/credentials still gate live traffic. Shadowfax's
-            // required-field set remains UNVERIFIED (their doc URL 404s, the
-            // Postman collection is auth-gated).
-            city: dropAddr.city || "",
+            // Same rule on the drop side: the order's own address snapshot is
+            // the only source, and the gate above refuses an empty city.
+            city: dropCity,
             contact_number: contactDigits(drop.phone, ctx.customerPhone || ""),
             name: (drop.name || "Customer").slice(0, 120),
             address: (dropAddr.line || "Customer Delivery Address").slice(0, 255),

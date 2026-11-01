@@ -46,7 +46,9 @@ function ctx(overrides: Partial<DispatchQuoteContext> = {}): DispatchQuoteContex
     orderId: "ord_sfx_gate",
     order: {
       branchName: "Burgonomics CG Road",
-      store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
+      // `store` is the client's OrderStoreSnapshot: its REQUIRED `city` is what
+      // the Marketplace `LocationDetails.city` (also required) is built from.
+      store: { name: "Burgonomics CG Road", phone: "+91 98250 12345", city: "Ahmedabad" },
       deliveryAddress: {
         full: "102, Shivalik Highstreet, Vastrapur",
         city: "Ahmedabad",
@@ -157,6 +159,60 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
     const body = JSON.parse(fetchCalls[0].init.body);
     expect(body.pickup_details.address).toHaveLength(255);
     expect(body.drop_details.address).toHaveLength(255);
+  });
+
+  it("sends the documented required `city` on both LocationDetails blocks", async () => {
+    // LocationDetails.city is REQUIRED (maxLength not stated, but `city: string
+    // · required`). The adapter read `order.branchCity`, which real orders do
+    // not carry — the branch snapshot is `order.store.city` — so every real
+    // booking sent `city: ""` on the pickup block.
+    config.shadowfax.apiKey = "your_api_token";
+    fetchHandler = () => okJson({ message: "Order placed", data: { sfx_order_id: 21030620 } }, 201);
+    const example = ctx();
+    example.order = {
+      ...example.order,
+      // A real order's branch snapshot (OrderStoreSnapshot) — no branchCity.
+      store: { name: "Burgonomics CG Road", phone: "+91 98250 12345", city: "Ahmedabad" },
+      deliveryAddress: { full: "Customer address in plain text", city: "Delhi", lat: DROP.lat, lng: DROP.lng },
+    };
+    await shadowfaxAdapter.book({ ...example, orderId: "379984400", quote: undefined as any });
+    const body = JSON.parse(fetchCalls[0].init.body);
+    expect(body.pickup_details.city).toBe("Ahmedabad");
+    expect(body.drop_details.city).toBe("Delhi");
+    // Still never INVENTED: no fallback literal when the snapshot has none.
+    expect(body.pickup_details.city).not.toBe("Ahmedabad".repeat(2));
+  });
+
+  it("refuses a booking whose pickup or drop city cannot be derived at all", async () => {
+    // Sending city:"" to a schema that marks it required is a guaranteed 400
+    // classified transient — i.e. a silent walk to another courier for a LOCAL
+    // data gap. Fail closed instead, before the wire (same rule as the contact
+    // and client_order_id gates).
+    config.shadowfax.apiKey = "your_api_token";
+    const example = ctx();
+    example.order = {
+      ...example.order,
+      store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
+      deliveryAddress: { full: "Customer address in plain text", lat: DROP.lat, lng: DROP.lng },
+    };
+    const err = await capture(shadowfaxAdapter.book({ ...example, orderId: "379984401", quote: undefined as any }));
+    expect(err.code).toBe("DISPATCH_LOCALITY_MISSING");
+    expect(err).not.toBeInstanceOf(ProviderDispatchError);
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it("states rain and surge explicitly on serviceability instead of omitting them", async () => {
+    // Both are documented OPTIONAL (`rain_flag`: "Pass true if rain-impacted",
+    // `client_surge`: "Extra surge incentive for the rider"). Burgonomics has
+    // no rain feed and no surge engine, so the honest payload says false/0
+    // rather than leaving the provider to guess — and an explicit 0 can never
+    // be read as an unset field the vendor defaults upward.
+    config.shadowfax.apiKey = "test_sfx_token";
+    fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42 });
+    await shadowfaxAdapter.quote(ctx());
+    const body = JSON.parse(fetchCalls[0].init.body);
+    expect(body.rain_flag).toBe(false);
+    expect(body.client_surge).toBe(0);
   });
 
   it("quote() refuses with a typed LOCAL config error and never reaches the wire", async () => {
