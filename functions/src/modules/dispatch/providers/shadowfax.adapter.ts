@@ -26,7 +26,7 @@ import {
  *
  * CONTRACT STATUS: OFFICIAL DOCS CAPTURED 2026-10-29; live traffic remains
  * human-gated. The official developer portal now documents:
- *   - Auth: `Authorization: Bearer <token>` or OAuth2
+ *   - Auth: `Authorization: Token <token>` or OAuth2
  *     `POST /oauth/token/` (client credentials, 24h expiry).
  *   - Quote = serviceability: `PUT /api/v1/order-serviceability/` →
  *     `{ serviceable, pickup_eta, delivery_cost }`. HTTP 400 (non-serviceable
@@ -55,7 +55,7 @@ function shadowfaxHeaders(): Record<string, string> {
     // with a trailing newline/space would otherwise pass the guard and reach the
     // wire as `Authorization: Bearer  abc ` -> 401 -> classified transient -> a
     // silent walk to another courier for a LOCAL config fault.
-    Authorization: `Bearer ${(config.shadowfax.apiKey || "").trim()}`,
+    Authorization: `Token ${(config.shadowfax.apiKey || "").trim()}`,
   };
 }
 

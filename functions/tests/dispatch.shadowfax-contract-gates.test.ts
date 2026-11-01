@@ -166,12 +166,13 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
     expect(fetchCalls).toHaveLength(1);
     // A newline/space pasted into the secret would otherwise reach the wire and
     // be rejected 401 -> transient -> a silent walk for a local config fault.
-    expect(fetchCalls[0].init.headers.Authorization).toBe("Bearer test_sfx_token");
+    expect(fetchCalls[0].init.headers.Authorization).toBe("Token test_sfx_token");
   });
 
-  it("positive control: a keyed quote reaches the wire exactly once with the Bearer header", async () => {
+  it("positive control: a keyed quote reaches the wire exactly once with the Token header", async () => {
     config.shadowfax.apiKey = "test_sfx_token";
-    fetchHandler = () => okJson({ serviceable: true, delivery_cost: 42, pickup_eta: 6 });
+    // Official Marketplace serviceability response example.
+    fetchHandler = () => okJson({ serviceable: true, pickup_eta: 10, drop_eta: 35, delivery_cost: 42, pickup_rain_mode_flag: false, drop_rain_mode_flag: false, rain_surge_amount: 0 });
 
     const quote = await shadowfaxAdapter.quote(ctx());
 
@@ -181,7 +182,7 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
       "https://hlbackend.staging.shadowfax.in/api/v1/order-serviceability/"
     );
     expect(fetchCalls[0].init.method).toBe("PUT");
-    expect(fetchCalls[0].init.headers.Authorization).toBe("Bearer test_sfx_token");
+    expect(fetchCalls[0].init.headers.Authorization).toBe("Token test_sfx_token");
   });
 
   it("positive control: a keyed book reaches the wire and returns the provider order id", async () => {
