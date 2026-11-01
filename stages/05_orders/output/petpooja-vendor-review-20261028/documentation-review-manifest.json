@@ -1,0 +1,144 @@
+{
+  "reviewedAtUtc": "2026-10-28T04:19:34.373789+00:00",
+  "baseCommit": "c26effe867c662f2008445ee6dae73d176c77bb8",
+  "coverage": {
+    "saveOrderPdfPages": 9,
+    "sandboxPdfPages": 6,
+    "publicApiResources": 10,
+    "publicHttpTransactions": 19,
+    "collapsedChildAttributesRead": true,
+    "rootLocalReferencesReadCompletely": true
+  },
+  "sources": [
+    {
+      "path": "C:\\Users\\DELL\\Downloads\\API Guide for Placing Orders on Petpooja POS.pdf",
+      "sha256": "b6a59c830185f33e93ab0c405a727ca2bc7dc23d3426ab50ac2fe873f776f247",
+      "bytes": 282351
+    },
+    {
+      "path": "C:\\Users\\DELL\\Downloads\\Petpooja Sandbox Guide for Integration Testing.pdf",
+      "sha256": "df1380f47ec6f9cf49f5c657c074a2491a68ce71c0571e09eeec1733500a6858",
+      "bytes": 289942
+    },
+    {
+      "path": "C:\\Users\\DELL\\Downloads\\commented payload.txt",
+      "sha256": "4af49d4f6f4313bf71234579aaa0b41b9364a58946ea03597062e28c621144e2",
+      "bytes": 9379
+    },
+    {
+      "path": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\petpooja-docs-20261028\\apiary-live.html",
+      "sha256": "86c430f6e02611dbcd02d819ba9072e151e2ca30383854a5cb531db2e281ac0a",
+      "bytes": 5724
+    },
+    {
+      "path": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\petpooja-docs-20261028\\apiary-ssr.js",
+      "sha256": "6d125c86fad74f67bd669f7ebc9074992021f8adfdd8d263c7a7c70fc1e23905",
+      "bytes": 958532
+    },
+    {
+      "path": "C:\\Users\\DELL\\AppData\\Local\\Temp\\opencode\\petpooja-docs-20261028\\apiary-state.json",
+      "sha256": "5fe709ca9f979c02b666ca426ca619b193ef27a3dd900ce1f6f5418df00adf69",
+      "bytes": 4513148
+    }
+  ],
+  "publicUrls": [
+    "https://onlineorderingapisv210.docs.apiary.io/",
+    "https://jsapi.apiary.io/apis/onlineorderingapisv210/ssr/68ef7e4dd63150f067a43496/0.38.0/Apiary.renderApiaryUI"
+  ],
+  "ssrResponseUtf8Sha256": "ac42eaaf64298840bfa237d4ce94b154da9a4ab9b012ecbc57bacb0db03a8f3f",
+  "ssrSavedTextSha256": "6d125c86fad74f67bd669f7ebc9074992021f8adfdd8d263c7a7c70fc1e23905",
+  "storageNote": "Python text files on Windows may have CRLF newlines; response hash and archived byte hash are separately recorded.",
+  "unchangedApplicationAndTestFiles": [
+    {
+      "file": "functions/src/modules/petpooja/orderPush.ts",
+      "sha256": "2c32affc73abf169b14e1d9bc0c3772e003563e4f2da5d99efb5df98322d134b",
+      "unchangedFromTestTime": true
+    },
+    {
+      "file": "functions/src/modules/petpooja/testRunner.ts",
+      "sha256": "8ab8cf29a3f089e7c638cbdd2c7dc5f378473b4802abfe90949f69b266b8728e",
+      "unchangedFromTestTime": true
+    },
+    {
+      "file": "functions/src/modules/petpooja/taxAmounts.ts",
+      "sha256": "6e4765c1b5034d5269cc71a5cf16976f28c53aa4a866d2e9c362541f621d3b33",
+      "unchangedFromTestTime": true
+    },
+    {
+      "file": "functions/tests/petpooja.vendor-attachment.test.ts",
+      "sha256": "e8b58d7de005321319827aa670978f2427162804c7d4122b6153a38157970fd4",
+      "unchangedFromTestTime": true
+    },
+    {
+      "file": "functions/tests/petpooja.tax-amounts.test.ts",
+      "sha256": "354f79eabf5d40040f6aad64d89828c89df25d5ed0759e9ecd57e046f996a3f0",
+      "unchangedFromTestTime": true
+    },
+    {
+      "file": "functions/tests/fixtures/petpooja-vendor-attachment-shape.json",
+      "sha256": "6c8f6bd8c52b3759af28bbc1cefab8c6b0090aa6c5dbd853df88c24bd8bfafbe",
+      "unchangedFromTestTime": true
+    }
+  ],
+  "referenceChanges": [
+    {
+      "file": "references/petpooja_save_order_api.md",
+      "sha256": "b124562018ab9a74e246fceaa6e5a7dd541cded7b1dd5fe299ab56a2215777d2",
+      "testTimeSha256": "3b6c3641f51b49f5e8ad9da947a1830282a4c2c51237826f9ee45d9aec990701",
+      "documentationOnlyChange": true
+    },
+    {
+      "file": "references/petpooja_pos.md",
+      "sha256": "fc80bada69953959ef1b48775329c3d140b6b6199ea29662ace3fe023e643494",
+      "testTimeSha256": null,
+      "documentationOnlyChange": true
+    }
+  ],
+  "reviewArtifacts": [
+    {
+      "file": "documentation-review.md",
+      "sha256": "ea7a9fb443d52dfb30424367fc948240f5a97f6506a7e75620d1637646028626"
+    },
+    {
+      "file": "comparison.md",
+      "sha256": "922b5a0da700df4d182ba058ed6c6d540f5949decf26b43df8af76258c2cf788"
+    },
+    {
+      "file": "email-draft.md",
+      "sha256": "ef06b0bb54b5f14771997239b94f6b9e9fadcfa2f5869cccf1f112baa7ee6f48"
+    },
+    {
+      "file": "email-draft-doc-reviewed.md",
+      "sha256": "0e4990e0669abc1791744e9cce0b685a3fbbc128cbfb13de1b202d36ce9b8229"
+    },
+    {
+      "file": "official-api-expanded-20261028.md",
+      "sha256": "881f5f25378f035fdb2bbbbfaa3d30caafe62d5a8d068aae5419d6b8fe5f52f8"
+    },
+    {
+      "file": "candidate-manifest.json",
+      "sha256": "ec92b7aa3904fe1a2dc264d10e041497975d9bc52acdbf378815b9ebf2b3cc0d"
+    }
+  ],
+  "originalDesktopDraft": {
+    "path": "C:\\Users\\DELL\\Desktop\\PETPOOJA_REPLY_DRAFT_20261028.md",
+    "sha256": "ef06b0bb54b5f14771997239b94f6b9e9fadcfa2f5869cccf1f112baa7ee6f48",
+    "preserved": true
+  },
+  "revisedDesktopDraft": {
+    "path": "C:\\Users\\DELL\\Desktop\\PETPOOJA_REPLY_DRAFT_20261028_DOC_REVIEWED.md",
+    "sha256": "0e4990e0669abc1791744e9cce0b685a3fbbc128cbfb13de1b202d36ce9b8229",
+    "sent": false
+  },
+  "gatesFile": "gates-doc-review.json (separate offline checks; not vendor conformance)",
+  "boundaries": {
+    "applicationSourceChanged": false,
+    "testsChanged": false,
+    "rootCheckoutEditedByReview": false,
+    "providerAccountAccessed": false,
+    "sandboxOrderSent": false,
+    "emailSent": false,
+    "deployed": false,
+    "merged": false
+  }
+}

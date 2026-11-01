@@ -13,9 +13,23 @@
  * where adding it was correct. `taxIncluded` keeps both shapes honest and
  * defaults to nothing — the caller must say which world it is in.
  *
+ * GST liability is still per item (vendor services vs restaurant goods): the
+ * menu, not a client or a global default, decides who remits it. Every line of
+ * OUR menu is restaurant-liable (R4), but the shape and the mapping stay so a
+ * vendor-liable line can never be booked as restaurant revenue.
+ *
  * All arithmetic is integer paise; every output is a 2dp string, the vendor's
  * shape for money.
  */
+
+export type PetpoojaGstLiability = "vendor" | "restaurant";
+
+/** The menu, not a client or a global default, defines who remits item GST. */
+export function petpoojaGstLiability(gstType: unknown): PetpoojaGstLiability {
+  if (gstType === "services") return "vendor";
+  if (gstType === "goods") return "restaurant";
+  throw new Error("BLOCKED_CONFIGURATION: missing or unknown captured item gst_type");
+}
 
 function paise(value: number | string, field: string): number {
   if (value === "" || typeof value === "boolean" || value == null) {
@@ -32,7 +46,16 @@ function paise(value: number | string, field: string): number {
 export interface FinancialItem {
   final_price: string;
   quantity: string;
+  /** Absent means restaurant-liable (our menu, R4); unknown values block. */
+  gst_liability?: PetpoojaGstLiability;
   item_tax: Array<{ id: string; amount: string }>;
+}
+
+/** The restaurant-liable share of one tax row, in rupees (vendor shape). */
+export function restaurantLiableItemTax(items: FinancialItem[], taxId: string): number {
+  return items.reduce((sum, item) => sum + (item.gst_liability === "vendor"
+    ? 0
+    : item.item_tax.reduce((tax, row) => tax + (row.id === taxId ? paise(row.amount, "item tax") : 0), 0)), 0) / 100;
 }
 
 export interface PetpoojaFinancialInput {
@@ -55,6 +78,7 @@ export interface PetpoojaFinancials {
   collect_cash: string;
 }
 
+/** POS total is restaurant due, separate from the amount charged to the customer. */
 export function petpoojaFinancials(input: PetpoojaFinancialInput): PetpoojaFinancials {
   let itemNet = 0;
   let itemTax = 0;
@@ -63,11 +87,21 @@ export function petpoojaFinancials(input: PetpoojaFinancialInput): PetpoojaFinan
     if (!Number.isSafeInteger(quantity) || quantity <= 0) {
       throw new Error("BLOCKED_CONFIGURATION: invalid item quantity");
     }
+    if (
+      item.gst_liability !== undefined &&
+      item.gst_liability !== "vendor" &&
+      item.gst_liability !== "restaurant"
+    ) {
+      throw new Error("BLOCKED_CONFIGURATION: unknown item GST liability");
+    }
     itemNet += paise(item.final_price, "item final price") * quantity;
-    itemTax += item.item_tax.reduce(
-      (sum, row) => sum + paise(row.amount, "item tax"),
-      0
-    );
+    // Only the restaurant's own liability can ever be part of restaurant due.
+    if (item.gst_liability !== "vendor") {
+      itemTax += item.item_tax.reduce(
+        (sum, row) => sum + paise(row.amount, "item tax"),
+        0
+      );
+    }
   }
 
   const discount = paise(input.discount, "order discount");

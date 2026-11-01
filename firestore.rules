@@ -89,19 +89,87 @@ service cloud.firestore {
         && resource.data.orderType == 'delivery';
     }
 
+    // Orders CREATE (both lanes): ALLOWLIST of exactly the keys the two real
+    // creators write. Audited against the CURRENT app sources:
+    //   - core ordersService.createOrder (persisted payload): id, shortCode,
+    //     status, fulfillment, store, address, deliveryAddress, deliveryQuoteId
+    //     (delivery only), items, totals, promo, tipAmount,
+    //     loyaltyPointsRedeemed, notes, fulfillmentInstructions, tableNumber,
+    //     whatsappOptIn, payment, placedAt, estimatedAt, userId, customerId,
+    //     createdAt, updatedAt, branchId, branchCoordinates,
+    //     checkoutFingerprint, petpoojaError. (`petpoojaStatus` is DELETED
+    //     before the write — server-owned.)
+    //   - partner ManualOrderCreateModal / walkInOrder.createOrderDocIfAbsent:
+    //     id, customerId, userId, customerName, customerPhone, branchId,
+    //     branchName, city, items, subtotal, tax, deliveryFee, total,
+    //     orderType, tableNumber, status, paymentMethod, paymentStatus,
+    //     specialInstructions, createdAt, updatedAt. (The walk-in no longer
+    //     stamps petpoojaSyncStatus — server-owned.)
+    // Everything else — forged lease state, planted refund claims, POS sync
+    // state or any literal-dotted binding — is refused by construction.
+    // CUS-06 regression guard: deliveryQuoteId is REQUIRED here (a delivery
+    // create carries it), or every real delivery checkout is denied.
+    function orderCreateAllowedKeys() {
+      return [
+        // Identity + placement (both lanes).
+        'id', 'shortCode', 'orderId', 'customerId', 'userId', 'branchId', 'branchName', 'city',
+        'branchCoordinates', 'orderType', 'fulfillment', 'tableNumber',
+        'customerName', 'customerPhone',
+        // Basket and client-authored pricing snapshot (repriced server-side at
+        // payment verification; cash-lane totals are a documented residual).
+        'items', 'subtotal', 'tax', 'deliveryFee', 'total', 'totals', 'tipAmount',
+        'promo', 'loyaltyPointsRedeemed', 'checkoutFingerprint',
+        // Delivery context, notes and fulfilment instructions. deliveryQuoteId
+        // is the R8 server courier quote a delivery order is created with.
+        'store', 'address', 'deliveryAddress', 'deliveryQuoteId', 'notes',
+        'specialInstructions', 'fulfillmentInstructions',
+        // Workflow meta.
+        'status', 'payment', 'paymentMethod', 'paymentStatus', 'whatsappOptIn',
+        'placedAt', 'estimatedAt', 'createdAt', 'updatedAt',
+        // Best-effort POS push failure surface (display only — POS STATE —
+        // petpoojaStatus/AcceptedNoId/SyncStatus/OrderId — stays server-owned).
+        'petpoojaError'
+      ];
+    }
+
+    // Allowlist over the written top-level keys ONLY (plus the nested-map
+    // allowlists beneath them). A literal field name containing a dot
+    // ("payment.razorpayPaymentId") is a member of no entry here, so planted
+    // legacy bindings are refused; nested injections under allowed maps
+    // (inside `payment`) are refused by that map's own hasOnly allowlist in
+    // orderCreatePaymentClientFieldsOnly().
+    function orderCreateKeysAllowlisted() {
+      return orderCreateAllowedKeys().hasAll(request.resource.data.keys());
+    }
+
     // Orders CREATE (both lanes): keys a client must never plant at birth.
-    // OTP proof fields are server-minted by POST /orders/verifyDeliveryOtp;
-    // refund/pricing/dispatch fields resolve server-side (Admin SDK /
-    // functions); petpoojaOrderId is webhook-owned (menuSyncWebhook).
+    // Kept alongside the allowlist above as the readable policy statement of
+    // what is server-owned (the allowlist is the enforcing direction).
     function orderCreateForbiddenKeys() {
       return [
         'deliveryOtp', 'deliveryOtpHash', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
         'refund', 'refundStatus', 'refundId', 'refundAmount',
         'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
+        'refundActiveClaim', 'refundClaimedAt', 'refundClaimedRequestId',
+        'refundClaimedPaymentId', 'refundClaimedPaise', 'refundClaimedKey',
+        'refundClaimedReason', 'refundKeyedReceipts',
         'pricing', 'pricingSnapshot', 'petpoojaOrderId', 'dispatchStatus',
         'routeTransferStatus', 'routeTransferNeedsManualSettlement',
         'routeTransferRetryCount', 'routeTransferClaimedAt',
-        'paymentChannel', 'monthlyFeeHold'
+        'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
+        'paymentChannel', 'monthlyFeeHold',
+        'petpoojaAcceptedNoId', 'petpoojaAcceptedNoIdAt', 'petpoojaAcceptedNoIdAck',
+        'petpoojaAcceptedNoIdSource', 'petpoojaAcceptedUnrecorded', 'petpoojaAcceptedAck',
+        'petpoojaStatus', 'petpoojaSyncStatus', 'petpoojaRetryCount',
+        'petpoojaPushClaimedAt', 'petpoojaClaimedAt', 'petpoojaAmbiguousProcessing',
+        'petpoojaCallbackAck', 'petpoojaCallbackOrderId', 'petpoojaCallbackClientRef',
+        'petpoojaKitchenStatus', 'petpoojaWebhookEventId', 'petpoojaWebhookReceivedAtMs',
+        'reconciliation', 'deliveryPartner', 'lastPetpoojaError', 'kotSyncFailed',
+        'kotPrinted', 'kotPrintedAt', 'kotPushedAt', 'dispatchProvider', 'dispatchOrderId',
+        'dispatchClaimedAt', 'dispatchError', 'dispatchAttempts', 'dispatchGeneration',
+        'dispatchPendingCorrelation', 'dispatchReleasedBindings', 'dispatchQuote',
+        'porterDispatchStatus', 'porterDispatchClaimedAt', 'needsRebook', 'rebookTrigger',
+        'borzoOrderId', 'shadowfaxOrderId', 'porterOrderId'
       ];
     }
 
@@ -114,11 +182,76 @@ service cloud.firestore {
         'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
         'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount',
         'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
+        'refundActiveClaim', 'refundClaimedAt', 'refundClaimedRequestId',
+        'refundClaimedPaymentId', 'refundClaimedPaise', 'refundClaimedKey',
+        'refundClaimedReason', 'refundKeyedReceipts',
         'routeTransferStatus', 'routeTransferNeedsManualSettlement',
         'routeTransferRetryCount', 'routeTransferClaimedAt',
+        'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
         'paymentChannel', 'monthlyFeeHold',
-        'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil'
+        'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
+        'petpoojaAcceptedNoId', 'petpoojaAcceptedNoIdAt', 'petpoojaAcceptedNoIdAck',
+        'petpoojaAcceptedNoIdSource', 'petpoojaAcceptedUnrecorded', 'petpoojaAcceptedAck',
+        'petpoojaStatus', 'petpoojaSyncStatus', 'petpoojaRetryCount',
+        'petpoojaPushClaimedAt', 'petpoojaClaimedAt', 'petpoojaAmbiguousProcessing',
+        'petpoojaCallbackAck', 'petpoojaCallbackOrderId', 'petpoojaCallbackClientRef',
+        'petpoojaKitchenStatus', 'petpoojaWebhookEventId', 'petpoojaWebhookReceivedAtMs',
+        'reconciliation', 'deliveryPartner', 'lastPetpoojaError', 'kotSyncFailed',
+        'kotPrinted', 'kotPrintedAt', 'kotPushedAt', 'dispatchProvider', 'dispatchOrderId',
+        'dispatchClaimedAt', 'dispatchError', 'dispatchAttempts', 'dispatchGeneration',
+        'dispatchPendingCorrelation', 'dispatchReleasedBindings', 'dispatchQuote',
+        'porterDispatchStatus', 'porterDispatchClaimedAt', 'needsRebook', 'rebookTrigger',
+        'borzoOrderId', 'shadowfaxOrderId', 'porterOrderId',
+        // Basket identity and fulfillment are immutable after create: flipping
+        // orderType would also defeat directDeliveredBypass(), and a
+        // staff-editable basket would let the kitchen cook a different order
+        // than the one charged.
+        'items', 'orderType', 'fulfillment', 'deliveryStatus',
+        'refund', 'refunds'
       ];
+    }
+
+    // Nested payment display marker at birth. The customer lane is
+    // pending-only: a client cannot mint a paid/completed settlement marker.
+    // The walk-in lane may be born completed because cash is tendered at the
+    // counter. Absent payment is fine (older clients/walk-in writes).
+    //
+    // ALLOWLIST the map itself, both lanes: `payment.routeTransfer` (the Route
+    // receipt) and the capture/refund bookkeeping are server-written after
+    // gateway verification. executeRouteSplit's fast path treats ANY stored
+    // `payment.routeTransfer` as an already-executed payout and returns
+    // "done" without POSTing the transfer (razorpay.service.ts), so a
+    // client-planted receipt at order create silently suppresses the branch
+    // settlement. Only the display fields the apps write are allowed.
+    function orderCreatePaymentClientFieldsOnly() {
+      return !('payment' in request.resource.data) || (
+        request.resource.data.payment is map &&
+        request.resource.data.payment.keys().hasOnly([
+          'method', 'label', 'status', 'transactionId', 'paidAt'
+        ])
+      );
+    }
+    function orderCreatePaymentPendingOnly() {
+      return orderCreatePaymentClientFieldsOnly() && (
+        !('payment' in request.resource.data) || (
+          request.resource.data.payment is map &&
+          (
+            !('status' in request.resource.data.payment) ||
+            request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
+          )
+        )
+      );
+    }
+    function orderCreatePaymentSettledWalkin() {
+      return orderCreatePaymentClientFieldsOnly() && (
+        !('payment' in request.resource.data) || (
+          request.resource.data.payment is map &&
+          (
+            !('status' in request.resource.data.payment) ||
+            request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE', 'completed']
+          )
+        )
+      );
     }
 
     // Orders CREATE (both lanes): the canonical initial status meta only.
@@ -267,7 +400,8 @@ service cloud.firestore {
           request.resource.data.customerId == request.auth.uid &&
           request.resource.data.userId == request.auth.uid &&
           orderCreateInitialStatus() &&
-          !request.resource.data.keys().hasAny(orderCreateForbiddenKeys()) &&
+          orderCreateKeysAllowlisted() &&
+          orderCreatePaymentPendingOnly() &&
           (
             !('paymentStatus' in request.resource.data) ||
             request.resource.data.paymentStatus in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
@@ -280,7 +414,8 @@ service cloud.firestore {
           isBranchOwner() &&
           ownsBranch(request.resource.data.branchId) &&
           orderCreateInitialStatus() &&
-          !request.resource.data.keys().hasAny(orderCreateForbiddenKeys()) &&
+          orderCreateKeysAllowlisted() &&
+          orderCreatePaymentSettledWalkin() &&
           (
             !('paymentStatus' in request.resource.data) ||
             request.resource.data.paymentStatus in ['pending', 'completed']
@@ -291,6 +426,9 @@ service cloud.firestore {
       allow update: if (
         isBrandOwner() &&
         !directDeliveredBypass() &&
+        // SEC-04 applies to EVERY client role: status moves only through
+        // POST /orders/bumpStatus (scope check + audit record).
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
       ) || (
         isBranchOwner() &&
@@ -682,6 +820,22 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Refund request identity receipts (razorpay.service.ts autoRefund) —
+    // server-only. Denied explicitly rather than left to the default-deny
+    // fallback: the document id is a hash of order/payment/request ids and
+    // carries money state, so no client lane may read or write it.
+    // Allows are additive: review any future overlapping wildcard rules too.
+    match /payment_refund_requests/{docId} {
+      allow read, write: if false;
+    }
+
+    // Dispatch pending-bind correlation tokens (dispatch.router.ts claim tx)
+    // — server-only. Keep correlation metadata out of client reads/writes;
+    // callbacks must still pass the provider authentication and binding checks.
+    match /dispatch_correlation_map/{docId} {
+      allow read, write: if false;
+    }
+
     match /dev_error_snapshots/{snapshotId} {
       allow read: if isBrandOwner();
       allow create, update, delete: if false;
@@ -796,6 +950,49 @@ service cloud.firestore {
     match /device_tokens/{token} {
       allow read: if false;
       allow create, update, delete: if false; // server-owned via registerToken (index.ts); kills any-auth overwrite
+    }
+
+    // =========================================================================
+    // NOTIFICATION + DISPATCH SERVER-OWNED PATHS (N09)
+    // =========================================================================
+    // Backend inventory (source-verified, functions/src):
+    //   - modules/notifications/devicePrefs.ts reads/sets
+    //     users/{uid}/device_prefs/{installationId} (Admin SDK).
+    //   - modules/notifications/sendGate.ts writes notification_quarantine
+    //     merge-rows on send-gate violations.
+    //   - modules/tickets/supportNotifications.ts writes the attempt ledger
+    //     notification_dispatch (Admin SDK).
+    //   - dispatch.router.ts / dispatch.webhooks.ts write dispatch_order_map
+    //     (pending-bind), dispatch_webhook_events (provider event trail) and
+    //     unmatched_dispatch_events (parked, unverified payloads).
+    // These paths leak which device belongs to which account (and its
+    // category toggles), forensic send state and raw provider receipt lanes:
+    // NO client role — brand_owner/developer included — may read or write
+    // them. All writes stay Admin SDK (bypasses rules). Overlapping `if false`
+    // guards are reviewable tripwires; the real guarantee is the ABSENCE of
+    // any overlapping allow statement.
+    match /users/{prefOwnerUid}/device_prefs/{installationId} {
+      allow read, write: if false;
+    }
+
+    match /notification_quarantine/{docId} {
+      allow read, write: if false;
+    }
+
+    match /notification_dispatch/{docId} {
+      allow read, write: if false;
+    }
+
+    match /dispatch_order_map/{docId} {
+      allow read, write: if false;
+    }
+
+    match /dispatch_webhook_events/{docId} {
+      allow read, write: if false;
+    }
+
+    match /unmatched_dispatch_events/{docId} {
+      allow read, write: if false;
     }
 
     // =========================================================================

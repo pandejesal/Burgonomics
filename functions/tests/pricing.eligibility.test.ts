@@ -8,9 +8,10 @@ import { describe, it, expect, vi } from "vitest";
  * so a line that went 86 after it entered the cart (or came from a stale menu)
  * was still priced, charged, and pushed to the kitchen.
  *
- * These tests pin the server contract: only an explicit boolean `true` is
- * sellable, unknown fails CLOSED, and a line priced from client input is
- * reported as degraded instead of looking like a clean catalog price.
+ * These tests pin the server contract: an explicit `inStock: false` blocks the
+ * line, a missing availability field (combo/import docs) is sellable, and a
+ * line whose catalog read threw refuses the basket with a retryable 503
+ * instead of being priced from client input.
  */
 
 const CATALOG: Record<string, { price: number; inStock?: boolean }> = {
@@ -27,6 +28,9 @@ const { mockDb } = vi.hoisted(() => {
         id: docId,
         get: async () => {
           if (col === "products") {
+            if (docId === "prod_read_fail") {
+              throw new Error("Firestore transient read error");
+            }
             const entry = (CATALOG as any)[docId];
             return entry === undefined
               ? { exists: false, data: () => ({}), id: docId }
@@ -65,7 +69,10 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { calculateOrderPricing } from "../src/modules/payments/pricing.engine";
+import {
+  calculateOrderPricing,
+  repriceOrderForVerification,
+} from "../src/modules/payments/pricing.engine";
 
 const basket = (productId: string, price = 100) => ({
   items: [{ id: "l1", productId, name: "Item", price, quantity: 1 }],
@@ -89,11 +96,49 @@ describe("money-time product eligibility (server, authoritative)", () => {
     });
   });
 
-  it("fails CLOSED when the product doc carries no availability field", async () => {
-    // Not 'probably fine': an unknown eligibility is not a licence to sell.
+  it("REFUSES a combo/legacy product with no inStock flag (only an explicit true is sellable)", async () => {
+    // Fail CLOSED (money-time eligibility): an absent `inStock` is not evidence
+    // the item is sellable. Combo-builder/brand-import docs must be backfilled
+    // with `inStock` before they can be charged — the customer sees a refresh
+    // prompt instead of paying for an item the kitchen may have 86'd.
     await expect(calculateOrderPricing(basket("prod_unknown"))).rejects.toMatchObject({
       statusCode: 409,
       code: "ITEM_UNAVAILABLE",
+    });
+
+    // The same refusal holds at payment verification (no silent re-price).
+    await expect(
+      repriceOrderForVerification({
+        items: basket("prod_unknown").items,
+        branchId: "b1",
+        orderType: "takeaway",
+        pricing: { grandTotal: 115 },
+      })
+    ).rejects.toMatchObject({ code: "ITEM_UNAVAILABLE" });
+  });
+
+  it("a product doc read failure refuses the basket with a retryable 503 (never a client-priced line)", async () => {
+    // 1. Partial read failure in a multi-line order: the readable line must
+    // not buy a "degraded" subtotal for the failed line — the whole basket is
+    // refused with the same retryable outage a catalog-layer failure returns.
+    const multiBasket = {
+      items: [
+        { id: "l1", productId: "prod_ok", name: "Ok Item", price: 100, quantity: 1 },
+        { id: "l2", productId: "prod_read_fail", name: "Failing Item", price: 120, quantity: 1 },
+      ],
+      orderType: "takeaway" as const,
+      branchId: "b1",
+      deliveryFee: 0,
+      packagingFee: 15,
+    };
+    await expect(calculateOrderPricing(multiBasket)).rejects.toMatchObject({
+      statusCode: 503,
+      message: "Menu pricing is temporarily unavailable — please retry checkout.",
+    });
+
+    // 2. Single failing line: same retryable 503, never 409 ITEM_PRICE_UNVERIFIED.
+    await expect(calculateOrderPricing(basket("prod_read_fail", 120))).rejects.toMatchObject({
+      statusCode: 503,
     });
   });
 

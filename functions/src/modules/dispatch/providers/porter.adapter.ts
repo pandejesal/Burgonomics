@@ -31,6 +31,31 @@ function porterApiReady(): boolean {
   );
 }
 
+/**
+ * Uncertain-acceptance classifier — the F1 double-rider guard.
+ *
+ * `porter.service.bookPorterRider` throws a PLAIN error (never a
+ * ProviderDispatchError) for two shapes that mean "we cannot prove whether
+ * Porter accepted":
+ *   - `PROVIDER_BOOK_AMBIGUOUS` (2xx without an order id — the delivery may
+ *     already exist), and
+ *   - an abort/timeout while the create-order request was in flight (the
+ *     request may already have reached Porter).
+ * Both must stay plain errors so dispatch.router.ts does NOT walk the ranked
+ * list and book a second carrier. Mirrors borzo.adapter/shadowfax.adapter.
+ */
+function isUncertainPorterBooking(err: any): boolean {
+  if (err?.code === "PROVIDER_BOOK_AMBIGUOUS") return true;
+  return /timed?\s?out|abort/i.test(String(err?.message || ""));
+}
+
+function porterBookAmbiguous(message: string): Error {
+  const err: any = new Error(message);
+  err.statusCode = 502;
+  err.code = "PROVIDER_BOOK_AMBIGUOUS";
+  return err;
+}
+
 export const porterAdapter: ProviderAdapter = {
   provider: "porter",
 
@@ -129,6 +154,19 @@ export const porterAdapter: ProviderAdapter = {
         // they are NOT provider failures and must not be walked past.
         throw err;
       }
+      // F1 (double-rider guard): a timeout/abort during create-order or a
+      // PROVIDER_BOOK_AMBIGUOUS reply means Porter may ALREADY hold this
+      // booking. Failing over here would book a second real rider for one
+      // delivery, so re-throw the SAME shape the router treats as
+      // "release the claim, park needs_reconciliation, zero further POSTs"
+      // (parity with borzo.adapter/shadowfax.adapter).
+      if (isUncertainPorterBooking(err)) {
+        throw porterBookAmbiguous(
+          err?.code === "PROVIDER_BOOK_AMBIGUOUS"
+            ? String(err?.message || "Porter booking hit an ambiguous acceptance state")
+            : "Porter create-order timed out/aborted with no response: the request may already have created an order - do not book another courier; reconcile the Porter booking before any rebook"
+        );
+      }
       // Everything else from the porter book path is a provider/booking
       // failure: walk to the next serviceable provider (DR6).
       throw new ProviderDispatchError(
@@ -139,10 +177,13 @@ export const porterAdapter: ProviderAdapter = {
     }
 
     if (!result?.porterOrderId) {
-      throw new ProviderDispatchError(
-        "porter",
-        "transient",
-        "porter booking returned no order id"
+      // Accepted-but-no-id is the SAME ambiguity, never a walkable fault: a
+      // fallback carrier here would put two riders on one delivery. (The
+      // service layer already raises PROVIDER_BOOK_AMBIGUOUS for its own
+      // 2xx-without-id shape; this keeps the adapter contract even if a
+      // future caller returns an empty result.)
+      throw porterBookAmbiguous(
+        "Porter create-order returned no order id (response shape differs from spec) - do not retry blindly; reconcile with Porter"
       );
     }
 

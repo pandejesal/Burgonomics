@@ -96,16 +96,41 @@ describe("KOT Truth & Relay Semantics (Review Finding 5 & Limitations)", () => {
     savedDocs["branches/branch_truth_1"] = {
       name: "Ahmedabad Truth Outlet",
       petpoojaStoreId: "res_truth_01",
+      // H2 â€” the branch's captured Petpooja tax catalogue (fixture truth).
+      petpoojaTaxes: [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ],
     };
-    // POS-11: POS line prices come from the catalog.
-    savedDocs["products/itm_1"] = { price: 200, inStock: true };
+    // POS-11: POS line prices come from the catalog (branch-scoped doc id).
+    savedDocs["products/prod_branch_truth_1_7765862"] = {
+      id: "prod_branch_truth_1_7765862",
+      branchId: "branch_truth_1",
+      petpoojaItemId: "7765862",
+      price: 200,
+      inStock: true,
+      petpoojaItemTaxIds: ["3928", "3929"],
+      petpoojaTaxInclusive: false,
+      petpoojaTaxUnsupported: false,
+      petpoojaGstType: "goods",
+    };
 
     savedDocs["orders/ord_truth_1"] = {
       id: "ord_truth_1",
       branchId: "branch_truth_1",
       customerName: "Relay Truth Customer",
       customerPhone: "+919825000001",
-      items: [{ id: "itm_1", name: "Smash Burger", price: 200, quantity: 1 }],
+      // H3 â€” branch-scoped catalog key the prefetch resolves; the product doc
+      // above is the synced vendor metadata snapshot (agreement + tax meta).
+      items: [
+        {
+          id: "itm_1",
+          productId: "prod_branch_truth_1_7765862",
+          name: "Smash Burger",
+          price: 200,
+          quantity: 1,
+        },
+      ],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
     };

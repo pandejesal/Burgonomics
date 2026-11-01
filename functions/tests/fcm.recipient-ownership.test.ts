@@ -99,18 +99,32 @@ afterEach(() => {
 describe("recipient-bound FCM never trusts a stale profile token list", () => {
   it("sends a token whose current device-token owner is the recipient", async () => {
     h.owners.set("unit_owned", A);
-    const result = await sendMulticastFcm(["unit_owned"], payload, A);
-    expect(result).toEqual({ successCount: 1, failureCount: 0, prunedTokens: [] });
+    const result = await sendMulticastFcm(["unit_owned"], payload, A, {
+      purpose: "orderUpdates",
+    });
+    expect(result).toMatchObject({ successCount: 1, failureCount: 0, prunedTokens: [] });
     expect(h.getAll).toHaveBeenCalledWith({ id: "unit_owned", path: "device_tokens/unit_owned" });
-    expect(h.send).toHaveBeenCalledWith({ ...payload, tokens: ["unit_owned"] });
+    expect(h.send).toHaveBeenCalledOnce();
+    const sent = h.send.mock.calls[0][0];
+    expect(sent.tokens).toEqual(["unit_owned"]);
+    // Contract §11: account payload carries only purpose/category/uid/ref.
+    expect(sent.data).toMatchObject({
+      purpose: "orderUpdates",
+      category: "order",
+      recipientUid: A,
+    });
+    expect(typeof sent.data.ref).toBe("string");
+    expect(sent.data).not.toHaveProperty("orderId");
   });
 
   it("withholds a token rebound to B even when A's stale profile still lists it", async () => {
     h.owners.set("unit_rebound", B);
     h.profiles.set(A, ["unit_rebound"]);
-    const result = await sendMulticastFcm(h.profiles.get(A)!, payload, A);
+    const result = await sendMulticastFcm(h.profiles.get(A)!, payload, A, {
+      purpose: "orderUpdates",
+    });
     expect(h.send).not.toHaveBeenCalled();
-    expect(result).toEqual({ successCount: 0, failureCount: 1, prunedTokens: [] });
+    expect(result).toMatchObject({ successCount: 0, failureCount: 1, prunedTokens: [] });
     // Withholding is not permission to mutate B's membership or prune A blindly.
     expect(h.updates).toEqual([]);
     expect(h.profiles.get(A)).toEqual(["unit_rebound"]);
@@ -122,46 +136,58 @@ describe("recipient-bound FCM never trusts a stale profile token list", () => {
     h.owners.set("unit_foreign", B);
     h.owners.set("unit_ownerless", undefined);
     const result = await sendMulticastFcm(
-      ["unit_foreign", "unit_owned", "unit_missing", "unit_ownerless"], payload, A,
+      ["unit_foreign", "unit_owned", "unit_missing", "unit_ownerless"],
+      payload,
+      A,
+      { purpose: "orderUpdates" },
     );
     expect(h.send).toHaveBeenCalledOnce();
-    expect(h.send).toHaveBeenCalledWith({ ...payload, tokens: ["unit_owned"] });
-    expect(result).toEqual({ successCount: 1, failureCount: 3, prunedTokens: [] });
+    expect(h.send.mock.calls[0][0].tokens).toEqual(["unit_owned"]);
+    expect(result).toMatchObject({ successCount: 1, failureCount: 3, prunedTokens: [] });
   });
 
   it("fails closed on an ownership lookup failure rather than sending unverified tokens", async () => {
     h.getAll.mockRejectedValueOnce(new Error("unit ownership read unavailable"));
-    const result = await sendMulticastFcm(["unit_unverified"], payload, A);
+    const result = await sendMulticastFcm(["unit_unverified"], payload, A, {
+      purpose: "orderUpdates",
+    });
     expect(h.send).not.toHaveBeenCalled();
-    expect(result).toEqual({ successCount: 0, failureCount: 1, prunedTokens: [] });
+    expect(result).toMatchObject({ successCount: 0, failureCount: 1, prunedTokens: [] });
     expect(h.update).not.toHaveBeenCalled();
   });
 
   it("does not report success for a critical message with no owned destination", async () => {
     h.owners.set("unit_foreign", B);
-    await expect(sendMulticastFcm(["unit_foreign"], payload, A, { critical: true }))
-      .rejects.toThrow(/critical|ownership|owned/i);
+    await expect(
+      sendMulticastFcm(["unit_foreign"], payload, A, { purpose: "orderUpdates", critical: true }),
+    ).rejects.toThrow(/critical|ownership|owned/i);
     expect(h.send).not.toHaveBeenCalled();
   });
 
   it("bounds a stalled ledger read and never sends the unverified destination", async () => {
     vi.useFakeTimers();
     h.getAll.mockReturnValueOnce(new Promise<never>(() => undefined));
-    const pending = sendMulticastFcm(["unit_stalled"], payload, A);
+    const pending = sendMulticastFcm(["unit_stalled"], payload, A, {
+      purpose: "orderUpdates",
+    });
     await vi.advanceTimersByTimeAsync(FCM_SEND_TIMEOUT_MS + 1);
-    expect(await pending).toEqual({ successCount: 0, failureCount: 1, prunedTokens: [] });
+    expect(await pending).toMatchObject({ successCount: 0, failureCount: 1, prunedTokens: [] });
     expect(h.send).not.toHaveBeenCalled();
   });
 
   it("does not treat an explicitly empty recipient as an unbound broadcast", async () => {
     h.owners.set("unit_ownerless", undefined);
-    const result = await sendMulticastFcm(["unit_ownerless"], payload, "");
+    await expect(
+      sendMulticastFcm(["unit_ownerless"], payload, "", { purpose: "orderUpdates" }),
+    ).rejects.toThrow(/recipient uid/i);
     expect(h.send).not.toHaveBeenCalled();
-    expect(result.successCount).toBe(0);
   });
 
   it("preserves the trusted server's explicit generic multicast contract when UID is omitted", async () => {
-    const result = await sendMulticastFcm(["unit_broadcast"], payload);
+    const result = await sendMulticastFcm(["unit_broadcast"], payload, undefined, {
+      purpose: "operational",
+      actor: { trusted: true },
+    });
     expect(h.getAll).not.toHaveBeenCalled();
     expect(h.send).toHaveBeenCalledWith({ ...payload, tokens: ["unit_broadcast"] });
     expect(result.successCount).toBe(1);
@@ -179,8 +205,10 @@ describe("recipient-bound FCM never trusts a stale profile token list", () => {
       failureCount: 1,
       responses: [{ success: false, error: { code: "messaging/registration-token-not-registered" } }],
     });
-    const result = await sendMulticastFcm(["unit_foreign", "unit_owned"], payload, A);
-    expect(h.send).toHaveBeenCalledWith({ ...payload, tokens: ["unit_owned"] });
+    const result = await sendMulticastFcm(["unit_foreign", "unit_owned"], payload, A, {
+      purpose: "orderUpdates",
+    });
+    expect(h.send.mock.calls[0][0].tokens).toEqual(["unit_owned"]);
     expect(result.prunedTokens).toEqual(["unit_owned"]);
     expect(result.failureCount).toBe(2);
     // Exactly one profile write, addressed to the recipient A.
@@ -193,10 +221,10 @@ describe("recipient-bound FCM never trusts a stale profile token list", () => {
 
   it("verifies and sends each real FCM chunk without exceeding 500 targets", async () => {
     const tokens = Array.from({ length: 501 }, (_, i) => `unit_chunk_${i}`);
-    tokens.forEach(t => h.owners.set(t, A));
-    const result = await sendMulticastFcm(tokens, payload, A);
-    expect(h.getAll.mock.calls.map(args => args.length)).toEqual([500, 1]);
-    expect(h.send.mock.calls.map(args => args[0].tokens.length)).toEqual([500, 1]);
+    tokens.forEach((t) => h.owners.set(t, A));
+    const result = await sendMulticastFcm(tokens, payload, A, { purpose: "orderUpdates" });
+    expect(h.getAll.mock.calls.map((args) => args.length)).toEqual([500, 1]);
+    expect(h.send.mock.calls.map((args) => args[0].tokens.length)).toEqual([500, 1]);
     expect(result.successCount).toBe(501);
     expect(result.failureCount).toBe(0);
   });
@@ -204,10 +232,13 @@ describe("recipient-bound FCM never trusts a stale profile token list", () => {
   it("keeps a withheld customer's message in A's inbox without pushing it to B", async () => {
     h.owners.set("unit_rebound", B);
     h.profiles.set(A, ["unit_rebound"]);
-    await pushToCustomer(A, "Order update", "Your order is ready.", { orderId: "unit_order" }, { badge: 1 });
+    await pushToCustomer(A, "Order update", "Your order is ready.", { orderId: "unit_order" }, {
+      badge: 1,
+      purpose: "orderUpdates",
+    });
     expect(h.send).not.toHaveBeenCalled();
     expect(h.inbox).toHaveLength(1);
     expect(h.inbox[0].uid).toBe(A);
-    expect(h.inbox[0].payload).toMatchObject({ title: "Order update", read: false });
+    expect(h.inbox[0].payload).toMatchObject({ title: "Order update", read: false, targetId: "unit_order" });
   });
 });

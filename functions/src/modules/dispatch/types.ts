@@ -137,6 +137,47 @@ export type DispatchStatus =
   | "dispatched"
   | "dispatch_failed"
   | "manual_pending"
-  | "cancelled_by_store";
+  | "cancelled_by_store"
+  // A provider booking we cannot bind with proof (ambiguous create-order /
+  // stale claim). Never rebooked automatically.
+  | "needs_reconciliation"
+  // Customer-cancelled / returned-parcel containment: manual review, never
+  // auto-rebooked (dispatch.webhooks.ts F6).
+  | "needs_review";
 
 export const ACTIVE_DELIVERY_STATUSES = ["dispatched", "in_transit", "driver_allocated"] as const;
+
+/**
+ * True while the order presents an un-released provider binding under a live
+ * `dispatchStatus`. Teardown paths null every binding field and settle
+ * `dispatchStatus` (`cancelled_by_store`/`dispatch_failed`), so a present
+ * provider/id here is an owned booking a provider can still resolve — whatever
+ * the `deliveryStatus` sidecar currently reads (a promoted correlated callback
+ * deliberately does not rewind it).
+ *
+ * A `needsRebook`-flagged order is the opposite: its carrier cancelled and the
+ * module is waiting to replace the booking, so the lingering binding must not
+ * block that replacement. `deliveryStatus: "needs_review"` (customer-cancel /
+ * returned-parcel containment) is the same "replace me" signal and is excluded
+ * for the same reason.
+ */
+export function hasOwnedLiveBooking(order: any): boolean {
+  const status = order?.dispatchStatus;
+  if (status !== "dispatched" && status !== "at_pickup") return false;
+  if (order?.needsRebook === true) return false;
+  // F4 (stress sweep 2026-10-24): a customer-cancel / returned-parcel
+  // containment parks the order on deliveryStatus "needs_review" while the old
+  // `dispatchStatus: "dispatched"` + binding stay in place (the booking must
+  // remain traceable for reconciliation). Treating that pair as a LIVE booking
+  // made dispatchRebook replay it as `reused: true` and hand staff a dead
+  // rider — no fresh carrier was ever booked. `needs_review` is exactly the
+  // state that asks a human to replace the booking, so it is not "owned".
+  if (order?.deliveryStatus === "needs_review") return false;
+  return Boolean(
+    order?.dispatchOrderId ||
+      order?.dispatchProvider ||
+      order?.porterOrderId ||
+      order?.borzoOrderId ||
+      order?.shadowfaxOrderId
+  );
+}

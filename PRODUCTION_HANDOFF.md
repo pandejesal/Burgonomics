@@ -2,7 +2,52 @@
 
 ## 1. Status Overview
 
-This repository has completed local code stabilization across 13 verified commits spanning three codebases (8 root, 3 customer, 2 partner) alongside reconciliation record `91fd901`. All gates, typechecks, build artifacts, and independent model reviews were executed strictly against local emulators, isolated git worktrees, and mocked fixtures. **Nothing has been deployed to Firebase or app stores, zero commits have been pushed upstream, and absolutely no live provider connectivity, physical device execution, production credential validity, or store submission readiness is claimed or verified.**
+The 13-commit ledger below is an earlier stabilization snapshot (8 root, 3 customer,
+2 partner), alongside reconciliation record `91fd901`. Its counts are not the final
+stress-sweep totals. All gates and reviews describe local code and fixtures, not
+live provider connectivity, physical device execution, credential validity, or
+store-submission readiness. Nothing in this handoff authorizes deployment.
+
+### 2026-10-24 stress-sweep update
+
+The root `stress-fixes-20261024` branch passed TypeScript, the full Functions suite
+(98 files passed, one skipped; 1,101 tests passed, two skipped), and build at
+`654dd48`. These tests include stubbed gateway HTTP and transaction interleavings;
+they do not prove the deployed functions or vendor integrations work. Customer and
+partner review-fix commits are recovered locally at `38a25d6` and `d2b6be3`, with
+their updated full gates in progress. All three `no-mistakes` runs failed on a
+provider quota before push/PR/CI; those pipeline gates are not passed.
+
+Before any rollout, operators must coordinate these dependencies:
+
+- **Refund API:** deploy the backend `refundRequestId` contract before or with the
+  partner caller update. Old live callers without that ID are rejected by the new
+  backend. Conversely, a new client talking to the old backend is not protected by
+  the new request identity: the old schema strips the field. Do not claim that
+  client-side validation detects the backend version.
+- **Firestore:** the missing `support_tickets (customerId ASC, createdAt DESC)`
+  composite is now in the manifest, not deployed. The new
+  `payment_refund_requests` and `dispatch_correlation_map` collections have explicit
+  client-deny matches. These document the intended boundary; Firestore allows are
+  additive, so a future overlapping allow rule must still be reviewed.
+- **Partner scoped order queries:** some existing queries use an unordered
+  `limit(100)`. Sorting those results in memory does not make them the newest 100
+  orders. This is a known potentially missing-ticket defect, not a safe fallback.
+  The required `orders (branchId ASC, createdAt DESC)` composite already exists
+  in the root manifest; its deployed readiness is unverified. Restore server-side
+  ordering and check that index before rollout. The query repair is pending;
+  no index rollout was performed in this sweep.
+- **KDS merge order:** commit the existing `ui-sweep` delta in
+  `useKDSRealtimeStream.ts` before merging the partner stress branch, which
+  deliberately carries that delta. The original dirty worktree remains untouched.
+- **Provider trust:** uncredentialed Petpooja order callbacks retain a known
+  non-terminal status-spoofing exposure. See `references/petpooja_pos.md` section 5.
+  Borzo/Shadowfax pending-binding recovery is tested against fixtures, not a live
+  vendor callback contract. Porter cannot echo the token and remains fail-closed
+  pending operator reconciliation.
+
+No live money, courier booking, POS order, index/rules rollout, hosting deployment,
+or autonomous merge was performed by the stress sweep.
 
 ---
 

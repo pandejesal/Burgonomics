@@ -26,51 +26,62 @@ export async function withSchedulerLock<T>(
   fn: () => Promise<T>
 ): Promise<{ ran: boolean; result?: T }> {
   const ref = db.collection("scheduler_locks").doc(name);
-
-  const leaseIsLive = (data: any): boolean => {
-    const claimedAt =
-      typeof data?.claimedAtMs === "number" && Number.isFinite(data.claimedAtMs)
-        ? data.claimedAtMs
-        : 0;
-    return claimedAt > 0 && Date.now() - claimedAt < ttlMs;
-  };
-
-  let shouldRun = true;
+  // CAS acquire (stress sweep 2026-10-24, M1): the old read-then-set let two
+  // Cloud Run instances both observe an absent lock inside the same instant
+  // and both run the tick. The freshness check and the lease write now
+  // commit ATOMICALLY: the loser observes the winner's stamp and skips.
+  // NUMERIC local-clock stamps stay (serverTimestamp sentinels are unreadable
+  // on fast re-read and cause instant false takeovers); the lease remains the
+  // release (a crashed run must not leave a permanent lock).
+  const nowMs = Date.now();
+  let acquired = false;
   try {
     if (db && typeof (db as any).runTransaction === "function") {
-      const acquired = await (db as any).runTransaction(async (tx: any) => {
+      await (db as any).runTransaction(async (tx: any) => {
         const snap = await tx.get(ref);
         const data = (snap.exists ? snap.data() : undefined) as any;
-        if (leaseIsLive(data)) return false;
-        const now = Date.now();
+        const claimedAt =
+          typeof data?.claimedAtMs === "number" && Number.isFinite(data.claimedAtMs)
+            ? data.claimedAtMs
+            : 0;
+        if (claimedAt > 0 && nowMs - claimedAt < ttlMs) {
+          acquired = false;
+          return;
+        }
+        // Absent or stale (crashed run) — claim atomically inside the same
+        // transaction that proved staleness.
         tx.set(
           ref,
-          { claimedAtMs: now, lockedAt: new Date(now).toISOString() },
+          { claimedAtMs: nowMs, lockedAt: new Date().toISOString() },
           { merge: true }
         );
-        return true;
+        acquired = true;
       });
-      if (acquired === false) shouldRun = false;
     } else {
       // Datastore shim without transactions: best effort, same semantics.
       const snap = await ref.get();
       const data = (snap.exists ? snap.data() : undefined) as any;
-      if (leaseIsLive(data)) {
-        shouldRun = false;
-      } else {
-        const now = Date.now();
+      const claimedAt =
+        typeof data?.claimedAtMs === "number" && Number.isFinite(data.claimedAtMs)
+          ? data.claimedAtMs
+          : 0;
+      if (!(claimedAt > 0 && nowMs - claimedAt < ttlMs)) {
         await ref.set(
-          { claimedAtMs: now, lockedAt: new Date(now).toISOString() },
+          { claimedAtMs: nowMs, lockedAt: new Date().toISOString() },
           { merge: true }
         );
+        acquired = true;
       }
     }
   } catch {
-    // Lease unreadable or unwritable — fail OPEN (see the header comment).
-    shouldRun = true;
+    // Lease/transaction unavailable — fail OPEN for schedulers (same policy
+    // as before: a stuck lock must never silently kill reminders/syncs
+    // forever); per-doc leases remain the backstop for the money paths.
+    acquired = true;
   }
-
-  if (!shouldRun) return { ran: false };
+  if (!acquired) {
+    return { ran: false };
+  }
 
   const result = await fn();
   return { ran: true, result };

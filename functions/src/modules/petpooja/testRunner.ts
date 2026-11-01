@@ -1,5 +1,35 @@
 import { config, isDeclaredProduction } from "../../config/env";
 import { getPetpoojaConfig } from "./client";
+import { db } from "../../core/firebase";
+import { assertBranchAccess } from "../../core/middleware";
+import { allocatePetpoojaTax, sumPetpoojaItemTax } from "./taxAmounts";
+import { petpoojaFinancials, petpoojaGstLiability, restaurantLiableItemTax } from "./financials";
+
+/**
+ * Branch-scope the QA relay. The request's `branchId` is the outlet's
+ * Petpooja menu-sharing code (resID), not a Firestore branch id, so it must be
+ * resolved through the authoritative stores/{id} mapping before access is
+ * checked. An unmapped outlet is refused: relaying a synthetic KOT into an
+ * outlet the caller does not own is a cross-branch write.
+ */
+export function assertPetpoojaRelayAccess(
+  caller: any,
+  mappedPartnerBranchId: string | null | undefined
+): void {
+  if (!mappedPartnerBranchId) {
+    const err: any = new Error(
+      "Forbidden: this Petpooja outlet is not linked to a branch — cannot authorize the relay"
+    );
+    err.statusCode = 403;
+    throw err;
+  }
+  try {
+    assertBranchAccess(caller, mappedPartnerBranchId);
+  } catch (err: any) {
+    err.statusCode = 403;
+    throw err;
+  }
+}
 
 /**
  * MT-01 — Petpooja Sandbox 5-Scenario Relay (POST /petpooja/testRunner).
@@ -32,8 +62,8 @@ import { getPetpoojaConfig } from "./client";
  * fallback chain). When mock mode is off and any of those is missing the relay
  * THROWS; only mock mode may hand back a synthetic `pp_test_*` id.
  *
- * This module deliberately imports NO Firestore code: it is a self-contained
- * sandbox relay, unit-testable without firebase-admin mocks.
+ * Live relay metadata is read from the mapped branch's captured catalog.
+ * Synthetic scenario records are not authority for current GST ownership.
  */
 
 export interface PetpoojaTestRunnerParams {
@@ -66,6 +96,11 @@ export interface ScenarioModifier {
   id: string;
   name: string;
   price: number;
+  /** M4 — the REAL numeric Petpooja add-on GROUP id (integer > 0). A ::0
+   *  placeholder exists ONLY for a payload print of a scenario the sendability
+   *  gate BLOCKED (never relayed); a sendable scenario always carries the true
+   *  integer. */
+  groupId: number;
 }
 
 /** Optional variant (size/style) on an item line. */
@@ -80,6 +115,8 @@ export interface ScenarioItem {
   price: number;
   quantity: number;
   isVeg: boolean;
+  /** From the captured item menu row, never inferred from a tax percentage. */
+  gstType?: string;
   modifiers?: ScenarioModifier[];
   /** Variant (size/style) carried on this line, when the item has one. */
   variation?: ScenarioVariation;
@@ -158,14 +195,12 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
         isVeg: true,
         // NOT EXPRESSIBLE AS CAPTURED: the demo outlet publishes
         // `addongroups: []` and sets `itemallowaddon: "0"` on all 166 items, so
-        // it defines no addon that these ids could resolve to. The lines are
-        // kept because "Addons + Tax" is a required scenario, but Petpooja must
-        // configure at least one addon group on this outlet before the POS can
-        // match them. See the escalation notes in
-        // references/petpooja_save_order_api.md §13.
+        // it defines no addon and no GROUP these ids could resolve to (M4:
+        // groupId intentionally UNCONFIGURED here — the sendability gate must
+        // report the addon gaps AND missing group; never relayed).
         modifiers: [
-          { id: "mod_extra_cheese", name: "Extra Cheese", price: 30 },
-          { id: "mod_brioche_bun", name: "Brioche Bun Upgrade", price: 40 },
+          { id: "mod_extra_cheese", name: "Extra Cheese", price: 30, groupId: 0 },
+          { id: "mod_brioche_bun", name: "Brioche Bun Upgrade", price: 40, groupId: 0 },
         ],
       },
     ],
@@ -338,19 +373,60 @@ function petpoojaTimestamp(at: Date): string {
 }
 
 /**
- * The outlet's own tax rows, exactly as Petpooja publishes them in the menu
- * push for this restaurant (`taxes[]` in the captured catalog).
- *
- * The API guide's illustrative numbers were shipped verbatim in this file for
- * months — `11213`/`20375` on item lines and `301`/`302` under `tax_details` —
- * and none of them names a tax row that exists in the outlet. Every relay
- * therefore declared taxes the POS had never heard of. Read the real ones from
- * the outlet's catalog; do not copy figures out of the guide.
+ * H2 (testRunner form) — the sandbox relay's tax rows come from the
+ * MAPPED BRANCH's captured catalogue (`branches.petpoojaTaxes`, provenance-
+ * written by menuSyncWebhook), never from a universal default: the hardcoded
+ * 3928/3929 pair used before silently invented configuration for an arbitrary
+ * outlet. A subset of the captured rows must represent the scenario's GST
+ * rate; otherwise the relay blocks (BLOCKED_CONFIGURATION).
  */
-const OUTLET_TAX = {
-  cgst: { id: "3928", name: "CGST", rate: "2.5" },
-  sgst: { id: "3929", name: "SGST", rate: "2.5" },
-} as const;
+export interface OutletTaxRow {
+  id: string;
+  name: string;
+  rate: string;
+}
+
+/** Pure subset search: which captured rows sum to the scenario's GST rate. */
+export function resolveSandboxTaxRows(
+  catalogue: unknown,
+  gstRatePct: number
+): { rows: OutletTaxRow[]; gap: string | null } {
+  const valid = (Array.isArray(catalogue) ? catalogue : []).filter(
+    (t: any) =>
+      t &&
+      typeof t === "object" &&
+      String(t.id ?? "").trim() !== "" &&
+      Number.isFinite(Number(t.rate)) &&
+      Number(t.rate) > 0
+  );
+  if (valid.length === 0) {
+    return {
+      rows: [],
+      gap: "no captured Petpooja tax catalogue for this branch (menu push pending/invalid) — re-run the branch's menu sync",
+    };
+  }
+  const rows: OutletTaxRow[] = valid.map((t: any) => ({
+    id: String(t.id).trim(),
+    name: String(t.name ?? ""),
+    rate: String(Number(t.rate)),
+  }));
+  // Exhaustive subset search over the captured rows (catalogues are tiny —
+  // mathematical, not heuristic): any exact representation of the rate works.
+  const eps = 1e-9;
+  for (let mask = 1; mask < 1 << rows.length; mask++) {
+    const subset = rows.filter((_, i) => mask & (1 << i));
+    const sum = subset.reduce((s, r) => s + Number(r.rate), 0);
+    if (Math.abs(sum - gstRatePct) <= 0.05 + eps) {
+      return { rows: subset, gap: null };
+    }
+  }
+  return {
+    rows: [],
+    gap: `captured tax catalogue ${rows
+      .map((r) => `${r.id}@${r.rate}%`)
+      .join(", ")} cannot represent the scenario's ${gstRatePct}% GST — vendor decision needed`,
+  };
+}
 
 /**
  * Builds the save_order body the vendor's corrected sample expects.
@@ -379,18 +455,35 @@ export function formatPetpoojaV21Payload(
   restId: string,
   clientOrderID: string,
   callbackUrl: string,
-  at: Date = new Date()
+  at: Date = new Date(),
+  // H2 — the MAPPED branch's captured tax catalogue (validated by
+  // resolveSandboxTaxRows); no universal default exists.
+  taxCatalogue?: unknown
 ): Record<string, unknown> {
   const gst = order.pricing.gst;
   const itemTotal = order.pricing.itemTotal;
   const discount = order.pricing.discount;
-  const halfGst = round2(gst / 2);
   const stamp = petpoojaTimestamp(at);
   const orderTypeCode = petpoojaOrderType(order.orderType);
   const isDelivery = order.orderType === "delivery";
 
-  const orderItems = order.items.map((item) => {
-    const lineTotal = itemLineTotal(item);
+  // Resolve the tax rows from the CAPTURED catalogue: a subset summing to the
+  // scenario's actual effective GST rate. Unrepresentable → this builder
+  // throws (the relay gates BEFORE calling it; pure-format callers see the
+  // honest error).
+  const gstBase = itemTotal - discount;
+  const effectiveRatePct = gstBase > 0 ? round2((gst / gstBase) * 100) : 0;
+  const taxResolution = resolveSandboxTaxRows(taxCatalogue, effectiveRatePct);
+  if (taxResolution.gap || taxResolution.rows.length === 0) {
+    throw new Error(
+      `BLOCKED_CONFIGURATION: ${taxResolution.gap || "no representable tax rows"}`
+    );
+  }
+  const taxRows = taxResolution.rows;
+  const itemGstAmounts = allocatePetpoojaTax(gst, order.items.map(itemLineTotal));
+
+  const orderItems = order.items.map((item, itemIndex) => {
+    const liability = petpoojaGstLiability(item.gstType);
     const modifierTotal = (item.modifiers || []).reduce(
       (sum, mod) => sum + mod.price,
       0
@@ -398,18 +491,22 @@ export function formatPetpoojaV21Payload(
     // `price` is the all-in UNIT figure (base + add-ons), which is how
     // Petpooja defines it and how this runner's scenario totals are built.
     const unitPrice = item.price + modifierTotal;
-    // Item tax follows the item's own line value, so addons/variants are taxed
-    // with their parent item (the restaurant-liable split Petpooja expects:
-    // vendor GST on the final line price, never on the raw MRP).
-    const lineGst = itemTotal > 0 ? round2((gst * lineTotal) / itemTotal) : 0;
-    const lineHalf = round2(lineGst / 2);
+    // Allocate the authoritative GST using integer paise, including the odd
+    // residual, instead of independently rounding both halves down/up.
+    const itemTaxAmounts = allocatePetpoojaTax(itemGstAmounts[itemIndex], taxRows.map((row) => Number(row.rate)));
+    // M4 — the real integer add-on GROUP id is REQUIRED on every modifier
+    // line and emitted verbatim. Vendor sample types group_id as an integer.
+    // This outlet publishes NO addon configuration (`addongroups: []`,
+    // `itemallowaddon: "0"`), so its scenarios carry groupId 0 ONLY as a
+    // scoreboard placeholder for the never-relayed print; the sendability
+    // gate refuses any non-positive group and the relay REFUSES to POST —
+    // a fabricated group id is never shipped.
     const addons = (item.modifiers || []).map((mod) => ({
       id: mod.id,
       name: mod.name,
       group_name: "Addons",
       price: money(mod.price),
-      // Vendor sample types group_id as an integer.
-      group_id: 0,
+      group_id: mod.groupId,
       quantity: "1",
     }));
 
@@ -418,21 +515,14 @@ export function formatPetpoojaV21Payload(
       name: item.name,
       // The runner adds GST ON TOP of its item prices, so this must be false.
       tax_inclusive: false,
-      gst_liability: "restaurant",
-      item_tax: [
-        {
-          id: OUTLET_TAX.cgst.id,
-          name: OUTLET_TAX.cgst.name,
-          tax_percentage: OUTLET_TAX.cgst.rate,
-          amount: money(lineHalf),
-        },
-        {
-          id: OUTLET_TAX.sgst.id,
-          name: OUTLET_TAX.sgst.name,
-          tax_percentage: OUTLET_TAX.sgst.rate,
-          amount: money(lineHalf),
-        },
-      ],
+      gst_liability: liability,
+      // The item's tax rows come from the CAPTURED catalogue subset (H2).
+      item_tax: taxRows.map((t, taxIndex) => ({
+        id: t.id,
+        name: t.name,
+        tax_percentage: t.rate,
+        amount: money(itemTaxAmounts[taxIndex]),
+      })),
       item_discount: money(0),
       price: money(unitPrice),
       // Vendor sample: final_price = price - item_discount, a UNIT figure.
@@ -446,102 +536,189 @@ export function formatPetpoojaV21Payload(
     };
   });
 
-  const taxLines = [
-    {
-      id: OUTLET_TAX.cgst.id,
-      title: OUTLET_TAX.cgst.name,
-      type: "P",
-      // Numeric percentage string, matching the vendor sample ("2.5", not "2.5%").
-      price: OUTLET_TAX.cgst.rate,
-      tax: money(halfGst),
-      restaurant_liable_amt: money(halfGst),
-    },
-    {
-      id: OUTLET_TAX.sgst.id,
-      title: OUTLET_TAX.sgst.name,
-      type: "P",
-      price: OUTLET_TAX.sgst.rate,
-      tax: money(halfGst),
-      restaurant_liable_amt: money(halfGst),
-    },
-  ];
+  // H2 — same captured rows, summing their exact serialized item amounts.
+  const taxLines = taxRows.map((t) => ({
+    id: t.id,
+    title: t.name,
+    type: "P",
+    // Numeric percentage string, matching the vendor sample ("2.5", not "2.5%").
+    price: t.rate,
+    tax: money(sumPetpoojaItemTax(orderItems, t.id)),
+    restaurant_liable_amt: money(restaurantLiableItemTax(orderItems, t.id)),
+  }));
+  const financials = petpoojaFinancials({
+    items: orderItems, discount, packagingFee: order.pricing.packagingFee,
+    deliveryFee: order.pricing.deliveryFee, customerTotal: order.pricing.grandTotal,
+    isDelivery, restaurantDelivery: false, paymentType: "COD",
+    // The sandbox builder emits tax-INCLUSIVE=false (it adds GST on top), so
+    // the kept tax must be added explicitly — the production builder is the
+    // one that runs with GST-inclusive menu prices (R1/R4).
+    taxIncluded: false,
+  });
 
-  const orderDetails = {
-    orderID: clientOrderID,
-    preorder_date: stamp.slice(0, 10),
-    preorder_time: stamp.slice(11),
-    service_charge: money(0),
-    sc_tax_amount: money(0),
-    delivery_charges: money(order.pricing.deliveryFee),
-    // Delivery/packing charges carry no separate tax in this pricing model.
-    dc_tax_percentage: "0",
-    dc_tax_amount: money(0),
-    dc_gst_details: [
-      { gst_liable: "vendor", amount: money(0) },
-      { gst_liable: "restaurant", amount: money(0) },
-    ],
-    packing_charges: money(order.pricing.packagingFee),
-    pc_tax_amount: money(0),
-    pc_tax_percentage: "0",
-    pc_gst_details: [
-      { gst_liable: "vendor", amount: money(0) },
-      { gst_liable: "restaurant", amount: money(0) },
-    ],
-    order_type: orderTypeCode,
-    ondc_bap: "",
-    advanced_order: "N",
-    urgent_order: false,
-    urgent_time: 0,
-    payment_type: "COD",
-    table_no: order.tableNumber || "",
-    no_of_persons: "0",
-    discount_total: money(discount),
-    tax_total: money(gst),
-    discount_type: "F",
-    total: money(order.pricing.grandTotal),
-    description: `MT-01 sandbox relay — ${order.scenarioId}`,
-    created_on: stamp,
-    // Riders are always third-party.
-    enable_delivery: 0,
-    min_prep_time: 0,
-    callback_url: callbackUrl,
-    collect_cash: money(order.pricing.grandTotal),
-    otp: "",
+  // Clearly-synthetic test contacts (test-only, sandbox dry-run fixture):
+  // the relay fabricates an order BY DESIGN and must keep the sample's
+  // non-empty contact expectations satisfied with values that no production
+  // customer could ever be confused with.
+  const SANDBOX_CONTACT = {
+    resName: "Burgonomics DEMO",
+    address: "Sandbox Outlet, Ahmedabad, Gujarat, India",
+    contactInformation: "9000000000", // clearly fictional, test-only
+    customerName: "Petpooja Sandbox Tester",
+    customerEmail: "sandbox.tester@example.com", // RFC 2606 reserved, test-only
+    customerPhone: "9000000000",
+    customerAddress: "Sandbox Test Address, Ahmedabad",
+    customerLat: "23.022500",
+    customerLng: "72.571400",
   };
 
   return {
     // Structure is LOCKED to the vendor's corrected sample (2026-10-26):
     // app credentials at the root, one `orderinfo` envelope, `OrderInfo` plus
     // `udid`/`device_type` as its only members. No legacy duplicate members
-    // and no `Discount` object.
+    // and no `Discount` object. The earlier "unknown keys are ignored" reading
+    // (~§12 of the reference) is dead: extra/misplaced members are exactly
+    // what the vendor called structural issues.
     orderinfo: {
       OrderInfo: {
         Restaurant: {
           details: {
-            res_name: "Burgonomics",
-            address: "Burgonomics, Ahmedabad",
-            contact_information: "",
+            res_name: SANDBOX_CONTACT.resName,
+            address: SANDBOX_CONTACT.address,
+            contact_information: SANDBOX_CONTACT.contactInformation,
             restID: restId,
           },
         },
         Customer: {
           details: {
-            email: "",
-            name: "Petpooja Sandbox Tester",
-            address: isDelivery ? "Sandbox Test Address, Ahmedabad" : "",
-            phone: "",
-            latitude: "",
-            longitude: "",
+            email: SANDBOX_CONTACT.customerEmail,
+            name: SANDBOX_CONTACT.customerName,
+            address: isDelivery ? SANDBOX_CONTACT.customerAddress : "",
+            phone: SANDBOX_CONTACT.customerPhone,
+            latitude: isDelivery ? SANDBOX_CONTACT.customerLat : "",
+            longitude: isDelivery ? SANDBOX_CONTACT.customerLng : "",
           },
         },
-        Order: { details: orderDetails },
+        Order: {
+          details: {
+            // `orderID` is the CLIENT reference the POS echoes to our
+            // order-status callback (resolves `orders/{orderID}`); on the
+            // production path that is the Firestore document id, here the
+            // MT-01 client order id.
+            orderID: clientOrderID,
+            preorder_date: stamp.slice(0, 10),
+            preorder_time: stamp.slice(11),
+            service_charge: money(0),
+            sc_tax_amount: money(0),
+            delivery_charges: money(order.pricing.deliveryFee),
+            // Delivery/packing charges carry no separate tax in our pricing
+            // model. The sample's dc/pc tax figures are ITS OWN arithmetic —
+            // illustrative, never a totals oracle for our engine.
+            dc_tax_percentage: "0",
+            dc_tax_amount: money(0),
+            dc_gst_details: [
+              { gst_liable: "vendor", amount: money(0) },
+              { gst_liable: "restaurant", amount: money(0) },
+            ],
+            packing_charges: money(order.pricing.packagingFee),
+            pc_tax_amount: money(0),
+            pc_tax_percentage: "0",
+            pc_gst_details: [
+              { gst_liable: "vendor", amount: money(0) },
+              { gst_liable: "restaurant", amount: money(0) },
+            ],
+            order_type: orderTypeCode,
+            ondc_bap: "",
+            advanced_order: "N",
+            urgent_order: false,
+            urgent_time: 0,
+            payment_type: "COD",
+            table_no: order.tableNumber || "",
+            no_of_persons: "0",
+            discount_total: money(discount),
+            tax_total: money(gst),
+            discount_type: "F",
+            total: financials.total,
+            description: `MT-01 sandbox relay — ${order.scenarioId}`,
+            created_on: stamp,
+            // These sandbox cases do not assign a merchant rider.
+            enable_delivery: financials.enable_delivery,
+            min_prep_time: 0,
+            callback_url: callbackUrl,
+            collect_cash: financials.collect_cash,
+            // Empty on purpose: the delivery OTP is the customer/rider
+            // verification secret — never printed on a kitchen ticket.
+            otp: "",
+          },
+        },
         OrderItem: { details: orderItems },
         Tax: { details: taxLines },
       },
+      // Vendor sample: siblings of OrderInfo inside the `orderinfo` envelope
+      // (they used to sit at the root, where the POS ignores them).
       udid: "",
       device_type: "Web",
     },
   };
+}
+
+/**
+ * Sendability gates for the QA relay (STRUCTURAL TRUTH, mirroring
+ * orderPush.ts's fail-closed builder gates). Returns every provable reason a
+ * scenario's payload could NOT structurally register at the POS:
+ *   - missing / non-numeric item id
+ *   - add-on lines with no numeric Petpooja addon id / group id
+ *   - variation lines with no numeric Petpooja variation id
+ * A NON-EMPTY result is reported as BLOCKED_CONFIGURATION and the relay NEVER
+ * fires the POST — vendor-side configuration is the cure, not a fabricated id.
+ */
+export function evaluatePetpoojaTestOrderSendability(
+  order: PetpoojaTestOrder
+): Array<{ field: string; reason: string }> {
+  const gaps: Array<{ field: string; reason: string }> = [];
+  const isPosNumericId = (v: unknown): boolean => /^\d+$/.test(String(v ?? "").trim());
+  for (const item of order.items) {
+    const id = String(item.id ?? "").trim();
+    if (id === "") {
+      gaps.push({
+        field: "OrderItem.details[].id",
+        reason: `item "${item.name || "(unnamed)"}" carries no Petpooja item id`,
+      });
+    } else if (!isPosNumericId(id)) {
+      gaps.push({
+        field: "OrderItem.details[].id",
+        reason: `item "${item.name}" id "${id}" is not a verified numeric Petpooja item id`,
+      });
+    }
+    for (const mod of item.modifiers || []) {
+      if (!isPosNumericId(mod.id)) {
+        gaps.push({
+          field: "OrderItem.details[].AddonItem",
+          reason: `add-on "${mod.name}" id "${mod.id}" is not a verified numeric Petpooja addon id (the outlet publishes no addon configuration)`,
+        });
+      }
+      // M4 — the add-on GROUP id is mandatory vendor configuration, not an
+      // optional nicety: a numeric addon id with no (positive) group blocks.
+      if (
+        !Number.isInteger(mod.groupId) ||
+        (mod.groupId as number) <= 0
+      ) {
+        gaps.push({
+          field: "OrderItem.details[].AddonItem",
+          reason: `add-on "${mod.name}" carries no positive Petpooja add-on GROUP id (groupId=${String(
+            mod.groupId
+          )}) — the outlet publishes no addon group; configuring one at the POS is the cure`,
+        });
+      }
+    }
+    if (item.variation && !isPosNumericId(item.variation.id)) {
+      gaps.push({
+        field: "OrderItem.details[].variation_id",
+        reason: `variation "${item.variation.name}" id "${item.variation.id}" is not a verified numeric Petpooja variation id (this outlet defines no variations)`,
+      });
+    }
+  }
+  return gaps;
 }
 
 interface RelayOutcome {
@@ -566,17 +743,94 @@ interface RelayOutcome {
  */
 async function relayScenarioToPetpooja(
   order: PetpoojaTestOrder,
-  branchId: string,
-  clientOrderID: string
+  outlet: RelayOutletMapping | null,
+  clientOrderID: string,
+  directBranchId?: string
 ): Promise<RelayOutcome> {
-  const petpoojaConfig = getPetpoojaConfig();
-  const body = formatPetpoojaV21Payload(
-    order,
-    branchId,
-    clientOrderID,
-    (config.petpooja as { callbackUrl?: string }).callbackUrl ||
-      `https://asia-south1-${config.firebase.projectId}.cloudfunctions.net/api/petpooja/webhook`
+  // M6 — the outlet code travels as the MAPPED petpoojaStoreId (verbatim
+  // request arguments never target the vendor).
+  const outletCode = outlet ? outlet.petpoojaStoreId : (directBranchId || "");
+
+  // H2 — load the MAPPED branch's captured tax catalogue (the mapped partner
+  // branch when a caller was resolved, else the direct sandbox branch id). A
+  // blocked catalogue is BLOCKED_CONFIGURATION before anything is built.
+  let taxCatalogue: unknown = undefined;
+  const partnerBranch = outlet ? outlet.partnerBranchId : directBranchId;
+  try {
+    if (partnerBranch) {
+      const branchSnap = await (db.collection("branches") as any).doc(partnerBranch).get();
+      taxCatalogue = branchSnap?.exists ? branchSnap.data()?.petpoojaTaxes : undefined;
+      // H1/H2 — the synced product docs carry the captured vendor tax metadata.
+      // R4: our menu is restaurant-liable, so an item that predates the capture
+      // is still taxable to the restaurant; an explicitly unsupported capture or
+      // an unknown captured gstType blocks instead of defaulting.
+      const resolved: Array<Record<string, any>> = [];
+      for (const item of order.items) {
+        const snap = await (db.collection("products") as any)
+          .doc(`prod_${partnerBranch}_${item.id}`)
+          .get();
+        const data = snap?.exists ? snap.data() || {} : {};
+        if (data.petpoojaTaxUnsupported === true) {
+          throw new Error(`item ${item.id} has no representable captured tax metadata`);
+        }
+        const capturedGst = data.petpoojaGstType;
+        const gstType =
+          capturedGst === "goods" || capturedGst === "services"
+            ? capturedGst
+            : "restaurant"; // R4: our own menu is restaurant-liable.
+        petpoojaGstLiability(gstType); // Unknown must block, never default.
+        resolved.push({ ...item, gstType });
+      }
+      order = { ...order, items: resolved as any };
+    }
+  } catch (err: any) {
+    return {
+      ok: false,
+      reason: "BLOCKED_CONFIGURATION",
+      detail: [
+        {
+          field: "branch.menuMetadata",
+          reason: `captured menu/tax metadata unavailable for branch ${partnerBranch}: ${err?.message || err}`,
+        },
+      ],
+    };
+  }
+  if (!partnerBranch) {
+    return { ok: false, reason: "BLOCKED_CONFIGURATION", detail: [{ field: "branch.petpoojaTaxes", reason: "no mapped partner branch — relay requires a real branch mapping" }] };
+  }
+
+  // STRUCTURAL GATE (mirrors orderPush.ts): an unverified-mapping payload is
+  // never POSTed. Reported BLOCKED_CONFIGURATION is the honest product of the
+  // relay — never a fabricated id reaching the vendor.
+  const sendability = evaluatePetpoojaTestOrderSendability(order);
+  const taxGate = resolveSandboxTaxRows(
+    taxCatalogue,
+    order.pricing.itemTotal - order.pricing.discount > 0
+      ? round2((order.pricing.gst / (order.pricing.itemTotal - order.pricing.discount)) * 100)
+      : 0
   );
+  if (taxGate.gap) {
+    sendability.push({ field: "Tax[].id", reason: taxGate.gap });
+  }
+  if (sendability.length > 0) {
+    return {
+      ok: false,
+      reason: "BLOCKED_CONFIGURATION",
+      detail: sendability,
+    };
+  }
+  const petpoojaConfig = getPetpoojaConfig();
+  let body: Record<string, unknown>;
+  try {
+    body = formatPetpoojaV21Payload(
+      order, outletCode, clientOrderID,
+      (config.petpooja as { callbackUrl?: string }).callbackUrl ||
+        `https://asia-south1-${config.firebase.projectId}.cloudfunctions.net/api/petpooja/webhook`,
+      new Date(), taxCatalogue
+    );
+  } catch (error: any) {
+    return { ok: false, reason: "BLOCKED_CONFIGURATION", detail: error?.message };
+  }
   // Credentials travel in the body (save_order contract) — dropped from the
   // builder above so the payload stays credential-free until this point.
   const payload = {
@@ -591,6 +845,13 @@ async function relayScenarioToPetpooja(
       signal: AbortSignal.timeout(10_000),
       headers: {
         "Content-Type": "application/json",
+        // Headers the tested sandbox relay used (all five scenarios returned
+        // HTTP 200 with them); `Content_key` is kept for the older gateway
+        // build that reads that spelling.
+        "Content-Type-Override": "application/json",
+        "app-key": petpoojaConfig.appKey,
+        "app-secret": petpoojaConfig.appSecret,
+        "access-token": petpoojaConfig.accessToken,
         Content_key: petpoojaConfig.appKey,
         Authorization: `Bearer ${petpoojaConfig.accessToken}`,
       },
@@ -650,11 +911,90 @@ async function relayScenarioToPetpooja(
  *    claimed nothing had synced when the POS had the order. It returns
  *    `petpoojaOrderId: null` with `petpoojaOrderIdReturned: false`.
  */
+/**
+ * M6 — RESOLVED MAPPING ONLY. The supplied branchId (internal branch id or
+ * the outlet's Petpooja store ID / menu-sharing code) must resolve through
+ * the authoritative stores/branches mapping. There is NO verbatim fallback:
+ * an unmapped outlet resolves to null and is DENIED — relaying a synthetic
+ * KOT to an arbitrary id (even a brand admin's) is a cross-outlet write.
+ * Returns the partner branch id (for RBAC) plus the canonical Petpooja
+ * store id (the ONLY value used as the payload's restID — never the raw
+ * request argument).
+ */
+export interface RelayOutletMapping {
+  partnerBranchId: string;
+  petpoojaStoreId: string;
+}
+
+export async function resolveRelayOutletMapping(
+  rawBranchId?: string
+): Promise<RelayOutletMapping | null> {
+  if (!rawBranchId || typeof rawBranchId !== "string") return null;
+  const trimmed = rawBranchId.trim();
+  if (!trimmed) return null;
+
+  try {
+    if (db && typeof db.collection === "function") {
+      // 1. stores mapping (petpoojaRestId -> partnerBranchId); the matched
+      //    doc's own petpoojaRestId is the canonical outlet code.
+      const storeCol = db.collection("stores") as any;
+      if (typeof storeCol.where === "function") {
+        const storeSnap = await storeCol.where("petpoojaRestId", "==", trimmed).limit(1).get();
+        const storeDoc = storeSnap.docs?.[0];
+        const partnerBranchId = storeDoc?.data()?.partnerBranchId;
+        if (partnerBranchId) {
+          return {
+            partnerBranchId: String(partnerBranchId),
+            petpoojaStoreId: String(storeDoc?.data()?.petpoojaRestId ?? trimmed),
+          };
+        }
+      }
+
+      // 2. branches mapping (petpoojaStoreId -> branch doc id).
+      const branchCol = db.collection("branches") as any;
+      if (typeof branchCol.where === "function") {
+        const branchSnap = await branchCol.where("petpoojaStoreId", "==", trimmed).limit(1).get();
+        const branchDoc = branchSnap.docs?.[0];
+        if (branchDoc) {
+          return {
+            partnerBranchId: branchDoc.id,
+            petpoojaStoreId: String(branchDoc.data()?.petpoojaStoreId ?? trimmed),
+          };
+        }
+      }
+      // No verbatim fallback: unmapped is UNMAPPED, whatever the caller is.
+    }
+  } catch {
+    // non-Firestore test environment
+  }
+
+  return null;
+}
+
+/**
+ * Back-compat helper for RBAC callers: resolves to the partner branch id or
+ * null (never the raw request string — an unmapped outlet is null).
+ */
+export async function resolveRelayBranchId(rawBranchId?: string): Promise<string | null> {
+  const mapping = await resolveRelayOutletMapping(rawBranchId);
+  return mapping ? mapping.partnerBranchId : null;
+}
+
 export async function runPetpoojaTestScenario(
   params: PetpoojaTestRunnerParams,
   caller?: any
 ): Promise<PetpoojaTestRunnerResult> {
-  void caller; // no branch-scoped reads — sandbox relay only
+  // Branch-scoping & cross-outlet denial:
+  // When an authenticated caller is present, resolve the supplied branchId
+  // through the authoritative stores/branches mapping and enforce that the
+  // caller owns or has access to the MAPPED partner branch, before any
+  // vendor save_order POST. An unmapped outlet is denied for EVERY caller
+  // role (brand admins included) — no fetch, no socket, nothing (M6).
+  let resolvedOutlet: RelayOutletMapping | null = null;
+  if (caller) {
+    resolvedOutlet = await resolveRelayOutletMapping(params.branchId);
+    assertPetpoojaRelayAccess(caller, resolvedOutlet?.partnerBranchId ?? null);
+  }
   // ZERO-MOCK policy: this runner fabricates a synthetic order BY DESIGN. In
   // a declared-production process the relay would fire that synthetic KOT at
   // a LIVE outlet — and, when credentials are missing, hand back a fake
@@ -705,10 +1045,14 @@ export async function runPetpoojaTestScenario(
     };
   }
 
+  // M6 — the POST's restID is the MAPPED outlet code, never the raw request
+  // argument: a mapped-but-renamed store keeps its canonical code, and a raw
+  // cosmetic argument can never retarget the vendor POST.
   const outcome = await relayScenarioToPetpooja(
     order,
-    params.branchId as string,
-    clientOrderID
+    resolvedOutlet,
+    clientOrderID,
+    caller ? undefined : (params.branchId as string)
   );
   if (!outcome.ok) {
     const err: any = new Error(
@@ -716,8 +1060,16 @@ export async function runPetpoojaTestScenario(
         outcome.reason || "unknown"
       }) — no fake order id is being reported.`
     );
-    err.statusCode = 502;
-    err.petpoojaDetail = outcome.detail;
+    // A structural block is NOT a gateway failure: it is our own gate refusing
+    // to send unverified mapping data, so the API surfaces it distinctly.
+    err.statusCode =
+      outcome.reason === "BLOCKED_CONFIGURATION" ? 409 : 502;
+    if (outcome.reason === "BLOCKED_CONFIGURATION") {
+      err.code = "BLOCKED_CONFIGURATION";
+      err.petpoojaDetail = outcome.detail;
+    } else {
+      err.petpoojaDetail = outcome.detail;
+    }
     throw err;
   }
 

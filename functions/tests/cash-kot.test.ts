@@ -147,7 +147,14 @@ describe("CASH-KOT push on staff acceptance", () => {
     config.mock.petpoojaPos = false; // live path — the POS POST is stubbed
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
-    savedDocs["branches/branch_a"] = { petpoojaStoreId: "res_a" };
+    savedDocs["branches/branch_a"] = {
+    petpoojaStoreId: "res_a",
+    // H2: the branch's CAPTURED tax catalogue (no builder default exists).
+    petpoojaTaxes: [
+      { id: "3928", name: "CGST", rate: 2.5 },
+      { id: "3929", name: "SGST", rate: 2.5 },
+    ],
+  };
     // POS-11: POS lines are priced from the catalog, so the line's product
     // must exist there (a real order always does).
     savedDocs["products/itm_1"] = { price: 199, inStock: true };

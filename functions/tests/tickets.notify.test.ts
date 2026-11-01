@@ -294,13 +294,29 @@ describe("ticket create -> escalate -> push flow (honest + PII-free)", () => {
     expect(res.success).toBe(true);
     expect(store[`support_tickets/${created.id}`].status).toBe("resolved");
 
-    // The customer push: generic copy, no names/phones/subject, data-only IDs
+    // The customer push: generic copy, no names/phones/subject. Contract §11:
+    // the wire payload carries {purpose, category, recipientUid, ref} only —
+    // the order/ticket id lives on the inbox doc as `targetId`, and `type`
+    // survives there as a compatibility alias.
     expect(multicastCalls.length).toBeGreaterThan(0);
     const last = multicastCalls[multicastCalls.length - 1];
     expect(last.notification.body).not.toContain("9876543210");
     expect(last.notification.body).not.toContain("Asha");
     expect(last.notification.body).not.toContain("paneer");
-    expect(last.data.type).toBe("ticket_resolved");
+    expect(last.data.purpose).toBe("supportReplies");
+    expect(last.data.category).toBe("support");
+    expect(last.data.recipientUid).toBe("cust_flow");
+    expect(last.data.ticketId).toBeUndefined();
+    expect(last.data.orderId).toBeUndefined();
+    const inboxRef = last.data.ref;
+    expect(typeof inboxRef).toBe("string");
+    const inbox = store[`users/cust_flow/notifications/${inboxRef}`];
+    expect(inbox).toMatchObject({
+      purpose: "supportReplies",
+      targetId: created.id,
+      type: "ticket_resolved",
+      read: false,
+    });
     expect(last.apns?.payload?.aps).toBeDefined();
     expect(last.webpush?.notification?.body).toBe(last.notification.body);
   });
@@ -441,14 +457,16 @@ describe("badge set/clear (H18)", () => {
   it("dispatchFCM sets badge = unread count + 1 for the incoming doc", async () => {
     store["users/u2/notifications/n1"] = { read: false };
     store["users/u2/notifications/n2"] = { read: false };
+    store["device_tokens/tok_u2"] = { userId: "u2" };
     const ok = await dispatchFCM({
       token: "tok_u2",
       title: "Hello",
       body: "World",
       recipientUid: "u2",
+      purpose: "orderUpdates",
     });
     expect(ok).toBe(true);
-    const last = sentTopic[sentTopic.length - 1];
+    const last = multicastCalls[multicastCalls.length - 1];
     expect(last.apns.payload.aps.badge).toBe(3);
     // Inbox doc written with truncated body
     expect(store["users/u2/notifications/n1"].read).toBe(false);
@@ -488,7 +506,9 @@ describe("badge set/clear (H18)", () => {
   it("pushToCustomer truncates long bodies and carries parity payloads", async () => {
     store["users/u4"] = { fcmTokens: ["tok_u4"] };
     store["device_tokens/tok_u4"] = { userId: "u4" };
-    await pushToCustomer("u4", "T", `prefix ${"x".repeat(500)}`, { type: "t", ticketId: "k" });
+    await pushToCustomer("u4", "T", `prefix ${"x".repeat(500)}`, { type: "t", ticketId: "k" }, {
+      purpose: "supportReplies",
+    });
     const last = multicastCalls[multicastCalls.length - 1];
     expect(last.notification.body.length).toBeLessThanOrEqual(120);
     expect(last.apns.payload.aps.badge).toBe(0);
@@ -508,7 +528,9 @@ describe("user-safe error copy (H36)", () => {
 describe("recipient ownership at send time (device_tokens ledger)", () => {
   it("withholds a profile token with no ledger entry and keeps the message in the owner's inbox", async () => {
     store["users/u_unledgered"] = { fcmTokens: ["tok_unledgered"] };
-    await pushToCustomer("u_unledgered", "T", "Body", { type: "t" });
+    await pushToCustomer("u_unledgered", "T", "Body", { type: "t" }, {
+      purpose: "orderUpdates",
+    });
 
     // Unverifiable destination: never handed to the transport, never pruned.
     expect(multicastCalls).toHaveLength(0);
@@ -522,7 +544,9 @@ describe("recipient ownership at send time (device_tokens ledger)", () => {
     store["users/u_new_owner"] = { fcmTokens: ["tok_rebound"] };
     store["device_tokens/tok_rebound"] = { userId: "u_new_owner" };
 
-    await pushToCustomer("u_victim", "T", "Body", { type: "t" });
+    await pushToCustomer("u_victim", "T", "Body", { type: "t" }, {
+      purpose: "orderUpdates",
+    });
 
     expect(multicastCalls).toHaveLength(0);
     expect(store["users/u_victim"].fcmTokens).toEqual(["tok_rebound"]);

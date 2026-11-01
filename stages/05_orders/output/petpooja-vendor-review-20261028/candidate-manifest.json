@@ -1,0 +1,37 @@
+{
+  "baseCommit": "c26effe867c662f2008445ee6dae73d176c77bb8",
+  "candidateFiles": [
+    {
+      "file": "functions/src/modules/petpooja/orderPush.ts",
+      "sha256": "2c32affc73abf169b14e1d9bc0c3772e003563e4f2da5d99efb5df98322d134b"
+    },
+    {
+      "file": "functions/src/modules/petpooja/testRunner.ts",
+      "sha256": "8ab8cf29a3f089e7c638cbdd2c7dc5f378473b4802abfe90949f69b266b8728e"
+    },
+    {
+      "file": "functions/src/modules/petpooja/taxAmounts.ts",
+      "sha256": "6e4765c1b5034d5269cc71a5cf16976f28c53aa4a866d2e9c362541f621d3b33"
+    },
+    {
+      "file": "functions/tests/petpooja.vendor-attachment.test.ts",
+      "sha256": "e8b58d7de005321319827aa670978f2427162804c7d4122b6153a38157970fd4"
+    },
+    {
+      "file": "functions/tests/petpooja.tax-amounts.test.ts",
+      "sha256": "354f79eabf5d40040f6aad64d89828c89df25d5ed0759e9ecd57e046f996a3f0"
+    },
+    {
+      "file": "functions/tests/fixtures/petpooja-vendor-attachment-shape.json",
+      "sha256": "6c8f6bd8c52b3759af28bbc1cefab8c6b0090aa6c5dbd853df88c24bd8bfafbe"
+    },
+    {
+      "file": "references/petpooja_save_order_api.md",
+      "sha256": "3b6c3641f51b49f5e8ad9da947a1830282a4c2c51237826f9ee45d9aec990701"
+    }
+  ],
+  "rootCheckoutModifiedByThisTask": false,
+  "deployed": false,
+  "sandboxOrdersSubmitted": false,
+  "emailSent": false
+}

@@ -1,4 +1,4 @@
-import { assertLiveDispatchContext, config } from "../../../config/env";
+import { assertLiveDispatchContext, config, isDeclaredProduction } from "../../../config/env";
 import type {
   DispatchBookContext,
   DispatchQuoteContext,
@@ -253,7 +253,12 @@ export const shadowfaxAdapter: ProviderAdapter = {
       config.shadowfax.enabled &&
       ((!!config.shadowfax.apiKey &&
         !!config.shadowfax.clientCode &&
-        config.shadowfax.contractVerified) ||
+        config.shadowfax.contractVerified &&
+        // F2 runtime half (Borzo parity): a declared-production process must
+        // not book through a keyed Shadowfax whose callback secret is empty —
+        // the booked rider's status could never be verified or the order
+        // closed. Boot fails closed; this covers post-boot config mutation.
+        (!isDeclaredProduction() || !!(config.shadowfax.webhookSecret || "").trim())) ||
         config.mock.shadowfaxDispatch)
     );
     // A garbage SHADOWFAX_BASE_URL is DELIBERATELY not an exclusion here: the
@@ -441,7 +446,9 @@ export const shadowfaxAdapter: ProviderAdapter = {
             // No invented locality: an empty city is "unknown", a hardcoded
             // "Ahmedabad" geocodes a drop pin in another city to the wrong place
             // (audit finding 6). The official docs now describe this shape; the
-            // vendor packet/credentials still gate live traffic.
+            // vendor packet/credentials still gate live traffic. Shadowfax's
+            // required-field set remains UNVERIFIED (their doc URL 404s, the
+            // Postman collection is auth-gated).
             city: dropAddr.city || "",
             contact_number: contactDigits(drop.phone, ctx.customerPhone || ""),
             name: (drop.name || "Customer").slice(0, 120),

@@ -57,7 +57,8 @@ export interface PricingBreakdown {
   discount: number;
   loyaltyDiscount: number;
   grandTotal: number;
-  /** True when branch/coupon reads fell back to defaults — price is degraded. */
+  /** True when pricing used a default input (no branchId → default packaging).
+   *  Catalog read failures refuse with 503; they never degrade to a client price. */
   pricingDegraded: boolean;
   split: {
     /**
@@ -340,10 +341,14 @@ export async function calculateOrderPricing(
   // groups the customer app reads), so a selection's price comes from the
   // catalog instead of the cart's priceDelta.
   const catalogCustomizations = new Map<string, any[] | undefined>();
-  // True when any line was priced from client input instead of the catalog.
-  // Surfaced on the result so callers can tell a clean total from a degraded
-  // one; before this it was declared and never set, so the documented signal
-  // did not exist.
+  // Per-line read failures (sequential path only). A transient read error is
+  // an OUTAGE for that line, not a price: the catalog is the only
+  // authoritative source, so the basket is refused with the same retryable
+  // 503 a catalog-layer failure returns (below). A doc that genuinely does
+  // not exist is a different outcome (409 ITEM_PRICE_UNVERIFIED).
+  const catalogReadErrors = new Set<string>();
+  // True when a pricing INPUT fell back to a default (no branchId → default
+  // packaging). Lines are never priced from client input any more.
   let pricingDegraded = false;
   const wantedIds = [...new Set(input.items.map((i) => i.productId || i.id).filter(Boolean))];
   // True only when reads themselves threw (outage) — distinct from docs that
@@ -352,14 +357,32 @@ export async function calculateOrderPricing(
   if (wantedIds.length > 0 && db && typeof db.collection === "function") {
     try {
       if (typeof (db as any).getAll === "function") {
-        const refs = wantedIds.map((id) => db.collection("products").doc(id as string));
-        const snaps = await (db as any).getAll(...refs);
-        for (const snap of snaps) {
-          const data = snap.data();
-          if (snap.exists && typeof data?.price === "number") {
-            catalogPrices.set(snap.id, data.price);
-            catalogAvailability.set(snap.id, data?.inStock);
-            catalogCustomizations.set(snap.id, data?.customizations);
+        try {
+          const refs = wantedIds.map((id) => db.collection("products").doc(id as string));
+          const snaps = await (db as any).getAll(...refs);
+          for (const snap of snaps) {
+            const data = snap.data();
+            if (snap.exists && typeof data?.price === "number") {
+              catalogPrices.set(snap.id, data.price);
+              catalogAvailability.set(snap.id, data?.inStock);
+              catalogCustomizations.set(snap.id, data?.customizations);
+            }
+          }
+        } catch {
+          // If getAll throws (e.g. single doc error or unsupported batch), degrade to sequential gets
+          for (const id of wantedIds) {
+            try {
+              const snap = await db.collection("products").doc(id as string).get();
+              const data = snap.data();
+              if (snap.exists && typeof data?.price === "number") {
+                catalogPrices.set(id as string, data.price);
+                catalogAvailability.set(id as string, data?.inStock);
+                catalogCustomizations.set(id as string, data?.customizations);
+              }
+            } catch {
+              catalogReadFailed = true;
+              catalogReadErrors.add(id as string);
+            }
           }
         }
       } else {
@@ -374,30 +397,36 @@ export async function calculateOrderPricing(
             }
           } catch {
             catalogReadFailed = true;
+            catalogReadErrors.add(id as string);
             // Fallback to validated client price for this item
           }
         }
       }
     } catch (err) {
       catalogReadFailed = true;
-      // Fallback to validated client prices — but never silently: a blind
-      // catalog read failure prices the whole order off untrusted input.
+      // A failure outside the per-document reads means the catalog layer
+      // itself is unavailable. Do NOT mark every wanted id as a transient
+      // per-line failure: that would let a genuinely missing product fall back
+      // to a client price. Fail closed with a retryable 503 instead.
       const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
         captureErrorSnapshot: async () => {},
       }));
       await captureErrorSnapshot({
         source: "payments",
         severity: "high",
-        message: `Catalog price resolution failed, falling back to client prices (${wantedIds.length} items)`,
+        message: `Catalog price resolution failed (${wantedIds.length} items)`,
         branchId: input.branchId,
       }).catch(() => undefined);
       void err;
+      const outage: any = new Error("Menu pricing is temporarily unavailable — please retry checkout.");
+      outage.statusCode = 503;
+      throw outage;
     }
   }
 
   // Fail CLOSED on total catalog outage: pricing the whole order off
   // untrusted client input turns any Firestore blip into arbitrary charges.
-  // Partial misses keep per-item fallback (flagged via pricingDegraded).
+  // Partial read failures are refused per line below.
   if (wantedIds.length > 0 && catalogPrices.size === 0 && catalogReadFailed) {
     const err: any = new Error("Menu pricing is temporarily unavailable — please retry checkout.");
     err.statusCode = 503;
@@ -427,14 +456,33 @@ export async function calculateOrderPricing(
         catalogPrice,
         catalogCustomizations.get(itemKey)
       );
+    } else if (catalogReadErrors.has(itemKey)) {
+      // The read for THIS line threw while the catalog as a whole answered:
+      // refuse the basket with the same retryable outage as a catalog-layer
+      // failure. Charging `item.price` here would let a Firestore blip turn
+      // the client-supplied amount into the authoritative charge — the old
+      // fallback reported that as "degraded" and still completed the sale.
+      const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
+        captureErrorSnapshot: async () => {},
+      }));
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Catalog price read failed for ${itemKey} — refused basket (retryable outage)`,
+        branchId: input.branchId,
+      }).catch(() => undefined);
+      const outage: any = new Error(
+        "Menu pricing is temporarily unavailable — please retry checkout."
+      );
+      outage.statusCode = 503;
+      throw outage;
     } else {
       // FAIL CLOSED on an unverifiable price. The catalog is the only
       // authoritative price source, so charging the price the CLIENT sent for a
       // product we cannot look up lets an arbitrary request value set the
       // amount. A deleted, foreign or mistyped product is refused instead of
       // silently priced, because "we could not verify it" is not a licence to
-      // charge it. Rejecting here is why pricingDegraded no longer has to carry
-      // this case on its own.
+      // charge it.
       const unverified: any = new Error(
         `${String((item as any)?.name || "An item")} could not be verified against the menu — please refresh your cart and try again.`
       );

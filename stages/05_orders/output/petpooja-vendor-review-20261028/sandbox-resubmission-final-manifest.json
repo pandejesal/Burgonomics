@@ -1,0 +1,37 @@
+{
+  "recordedAtUtc": "2026-10-28T07:59:39.983949+00:00",
+  "applicationFilesStillMatchPassedGates": 16,
+  "gatesReusedWithoutRepeatingUnchangedWork": true,
+  "saveAcknowledgedCount": 5,
+  "listedAndDetailVerifiedCount": 5,
+  "retries": 0,
+  "pendingAcceptanceCount": 5,
+  "menuWebhookHttpStatus": 503,
+  "callbackVerified": false,
+  "physicalKotVerified": false,
+  "vendorApproval": false,
+  "emailSent": false,
+  "deployed": false,
+  "files": [
+    {
+      "file": "sandbox-resubmission-results.json",
+      "sha256": "45813c68180af30cb7caaea5884a8a913a8a64da454cc2286401bb67cbd3418a"
+    },
+    {
+      "file": "sandbox-resubmission-payloads-redacted.json",
+      "sha256": "ab132c2834ee5bfff30c0701489abe2fbf720ad2d8891444d8628479ee777f7a"
+    },
+    {
+      "file": "sandbox-menu-mappings-verified.json",
+      "sha256": "dfcfdf64a6deae3ff401bb3f3ea040ff5b867f879e89971d47479c1cea9a55b3"
+    },
+    {
+      "file": "email-draft-resubmission-results.md",
+      "sha256": "c856ade6516b00700041e06c6bd7e879ef001c74db3fd5407efe14f3d3a9bebb"
+    },
+    {
+      "file": "financial-corrections-progress.md",
+      "sha256": "fe15955e01cb92caf5205b9734ff7005967abe88aa8569bf84ac61625e71a844"
+    }
+  ]
+}

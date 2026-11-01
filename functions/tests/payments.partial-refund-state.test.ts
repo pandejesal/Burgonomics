@@ -335,6 +335,46 @@ describe("partial refund state (webhook + claim guard)", () => {
     expect(Object.keys(order.refundLedger)).toHaveLength(2);
   });
 
+  // ── Legacy pre-ledger scalar receipt: real money already returned must be
+  // represented in the ledger, otherwise a later partial overwrites the only
+  // record of it and the monotonic total understates what was returned. ──
+  it("folds a legacy scalar receipt into the ledger so webhook refunds are not understated", async () => {
+    savedDocs["orders/order_pr_legacy_scalar"] = {
+      id: "order_pr_legacy_scalar",
+      paymentStatus: "completed",
+      payment: {
+        razorpayPaymentId: "pay_pr_legacy_scalar",
+        status: "completed",
+        capturedAmountPaise: 10000,
+      },
+      refundStatus: "partially_refunded",
+      refundId: "rfnd_legacy",
+      refundAmount: 50, // ₹50 = 5000pa already returned, no ledger entry
+    };
+
+    let call = mockReqRes(
+      refundPayload("evt_pr_ls_1", "rfnd_new_a", "pay_pr_legacy_scalar", 3000)
+    );
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_pr_legacy_scalar"]).toMatchObject({
+      refundedTotalPaise: 8000,
+      refundStatus: "partially_refunded",
+      refundLedger: { rfnd_legacy: 5000, rfnd_new_a: 3000 },
+    });
+
+    call = mockReqRes(
+      refundPayload("evt_pr_ls_2", "rfnd_new_b", "pay_pr_legacy_scalar", 2000)
+    );
+    await handleRazorpayWebhook(call.req, call.res);
+    expect(call.out().statusCode).toBe(200);
+    expect(savedDocs["orders/order_pr_legacy_scalar"]).toMatchObject({
+      refundedTotalPaise: 10000,
+      refundStatus: "refunded",
+      refundLedger: { rfnd_legacy: 5000, rfnd_new_a: 3000, rfnd_new_b: 2000 },
+    });
+  });
+
   // ── Review finding B2: replay identity is ledger-keyed — the (order,
   // amount) refund replays its stored receipt; a DIFFERENT amount is a new
   // refund. Also pins the gateway-echo double-count fix (M2). ──

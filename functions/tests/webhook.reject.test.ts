@@ -33,6 +33,12 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
       const docPath = `${colName}/${docId}`;
       savedDocs[docPath] = { ...(savedDocs[docPath] || {}), ...data };
     }),
+    // Mock-capability repair (stress sweep 2026-10-24): the claim-first
+    // freshness reject releases its audit doc on rejection. Assertions are
+    // unchanged — this only lets the handler execute that release.
+    delete: vi.fn(async () => {
+      delete savedDocs[`${colName}/${docId}`];
+    }),
   });
   const mockDb = {
     collection: (colName: string) => ({

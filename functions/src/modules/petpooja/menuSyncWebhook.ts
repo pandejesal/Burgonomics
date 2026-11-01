@@ -37,6 +37,174 @@ export interface PetpoojaMenuItem {
   addon_groups?: any[];
   itemallowvariation?: string | number | boolean;
   variation?: unknown[];
+  // TAX METADATA (capture-only, 2026-10-26): the save_order side needs each
+  // item's tax rows + inclusivity, and the reference records that the mapper
+  // dropped all of it (§17.8: "Tax does not reach the product document").
+  // spellings: `item_tax` is a CSV of tax ids ("3928,3929"), resolved through
+  // the top-level `taxes[]; `tax_inclusive` arrives as boolean/string.
+  item_tax?: string | number;
+  tax_inclusive?: string | number | boolean;
+  gst_type?: string;
+}
+
+export type DocIdAnomalyReason =
+  | "empty_or_missing_id"
+  | "contains_slash"
+  | "reserved_name"
+  | "exceeds_1500_bytes"
+  | "invalid_composed_id";
+
+/**
+ * Validates a document ID according to Firestore constraints:
+ * - non-empty
+ * - no forward slash ('/')
+ * - not reserved ('.' or '..' or matching /^__.*__$/)
+ * - UTF-8 byte length <= 1500
+ */
+export function classifyDocIdAnomaly(id: unknown): DocIdAnomalyReason | null {
+  if (id === undefined || id === null) {
+    return "empty_or_missing_id";
+  }
+  if (typeof id !== "string" && typeof id !== "number") {
+    return "empty_or_missing_id";
+  }
+  const str = String(id);
+  // Emptiness detection: use trim only to detect empty or whitespace-only IDs
+  if (str.trim().length === 0) {
+    return "empty_or_missing_id";
+  }
+  if (str.includes("/")) {
+    return "contains_slash";
+  }
+  if (str === "." || str === ".." || /^__.*__$/.test(str)) {
+    return "reserved_name";
+  }
+  if (Buffer.byteLength(str, "utf8") > 1500) {
+    return "exceeds_1500_bytes";
+  }
+  return null;
+}
+
+export function isValidFirestoreDocId(id: unknown): id is string {
+  return typeof id === "string" && classifyDocIdAnomaly(id) === null;
+}
+
+// ---------------------------------------------------------------------------
+// TAX METADATA CAPTURE (2026-10-26)
+//
+// The menu push carries the outlet's tax catalogue (`taxes[]`), each item's
+// tax-group membership (`item_tax: "3928,3929"`) and its inclusivity
+// (`tax_inclusive`). None of it reached a document before — the reference
+// records §17.8 "Tax does not reach the product document", so the order push
+// could not read provenance-backed tax semantics and silently kept sending
+// unrelated default row ids. The capture below is RECORD-ONLY + PROVENANCE:
+// it never rewrites the pricing engine, never flips GST liability, and never
+// invents a rate the feed did not send. Unsupported shapes are counted and
+// surfaced honestly (vendor decision needed) instead of silently flattened.
+// ---------------------------------------------------------------------------
+
+export interface CapturedPetpoojaTaxRow {
+  /** Vendor tax row id, e.g. "3928". */
+  id: string;
+  /** Row title exactly as the feed names it, "" when absent (never invented). */
+  name: string;
+  /** Numeric rate (e.g. 2.5). Only rows with a parseable rate > 0 are captured. */
+  rate: number;
+}
+
+export interface TaxCatalogueCapture {
+  rows: CapturedPetpoojaTaxRow[];
+  /** Rows in the feed that could not be captured (supports the census). */
+  unsupported: number;
+  unsupportedReasons: string[];
+  /** True when the payload carried a `taxes` member at all. */
+  payloadHadTaxes: boolean;
+}
+
+/** Accepts number | "2.5" — everything else is not a rate. */
+function parseTaxRate(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+export function captureTaxCatalogue(rawTaxes: unknown): TaxCatalogueCapture {
+  const capture: TaxCatalogueCapture = {
+    rows: [],
+    unsupported: 0,
+    unsupportedReasons: [],
+    payloadHadTaxes: Array.isArray(rawTaxes) || (typeof rawTaxes === "object" && rawTaxes !== null),
+  };
+  if (!Array.isArray(rawTaxes)) {
+    if (capture.payloadHadTaxes) {
+      capture.unsupportedReasons.push(`taxes member is not an array (${typeof rawTaxes})`);
+      capture.unsupported = 1;
+    }
+    return capture;
+  }
+  for (const row of rawTaxes) {
+    if (!row || typeof row !== "object") {
+      capture.unsupported++;
+      capture.unsupportedReasons.push("tax row is not an object");
+      continue;
+    }
+    const r = row as Record<string, unknown>;
+    const idRaw = r.id ?? r.tax_id ?? r.taxid;
+    const id = idRaw === undefined || idRaw === null ? "" : String(idRaw).trim();
+    if (!id) {
+      capture.unsupported++;
+      capture.unsupportedReasons.push("tax row carries no id");
+      continue;
+    }
+    const rate =
+      parseTaxRate(r.rate) ??
+      parseTaxRate(r.tax_rate) ??
+      parseTaxRate(r.tax_percentage) ??
+      parseTaxRate(r.percentage) ??
+      parseTaxRate(r.percent);
+    if (rate === null || rate <= 0) {
+      capture.unsupported++;
+      capture.unsupportedReasons.push(
+        `tax row ${id} carries no parseable positive rate (fields seen: ${Object.keys(r)
+          .filter((k) => /rate|percent|pct/i.test(k))
+          .join(", ") || "none"})`
+      );
+      continue;
+    }
+    const nameRaw = r.title ?? r.name ?? r.tax_name ?? r.taxname;
+    capture.rows.push({
+      id,
+      name: nameRaw === undefined || nameRaw === null ? "" : String(nameRaw),
+      rate,
+    });
+  }
+  return capture;
+}
+
+/** `item_tax` is a CSV of tax ids; "" / undefined mean "nothing captured". */
+export function parseItemTaxCsv(raw: unknown): string[] {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return [];
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * `tax_inclusive` decodes STRICTLY: true ← true/"1"/1; false ← false/"0"/0;
+ * any OTHER shape returns null (recorded as-is — never coerced, never guessed).
+ */
+export function parseTaxInclusiveFlag(raw: unknown): boolean | null {
+  if (raw === true) return true;
+  if (raw === false) return false;
+  if (raw === 1 || raw === "1") return true;
+  if (raw === 0 || raw === "0") return false;
+  return null;
 }
 
 /**
@@ -126,12 +294,19 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // both tolerate the throw; unlinked branches sync nothing until ops links
   // them.
   let restId: string;
+  // Previous sync's reported catalogue size (branches/{id}.petpoojaItemCount)
+  // and the size observed by this run's tombstone scan. F7 uses both to decide
+  // whether a feed is a genuine removal or a TRUNCATED payload.
+  let previousItemCount = 0;
+  let observedItemCount = 0;
   if (config.mock.petpoojaPos) {
     // Mock mode serves canned menu data (no outlet queried) — the strict
     // outlet binding below applies to live mode only.
     try {
       const branchSnap = await db.collection("branches").doc(branchId).get();
-      restId = (branchSnap.data() as any)?.petpoojaStoreId || branchId;
+      const mockBranch = branchSnap.data() as any;
+      restId = mockBranch?.petpoojaStoreId || branchId;
+      previousItemCount = Number(mockBranch?.petpoojaItemCount) || 0;
     } catch {
       restId = branchId;
     }
@@ -150,6 +325,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       throw unlinked;
     }
     restId = b.petpoojaStoreId;
+    previousItemCount = Number(b.petpoojaItemCount) || 0;
   } catch (err: any) {
     if (err?.unlinkedOutlet === true) throw err;
     throw new Error(
@@ -370,6 +546,16 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // by the mapper yet; count them so the gap stays visible.
   let itemsWithVariationScopedAddons = 0;
 
+  // TAX CATALOGUE (record-only + provenance). Written onto the branch so the
+  // order push reads outlet-proven ids instead of assuming unrelated defaults;
+  // unsupported rows are counted honestly and NEVER silently dropped.
+  const taxCatalogue = captureTaxCatalogue(menuData.taxes);
+  let itemsTaxInclusiveTrueCount = 0;
+  let itemsTaxInclusiveUnknownCount = 0;
+  let itemTaxIdsUnresolvableCount = 0;
+  const seenTaxGroupIds = new Set<string>();
+  let mixedTaxGroupCatalogue = false;
+
   // Resolve the item -> category NAME join ONCE, before the loop: the real push
   // carries the id on each item and the name only in the top-level catalog.
   const categoryNames = buildCategoryNameMap(menuData.categories);
@@ -401,6 +587,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // UNRESOLVED — that is exactly why the raw values are counted: the next real
   // push answers it without a code change.
   const rawInStockValues: Record<string, number> = {};
+  const anomalyCensus: Record<string, number> = {};
+  let malformedItemCount = 0;
+  let validItemsCount = 0;
+  const validItemIds: string[] = [];
   let inStockTrueCount = 0;
   let unpricedSkuCount = 0;
   let unpricedInStockCount = 0;
@@ -408,10 +598,49 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   let unpricedInStockVariationMissingCount = 0;
 
   for (const item of items) {
+    // Census bucket. Normalised ONLY for grouping (`String(value)`), so "2"
+    // stays "2" and the numeric 1 / "1" / true collapse to one key. An absent or
+    // null flag is its own bucket ("(absent)") rather than being folded into the
+    // string "undefined". Optional chaining keeps a non-object entry (a bare
+    // string / number in `items`) from throwing here — this read must never be
+    // the thing that fails a sync.
+    const rawInStock = (item as any)?.in_stock;
+    const rawInStockKey =
+      rawInStock === undefined || rawInStock === null ? "(absent)" : String(rawInStock);
+    rawInStockValues[rawInStockKey] = (rawInStockValues[rawInStockKey] || 0) + 1;
+
+    // A malformed entry (or an id that cannot be a Firestore doc id) is counted
+    // and skipped: one bad SKU must never abort the sync or write a bad path.
+    if (!item || typeof item !== "object") {
+      malformedItemCount++;
+      anomalyCensus["empty_or_missing_id"] = (anomalyCensus["empty_or_missing_id"] || 0) + 1;
+      continue;
+    }
+
+    const rawAnomaly = classifyDocIdAnomaly(item.itemid);
+    if (rawAnomaly) {
+      malformedItemCount++;
+      anomalyCensus[rawAnomaly] = (anomalyCensus[rawAnomaly] || 0) + 1;
+      continue;
+    }
+
+    const rawItemId = String(item.itemid);
     // Doc id is branch-scoped: the same Petpooja itemid exists in every
     // outlet, and a global prod_{itemid} lets the second synced branch
     // overwrite (and steal) the first branch's doc.
-    const productId = `prod_${branchId}_${item.itemid}`;
+    const productId = `prod_${branchId}_${rawItemId}`;
+
+    const composedAnomaly = classifyDocIdAnomaly(productId);
+    if (composedAnomaly) {
+      malformedItemCount++;
+      const reasonKey =
+        composedAnomaly === "empty_or_missing_id" ? "invalid_composed_id" : composedAnomaly;
+      anomalyCensus[reasonKey] = (anomalyCensus[reasonKey] || 0) + 1;
+      continue;
+    }
+
+    validItemsCount++;
+    validItemIds.push(rawItemId);
     const productRef = db.collection("products").doc(productId);
 
     // P4 census (record-only; the flag spellings the vendor uses are "1"/1).
@@ -433,7 +662,6 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     ) {
       itemsWithVariationScopedAddons++;
     }
-    const rawInStock = (item as any)?.in_stock;
     // M2 (corrected): the effective base price is the lowest active variation
     // price when the item HAS variations (never keyed on the flag — the
     // vendor's own sample is flagged "0"), else the item price. It is computed
@@ -452,17 +680,29 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       effectivePrice,
       config.petpooja.unknownStockPolicy
     );
-
-    // Census bucket. Normalised ONLY for grouping (`String(value)`), so "2"
-    // stays "2" and the numeric 1 / "1" / true collapse to one key. An absent or
-    // null flag is its own bucket ("(absent)") rather than being folded into the
-    // string "undefined". Optional chaining keeps a non-object entry (a bare
-    // string / number in `items`) from throwing here — this read must never be
-    // the thing that fails a sync.
-    const rawInStockKey =
-      rawInStock === undefined || rawInStock === null ? "(absent)" : String(rawInStock);
-    rawInStockValues[rawInStockKey] = (rawInStockValues[rawInStockKey] || 0) + 1;
     if (inStock) inStockTrueCount++;
+
+    // PER-ITEM TAX METADATA (record-only; typed per the capture contract).
+    const itemTaxIds = parseItemTaxCsv((item as any).item_tax);
+    const taxInclusive = parseTaxInclusiveFlag((item as any).tax_inclusive);
+    if (taxInclusive === true) itemsTaxInclusiveTrueCount++;
+    if (taxInclusive === null) itemsTaxInclusiveUnknownCount++;
+    for (const taxId of itemTaxIds) {
+      seenTaxGroupIds.add(taxId);
+      if (!taxCatalogue.rows.some((row) => row.id === taxId)) {
+        itemTaxIdsUnresolvableCount++;
+      }
+    }
+    // The pull-model order push applies ONE uniform GST group (the branch
+    // catalogue):
+    //  tax-INCLUSIVE items or items whose tax rows are not verifiable from
+    //  this catalogue cannot be represented — flagged truthfully for the next
+    //  vendor decision, never silently mapped onto an unrelated default.
+    const itemTaxUnsupported =
+      taxInclusive === true ||
+      (taxCatalogue.rows.length > 0 &&
+        itemTaxIds.length > 0 &&
+        itemTaxIds.some((taxId) => !taxCatalogue.rows.some((row) => row.id === taxId)));
 
     // Record-only: keep the raw-price hazard visible even though
     // `resolvePushStock` now blocks every unpriced item from sale.
@@ -519,7 +759,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
 
     const productPayload = {
       id: productId,
-      petpoojaItemId: item.itemid,
+      petpoojaItemId: rawItemId,
       name: item.itemname,
       description: item.itemdescription || item.item_description || "",
       // M2: a variation item is priced by its lowest active variation.
@@ -541,6 +781,16 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       // P1: item-level packaging charge. `""` (the vendor's "none") is null,
       // never 0 silently — the pricing helper treats null as "no charge".
       packingCharge: itemPackingCharge((item as any).item_packingcharges),
+      // Tax metadata, captured verbatim (2026-10-26): ids/name/rate from the
+      // feed; `taxInclusive: null` = undecodable shape (recorded, never
+      // coerced); unsupported = unrepresentable in the uniform GST model.
+      petpoojaItemTaxIds: itemTaxIds,
+      petpoojaTaxInclusive: taxInclusive,
+      petpoojaGstType:
+        typeof (item as any).gst_type === "string" && (item as any).gst_type.trim() !== ""
+          ? (item as any).gst_type
+          : null,
+      petpoojaTaxUnsupported: itemTaxUnsupported,
       // Delivery filters products by this restId (stores/{id}.petpoojaRestId
       // must equal the branch's restId once outlets are linked — Runbook §5).
       restId,
@@ -562,8 +812,8 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // drift apart. An EMPTY feed is deliberately not an all-dark catalogue (an API
   // glitch must not look like a 100% 86-ing), and a partially dark catalogue is
   // normal 86-ing — only "items ingested AND none available" qualifies.
-  const allDark = items.length > 0 && inStockTrueCount === 0;
-  const catalogueReady = items.length > 0 && inStockTrueCount > 0;
+  const allDark = validItemsCount > 0 && inStockTrueCount === 0;
+  const catalogueReady = validItemsCount > 0 && inStockTrueCount > 0;
   const availabilityWarning = allDark ? "NO_ITEMS_IN_STOCK" : null;
 
   // The warning that would have caught the 166-item Sold-Out incident. A warn
@@ -595,14 +845,36 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // bad feed is recoverable. Local-only docs (combos / no petpoojaItemId) are
   // never touched. Skipped entirely on an empty feed (API glitch must not
   // retire the whole catalog).
-  if (!config.mock.petpoojaPos && items.length > 0) {
+  //
+  // F7 (tombstone-guard integrity): the ONLY guard used to be "the feed is not
+  // empty". A TRUNCATED feed — the menu API returning a partial page, a push
+  // carrying half the catalogue — then retired every SKU it happened to omit,
+  // taking the branch's menu dark on the customer app. Two proportional guards
+  // now decide BEFORE any write:
+  //   (a) the feed must cover at least half of the branch's known catalogue;
+  //   (b) a single run may not retire more than half of it.
+  // Both compare against the LARGER of the last sync's reported item count and
+  // this run's own scan, and both raise a HIGH snapshot and skip the pass
+  // (nothing is written, so there is nothing to reverse). A catalogue that
+  // legitimately shrinks by more than half therefore needs an operator to
+  // reconcile it deliberately — the alternative is silently taking a live menu
+  // dark on a partial feed, which is strictly worse.
+  let tombstoneRefused = false;
+  if (!config.mock.petpoojaPos && validItemIds.length > 0) {
     try {
-      const feedIds = new Set(items.map((i) => String((i as PetpoojaMenuItem).itemid)));
+      const feedIds = new Set(validItemIds);
       // Paginated by doc id: the old single limit(1000) pass left SKUs past
       // the window live/orderable forever on catalogs bigger than the page.
       const TOMBSTONE_PAGE = 500;
       let lastDoc: any = null;
-      let retired = 0;
+      // Two-phase on purpose: collect first, so a refused pass writes nothing.
+      const retireCandidates: any[] = [];
+      // F7 (SKU re-appearance): a SKU that comes BACK in the feed must stop
+      // being a tombstone. Cleared here (not in the product payload) so a live
+      // SKU that was never retired does not carry a misleading
+      // `ghostRetired: false` field of its own.
+      const restoreCandidates: any[] = [];
+      let knownActiveItems = 0;
       for (;;) {
         let pageQuery: any = db
           .collection("products")
@@ -619,41 +891,134 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
           if (dd.isCombo) continue;
           const pid = dd.petpoojaItemId ? String(dd.petpoojaItemId) : null;
           if (!pid) continue;
-          if (!feedIds.has(pid) && dd.inStock !== false) {
-            await d.ref.set(
-              {
-                inStock: false,
-                ghostRetired: true,
-                ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true }
-            );
-            retired++;
+          if (feedIds.has(pid)) {
+            // Back in the feed → drop the tombstone. A live SKU carrying
+            // `ghostRetired: true` misleads operators/reports that read the flag.
+            if (dd.ghostRetired === true) restoreCandidates.push(d.ref);
+            // A feed-present SKU is part of the live catalogue: it must count
+            // toward the denominator, or the feed-share guard compares a feed
+            // against only the SKUs it omits.
+            knownActiveItems++;
+            continue;
+          }
+          // A tombstone that stays absent is already off the menu; counting it
+          // would inflate the denominator until the guard refused every pass.
+          if (dd.ghostRetired === true) continue;
+          knownActiveItems++;
+          if (dd.inStock !== false) {
+            retireCandidates.push(d.ref);
           }
         }
         if (docs.length < TOMBSTONE_PAGE) break;
         lastDoc = docs[docs.length - 1];
         if (!lastDoc || typeof pageQuery.startAfter !== "function") break;
       }
-      if (retired > 0) {
-        const { captureErrorSnapshot } = await import("../../core/errors");
+      observedItemCount = knownActiveItems;
+
+      // Restores are never dangerous (they only clear a tombstone), so they run
+      // even when the retirement pass below is refused.
+      if (restoreCandidates.length > 0) {
+        for (const ref of restoreCandidates) {
+          await ref.set(
+            {
+              ghostRetired: false,
+              ghostRetiredAt: null,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+        console.log(
+          `[Petpooja Menu Sync] restored ${restoreCandidates.length} returned SKU(s) for branch ${branchId} (cleared ghostRetired)`
+        );
+      }
+
+      const knownItems = Math.max(previousItemCount, knownActiveItems);
+      const MIN_FEED_SHARE = 0.5;
+      const MAX_RETIRE_SHARE = 0.5;
+      const truncatedFeed =
+        knownItems > 0 && feedIds.size < knownItems * MIN_FEED_SHARE;
+      const massRetirement =
+        retireCandidates.length > 0 &&
+        knownItems > 0 &&
+        retireCandidates.length > knownItems * MAX_RETIRE_SHARE;
+
+      if (truncatedFeed || massRetirement) {
+        tombstoneRefused = true;
+        console.warn(
+          `[Petpooja Menu Sync] REFUSING the ghost-SKU tombstone pass for branch ${branchId}: ${
+            truncatedFeed
+              ? `feed carries ${feedIds.size} SKU(s) against ${knownItems} known item(s)`
+              : `this run would retire ${retireCandidates.length} of ${knownItems} known item(s)`
+          } — a truncated feed must not take the catalogue dark`
+        );
         await captureErrorSnapshot({
           source: "petpooja",
-          severity: "medium",
-          message: `Menu sync retired ${retired} ghost SKU(s) for branch ${branchId} (absent from POS feed, flipped out-of-stock — not deleted)`,
+          severity: "high",
+          message: `Menu sync REFUSED to retire ghost SKUs for branch ${branchId}: ${
+            truncatedFeed
+              ? `feed has ${feedIds.size} SKU(s) vs ${knownItems} known item(s) (suspected truncated feed)`
+              : `would retire ${retireCandidates.length} of ${knownItems} known item(s) in one run`
+          }. No product was retired; re-run once the feed is complete.`,
           branchId,
         });
+      } else {
+        let retired = 0;
+        for (const ref of retireCandidates) {
+          await ref.set(
+            {
+              inStock: false,
+              ghostRetired: true,
+              ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          retired++;
+        }
+        if (retired > 0) {
+          await captureErrorSnapshot({
+            source: "petpooja",
+            severity: "medium",
+            message: `Menu sync retired ${retired} ghost SKU(s) for branch ${branchId} (absent from POS feed, flipped out-of-stock — not deleted)`,
+            branchId,
+          });
+        }
       }
     } catch (err: any) {
       console.warn(`[Petpooja Menu Sync] Ghost-SKU tombstone pass failed for ${branchId}:`, err?.message || err);
     }
   }
 
+  // Honest handling of tax shapes the uniform payload CANNOT represent:
+  // recorded loudly (catalogue decision needed from the vendor), never
+  // silently flattened into an unrelated default.
+  if (itemsTaxInclusiveTrueCount > 0 || itemTaxIdsUnresolvableCount > 0) {
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: `Menu sync for branch ${branchId} captured tax metadata it cannot order-push representably: ${itemsTaxInclusiveTrueCount} tax-inclusive item(s), ${itemTaxIdsUnresolvableCount} item-tax row(s) not named by the captured catalogue. Recorded on the product docs (petpoojaTaxInclusive/petpoojaItemTaxIds/petpoojaTaxUnsupported); order push keeps the branch-level rows until the vendor decides the mixed model. Vendor decision needed.`,
+      branchId,
+    });
+  }
+  if (taxCatalogue.payloadHadTaxes && taxCatalogue.rows.length === 0) {
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: `Menu sync for branch ${branchId} received a taxes[] catalogue whose rows capture nothing — NOT writing petpoojaTaxes (a guessed id would push tax rows that name no outlet row). Reasons: ${taxCatalogue.unsupportedReasons.slice(0, 3).join("; ") || "all rows unsupported"}. Vendor decision needed.`,
+      branchId,
+    });
+  }
+
   await db.collection("branches").doc(branchId).set(
     {
       lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
-      petpoojaItemCount: items.length,
+      // A refused tombstone run must NOT lower the recorded catalogue size:
+      // that field is the guard's own memory of how many SKUs this branch has,
+      // and lowering it on a truncated feed would disarm the guard next tick.
+      petpoojaItemCount: tombstoneRefused
+        ? Math.max(previousItemCount, observedItemCount, validItemsCount)
+        : validItemsCount,
       // P1: only ever written when the push actually carried packaging keys, so
       // a keyless push (or a failed one) cannot clear a stored contract.
       ...(packagingInfo.packaging
@@ -662,6 +1027,17 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
               ...packagingInfo.packaging,
               syncedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
+          }
+        : {}),
+      // PROVENANCE-BACKED tax catalogue: only outlet-pushed rows ever land
+      // here (orderPush reads these ids first); absent rows change nothing, so
+      // a broken capture can never plant a guess.
+      ...(taxCatalogue.rows.length > 0
+        ? {
+            petpoojaTaxes: taxCatalogue.rows,
+            petpoojaTaxesSource: "menu_push",
+            petpoojaTaxesUnsupportedRowCount: taxCatalogue.unsupported || 0,
+            petpoojaTaxesUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }
         : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -695,7 +1071,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       finishedAt: new Date().toISOString(),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       duration: "live",
-      created: items.length,
+      created: validItemsCount,
       updated: 0,
       // TRUTHFUL READINESS: `status` reports that the INGEST completed, which
       // stayed true for a 100%-dark catalogue — exactly how a fully Sold-Out
@@ -728,6 +1104,17 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       itemsAllowingVariations,
       itemsWithVariationsDefined,
       itemsWithVariationScopedAddons,
+      malformedItemCount,
+      anomalyCensus,
+      // ADDITIVE tax-metadata census (2026-10-26): the captured rows + every
+      // straight count the branch decision depends on. Record-only.
+      taxCatalogCaptured: taxCatalogue.rows.length,
+      taxCatalogUnsupported: taxCatalogue.unsupported,
+      taxCatalogUnsupportedReasons: taxCatalogue.unsupportedReasons.slice(0, 5),
+      petpoojaTaxesWritten: taxCatalogue.rows.length > 0,
+      itemsTaxInclusiveTrueCount,
+      itemsTaxInclusiveUnknownCount,
+      itemTaxIdsUnresolvableCount,
       error: unexplainedVendorMessage,
       simulated: config.mock.petpoojaPos,
       source: "menuSyncWebhook",
@@ -737,7 +1124,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   }
 
   return {
-    itemCount: items.length,
+    itemCount: validItemsCount,
     categoriesCount: categories.length,
   };
 }

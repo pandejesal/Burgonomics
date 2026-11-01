@@ -46,7 +46,9 @@ export class PetpoojaStructuralError extends Error {
 
   constructor(gaps: PetpoojaStructuralGap[]) {
     super(
-      `KOT blocked: ${gaps.length} unverified POS mapping${
+      // "BLOCKED_CONFIGURATION" is the operator-facing class name the vendor
+      // tooling and both test families grep for; it is not a generic failure.
+      `BLOCKED_CONFIGURATION: KOT blocked: ${gaps.length} unverified POS mapping${
         gaps.length === 1 ? "" : "s"
       }. ${gaps.map((g) => `${g.field}: ${g.reason}`).join("; ")}`
     );
@@ -73,16 +75,12 @@ function firstPosId(candidates: unknown[]): string {
  * `item_tax` from the lines entirely, so every line arrived untaxed while the
  * order still declared a tax total.
  *
- * A branch may declare its own rows as `petpoojaTaxes: [{id, name, rate}]`
- * (what the menu sync should write once it captures the outlet's `taxes[]`).
- * Until a branch does, the rows published by the outlet currently linked are
- * used — CGST `3928` and SGST `3929`, both 2.5%.
+ * A branch declares its own rows as `petpoojaTaxes: [{id, name, rate}]` (what
+ * the menu sync writes when it captures the outlet's `taxes[]`). There is NO
+ * universal default: an outlet's row ids are outlet-specific, so a branch that
+ * has not captured them is BLOCKED (see the positive-GST guard) instead of
+ * being sent a guessed id that names no row on that outlet.
  */
-const DEFAULT_OUTLET_TAXES = [
-  { id: "3928", name: "CGST", rate: 2.5 },
-  { id: "3929", name: "SGST", rate: 2.5 },
-];
-
 function outletTaxes(branch: any): Array<{ id: string; name: string; rate: number }> {
   const declared = branch?.petpoojaTaxes;
   if (Array.isArray(declared) && declared.length > 0) {
@@ -94,7 +92,7 @@ function outletTaxes(branch: any): Array<{ id: string; name: string; rate: numbe
         rate: Number(t.rate) || 0,
       }));
   }
-  return DEFAULT_OUTLET_TAXES.map((t) => ({ ...t }));
+  return [];
 }
 
 export function normalizeCustomerPhone(raw: any): string {
@@ -725,6 +723,18 @@ export function formatPetpoojaOrderPayload(
   // `order.taxAmount` / `order.totalAmount` / `order.total` are client-writable
   // and must never decide a KOT total or COD cash amount.
   const gstAmount = Number(pricing.gst) || 0;
+  // POS-11/R4b: a positive GST with NO captured tax rows would print a
+  // tax_total the Tax[] section cannot explain — the vendor's own consistency
+  // rule. Block instead of emitting an empty tax split.
+  if (gstAmount > 0 && branchTaxes.length === 0) {
+    throw new PetpoojaStructuralError([
+      {
+        field: "Tax.details",
+        reason:
+          "positive order GST has no matched tax rows — capture the outlet's tax catalogue before relaying",
+      },
+    ]);
+  }
   // R6b: the caller's verified courier fee wins; the stored value is only a
   // fallback for callers that did not resolve one (non-delivery never does).
   const deliveryFee =
@@ -1111,7 +1121,19 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         if (data.petpoojaPushClaimedAt && Date.now() - claimedAt < PUSH_CLAIM_TTL_MS) {
           return "busy"; // another push is in flight right now — yield to it
         }
-        tx.set(orderDoc.ref, { petpoojaPushClaimedAt: Date.now() }, { merge: true });
+        tx.set(
+          orderDoc.ref,
+          {
+            petpoojaPushClaimedAt: Date.now(),
+            // F5 (claim visibility): a hard kill mid-POST must be VISIBLE to
+            // the crash lane, which scans `petpoojaStatus == "processing"`.
+            // The lease alone is not enough once the process dies before the
+            // post-ack write.
+            petpoojaStatus: "processing",
+            petpoojaSyncStatus: "processing",
+          },
+          { merge: true }
+        );
         return "claimed";
       });
     } catch (err: any) {
@@ -1176,6 +1198,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     );
     return true;
   }
+
+  // Point of no return (F3): true once the POS ACKNOWLEDGED a POST. Any later
+  // failure (including Firestore writes) must never become a retry.
+  let posAccepted = false;
+  let posAcceptedOrderId = "";
+  let posAcceptedAckBody: string | null = null;
 
   try {
     let branchData: any = null;
@@ -1339,6 +1367,18 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     // Both shapes prevent retry loops from firing duplicate KOTs.
     const petpoojaOrderId =
       result.petpooja_order_id || result.order_id || result.orderID || result.orderId || "";
+    // F3 (polish stress sweep): from here on the POS has ACCEPTED the ticket.
+    // Recorded in memory BEFORE the first write so a rejected write cannot
+    // erase the fact that the POST was acknowledged.
+    if (ok) {
+      posAccepted = true;
+      posAcceptedOrderId = String(petpoojaOrderId || "");
+      try {
+        posAcceptedAckBody = JSON.stringify(result).slice(0, 500);
+      } catch {
+        posAcceptedAckBody = null;
+      }
+    }
     if (ok && petpoojaOrderId) {
       await orderDoc.ref.set(
         {
@@ -1420,6 +1460,58 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     const parkedStatus = structural ? "blocked_configuration" : "pending_retry";
     const fallbackRetry = structural ? (order.petpoojaRetryCount || 0) : (order.petpoojaRetryCount || 0) + 1;
     let retryForSnapshot = fallbackRetry;
+
+    // TRANSPORT-AMBIGUITY (stress sweep 2026-10-24, K1): a POST whose fetch
+    // TIMED OUT / was Aborted after the request was written has an unknown
+    // KOT state — the POS cloud may already have registered the ticket.
+    // Parking it `pending_retry` re-POSTs the same paid order (a duplicate
+    // kitchen ticket). The crash lane (petpooja.scheduler) already parks
+    // this shape `reconciliation_required` with NO new POST; the in-process
+    // path now agrees. HTTP 5xx stays retryable on purpose — the origin
+    // provably did not process it cleanly (pinned by the retry-lifecycle
+    // suite).
+    const kotTransportAmbiguous =
+      err?.name === "TimeoutError" || err?.name === "AbortError";
+
+    // F3: the ack landed but we could not persist it. This write is the
+    // reconciliation park; it is intentionally NOT a retry and does NOT touch
+    // petpoojaRetryCount. It also records the acceptance marker (POS id, or the
+    // accepted-no-id flag) so every later dedupe short-circuits before the POS
+    // is ever contacted again. `petpoojaAcceptedUnrecorded` distinguishes this
+    // from the transport-ambiguous case for the operator.
+    const parkAcceptedUnrecorded = () => ({
+      petpoojaStatus: "reconciliation_required",
+      petpoojaSyncStatus: "reconciliation_required",
+      kotSyncFailed: true,
+      // Reuses the existing "do not blind-push" guards (orderPush pre-read +
+      // claim transaction) until an operator has verified the physical ticket.
+      petpoojaAmbiguousProcessing: true,
+      petpoojaAcceptedUnrecorded: true,
+      ...(posAcceptedOrderId
+        ? { petpoojaOrderId: posAcceptedOrderId }
+        : {
+            petpoojaAcceptedNoId: true,
+            petpoojaAcceptedNoIdAt: admin.firestore.FieldValue.serverTimestamp(),
+            petpoojaAcceptedNoIdSource: "order_push_ack_unpersisted",
+          }),
+      ...(posAcceptedAckBody ? { petpoojaAcceptedAck: posAcceptedAckBody } : {}),
+      lastPetpoojaError: `POS acknowledged the KOT but persisting the acceptance failed: ${err.message}`,
+      petpoojaPushClaimedAt: null,
+      petpoojaClaimedAt: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    /** K1: the POS may already hold this KOT — never re-POST it blindly. */
+    const parkTransportAmbiguous = () => ({
+      petpoojaStatus: "reconciliation_required",
+      petpoojaSyncStatus: "reconciliation_required",
+      kotSyncFailed: true,
+      petpoojaAmbiguousProcessing: true,
+      lastPetpoojaError: err.message,
+      petpoojaPushClaimedAt: null,
+      petpoojaClaimedAt: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
     if (db && typeof (db as any).runTransaction === "function") {
       try {
         const outcome = await (db as any).runTransaction(async (tx: any) => {
@@ -1435,6 +1527,19 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
               { merge: true }
             );
             return "won";
+          }
+          // F3: never re-POST an accepted KOT. Checked before the structural
+          // and transport-ambiguity branches because acceptance is PROVEN.
+          if (posAccepted) {
+            tx.set(orderDoc.ref, parkAcceptedUnrecorded(), { merge: true });
+            return "parked_accepted_unsaved";
+          }
+          // K1: transport-ambiguous POST (timeout/abort after the request was
+          // written) — the POS may already hold this KOT. Park for manual
+          // reconciliation: NO retry, NO retry-count burn.
+          if (!structural && kotTransportAmbiguous) {
+            tx.set(orderDoc.ref, parkTransportAmbiguous(), { merge: true });
+            return "parked_ambiguous";
           }
           const freshRetry = structural
             ? Number(data?.petpoojaRetryCount) || 0
@@ -1457,7 +1562,16 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
           return "parked";
         });
         if (outcome === "won") pushedByRacer = true;
-        if (outcome === "parked") parked = true;
+        // Every other outcome committed a park: leaving `parked === false` let
+        // the plain fallback write below clobber a concurrent racer's
+        // successful push that landed after the transaction.
+        if (
+          outcome === "parked" ||
+          outcome === "parked_ambiguous" ||
+          outcome === "parked_accepted_unsaved"
+        ) {
+          parked = true;
+        }
       } catch (txErr: any) {
         // Transactional write failed — fall back to the legacy write below.
         console.warn(
@@ -1475,27 +1589,38 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
 
     if (!parked) {
       await orderDoc.ref.set(
-        {
-          petpoojaStatus: parkedStatus,
-          petpoojaSyncStatus: parkedStatus,
-          petpoojaRetryCount: fallbackRetry,
-          lastPetpoojaError: err.message,
-          ...(structural ? { kotSyncFailed: true } : {}),
-          petpoojaPushClaimedAt: null,
-          petpoojaClaimedAt: null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
+        posAccepted
+          ? // F3: same rule as the transactional path — an acknowledged POST is
+            // never a retry candidate, even when the transaction itself failed.
+            parkAcceptedUnrecorded()
+          : !structural && kotTransportAmbiguous
+            ? parkTransportAmbiguous()
+            : {
+                petpoojaStatus: parkedStatus,
+                petpoojaSyncStatus: parkedStatus,
+                petpoojaRetryCount: fallbackRetry,
+                lastPetpoojaError: err.message,
+                ...(structural ? { kotSyncFailed: true } : {}),
+                petpoojaPushClaimedAt: null,
+                petpoojaClaimedAt: null,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
         { merge: true }
       );
     }
 
     await captureErrorSnapshot({
       source: "petpooja",
-      // A structural refusal is an operator action, not a transient failure.
-      severity: structural ? "high" : "medium",
-      message: structural
-        ? `Petpooja KOT blocked for order ${orderId} — unverified POS ids: ${err.message}`
-        : `Petpooja KOT Push failed for order ${orderId} (Attempt ${retryForSnapshot}): ${err.message}`,
+      // A structural refusal is an operator action, not a transient failure; a
+      // KOT the POS accepted but we could not record is a lost-ticket hazard
+      // (the kitchen may be cooking an order no system tracks) — page, do not
+      // bury it at medium.
+      severity: posAccepted || structural ? "high" : "medium",
+      message: posAccepted
+        ? `Petpooja POS ACKNOWLEDGED the KOT for order ${orderId} but the acceptance could not be persisted — parked reconciliation_required with NO retry (an automatic re-POST would duplicate the ticket): ${err.message}`
+        : structural
+          ? `Petpooja KOT blocked for order ${orderId} — unverified POS ids: ${err.message}`
+          : `Petpooja KOT Push failed for order ${orderId} (Attempt ${retryForSnapshot}): ${err.message}`,
       orderId,
       branchId,
     });

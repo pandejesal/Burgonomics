@@ -326,6 +326,30 @@ describe("Porter Logistics Service", () => {
       expect(savedDocs["orders/order_prt_101"]?.dispatchGeoSource).toBeDefined();
     });
 
+    it("refuses a direct Porter booking over a live external booking whose delivery sidecar was not rewound", async () => {
+      savedDocs["orders/order_prt_owned"] = {
+        branchId: "branch_ahmedabad_1",
+        store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
+        branchCoordinates: { lat: 23.0131, lng: 72.5085 },
+        deliveryAddress: { full: "102, Shivalik Highstreet, Vastrapur", lat: 23.0338, lng: 72.5262 },
+        customerPhone: "+91 99999 88888",
+        customerName: "Aarav Shah",
+        status: "ready",
+        // Promoted correlated callback: binding is live, the protected
+        // deliveryStatus sidecar still reads cancelled.
+        dispatchStatus: "dispatched",
+        dispatchProvider: "borzo",
+        dispatchOrderId: "BZ-OWNED-9",
+        deliveryStatus: "rider_cancelled",
+      };
+
+      await expect(bookPorterRider("order_prt_owned", "Store Manager")).rejects.toMatchObject({
+        statusCode: 409,
+        code: "DISPATCH_EXISTS",
+      });
+      expect(savedDocs["orders/order_prt_owned"].porterOrderId).toBeUndefined();
+    });
+
     it("processes Porter webhook transit and delivery events", async () => {
       // 1. In Transit (valid HMAC — the enforced live path, no mock bypass)
       await handlePorterWebhook("raw_body", porterSig("raw_body"), {

@@ -26,6 +26,7 @@ Identify your current goal and open the designated Stage Contract:
 | **10** | `stages/10_branches/` | Dynamic branches, Route linked accounts, franchise leads | [10 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/10_branches/CONTEXT.md) | `references/scaling_architecture.md`, `references/push_notifications.md` |
 | **11** | `stages/11_users/` | Staff management, custom claims assignment, audit logs | [11 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/11_users/CONTEXT.md) | `references/rbac.md`, `_config/coding_standards.md` |
 | **12** | `stages/12_settings_notifications/` | FCM push notifications, 1:1 DMs (chats/{pairId}) | [12 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/12_settings_notifications/CONTEXT.md) | `references/push_notifications.md`, `references/firestore_schema.md` |
+| **13** | `stages/13_production_rehearsal/` | Dry-run gate verification, mobile artifact proof, staging readiness | [13 CONTEXT.md](file:///c:/Users/DELL/Desktop/Burgonomics/stages/13_production_rehearsal/CONTEXT.md) | `PRODUCTION_HANDOFF.md`, `_config/deployment_strategy.md` |
 
 ---
 

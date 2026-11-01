@@ -145,8 +145,33 @@ describe("Petpooja POS Bridge Service", () => {
   });
 
   describe("formatPetpoojaOrderPayload", () => {
-    it("correctly maps order details, items, GST tax splits, and order types", () => {
-      const order = {
+    // Sanitized vendor-shape fixture: real-shaped NUMERIC POS ids taken from
+    // the vendor's corrected save_order sample, no credentials, no real
+    // H2 — the branch's CAPTURED tax catalogue fixture (what menuSyncWebhook
+    // writes; no builder default exists anymore). The ids are the outlet's
+    // own captured rows, used as test FIXTURE truth only.
+    const CAPTURED_TAXES = [
+      { id: "3928", name: "CGST", rate: 2.5 },
+      { id: "3929", name: "SGST", rate: 2.5 },
+    ];
+    const capturedBranch = (extra: Record<string, any> = {}) => ({
+      id: "branch_surat_01",
+      petpoojaStoreId: "PP_SURAT_01",
+      petpoojaTaxes: CAPTURED_TAXES,
+      ...extra,
+    });
+    // H1 — per-product tax metadata snapshots (edited per test as needed).
+    const snapshotFor = (posId: string, taxIds: string[] = ["3928", "3929"]) => ({
+      petpoojaItemId: posId,
+      taxIds,
+      taxInclusive: false,
+      taxUnsupported: false,
+      gstType: "goods", // Explicit ownership of this synthetic fixture, not a default.
+    });
+
+    // customer data (names/phones/address are fictional placeholders).
+    function vendorShapeOrder(extra: Record<string, any> = {}) {
+      return {
         id: "ord_1001",
         orderNumber: "BUR-1001",
         branchId: "branch_surat_01",
@@ -157,8 +182,9 @@ describe("Petpooja POS Bridge Service", () => {
         address: { street: "123 Adajan Main Rd" },
         items: [
           {
-            id: "itm_smash_01",
-            petpoojaItemId: "pp_b1",
+            id: "l1",
+            productId: "prod_branch_surat_01_7765862",
+            petpoojaItemId: "7765862",
             name: "Classic Smash Cheese Burger",
             price: 235,
             quantity: 2,
@@ -186,10 +212,19 @@ describe("Petpooja POS Bridge Service", () => {
           discount: 50,
           grandTotal: 475,
         },
+        ...extra,
       };
+    }
 
-      const branch = { id: "branch_surat_01", petpoojaStoreId: "PP_SURAT_01" };
-      const payload = formatPetpoojaOrderPayload(order, branch, "PP_SURAT_01");
+    it("correctly maps order details, items, GST tax splits, and order types", () => {
+      const branch = capturedBranch();
+      const payload = formatPetpoojaOrderPayload(
+        vendorShapeOrder(),
+        branch,
+        "PP_SURAT_01",
+        "branch_surat_01",
+        "ord_1001"
+      );
 
       // ---- the vendor's envelope (sample of 2026-10-26) ----
       // `orderinfo` contains exactly OrderInfo + udid + device_type. Extra
@@ -278,7 +313,7 @@ describe("Petpooja POS Bridge Service", () => {
       // Verify item mapping with addons — vendor OrderItem names only.
       expect(info.OrderItem.details).toHaveLength(1);
       const line = info.OrderItem.details[0];
-      expect(line.id).toBe("pp_b1");
+      expect(line.id).toBe("7765862");
       expect(line.name).toBe("Classic Smash Cheese Burger");
       expect(line.quantity).toBe("2");
       expect(line.price).toBe("235.00");
@@ -344,7 +379,15 @@ describe("Petpooja POS Bridge Service", () => {
           grandTotal: 625,
         },
       };
-      const branch = { id: "branch_surat_01", petpoojaStoreId: "PP_SURAT_01" };
+      const branch = {
+        id: "branch_surat_01",
+        petpoojaStoreId: "PP_SURAT_01",
+        // H2: the branch's CAPTURED tax catalogue (no builder default exists).
+        petpoojaTaxes: [
+          { id: "3928", name: "CGST", rate: 2.5 },
+          { id: "3929", name: "SGST", rate: 2.5 },
+        ],
+      };
       const payload = formatPetpoojaOrderPayload(order, branch, "PP_SURAT_01");
       const info = payload.orderinfo.OrderInfo;
 
@@ -391,15 +434,10 @@ describe("Petpooja POS Bridge Service", () => {
     });
 
     it("carries the vendor's optional variation fields, as empty strings when absent", () => {
-      // Vendor "API Guide for Placing Orders on Petpooja POS" (pp.6-7) lists
-      // `variation_id` ("Unique ID for variant received from Menu Push Payload")
-      // and `variation_name` ("Half Dish or Full Dish") as OPTIONAL, and its own
-      // OrderItem example emits both as EMPTY STRINGS for a line with no variant.
-      // The sandbox outlet exposes no variation definitions (81 of 166 items are
-      // variation-flagged with an empty `variation` - see the menu census), so
-      // the absent case is what ships for V1/V2/V4 and it must be a PRESENT ""
-      // rather than an omitted key, which a stricter POS parser could read
-      // differently. There was no test on these two keys at all before this one.
+      // Vendor pp.6-7: `variation_id`/`variation_name` are OPTIONAL and its own
+      // OrderItem example emits both as EMPTY STRINGS for a line with no
+      // variant. The key must exist (not omitted) — a stricter parser could
+      // read a missing member differently.
       const order = {
         id: "ord_var_01",
         orderNumber: "BUR-VAR-01",
@@ -410,10 +448,10 @@ describe("Petpooja POS Bridge Service", () => {
         customerPhone: "+919825100009",
         address: { street: "123 Adajan Main Rd" },
         items: [
-          { id: "l_no_variant", petpoojaItemId: "30791", name: "Tandoori Dahi Kebab", price: 350, quantity: 1 },
+          { id: "l_no_variant", petpoojaResolvedId: "30791", name: "Tandoori Dahi Kebab", price: 350, quantity: 1 },
           {
             id: "l_with_variant",
-            petpoojaItemId: "30792",
+            petpoojaResolvedId: "30792",
             name: "Half Dish Case",
             price: 200,
             quantity: 1,
@@ -429,7 +467,6 @@ describe("Petpooja POS Bridge Service", () => {
 
       expect(noVariant.variation_id).toBe("");
       expect(noVariant.variation_name).toBe("");
-      // The key must exist; undefined/absent is the shape the guide does not show.
       expect(Object.prototype.hasOwnProperty.call(noVariant, "variation_id")).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(noVariant, "variation_name")).toBe(true);
 
@@ -534,8 +571,9 @@ describe("Petpooja POS Bridge Service", () => {
             quantity: 1,
             veg: true,
             name: "French Fries",
-            // The cart's documented escape hatch for POS ids.
-            meta: { petpoojaItemId: "30799" },
+            // The cart's agreement escape hatch: it must AGREE with the
+            // branch-scoped doc id's numeric tail (H3) or the line blocks.
+            meta: { petpoojaItemId: "30787" },
           },
         ],
         pricing: { subtotal: 920, gst: 46, grandTotal: 966 },
@@ -543,7 +581,7 @@ describe("Petpooja POS Bridge Service", () => {
 
       const payload = formatPetpoojaOrderPayload(
         order,
-        null,
+        capturedBranch(),
         "TEST_RES_ID",
         "branch_surat_01"
       );
@@ -554,7 +592,7 @@ describe("Petpooja POS Bridge Service", () => {
       // `prod_<branchId>_<itemid>` is stripped by exact prefix.
       expect(lines[0].id).toBe("30791");
       // `meta.petpoojaItemId` outranks the doc-id fallback.
-      expect(lines[1].id).toBe("30799");
+      expect(lines[1].id).toBe("30787");
       // Prices come from `unitPrice`, not the absent `price`/`basePrice`.
       expect(lines[0].price).toBe("350.00");
       expect(lines[1].price).toBe("220.00");
@@ -591,6 +629,7 @@ describe("Petpooja POS Bridge Service", () => {
       ).toThrow(/no verified Petpooja item id/);
     });
   });
+
 
   describe("normalizePetpoojaStatus", () => {
     it("correctly maps numeric Petpooja status codes", () => {

@@ -1,0 +1,765 @@
+[
+  {
+    "case": "items_tax",
+    "clientOrderID": "bgx2_items_tax_1793173921627",
+    "request": {
+      "app_key": "[REDACTED]",
+      "app_secret": "[REDACTED]",
+      "access_token": "[REDACTED]",
+      "orderinfo": {
+        "OrderInfo": {
+          "Restaurant": {
+            "details": {
+              "restID": "31z58ciw0h",
+              "res_name": "Burgonomics DEMO [135148]",
+              "address": "Ahmedabad ",
+              "contact_information": "1234567890"
+            }
+          },
+          "Customer": {
+            "details": {
+              "name": "Petpooja Sandbox Tester",
+              "phone": "9000000000",
+              "address": "",
+              "email": "sandbox.tester@example.com",
+              "latitude": "",
+              "longitude": ""
+            }
+          },
+          "Order": {
+            "details": {
+              "orderID": "bgx2_items_tax_1793173921627",
+              "preorder_date": "2026-10-28",
+              "preorder_time": "13:22:01",
+              "service_charge": "0.00",
+              "sc_tax_amount": "0.00",
+              "delivery_charges": "0.00",
+              "dc_tax_percentage": "0",
+              "dc_tax_amount": "0.00",
+              "dc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "packing_charges": "0.00",
+              "pc_tax_amount": "0.00",
+              "pc_tax_percentage": "0",
+              "pc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "order_type": "P",
+              "ondc_bap": "",
+              "advanced_order": "N",
+              "urgent_order": false,
+              "urgent_time": 0,
+              "payment_type": "COD",
+              "table_no": "",
+              "no_of_persons": "0",
+              "discount_total": "0.00",
+              "tax_total": "17.50",
+              "discount_type": "F",
+              "total": "350.00",
+              "description": "Corrected vendor sandbox case: Items + Tax",
+              "created_on": "2026-10-28 13:22:01",
+              "enable_delivery": 0,
+              "min_prep_time": 0,
+              "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+              "collect_cash": "0.00",
+              "otp": ""
+            }
+          },
+          "OrderItem": {
+            "details": [
+              {
+                "id": "30791",
+                "name": "Tandoori Dahi Kebab",
+                "tax_inclusive": false,
+                "gst_liability": "vendor",
+                "item_tax": [
+                  {
+                    "id": "3928",
+                    "name": "CGST",
+                    "tax_percentage": "2.5",
+                    "amount": "8.75"
+                  },
+                  {
+                    "id": "3929",
+                    "name": "SGST",
+                    "tax_percentage": "2.5",
+                    "amount": "8.75"
+                  }
+                ],
+                "item_discount": "0.00",
+                "price": "350.00",
+                "final_price": "350.00",
+                "quantity": "1",
+                "description": "",
+                "variation_name": "",
+                "variation_id": "",
+                "AddonItem": {
+                  "details": []
+                }
+              }
+            ]
+          },
+          "Tax": {
+            "details": [
+              {
+                "id": "3928",
+                "title": "CGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "8.75",
+                "restaurant_liable_amt": "0.00"
+              },
+              {
+                "id": "3929",
+                "title": "SGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "8.75",
+                "restaurant_liable_amt": "0.00"
+              }
+            ]
+          }
+        },
+        "udid": "",
+        "device_type": "Web"
+      }
+    },
+    "response": {
+      "success": "1",
+      "message": "Your order is saved.",
+      "restID": "31z58ciw0h",
+      "clientOrderID": "bgx2_items_tax_1793173921627",
+      "orderID": "",
+      "code": 200
+    }
+  },
+  {
+    "case": "addons_tax",
+    "clientOrderID": "bgx2_addons_tax_1793173921628",
+    "request": {
+      "app_key": "[REDACTED]",
+      "app_secret": "[REDACTED]",
+      "access_token": "[REDACTED]",
+      "orderinfo": {
+        "OrderInfo": {
+          "Restaurant": {
+            "details": {
+              "restID": "31z58ciw0h",
+              "res_name": "Burgonomics DEMO [135148]",
+              "address": "Ahmedabad ",
+              "contact_information": "1234567890"
+            }
+          },
+          "Customer": {
+            "details": {
+              "name": "Petpooja Sandbox Tester",
+              "phone": "9000000000",
+              "address": "",
+              "email": "sandbox.tester@example.com",
+              "latitude": "",
+              "longitude": ""
+            }
+          },
+          "Order": {
+            "details": {
+              "orderID": "bgx2_addons_tax_1793173921628",
+              "preorder_date": "2026-10-28",
+              "preorder_time": "13:22:01",
+              "service_charge": "0.00",
+              "sc_tax_amount": "0.00",
+              "delivery_charges": "0.00",
+              "dc_tax_percentage": "0",
+              "dc_tax_amount": "0.00",
+              "dc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "packing_charges": "0.00",
+              "pc_tax_amount": "0.00",
+              "pc_tax_percentage": "0",
+              "pc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "order_type": "P",
+              "ondc_bap": "",
+              "advanced_order": "N",
+              "urgent_order": false,
+              "urgent_time": 0,
+              "payment_type": "COD",
+              "table_no": "",
+              "no_of_persons": "0",
+              "discount_total": "0.00",
+              "tax_total": "16.00",
+              "discount_type": "F",
+              "total": "320.00",
+              "description": "Corrected vendor sandbox case: Item with Addons + Tax",
+              "created_on": "2026-10-28 13:22:01",
+              "enable_delivery": 0,
+              "min_prep_time": 0,
+              "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+              "collect_cash": "0.00",
+              "otp": ""
+            }
+          },
+          "OrderItem": {
+            "details": [
+              {
+                "id": "30674",
+                "name": "Paneer Achari Tikka [8 Pieces]",
+                "tax_inclusive": false,
+                "gst_liability": "vendor",
+                "item_tax": [
+                  {
+                    "id": "3928",
+                    "name": "CGST",
+                    "tax_percentage": "2.5",
+                    "amount": "8.00"
+                  },
+                  {
+                    "id": "3929",
+                    "name": "SGST",
+                    "tax_percentage": "2.5",
+                    "amount": "8.00"
+                  }
+                ],
+                "item_discount": "0.00",
+                "price": "320.00",
+                "final_price": "320.00",
+                "quantity": "1",
+                "description": "",
+                "variation_name": "",
+                "variation_id": "",
+                "AddonItem": {
+                  "details": [
+                    {
+                      "id": "93021",
+                      "name": "Coke",
+                      "group_name": "Soft Drinks",
+                      "price": "10.00",
+                      "group_id": 17259,
+                      "quantity": "1"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "Tax": {
+            "details": [
+              {
+                "id": "3928",
+                "title": "CGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "8.00",
+                "restaurant_liable_amt": "0.00"
+              },
+              {
+                "id": "3929",
+                "title": "SGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "8.00",
+                "restaurant_liable_amt": "0.00"
+              }
+            ]
+          }
+        },
+        "udid": "",
+        "device_type": "Web"
+      }
+    },
+    "response": {
+      "success": "1",
+      "message": "Your order is saved.",
+      "restID": "31z58ciw0h",
+      "clientOrderID": "bgx2_addons_tax_1793173921628",
+      "orderID": "",
+      "code": 200
+    }
+  },
+  {
+    "case": "variation_tax",
+    "clientOrderID": "bgx2_variation_tax_1793173921629",
+    "request": {
+      "app_key": "[REDACTED]",
+      "app_secret": "[REDACTED]",
+      "access_token": "[REDACTED]",
+      "orderinfo": {
+        "OrderInfo": {
+          "Restaurant": {
+            "details": {
+              "restID": "31z58ciw0h",
+              "res_name": "Burgonomics DEMO [135148]",
+              "address": "Ahmedabad ",
+              "contact_information": "1234567890"
+            }
+          },
+          "Customer": {
+            "details": {
+              "name": "Petpooja Sandbox Tester",
+              "phone": "9000000000",
+              "address": "",
+              "email": "sandbox.tester@example.com",
+              "latitude": "",
+              "longitude": ""
+            }
+          },
+          "Order": {
+            "details": {
+              "orderID": "bgx2_variation_tax_1793173921629",
+              "preorder_date": "2026-10-28",
+              "preorder_time": "13:22:01",
+              "service_charge": "0.00",
+              "sc_tax_amount": "0.00",
+              "delivery_charges": "0.00",
+              "dc_tax_percentage": "0",
+              "dc_tax_amount": "0.00",
+              "dc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "packing_charges": "0.00",
+              "pc_tax_amount": "0.00",
+              "pc_tax_percentage": "0",
+              "pc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "order_type": "P",
+              "ondc_bap": "",
+              "advanced_order": "N",
+              "urgent_order": false,
+              "urgent_time": 0,
+              "payment_type": "COD",
+              "table_no": "",
+              "no_of_persons": "0",
+              "discount_total": "0.00",
+              "tax_total": "29.00",
+              "discount_type": "F",
+              "total": "580.00",
+              "description": "Corrected vendor sandbox case: Item with Variation + Tax",
+              "created_on": "2026-10-28 13:22:01",
+              "enable_delivery": 0,
+              "min_prep_time": 0,
+              "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+              "collect_cash": "0.00",
+              "otp": ""
+            }
+          },
+          "OrderItem": {
+            "details": [
+              {
+                "id": "10657618",
+                "name": "Paneer Malai Tikka [8 Pieces]",
+                "tax_inclusive": false,
+                "gst_liability": "vendor",
+                "item_tax": [
+                  {
+                    "id": "3928",
+                    "name": "CGST",
+                    "tax_percentage": "2.5",
+                    "amount": "14.50"
+                  },
+                  {
+                    "id": "3929",
+                    "name": "SGST",
+                    "tax_percentage": "2.5",
+                    "amount": "14.50"
+                  }
+                ],
+                "item_discount": "0.00",
+                "price": "290.00",
+                "final_price": "290.00",
+                "quantity": "2",
+                "description": "",
+                "variation_name": "Full [8 Pieces]",
+                "variation_id": "14178",
+                "AddonItem": {
+                  "details": []
+                }
+              }
+            ]
+          },
+          "Tax": {
+            "details": [
+              {
+                "id": "3928",
+                "title": "CGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "14.50",
+                "restaurant_liable_amt": "0.00"
+              },
+              {
+                "id": "3929",
+                "title": "SGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "14.50",
+                "restaurant_liable_amt": "0.00"
+              }
+            ]
+          }
+        },
+        "udid": "",
+        "device_type": "Web"
+      }
+    },
+    "response": {
+      "success": "1",
+      "message": "Your order is saved.",
+      "restID": "31z58ciw0h",
+      "clientOrderID": "bgx2_variation_tax_1793173921629",
+      "orderID": "",
+      "code": 200
+    }
+  },
+  {
+    "case": "discount_tax",
+    "clientOrderID": "bgx2_discount_tax_1793173921630",
+    "request": {
+      "app_key": "[REDACTED]",
+      "app_secret": "[REDACTED]",
+      "access_token": "[REDACTED]",
+      "orderinfo": {
+        "OrderInfo": {
+          "Restaurant": {
+            "details": {
+              "restID": "31z58ciw0h",
+              "res_name": "Burgonomics DEMO [135148]",
+              "address": "Ahmedabad ",
+              "contact_information": "1234567890"
+            }
+          },
+          "Customer": {
+            "details": {
+              "name": "Petpooja Sandbox Tester",
+              "phone": "9000000000",
+              "address": "",
+              "email": "sandbox.tester@example.com",
+              "latitude": "",
+              "longitude": ""
+            }
+          },
+          "Order": {
+            "details": {
+              "orderID": "bgx2_discount_tax_1793173921630",
+              "preorder_date": "2026-10-28",
+              "preorder_time": "13:22:01",
+              "service_charge": "0.00",
+              "sc_tax_amount": "0.00",
+              "delivery_charges": "0.00",
+              "dc_tax_percentage": "0",
+              "dc_tax_amount": "0.00",
+              "dc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "packing_charges": "0.00",
+              "pc_tax_amount": "0.00",
+              "pc_tax_percentage": "0",
+              "pc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "order_type": "P",
+              "ondc_bap": "",
+              "advanced_order": "N",
+              "urgent_order": false,
+              "urgent_time": 0,
+              "payment_type": "COD",
+              "table_no": "",
+              "no_of_persons": "0",
+              "discount_total": "50.00",
+              "tax_total": "15.00",
+              "discount_type": "F",
+              "total": "300.00",
+              "description": "Corrected vendor sandbox case: Item with Discount + Tax",
+              "created_on": "2026-10-28 13:22:01",
+              "enable_delivery": 0,
+              "min_prep_time": 0,
+              "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+              "collect_cash": "0.00",
+              "otp": ""
+            }
+          },
+          "OrderItem": {
+            "details": [
+              {
+                "id": "30791",
+                "name": "Tandoori Dahi Kebab",
+                "tax_inclusive": false,
+                "gst_liability": "vendor",
+                "item_tax": [
+                  {
+                    "id": "3928",
+                    "name": "CGST",
+                    "tax_percentage": "2.5",
+                    "amount": "7.50"
+                  },
+                  {
+                    "id": "3929",
+                    "name": "SGST",
+                    "tax_percentage": "2.5",
+                    "amount": "7.50"
+                  }
+                ],
+                "item_discount": "0.00",
+                "price": "350.00",
+                "final_price": "350.00",
+                "quantity": "1",
+                "description": "",
+                "variation_name": "",
+                "variation_id": "",
+                "AddonItem": {
+                  "details": []
+                }
+              }
+            ]
+          },
+          "Tax": {
+            "details": [
+              {
+                "id": "3928",
+                "title": "CGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "7.50",
+                "restaurant_liable_amt": "0.00"
+              },
+              {
+                "id": "3929",
+                "title": "SGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "7.50",
+                "restaurant_liable_amt": "0.00"
+              }
+            ]
+          }
+        },
+        "udid": "",
+        "device_type": "Web"
+      }
+    },
+    "response": {
+      "success": "1",
+      "message": "Your order is saved.",
+      "restID": "31z58ciw0h",
+      "clientOrderID": "bgx2_discount_tax_1793173921630",
+      "orderID": "",
+      "code": 200
+    }
+  },
+  {
+    "case": "addon_variation_tax",
+    "clientOrderID": "bgx2_addon_variation_tax_1793173921631",
+    "request": {
+      "app_key": "[REDACTED]",
+      "app_secret": "[REDACTED]",
+      "access_token": "[REDACTED]",
+      "orderinfo": {
+        "OrderInfo": {
+          "Restaurant": {
+            "details": {
+              "restID": "31z58ciw0h",
+              "res_name": "Burgonomics DEMO [135148]",
+              "address": "Ahmedabad ",
+              "contact_information": "1234567890"
+            }
+          },
+          "Customer": {
+            "details": {
+              "name": "Petpooja Sandbox Tester",
+              "phone": "9000000000",
+              "address": "",
+              "email": "sandbox.tester@example.com",
+              "latitude": "",
+              "longitude": ""
+            }
+          },
+          "Order": {
+            "details": {
+              "orderID": "bgx2_addon_variation_tax_1793173921631",
+              "preorder_date": "2026-10-28",
+              "preorder_time": "13:22:01",
+              "service_charge": "0.00",
+              "sc_tax_amount": "0.00",
+              "delivery_charges": "0.00",
+              "dc_tax_percentage": "0",
+              "dc_tax_amount": "0.00",
+              "dc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "packing_charges": "0.00",
+              "pc_tax_amount": "0.00",
+              "pc_tax_percentage": "0",
+              "pc_gst_details": [
+                {
+                  "gst_liable": "vendor",
+                  "amount": "0.00"
+                },
+                {
+                  "gst_liable": "restaurant",
+                  "amount": "0.00"
+                }
+              ],
+              "order_type": "P",
+              "ondc_bap": "",
+              "advanced_order": "N",
+              "urgent_order": false,
+              "urgent_time": 0,
+              "payment_type": "COD",
+              "table_no": "",
+              "no_of_persons": "0",
+              "discount_total": "0.00",
+              "tax_total": "29.00",
+              "discount_type": "F",
+              "total": "580.00",
+              "description": "Corrected vendor sandbox case: Item with Addon and Variation + Tax",
+              "created_on": "2026-10-28 13:22:01",
+              "enable_delivery": 0,
+              "min_prep_time": 0,
+              "callback_url": "https://asia-south1-burgonomics-7faa8.cloudfunctions.net/api/petpooja/webhook",
+              "collect_cash": "0.00",
+              "otp": ""
+            }
+          },
+          "OrderItem": {
+            "details": [
+              {
+                "id": "10657617",
+                "name": "Tandoori Paneer Tikka [8 Pieces]",
+                "tax_inclusive": false,
+                "gst_liability": "vendor",
+                "item_tax": [
+                  {
+                    "id": "3928",
+                    "name": "CGST",
+                    "tax_percentage": "2.5",
+                    "amount": "14.50"
+                  },
+                  {
+                    "id": "3929",
+                    "name": "SGST",
+                    "tax_percentage": "2.5",
+                    "amount": "14.50"
+                  }
+                ],
+                "item_discount": "0.00",
+                "price": "290.00",
+                "final_price": "290.00",
+                "quantity": "2",
+                "description": "",
+                "variation_name": "Full [8 Pieces]",
+                "variation_id": "14178",
+                "AddonItem": {
+                  "details": [
+                    {
+                      "id": "93023",
+                      "name": "Diet Coke",
+                      "group_name": "Soft Drinks",
+                      "price": "20.00",
+                      "group_id": 17259,
+                      "quantity": "1"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "Tax": {
+            "details": [
+              {
+                "id": "3928",
+                "title": "CGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "14.50",
+                "restaurant_liable_amt": "0.00"
+              },
+              {
+                "id": "3929",
+                "title": "SGST",
+                "type": "P",
+                "price": "2.5",
+                "tax": "14.50",
+                "restaurant_liable_amt": "0.00"
+              }
+            ]
+          }
+        },
+        "udid": "",
+        "device_type": "Web"
+      }
+    },
+    "response": {
+      "success": "1",
+      "message": "Your order is saved.",
+      "restID": "31z58ciw0h",
+      "clientOrderID": "bgx2_addon_variation_tax_1793173921631",
+      "orderID": "",
+      "code": 200
+    }
+  }
+]

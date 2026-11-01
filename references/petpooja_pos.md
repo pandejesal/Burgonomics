@@ -2,6 +2,12 @@
 
 > **Reference Specification**: Petpooja POS menu ingestion, live KOT push, item out-of-stock webhooks (instant 86ing), and backoff retries.
 
+> **Reading correction (2026-10-28):** Sections 0–4 contain historical design
+> proposals, not a verified description of the current implementation. Use §6
+> below and `petpooja_save_order_api.md §§21–22` for the contract and runtime results.
+> In particular, do not restore the old envelope/`Discount` object or assume that
+> an echoed client order reference guarantees vendor-side retry idempotency.
+
 ---
 
 ## 0. Research Decisions & Design Constraints (locked — gap review)
@@ -51,3 +57,81 @@ Each branch stores credentials under `branches/{branchId}.petpooja`:
 - **Stock Webhook (`petpoojaStockWebhook`)**: Authenticated per-branch via the calling branch's stored `appKey`/`accessToken`, attributed by `restID`, and unknown `restID`s rejected (P4).
 - When Petpooja marks an ingredient or item out-of-stock, the Cloud Function updates the **branch-scoped** product (`products/branches/{branchId}/items/{itemid}`) `.available = false` instantly (P4) — never a shared/global product, so one branch's 86 cannot affect another branch.
 - **Post-Checkout Auto-Refund**: If an item is 86ed during cooking, the branch manager can adjust the order, automatically triggering a partial refund via Razorpay.
+
+## 5. Callback Trust Boundary and Remaining Exposure
+
+The documented order callback does not provide an inbound HMAC contract. The
+compatibility allowance in `functions/src/core/middleware.ts` applies only to
+`/petpooja/webhook`; payload shape is not authentication. Stock and menu endpoints
+must not inherit this allowance.
+
+An uncredentialed callback must resolve its `restID` to a linked branch and match
+the order's current branch. It must not set the POS acceptance markers that stop
+outbound retries, enqueue a refund, or rewind a terminal order. Scope, replay,
+terminal and refund decisions must use the same fresh transactional snapshot.
+The regression owner is `functions/tests/petpooja.status-callback-race.stress.test.ts`.
+
+Remaining exposure: a caller who knows a linked restaurant ID and an internal
+order ID may still forge a permitted non-terminal kitchen status or create a
+review row. These identifiers are not secrets and do not prove origin. Keeping
+money-moving effects blocked does not eliminate status spoofing or review-queue
+noise; operators must not treat an uncredentialed review row as provider proof.
+
+Before live rollout, the integrations and infrastructure owners must resolve
+provider authentication with Petpooja: an agreed signed callback contract or a
+verified source restriction appropriate to the provider. This limitation is
+recorded for that decision, not as approval to weaken authentication on other
+routes. The stress sweep changes no deployed credentials or infrastructure.
+
+## 6. Current vendor-document interpretation — 2026-10-28
+
+- The supplied corrected attachment requires credentials at the root and
+  `orderinfo: { OrderInfo: { Restaurant, Customer, Order, OrderItem, Tax }, udid,
+  device_type }`. Each section carries its documented `details` wrapper. There
+  is no separate `Discount` object or legacy duplicate envelope member.
+- The request's client reference is `Order.details.orderID`. Save Order returns
+  `clientOrderID` as an echo; the callback's `orderID` is also the client reference.
+  The documentation does not promise provider duplicate suppression for repeated
+  submissions. Reuse a stable client reference, but retain local serialization,
+  accepted markers and manual reconciliation after ambiguous transport outcomes.
+  Do not blindly replay an uncertain relay based on old P5's dedup assumption.
+- Item prices include selected add-ons/variation price; `final_price` is per unit
+  less item discount. Order discount fields are separate. The item-local variation
+  child item ID and variation-master ID are distinct mappings, not interchangeable
+  numeric strings. Fresh vendor configuration and end-to-end selection mapping
+  are both required before the blocked scenarios can be resubmitted honestly.
+- POS `total` means restaurant due, not automatically customer grand total.
+  Menu `gst_type` defines tax ownership. The isolated candidate still hard-codes
+  restaurant liability, copies grand total and populates COD `collect_cash` with
+  third-party delivery enabled; these gaps are not resolved by its passing shape
+  and paise-conservation tests. Full details are in the Save Order reference §21.
+- Sandbox Guide p.2 supports optional Client Authorization and Headers
+  Configuration. No standard inbound HMAC algorithm is specified by these docs.
+  §5's remaining spoofing exposure is real; confirm/enforce the provisioned trust
+  mechanism rather than treating an undocumented signature as permission for
+  unauthenticated production callbacks.
+- The PDF and public Apiary Save Order hosts conflict. Confirm the host provisioned
+  for this sandbox instead of changing endpoints or sending exploratory orders.
+  No sandbox submission, deployment or production approval is authorized here.
+
+### 6.1 Subsequent authorized correction and runtime proof
+
+The preceding candidate-gap and authorization statements are historical.
+The user subsequently authorized demo configuration, five resubmissions and a
+specific demo menu publication to the existing webhook. The isolated candidate's
+GST ownership, restaurant due and cash-instruction corrections passed its gates;
+all16 application/test fingerprints matched those gates before live preparation.
+
+On 2026-10-28, five corrected cases were each saved once at the Staging account's
+confirmed `qle1yy2ydc` endpoint. All returned HTTP200/success1 and were separately
+verified in Order Listing/detail, with real variation child/master pairs and
+add-on group membership. They remain **Waiting For Acceptance**. No status action,
+physical printing, callback completion or production approval is claimed.
+
+The approved menu push returned webhook HTTP503, not successful synchronization.
+Its exact generated-menu request supplied current services/vendor GST ownership,
+exclusive pricing, item/variant/add-on identities and explicit charge-tax flags.
+Do not replace that captured provenance with hardcoded scenario ownership, and do
+not infer the deployed app can ingest or relay these selections end-to-end.
+See `petpooja_save_order_api.md §22` for IDs, financial results, evidence paths
+and unresolved production gates. No email was sent and no code was deployed.

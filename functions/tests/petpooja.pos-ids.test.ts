@@ -95,6 +95,10 @@ const fetchMock = vi.fn();
 function seedCatalog() {
   savedDocs["branches/b_m"] = {
     petpoojaStoreId: "xxxxxx",
+    petpoojaTaxes: [
+      { id: "3928", name: "CGST", rate: 2.5 },
+      { id: "3929", name: "SGST", rate: 2.5 },
+    ],
     coordinates: { lat: 23.0225, lng: 72.5714 },
   };
   savedDocs["products/prod_7765809"] = {

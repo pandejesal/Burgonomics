@@ -1,4 +1,5 @@
-import { messaging } from "../../core/firebase";
+import { sendFcmMessage } from "../notifications/fcmClient";
+import { TRUSTED_SERVER_ACTOR } from "../notifications/sendGate";
 import { truncatePushText, buildParityExtras } from "../notifications/templates";
 
 export type EscalationLevelCode = "L1_STORE" | "L2_REGIONAL" | "L3_EXECUTIVE";
@@ -65,38 +66,37 @@ export async function dispatchTicketEscalationAlert(payload: TicketAlertPayload)
   }
 
   const safeBody = truncatePushText(body);
-  // No messaging backend (unit tests, miswired env): page nobody, fail loud
-  // in logs, never throw into the calling ticket flow.
-  if (!messaging || typeof messaging.send !== "function") {
-    console.warn("[Tickets] FCM messaging unavailable — escalation alert logged only:", title);
-    return;
-  }
 
-  // 1. Send to target escalation topic
+  // 1. Send to target escalation topic. Staff alert ⇒ `operational` purpose
+  //    from trusted server context (contract §2). Routing through the core is
+  //    mandatory: no raw `messaging.send` outside sendGate/fcmClient.
   attempts.push(
-    messaging.send({
-      topic,
-      notification: { title, body: safeBody },
-      data: {
-        type: "ticket_escalated",
-        ticketId,
-        ticketNumber,
-        escalationLevel,
-        reason: reason || "",
-      },
-      android: {
-        priority: "high",
-        notification: {
-          // Must match a channel created on device (burgonomics_updates_channel).
-          // The old tickets_alerts ID exists nowhere — Android silently drops it.
-          sound: "default",
-          channelId: "burgonomics_updates_channel",
+    sendFcmMessage(
+      {
+        topic,
+        notification: { title, body: safeBody },
+        data: {
+          type: "ticket_escalated",
+          ticketId,
+          ticketNumber,
+          escalationLevel,
+          reason: reason || "",
         },
+        android: {
+          priority: "high",
+          notification: {
+            // Must match a channel created on device (burgonomics_updates_channel).
+            // The old tickets_alerts ID exists nowhere — Android silently drops it.
+            sound: "default",
+            channelId: "burgonomics_updates_channel",
+          },
+        },
+        // Shared iOS/Web parity (H34): same title/body, no badge on shared
+        // staff topic terminals.
+        ...buildParityExtras(title, safeBody),
       },
-      // Shared iOS/Web parity (H34): same title/body, no badge on shared
-      // staff topic terminals.
-      ...buildParityExtras(title, safeBody),
-    })
+      { purpose: "operational", actor: TRUSTED_SERVER_ACTOR }
+    )
   );
 
   // 2. Also notify the specific branch topic if L2/L3 so local managers stay in sync.
@@ -105,18 +105,21 @@ export async function dispatchTicketEscalationAlert(payload: TicketAlertPayload)
   // topic paged nobody.
   if (branchId && (escalationLevel === "L2_REGIONAL" || escalationLevel === "L3_EXECUTIVE")) {
     attempts.push(
-      messaging.send({
-        topic: `branch_${branchId}_tickets`,
-        notification: { title, body: safeBody },
-        data: {
-          type: "ticket_escalated",
-          ticketId,
-          ticketNumber,
-          escalationLevel,
+      sendFcmMessage(
+        {
+          topic: `branch_${branchId}_tickets`,
+          notification: { title, body: safeBody },
+          data: {
+            type: "ticket_escalated",
+            ticketId,
+            ticketNumber,
+            escalationLevel,
+          },
+          android: { priority: "high" },
+          ...buildParityExtras(title, safeBody),
         },
-        android: { priority: "high" },
-        ...buildParityExtras(title, safeBody),
-      })
+        { purpose: "operational", actor: TRUSTED_SERVER_ACTOR }
+      )
     );
   }
 
@@ -140,20 +143,25 @@ export async function dispatchTicketReminderAlert(payload: {
     `Ticket open for over 60 minutes without resolution — open Tickets to view.`
   );
 
-  if (!messaging || typeof messaging.send !== "function") {
-    console.warn("[Tickets] FCM messaging unavailable — reminder logged only:", title);
-    return;
+  // Staff alert ⇒ `operational` purpose from trusted server context. A gate
+  // refusal (or transport failure) is logged, never thrown into the caller's
+  // scheduler flow.
+  try {
+    await sendFcmMessage(
+      {
+        topic,
+        notification: { title, body },
+        data: {
+          type: "ticket_reminder",
+          ticketId,
+          ticketNumber,
+        },
+        android: { priority: "high" },
+        ...buildParityExtras(title, body),
+      },
+      { purpose: "operational", actor: TRUSTED_SERVER_ACTOR }
+    );
+  } catch (err: any) {
+    console.warn("[Tickets] Reminder push blocked or failed (non-blocking):", err?.message || err);
   }
-
-  await messaging.send({
-    topic,
-    notification: { title, body },
-    data: {
-      type: "ticket_reminder",
-      ticketId,
-      ticketNumber,
-    },
-    android: { priority: "high" },
-    ...buildParityExtras(title, body),
-  });
 }

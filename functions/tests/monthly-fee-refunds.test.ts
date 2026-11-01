@@ -301,6 +301,7 @@ describe("F7 refunds and the monthly fee", () => {
       orderId: "ord_lease",
       razorpayPaymentId: "pay_ord_lease",
       amountRupees: 100,
+          refundRequestId: "refund_req_ord_lease",
     }).catch((e) => e);
     expect(live).toMatchObject({ statusCode: 409, code: "REFUND_WAIT_TRANSFER" });
 
@@ -310,6 +311,7 @@ describe("F7 refunds and the monthly fee", () => {
       orderId: "ord_lease",
       razorpayPaymentId: "pay_ord_lease",
       amountRupees: 100,
+          refundRequestId: "refund_req_ord_lease",
     });
     expect(ok.id).toBeTruthy();
   });
@@ -331,16 +333,16 @@ describe("F7 refunds and the monthly fee", () => {
       for (const status of ["transferred", "needs_reconciliation"]) {
         const id = `ord_rev_${status}`;
         seedOrder(id, { routeTransferStatus: status, monthlyFeeHold: undefined });
-        await autoRefund({ orderId: id, razorpayPaymentId: `pay_${id}`, amountRupees: 100 });
+        await autoRefund({ orderId: id, razorpayPaymentId: `pay_${id}`, amountRupees: 100, refundRequestId: `refund_req_${id}` });
       }
       for (const status of ["not_required", "pending_retry", "failed"]) {
         const id = `ord_norev_${status}`;
         seedOrder(id, { routeTransferStatus: status, monthlyFeeHold: undefined });
-        await autoRefund({ orderId: id, razorpayPaymentId: `pay_${id}`, amountRupees: 100 });
+        await autoRefund({ orderId: id, razorpayPaymentId: `pay_${id}`, amountRupees: 100, refundRequestId: `refund_req_${id}` });
       }
       const id = "ord_norev_none";
       seedOrder(id, { monthlyFeeHold: undefined });
-      await autoRefund({ orderId: id, razorpayPaymentId: `pay_${id}`, amountRupees: 100 });
+      await autoRefund({ orderId: id, razorpayPaymentId: `pay_${id}`, amountRupees: 100, refundRequestId: `refund_req_${id}` });
 
       const withReverse = payloads.filter((p) => "reverse_all" in p);
       const withoutReverse = payloads.filter((p) => !("reverse_all" in p));

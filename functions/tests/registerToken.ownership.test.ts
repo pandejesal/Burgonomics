@@ -533,4 +533,69 @@ describe("registerDeviceToken ownership seam", () => {
       }
     });
   });
+
+  describe("installationId stamping (N-02)", () => {
+    beforeEach(() => {
+      h.store.tokens.clear();
+      h.store.users.clear();
+      h.store.txSetOps.length = 0;
+      h.store.txSetData.length = 0;
+      h.store.refSetOps.length = 0;
+      h.store.userOps.length = 0;
+      h.store.queries.length = 0;
+      h.store.failRunTransaction = false;
+      vi.restoreAllMocks();
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    it("stamps the installation identity on a fresh owner claim", async () => {
+      const res = await registerDeviceToken({
+        token: TOKEN,
+        uid: OWNER,
+        platform: "web",
+        installationId: "install_abc123",
+      });
+      expect(res).toMatchObject({ success: true, outcome: "claimed" });
+      expect(h.store.tokens.get(TOKEN)).toMatchObject({
+        token: TOKEN,
+        userId: OWNER,
+        installationId: "install_abc123",
+      });
+    });
+
+    it("refreshes without installationId: the stored identity is preserved, never cleared", async () => {
+      h.store.tokens.set(TOKEN, {
+        token: TOKEN,
+        userId: OWNER,
+        platform: "ios",
+        installationId: "install_abc123",
+      });
+      await registerDeviceToken({ token: TOKEN, uid: OWNER, platform: "android" });
+      expect(h.store.tokens.get(TOKEN)).toMatchObject({
+        platform: "android",
+        installationId: "install_abc123",
+      });
+    });
+
+    it("never mass-backfills other token rows", async () => {
+      h.store.tokens.set("legacy_token", { token: "legacy_token", userId: "other_owner" });
+      await registerDeviceToken({
+        token: TOKEN,
+        uid: OWNER,
+        installationId: "install_abc123",
+      });
+      expect(h.store.tokens.get("legacy_token")).toEqual({
+        token: "legacy_token",
+        userId: "other_owner",
+      });
+    });
+
+    it("rejects an empty installationId rather than stamping an unusable identity", async () => {
+      await expect(
+        registerDeviceToken({ token: TOKEN, uid: OWNER, installationId: "" })
+      ).rejects.toThrow(/installationId/i);
+      expect(h.store.tokens.has(TOKEN)).toBe(false);
+    });
+  });
 });

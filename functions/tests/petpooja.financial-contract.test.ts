@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
- * Corrected R4 — the POS `total` is the RESTAURANT DUE, not the customer total
+ * Corrected R4 â€” the POS `total` is the RESTAURANT DUE, not the customer total
  * (owner decision 2026-10-31, after the vendor emails and branch
  * fix/petpooja-vendor-contract-20261031).
  *
@@ -84,6 +84,8 @@ import {
   pushOrderToPetpooja,
   PetpoojaStructuralError,
 } from "../src/modules/petpooja/orderPush";
+import { petpoojaFinancials, petpoojaGstLiability } from "../src/modules/petpooja/financials";
+import { formatPetpoojaV21Payload } from "../src/modules/petpooja/testRunner";
 import { config } from "../src/config/env";
 
 const TAXES = [
@@ -421,5 +423,100 @@ describe("R4b structural park (no relay)", () => {
     expect(String(doc.lastPetpoojaError)).toMatch(/Brioche Bun/);
     // Not queued for the retry worker: nothing would change on a retry.
     expect(doc.petpoojaStatus).not.toBe("pending_retry");
+  });
+});
+
+
+/**
+ * Vendor-accepted financial primitives (36cdd6b / 3c2dafc), reconciled with
+ * R1/R4: the GST liability split is kept per line, but `tax_included` decides
+ * whether the kept tax is ADDED or already inside the line price.
+ */
+describe("financial primitives: liability split and inclusive-vs-exclusive", () => {
+  const line = (liability: "restaurant" | "vendor") => ({
+    final_price: "200.00",
+    quantity: "1",
+    gst_liability: liability,
+    item_tax: [
+      { id: "11", amount: "5.00" },
+      { id: "12", amount: "5.00" },
+    ],
+  });
+  const base = {
+    discount: 0,
+    packagingFee: 20,
+    deliveryFee: 40,
+    customerTotal: 270,
+    isDelivery: true,
+    restaurantDelivery: false,
+    paymentType: "COD",
+  };
+
+  it("defines both documented GST ownership modes without a default", () => {
+    expect(petpoojaGstLiability("services")).toBe("vendor");
+    expect(petpoojaGstLiability("goods")).toBe("restaurant");
+    expect(() => petpoojaGstLiability(undefined)).toThrow(/BLOCKED_CONFIGURATION/);
+  });
+
+  it("does not allow an order discount larger than its items", () => {
+    expect(() =>
+      petpoojaFinancials({
+        items: [],
+        discount: 1,
+        packagingFee: 0,
+        deliveryFee: 0,
+        customerTotal: 0,
+        isDelivery: false,
+        restaurantDelivery: false,
+        paymentType: "COD",
+        taxIncluded: true,
+      })
+    ).toThrow(/BLOCKED_CONFIGURATION/);
+  });
+
+  it("adds only restaurant-liable GST when the caller declares EXCLUSIVE prices", () => {
+    const goods = petpoojaFinancials({ ...base, items: [line("restaurant")], taxIncluded: false });
+    expect(goods.total).toBe("230.00"); // 200 + 10 kept tax + 20 packaging
+    const vendor = petpoojaFinancials({ ...base, items: [line("vendor")], taxIncluded: false });
+    expect(vendor.total).toBe("220.00"); // integrator-remitted tax is not our due
+    expect(goods.enable_delivery).toBe(0);
+    expect(goods.collect_cash).toBe("0.00");
+  });
+
+  it("never adds the included GST again when prices are INCLUSIVE (R1/R4)", () => {
+    const goods = petpoojaFinancials({ ...base, items: [line("restaurant")], taxIncluded: true });
+    const vendor = petpoojaFinancials({ ...base, items: [line("vendor")], taxIncluded: true });
+    expect(goods.total).toBe("220.00");
+    expect(vendor.total).toBe("220.00");
+  });
+
+  it("sandbox runner declares tax_inclusive false and keeps the captured tax rows", () => {
+    const payload: any = formatPetpoojaV21Payload(
+      {
+        scenarioId: "financial-contract",
+        orderType: "delivery",
+        status: "placed",
+        items: [
+          { id: "101", name: "Synthetic test item", price: 200, quantity: 1, isVeg: true, gstType: "goods" },
+        ],
+        pricing: { itemTotal: 200, discount: 0, gst: 10, packagingFee: 20, deliveryFee: 40, grandTotal: 270 },
+      } as any,
+      "fixture_res",
+      "bgx_financial_contract",
+      "https://example.test/callback",
+      new Date(),
+      [
+        { id: "11", name: "CGST", rate: 2.5 },
+        { id: "12", name: "SGST", rate: 2.5 },
+      ]
+    );
+    const info = payload.orderinfo.OrderInfo;
+    expect(info.OrderItem.details[0].tax_inclusive).toBe(false);
+    expect(info.OrderItem.details[0].gst_liability).toBe("restaurant");
+    expect(info.Order.details.total).toBe("230.00");
+    expect(info.Order.details.tax_total).toBe("10.00");
+    expect(info.Tax.details.map((row: any) => row.restaurant_liable_amt)).toEqual(["5.00", "5.00"]);
+    expect(info.Order.details.enable_delivery).toBe(0);
+    expect(info.Order.details.collect_cash).toBe("0.00");
   });
 });

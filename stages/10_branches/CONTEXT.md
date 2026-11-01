@@ -21,7 +21,7 @@
    - **Royalty & Payments Config**: Brand Royalty % (e.g. `8.0%`) and Razorpay Route linked Account ID (`razorpayAccountId`).
    - **Branch Status Selector**: `active` | `upcoming` | `paused`.
    - **Expected Opening Date**: e.g. `2026-09-15` (for `upcoming` status).
-   - **Logistics Feature Toggle**: `features.porterEnabled`.
+   - **Logistics Feature Toggle (Historical)**: `features.porterEnabled` (retained for schema compatibility; live dispatch routing runs via backend multi-provider router).
    - **Petpooja POS Credentials**: `appKey`, `appSecret`, `accessToken`, `restId`.
 3. Implement Customer App "Notify Me" flow for upcoming branches (subscribing to `upcoming_{branchId}`).
 4. Build **Franchise Leads Pipeline** in Partner POS for Brand Owners to review customer franchise inquiries.

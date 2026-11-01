@@ -44,42 +44,79 @@ const { mockDb, savedDocs, batchUpdates, batchSets, batchDeletes } = vi.hoisted(
         };
       },
       where: (field: string, op: string, val: any) => {
-        const createQuery = (filters: Array<{ field: string; op: string; val: any }>) => ({
-          where: (f2: string, o2: string, v2: any) => createQuery([...filters, { field: f2, op: o2, val: v2 }]),
-          limit: (n: number) => ({
-            get: async () => {
-              const matched: any[] = [];
-              for (const [docPath, data] of Object.entries(savedDocs)) {
-                if (!docPath.startsWith(`${colName}/`)) continue;
-                const matchesAll = filters.every((f) => data[f.field] === f.val);
-                if (matchesAll) {
-                  matched.push({
-                    ref: { id: docPath.replace(`${colName}/`, ""), path: docPath },
-                    data: () => data,
-                  });
+        const createQuery = (
+          filters: Array<{ field: string; op: string; val: any }>,
+          orderFields: Array<{ field: any; dir?: string }> = [],
+          cursorDoc: any = null
+        ) => ({
+          where: (f2: string, o2: string, v2: any) =>
+            createQuery([...filters, { field: f2, op: o2, val: v2 }], orderFields, cursorDoc),
+          orderBy: (f2: any, dir: string = "asc") =>
+            createQuery(filters, [...orderFields, { field: f2, dir }], cursorDoc),
+          startAfter: (c: any) =>
+            createQuery(filters, orderFields, c),
+          limit: (n: number) => {
+            const inner = createQuery(filters, orderFields, cursorDoc);
+            return {
+              ...inner,
+              get: async () => {
+                const matched: any[] = [];
+                for (const [docPath, data] of Object.entries(savedDocs)) {
+                  if (!docPath.startsWith(`${colName}/`)) continue;
+                  const matchesAll = filters.every((f) => data[f.field] === f.val);
+                  if (matchesAll) {
+                    const id = docPath.replace(`${colName}/`, "");
+                    matched.push({
+                      id,
+                      ref: { id, path: docPath },
+                      data: () => data,
+                    });
+                  }
                 }
-              }
-              return {
-                empty: matched.length === 0,
-                docs: matched.slice(0, n),
-              };
-            },
-          }),
+                matched.sort((a, b) => a.id.localeCompare(b.id));
+                let sliced = matched;
+                if (cursorDoc) {
+                  const afterId =
+                    typeof cursorDoc === "string"
+                      ? cursorDoc
+                      : cursorDoc?.id || cursorDoc?.ref?.id;
+                  const idx = matched.findIndex((d) => d.id === afterId);
+                  if (idx !== -1) sliced = matched.slice(idx + 1);
+                }
+                return {
+                  empty: sliced.slice(0, n).length === 0,
+                  docs: sliced.slice(0, n),
+                };
+              },
+            };
+          },
           get: async () => {
             const matched: any[] = [];
             for (const [docPath, data] of Object.entries(savedDocs)) {
               if (!docPath.startsWith(`${colName}/`)) continue;
               const matchesAll = filters.every((f) => data[f.field] === f.val);
               if (matchesAll) {
+                const id = docPath.replace(`${colName}/`, "");
                 matched.push({
-                  ref: { id: docPath.replace(`${colName}/`, ""), path: docPath },
+                  id,
+                  ref: { id, path: docPath },
                   data: () => data,
                 });
               }
             }
+            matched.sort((a, b) => a.id.localeCompare(b.id));
+            let sliced = matched;
+            if (cursorDoc) {
+              const afterId =
+                typeof cursorDoc === "string"
+                  ? cursorDoc
+                  : cursorDoc?.id || cursorDoc?.ref?.id;
+              const idx = matched.findIndex((d) => d.id === afterId);
+              if (idx !== -1) sliced = matched.slice(idx + 1);
+            }
             return {
-              empty: matched.length === 0,
-              docs: matched,
+              empty: sliced.length === 0,
+              docs: sliced,
             };
           },
         });
@@ -123,6 +160,9 @@ vi.mock("firebase-admin", () => {
 
   const firestoreFn: any = vi.fn(() => mockDb);
   firestoreFn.FieldValue = FieldValue;
+  firestoreFn.FieldPath = {
+    documentId: () => "__name__",
+  };
 
   // Default: the source UID is a genuine anonymous account (no providers).
   const mockAuth = {

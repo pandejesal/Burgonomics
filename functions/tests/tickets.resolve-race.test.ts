@@ -350,4 +350,91 @@ describe("resolveTicket concurrency", () => {
       (gate.parked as null | (() => void))?.();
     }
   });
+
+  it("5. deterministic ticket refund identity prevents collisions across punctuation or long prefixes", async () => {
+    savedDocs["orders/ord_punc_1"] = { payment: { razorpayPaymentId: "pay_1" } };
+    savedDocs["orders/ord_punc_2"] = { payment: { razorpayPaymentId: "pay_2" } };
+
+    savedDocs["support_tickets/tkt_sample:item/1"] = {
+      ticketNumber: "TKT-P1",
+      status: "open",
+      branchId: "branch_1",
+      orderId: "ord_punc_1",
+    };
+    savedDocs["support_tickets/tkt_sample_item_1"] = {
+      ticketNumber: "TKT-P2",
+      status: "open",
+      branchId: "branch_1",
+      orderId: "ord_punc_2",
+    };
+
+    await resolveTicket({
+      ticketId: "tkt_sample:item/1",
+      resolvedBy: "staff_a",
+      resolvedByName: "Staff A",
+      action: "full_refund",
+      notes: "punc 1",
+      caller: staffA,
+    } as any);
+
+    await resolveTicket({
+      ticketId: "tkt_sample_item_1",
+      resolvedBy: "staff_a",
+      resolvedByName: "Staff A",
+      action: "full_refund",
+      notes: "punc 2",
+      caller: staffA,
+    } as any);
+
+    const calls = vi.mocked(autoRefund).mock.calls;
+    const key1 = (calls[calls.length - 2][0] as any).refundRequestId;
+    const key2 = (calls[calls.length - 1][0] as any).refundRequestId;
+
+    expect(key1).toBeDefined();
+    expect(key2).toBeDefined();
+    expect(key1).not.toBe(key2);
+  });
+
+  it("6. retry after a failed refund with EDITED notes replays the same identity payload", async () => {
+    seedTicket({ orderId: "order_refund_notes" });
+    savedDocs["orders/order_refund_notes"] = { payment: { razorpayPaymentId: "pay_notes_1" } };
+    vi.mocked(autoRefund).mockRejectedValueOnce(new Error("gateway timeout"));
+
+    await expect(
+      resolveTicket({
+        ticketId: TICKET,
+        resolvedBy: "staff_a",
+        resolvedByName: "Staff A",
+        action: "full_refund",
+        notes: "customer says the fries were cold",
+        caller: staffA,
+      })
+    ).rejects.toThrow(/gateway timeout/);
+
+    // The failed attempt released its lease and left the ticket open.
+    expect(savedDocs[`support_tickets/${TICKET}`].status).toBe("open");
+
+    const res = await resolveTicket({
+      ticketId: TICKET,
+      resolvedBy: "staff_a",
+      resolvedByName: "Staff A",
+      action: "full_refund",
+      notes: "customer says the fries were cold and the burger was late",
+      caller: staffA,
+    });
+    expect(res.success).toBe(true);
+
+    const calls = vi.mocked(autoRefund).mock.calls;
+    expect(calls).toHaveLength(2);
+    const first = calls[0][0] as any;
+    const second = calls[1][0] as any;
+    // Same identity: the retry replays instead of a REFUND_REQUEST_CONFLICT.
+    expect(second.refundRequestId).toBe(first.refundRequestId);
+    expect(second.reason).toBe(first.reason);
+    // Operator free text is an audit field, never part of the identity payload.
+    expect(second.reason).not.toMatch(/fries/);
+    expect(savedDocs[`support_tickets/${TICKET}`].resolution.notes).toBe(
+      "customer says the fries were cold and the burger was late"
+    );
+  });
 });

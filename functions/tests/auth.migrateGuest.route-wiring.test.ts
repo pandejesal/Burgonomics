@@ -1,64 +1,158 @@
-import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 
-// /auth/migrateGuest ROUTE WIRING pin (M4).
+// /auth/migrateGuest ROUTE WIRING (M4) — behavioural.
 //
-// Why a source-contract test: there is no HTTP harness in this repo, and the
-// Functions lane's route-schema suite drives the SERVICE with a hand-built
-// payload (it passes `caller` INSIDE the input object), so it cannot catch the
-// actual regression this commit fixed: the route calling migrateGuestAccount
-// with no second argument at all, which made the service's caller/target bind
-// and OTP-verified-phone contradiction guard dead code.
-//
-// This pin is deliberately narrow: it asserts the wiring shape of the real
-// handler in src/index.ts. It is NOT behavioural proof of the guards - those
-// are proven by the service suite - and it is labelled as such rather than
-// counted as end-to-end coverage.
+// The regression this pins: the route called `migrateGuestAccount(body)` with
+// no second argument, so the service's caller/target bind and the
+// OTP-verified-phone contradiction guard were dead code. Pinning handler source
+// text could not catch that (a dead or reordered branch keeps the text
+// matching), so this suite boots the real express app from src/index.ts and
+// drives the actual middleware chain over HTTP with the service stubbed.
 
-const source = readFileSync(resolve(__dirname, "../src/index.ts"), "utf8");
+const { verifyIdToken, migrateGuestAccount } = vi.hoisted(() => ({
+  verifyIdToken: vi.fn(),
+  migrateGuestAccount: vi.fn(),
+}));
 
-function migrateGuestRouteBlock(): string {
-  const start = source.lastIndexOf('"/auth/migrateGuest"');
-  const end = source.lastIndexOf('"/auth/verifyBonusEligibility"');
-  const block = source.slice(start, end);
-  if (start < 0 || end < 0 || !block.includes("migrateGuestAccount(")) {
-    throw new Error("Could not locate the /auth/migrateGuest route block");
-  }
-  return block;
+vi.mock("firebase-admin", () => {
+  const FieldValue = {
+    serverTimestamp: () => "MOCK_TIMESTAMP",
+    increment: (n: number) => n,
+    arrayUnion: (item: any) => [item],
+    delete: () => "MOCK_DELETE",
+  };
+  const firestoreFn: any = vi.fn(() => {
+    const doc = () => ({
+      get: async () => ({ exists: false, data: () => undefined }),
+      set: async () => undefined,
+    });
+    const collection = () => ({
+      doc,
+      where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }),
+      get: async () => ({ empty: true, docs: [] }),
+    });
+    return { collection, runTransaction: async (fn: any) => fn({ get: async () => ({ exists: false }), set: () => undefined }) };
+  });
+  firestoreFn.FieldValue = FieldValue;
+  const authFn: any = vi.fn(() => ({ verifyIdToken, getUser: vi.fn() }));
+  return {
+    default: {
+      firestore: firestoreFn,
+      auth: authFn,
+      messaging: vi.fn(() => ({ send: vi.fn() })),
+      appCheck: vi.fn(() => ({ verifyToken: vi.fn() })),
+      initializeApp: vi.fn(),
+      apps: [{ name: "mock" }],
+      credential: { cert: vi.fn() },
+    },
+    firestore: firestoreFn,
+    auth: authFn,
+    messaging: vi.fn(() => ({ send: vi.fn() })),
+    appCheck: vi.fn(() => ({ verifyToken: vi.fn() })),
+    initializeApp: vi.fn(),
+    apps: [{ name: "mock" }],
+    credential: { cert: vi.fn() },
+  };
+});
+
+vi.mock("../src/modules/auth", () => ({
+  migrateGuestAccount,
+  setUserCustomClaims: vi.fn(),
+  assignUserRole: vi.fn(),
+  revokeUserRole: vi.fn(),
+  verifyBonusEligibility: vi.fn(),
+  cleanupExpiredGuestSessionsWorker: vi.fn(),
+  onUserDeletedCleanup: vi.fn(),
+}));
+
+import { app } from "../src/index";
+
+const VERIFIED_USER = {
+  uid: "perm_uid_verified",
+  phone_number: "+919812345678",
+  email: "verified@example.com",
+};
+
+let server: Server;
+let baseUrl: string;
+let previousDeployEnv: string | undefined;
+
+beforeAll(async () => {
+  previousDeployEnv = process.env.BURGONOMICS_ENV;
+  process.env.BURGONOMICS_ENV = "dev";
+  server = app.listen(0);
+  await new Promise<void>((resolve, reject) => {
+    server.once("listening", () => resolve());
+    server.once("error", reject);
+  });
+  const { port } = server.address() as AddressInfo;
+  baseUrl = `http://127.0.0.1:${port}`;
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (previousDeployEnv === undefined) delete process.env.BURGONOMICS_ENV;
+  else process.env.BURGONOMICS_ENV = previousDeployEnv;
+});
+
+beforeEach(() => {
+  verifyIdToken.mockReset();
+  migrateGuestAccount.mockReset();
+  verifyIdToken.mockResolvedValue(VERIFIED_USER);
+  migrateGuestAccount.mockResolvedValue({ success: true, migrated: true });
+});
+
+function postMigrateGuest(body: Record<string, any>, token = "id-token-1") {
+  return fetch(`${baseUrl}/auth/migrateGuest`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
 }
 
 describe("/auth/migrateGuest route wiring (M4)", () => {
-  it("passes the verified caller as the SECOND argument to the service", () => {
-    const block = migrateGuestRouteBlock();
-    const call = block.match(/migrateGuestAccount\(([\s\S]*?)\);/);
-    expect(call).toBeTruthy();
-    // Strip line comments so the assertion is about code, not prose.
-    const args = call![1].replace(/\/\/[^\n]*/g, "").trim();
-    expect(args.startsWith("{")).toBe(true);
-    expect(args).toMatch(/,\s*req\.user\s*$/);
+  it("passes the ID-token-verified caller as the SECOND argument", async () => {
+    const res = await postMigrateGuest({ permanentUid: "body_supplied_uid", phone: "+919800000000" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true });
+
+    expect(migrateGuestAccount).toHaveBeenCalledTimes(1);
+    const [payload, caller] = migrateGuestAccount.mock.calls[0];
+    // The verified token binds the target uid; a body-supplied uid cannot.
+    expect(payload.permanentUid).toBe(VERIFIED_USER.uid);
+    expect(caller).toMatchObject({ uid: VERIFIED_USER.uid, phone_number: VERIFIED_USER.phone_number });
+    // The caller is never smuggled into the strict payload.
+    expect(payload).not.toHaveProperty("caller");
   });
 
-  it("never smuggles the caller into the payload (strict schema would reject it)", () => {
-    const block = migrateGuestRouteBlock();
-    const call = block.match(/migrateGuestAccount\(([\s\S]*?)\);/);
-    expect(call).toBeTruthy();
-    expect(call![1]).not.toMatch(/\bcaller\s*:/);
+  it("fails closed at 401 when the ID token cannot be verified", async () => {
+    verifyIdToken.mockRejectedValueOnce(new Error("token revoked"));
+    const res = await postMigrateGuest({ permanentUid: "body_uid" });
+    expect(res.status).toBe(401);
+    expect(migrateGuestAccount).not.toHaveBeenCalled();
   });
 
-  it("maps typed 4xx refusals through and keeps everything else fail-closed at 500", () => {
-    const block = migrateGuestRouteBlock();
-    // Typed status is only honoured inside the 400-499 band...
-    expect(block).toMatch(/statusCode\s*>=\s*400/);
-    expect(block).toMatch(/statusCode\s*<\s*500/);
-    // ...and the fallback is still a 500, never a 2xx.
-    expect(block).toMatch(/:\s*500\s*;/);
-    // The old flatten-everything handler is gone.
-    expect(block).not.toMatch(/res\.status\(500\)\.json\(\{\s*error:\s*err\.message \|\| "Failed to migrate guest session"\s*\}\)/);
+  it("maps a typed 403 refusal through so the client can re-auth", async () => {
+    migrateGuestAccount.mockRejectedValueOnce(
+      Object.assign(new Error("Caller does not own the migration target"), {
+        statusCode: 403,
+        code: "CALLER_TARGET_MISMATCH",
+      })
+    );
+    const res = await postMigrateGuest({ permanentUid: "other_uid" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "CALLER_TARGET_MISMATCH" });
   });
 
-  it("keeps the server-verified uid as the migration target", () => {
-    const block = migrateGuestRouteBlock();
-    expect(block).toMatch(/const permanentUid = req\.user\?\.uid \|\| req\.body\.permanentUid/);
+  it("maps an unexpected failure to a fail-closed 500", async () => {
+    migrateGuestAccount.mockRejectedValueOnce(new Error("firestore unavailable"));
+    const res = await postMigrateGuest({ permanentUid: "body_uid" });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: "firestore unavailable" });
   });
 });

@@ -71,15 +71,32 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     config.mock.petpoojaPos = false; // live path — the POS POST is stubbed
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
-    savedDocs["branches/branch_k1"] = { petpoojaStoreId: "res_k1" };
-    // POS-11: POS lines are priced from the catalog.
-    savedDocs["products/itm_1"] = { price: 199, inStock: true };
+    savedDocs["branches/branch_k1"] = {
+      petpoojaStoreId: "res_k1",
+      // H2 fixture — captured Petpooja tax catalogue (no builder default).
+      petpoojaTaxes: [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ],
+    };
+    // POS-11: POS lines are priced from the catalog (branch-scoped doc id).
+    savedDocs["products/prod_branch_k1_7765862"] = {
+      id: "prod_branch_k1_7765862",
+      branchId: "branch_k1",
+      petpoojaItemId: "7765862",
+      price: 199,
+      inStock: true,
+      petpoojaItemTaxIds: ["3928", "3929"],
+      petpoojaTaxInclusive: false,
+      petpoojaTaxUnsupported: false,
+      petpoojaGstType: "goods",
+    };
     savedDocs["orders/kot_1"] = {
       id: "kot_1",
       branchId: "branch_k1",
       customerName: "Test Customer",
       customerPhone: "+919825000001",
-      items: [{ id: "itm_1", name: "Burger", price: 199, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_k1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 199, quantity: 1 }],
       pricing: { grandTotal: 199, gst: 9.95 },
       status: "pending",
     };

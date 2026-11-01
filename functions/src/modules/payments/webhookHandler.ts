@@ -4,9 +4,96 @@ import { db } from "../../core/firebase";
 import { config, assertLivePaymentsContext } from "../../config/env";
 import { verifyRazorpayWebhookSignature, isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
-import { markOrderReconciliation } from "./reconciliation";
+import { markOrderReconciliation, claimCapturedPaymentInTx } from "./reconciliation";
 import { applyRefundToMonthlyFee } from "./monthlyFee";
 import { pushOrderToPetpooja } from "../petpooja";
+import { dispatchCustomerAccountNotification } from "../tickets/supportNotifications";
+
+/**
+ * Reads a legacy DOT-LITERAL field path — `"payment.razorpayPaymentId"` as a
+ * field NAME, which is what merge-set writers produced before the canonical
+ * nested `payment` map existed. Firestore parses a plain dotted string in
+ * `where()` as a NESTED path, so the literal field can only be queried through
+ * a single-segment `FieldPath`. Returns null when the datastore exposes no
+ * FieldPath constructor (test shims): the canonical query still runs.
+ */
+function legacyDottedFieldPath(field: string): any | null {
+  const FieldPathCtor: any = (admin as any)?.firestore?.FieldPath;
+  if (typeof FieldPathCtor !== "function") return null;
+  try {
+    return new FieldPathCtor(field);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves the orders bound to a captured Razorpay payment id across BOTH
+ * storage shapes:
+ *   • canonical nested `payment.razorpayPaymentId` — what every confirm writer
+ *     emits now (and the only shape a `where("payment.razorpayPaymentId")`
+ *     query can match);
+ *   • legacy top-level literal `"payment.razorpayPaymentId"` — pre-fix docs,
+ *     queried through the single-segment FieldPath above.
+ * Results are de-duplicated by document path, so a doc carrying BOTH shapes
+ * (dual-written during migration) is counted exactly ONCE and never looks
+ * ambiguous. Errors fail CLOSED: an unreadable canonical lookup, or an
+ * unreadable legacy lookup with no canonical match, throws (→ 500 → gateway
+ * retry) instead of parking a real refund as unmatched.
+ */
+async function findOrdersByCapturedPaymentId(paymentId: string): Promise<any[]> {
+  const found = new Map<string, any>();
+  const collect = (snap: any) => {
+    const docs: any[] = Array.isArray(snap?.docs) ? snap.docs : [];
+    for (const d of docs) {
+      const key =
+        (typeof d?.ref?.path === "string" && d.ref.path) ||
+        (typeof d?.id === "string" && d.id) ||
+        `idx_${found.size}`;
+      if (!found.has(key)) found.set(key, d);
+    }
+  };
+
+  collect(
+    await db
+      .collection("orders")
+      .where("payment.razorpayPaymentId", "==", paymentId)
+      .limit(2)
+      .get()
+  );
+
+  const legacyPath = legacyDottedFieldPath("payment.razorpayPaymentId");
+  if (legacyPath) {
+    try {
+      collect(
+        await db
+          .collection("orders")
+          .where(legacyPath, "==", paymentId)
+          .limit(2)
+          .get()
+      );
+    } catch (err: any) {
+      // The migration fallback must not become a refund outage. With a
+      // canonical match in hand the refund can proceed (the legacy shape can
+      // only add an ambiguity, it can never invalidate the canonical doc);
+      // with NO match yet we cannot prove the refund is unmatched, and parking
+      // it would strand real money — fail closed so the gateway retries.
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message:
+          `Legacy dotted payment-id lookup failed for ${paymentId} — ` +
+          (found.size > 0
+            ? "canonical shape matched, continuing"
+            : "refusing to park an unmatched refund (retry required)"),
+        errorStack: err?.stack,
+      }).catch(() => undefined);
+      if (found.size === 0) throw err;
+    }
+  }
+
+  return [...found.values()].slice(0, 2);
+}
 
 /**
  * F5a: fields the webhook's confirm transaction must add so a settlement is
@@ -89,19 +176,15 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   // Deliveries older than the window are stale replays — reject. Payloads
   // without the stamp predate this check and stay accepted (the idempotency
   // claim below still dedups them).
-  const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
-  const createdAtSec = typeof payload.created_at === "number" ? payload.created_at : null;
-  if (createdAtSec !== null && Date.now() - createdAtSec * 1000 > FRESHNESS_WINDOW_MS) {
-    console.warn("[Razorpay Webhook] stale event delivery — rejecting", { eventId, event });
-    res.status(401).json({ error: "Stale webhook event" });
-    return;
-  }
-
-  // Idempotency CLAIM (not check-then-act): the old code wrote the audit doc
-  // only AFTER the slow FCM + KOT push, so a Razorpay retry landing mid-push
-  // re-passed this check and double-pushed the KOT. create() fails when the
-  // doc exists, serializing concurrent deliveries; a stale claim (previous
-  // attempt died >10 min ago without completing) is taken over.
+  //
+  // ORDERING (stress sweep 2026-10-24): the freshness check runs AFTER the
+  // idempotency claim so a CRASHED delivery can be recovered by gateway
+  // redelivery. Razorpay's retry cadence jumps past the 10–15 min takeover
+  // band; a redelivery of a dead claim is by definition a recovery attempt,
+  // and the claim doc — not the payload timestamp — is the replay defense.
+  // Only a genuinely-NEW claim (no prior attempt) is subject to the
+  // freshness reject, and the claim doc is released so a plain rejection
+  // leaves no phantom lease behind.
   const auditDocRef = db.collection("payment_audits").doc(`aud_evt_${eventId}`);
   const CLAIM_TTL_MS = 10 * 60 * 1000;
   // Tri-state lease: "new" (we claimed it — process), "done" (a prior
@@ -109,7 +192,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   // recently but never completed: crash or still working — 500 so Razorpay
   // retries. The old code 200-acked inflight claims, and a crash between
   // claim and completion silently dropped real money forever).
-  const acquireClaim = async (): Promise<"new" | "done" | "inflight"> => {
+  const acquireClaim = async (): Promise<"new" | "takeover" | "done" | "inflight"> => {
     try {
       await auditDocRef.create({
         eventId,
@@ -131,10 +214,12 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               ? data.claimedAt
               : 0;
         // Stale claim (previous attempt died >10 min ago): take over by
-        // re-stamping a fresh numeric lease, then process.
+        // re-stamping a fresh numeric lease, then process. A takeover is a
+        // RECOVERY attempt — it is exempt from the payload freshness reject
+        // (the caller distinguishes "takeover" from "new").
         if (Date.now() - claimedMs >= CLAIM_TTL_MS) {
           await auditDocRef.set({ claimedAt: Date.now() }, { merge: true });
-          return "new";
+          return "takeover";
         }
         return "inflight";
       } catch (leaseErr) {
@@ -150,7 +235,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       }
     }
   };
-  let claim: "new" | "done" | "inflight";
+  let claim: "new" | "takeover" | "done" | "inflight";
   try {
     claim = await acquireClaim();
   } catch (leaseErr: any) {
@@ -167,6 +252,30 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   }
   if (claim === "inflight") {
     res.status(500).json({ error: "Event is being processed — retry shortly" });
+    return;
+  }
+
+  // Freshness window (relocated: claim-first so dead claims stay recoverable —
+  // see the ordering note above). Applies ONLY to genuinely-new claims: a
+  // takeover already owns a dead lease, and rejecting it would strand real
+  // money forever (audit doc carries the evidence, claim released on reject).
+  const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
+  const createdAtSec = typeof payload.created_at === "number" ? payload.created_at : null;
+  if (
+    claim === "new" &&
+    createdAtSec !== null &&
+    Date.now() - createdAtSec * 1000 > FRESHNESS_WINDOW_MS
+  ) {
+    console.warn("[Razorpay Webhook] stale event delivery — rejecting", { eventId, event });
+    try {
+      // Release the just-created claim: a plain rejection must not shadow
+      // the event with a phantom lease (no order writes happened).
+      await auditDocRef.delete();
+    } catch (e) {
+      // Best effort — the claim will age out via CLAIM_TTL_MS either way.
+      console.warn("[Razorpay Webhook] claim release after stale reject failed:", e);
+    }
+    res.status(401).json({ error: "Stale webhook event" });
     return;
   }
 
@@ -502,6 +611,18 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             : undefined;
          const basePayload = {
           paymentStatus: "completed",
+          // CANONICAL nested payment map — the shape the refund.processed
+          // branch can QUERY (`payment.razorpayPaymentId`). The dotted literals
+          // below are top-level fields whose names merely contain dots; a
+          // `where("payment.razorpayPaymentId", …)` never sees them, which is
+          // why webhook-confirmed orders also parked their refunds unmatched.
+          payment: {
+            status: "completed",
+            ...(razorpayPaymentId ? { razorpayPaymentId } : {}),
+            ...(typeof capturedPaise === "number"
+              ? { capturedAmountPaise: capturedPaise }
+              : {}),
+          },
           "payment.status": "completed",
           // F8: the stream marker survives a suppressed confirm.
           paymentChannel: "razorpay",
@@ -556,6 +677,32 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           if (laterState || foreignAttempt) {
             suppressedReason = foreignAttempt ? "suppressed_foreign_capture" : "suppressed_later_state";
             return { written: false, reason: suppressedReason, recordedPaymentId, fresh };
+          }
+          // T3.2 — ATOMIC CAPTURED-PAYMENT CLAIM (gateway-order binding):
+          // one captured payment may confirm at most ONE internal order. The
+          // per-order foreign-recording guard above cannot see another
+          // order's doc; this shared ownership record can. A capture already
+          // owned by a DIFFERENT order is suppressed here — before the
+          // CONFIRMED write, the OTP mint, the split, the coins and the KOT.
+          if (razorpayPaymentId) {
+            const captureClaim = await claimCapturedPaymentInTx(tx, db, {
+              razorpayPaymentId,
+              orderId,
+              razorpayOrderId:
+                (event === "order.paid" ? paymentEntity?.id : paymentEntity?.order_id) || null,
+              amountPaise: typeof capturedPaise === "number" ? capturedPaise : null,
+              eventId,
+            });
+            if (captureClaim.kind === "reused_by_other_order") {
+              suppressedReason = "suppressed_reused_capture";
+              return {
+                written: false,
+                reason: suppressedReason,
+                recordedPaymentId,
+                recordedCaptureOrderId: captureClaim.recordedOrderId,
+                fresh,
+              };
+            }
           }
           // Same transaction as CONFIRMED: mint the delivery OTP hash when the
           // order is eligible and has none. An existing hash is left untouched,
@@ -689,8 +836,24 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         try {
           const pushed = await pushOrderToPetpooja(orderId);
           if (!pushed) {
+            // Truthful log (review fix): `pushed === false` can mean EITHER a
+            // retryable POS sync outstanding OR a parked
+            // `pending_configuration` state (a dead-end skip with NO
+            // automatic retry — recovery is manual, via the authorized push
+            // route after the menu is corrected). Name the actual state
+            // instead of claiming `pending_retry` for both, and never change
+            // money/notification logic here.
+            const kotState = await (db as any)
+              .collection("orders")
+              .doc(orderId)
+              .get()
+              .then((s: any) => (s.data()?.petpoojaStatus ?? "unknown"))
+              .catch(() => "unknown");
             console.warn(
-              `[Razorpay Webhook] KOT push pending_retry for order ${orderId} — POS sync outstanding, retry worker owns it`
+              `[Razorpay Webhook] KOT push did not complete for order ${orderId} — petpoojaPush.state=${kotState}` +
+                (kotState === "pending_configuration"
+                  ? " (parked: manual recovery required after menu correction — no automatic retry)"
+                  : " (retry worker owns it)")
             );
           }
         } catch (err) {
@@ -750,33 +913,41 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         await parkFailed("unsafe_order_id");
       } else if (orderId) {
         const orderRef = db.collection("orders").doc(orderId);
-        const orderSnap = await orderRef.get();
-        const orderData = (orderSnap.exists ? orderSnap.data() : undefined) as any;
-        if (!orderSnap.exists || !orderData) {
-          // Never resurrect a ghost order doc with a merged "failed" write
-          // (the mirror image of the confirm-path ghost guard).
-          await parkFailed("failed_unknown_order");
-        } else {
-          const alreadyPaid =
-            orderData.paymentStatus === "completed" ||
-            orderData?.payment?.status === "completed";
-          const recordedPaymentId =
-            orderData.payment?.razorpayPaymentId ??
-            orderData["payment.razorpayPaymentId"] ??
-            null;
-          // Monotonic status guard: a PAID order is never flipped back to
-          // failed by a late or replayed failure, and attempt A's failure
-          // never fails an order that already carries captured payment B
-          // (the pay-fail-retry-pay flow lands in exactly that ordering).
-          const foreignAttempt =
-            !!recordedPaymentId && !!failedPaymentId && recordedPaymentId !== failedPaymentId;
-          if (alreadyPaid || foreignAttempt) {
-            console.warn(
-              `[Razorpay Webhook] ignored payment.failed for order ${orderId} — ` +
-                `${alreadyPaid ? "order is already paid" : "failure belongs to a different payment attempt"}`
-            );
-          } else {
-            await orderRef.set(
+        // Transaction (stress sweep 2026-10-24): the confirm path reads and
+        // writes money status in ONE transaction, but the failed path read
+        // preT-then-wrote plain — a capture landing in the read→write window
+        // was silently overwritten by a stale `failed`. The guards below now
+        // evaluate against the TRANSACTIONAL snapshot, mirroring the confirm
+        // path ("must not regress a later/terminal status").
+        const txnOutcome = await (async () => {
+          const snap = await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(orderRef);
+            const orderData = (fresh.exists ? fresh.data() : undefined) as any;
+            if (!fresh.exists || !orderData) {
+              return { outcome: "unknown" as const, orderData: undefined as any };
+            }
+            const alreadyPaid =
+              orderData.paymentStatus === "completed" ||
+              orderData?.payment?.status === "completed";
+            const recordedPaymentId =
+              orderData.payment?.razorpayPaymentId ??
+              orderData["payment.razorpayPaymentId"] ??
+              null;
+            // Monotonic status guard: a PAID order is never flipped back to
+            // failed by a late or replayed failure, and attempt A's failure
+            // never fails an order that already carries captured payment B
+            // (the pay-fail-retry-pay flow lands in exactly that ordering).
+            const foreignAttempt =
+              !!recordedPaymentId && !!failedPaymentId && recordedPaymentId !== failedPaymentId;
+            if (alreadyPaid || foreignAttempt) {
+              console.warn(
+                `[Razorpay Webhook] ignored payment.failed for order ${orderId} — ` +
+                  `${alreadyPaid ? "order is already paid" : "failure belongs to a different payment attempt"}`
+              );
+              return { outcome: "ignored" as const, orderData };
+            }
+            tx.set(
+              orderRef,
               {
                 paymentStatus: "failed",
                 "payment.status": "failed",
@@ -799,32 +970,49 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               },
               { merge: true }
             );
-            // B5 interaction: if this order still carries a reconciliation
-            // marker, an earlier capture was parked and its money may genuinely
-            // have moved. The gateway's word about THIS attempt stands (the
-            // order flips to failed) and the marker is NOT silently cleared —
-            // but a human must see the contradiction instead of one signal
-            // quietly outranking the other.
-            if (orderData?.reconciliation?.state === "payment_review") {
-              await captureErrorSnapshot({
-                source: "payments",
-                severity: "high",
-                message: `Order ${orderId} flipped to failed while a reconciliation marker is still present — an earlier capture on this order may have moved money; review both signals`,
-              }).catch(() => undefined);
+            return { outcome: "failed" as const, orderData };
+          });
+          return snap;
+        })();
+
+        if (txnOutcome.outcome === "unknown") {
+          // Never resurrect a ghost order doc with a merged "failed" write
+          // (the mirror image of the confirm-path ghost guard).
+          await parkFailed("failed_unknown_order");
+        } else if (txnOutcome.outcome === "failed") {
+          const orderData = txnOutcome.orderData;
+          // B5 interaction: if this order still carries a reconciliation
+          // marker, an earlier capture was parked and its money may genuinely
+          // have moved. The gateway's word about THIS attempt stands (the
+          // order flips to failed) and the marker is NOT silently cleared —
+          // but a human must see the contradiction instead of one signal
+          // quietly outranking the other.
+          if (orderData?.reconciliation?.state === "payment_review") {
+            await captureErrorSnapshot({
+              source: "payments",
+              severity: "high",
+              message: `Order ${orderId} flipped to failed while a reconciliation marker is still present — an earlier capture on this order may have moved money; review both signals`,
+            }).catch(() => undefined);
+          }
+          // The customer otherwise stares at a spinner: tell them plainly.
+          // (Status code is untouched, so no status trigger fires — push here.)
+          // Classified `orderUpdates` for the order owner, dispatched after the
+          // money transaction committed. Copy carries no order id, name, or
+          // amount; `targetId` is the inbox pointer, not tray copy.
+          try {
+            const recipientUid = orderData?.customerId || orderData?.userId;
+            if (recipientUid) {
+              await dispatchCustomerAccountNotification({
+                purpose: "orderUpdates",
+                recipientUid,
+                targetId: orderId,
+                type: "payment_failed",
+                title: "Payment failed",
+                body: "Payment for your order did not go through. No money was charged — please try again.",
+              });
             }
-            // The customer otherwise stares at a spinner: tell them plainly.
-            // (Status code is untouched, so no status trigger fires — push here.)
-            try {
-              const { pushToCustomer } = await import("../notifications/fcmClient");
-              await pushToCustomer(
-                orderData?.customerId || orderData?.userId,
-                "⚠️ Payment failed",
-                `Payment for order #${orderId.substring(0, 6)} did not go through. No money was charged — please try again.`,
-                { type: "payment_failed", orderId }
-              );
-            } catch {
-              // Non-blocking (see pushToCustomer).
-            }
+          } catch {
+            // Non-blocking: a push failure never affects the money outcome.
           }
         }
       }
@@ -861,20 +1049,42 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       const refundId = refundEntity?.id;
       const amount = refundEntity?.amount ? refundEntity.amount / 100 : 0;
 
-      // Find order by paymentId. More than one match (reused payment
-      // intent) is ambiguous — park for review instead of picking an
-      // arbitrary doc and stamping the wrong order refunded.
-      const ordersSnap = await db
-        .collection("orders")
-        .where("payment.razorpayPaymentId", "==", paymentId)
-        .limit(2)
-        .get();
+      // Find order by paymentId across BOTH stored shapes (see
+      // findOrdersByCapturedPaymentId — nested canonical plus the legacy
+      // dotted-literal field). A missing payment id cannot bind anything and
+      // would make a Firestore `where` throw (undefined value) into an endless
+      // gateway retry loop, so it is parked visibly instead. More than one
+      // match (reused payment intent) is ambiguous — park for review instead
+      // of picking an arbitrary doc and stamping the wrong order refunded.
+      const missingPaymentId = typeof paymentId !== "string" || !paymentId;
+      const matchedOrders = missingPaymentId
+        ? []
+        : await findOrdersByCapturedPaymentId(paymentId);
 
-      if (ordersSnap.size > 1) {
+      if (missingPaymentId) {
         await captureErrorSnapshot({
           source: "payments",
           severity: "high",
-          message: `Ambiguous processed refund ${refundId} (payment ${paymentId}, amount ${amount}) — ${ordersSnap.size} orders share this payment id; manual review required`,
+          message: `Processed refund ${refundId} carries no payment_id — cannot bind it to an order; manual review required`,
+        });
+        await db.collection("unmatched_payments").doc(`ump_refund_${eventId}`).set(
+          {
+            eventId,
+            event,
+            refundId: refundId || null,
+            amount,
+            currency: refundEntity?.currency || "INR",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+            reason: "refund_missing_payment_id",
+          },
+          { merge: true }
+        );
+      } else if (matchedOrders.length > 1) {
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message: `Ambiguous processed refund ${refundId} (payment ${paymentId}, amount ${amount}) — ${matchedOrders.length} orders share this payment id; manual review required`,
         });
         await db.collection("unmatched_payments").doc(`ump_refund_${eventId}`).set(
           {
@@ -890,8 +1100,8 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           },
           { merge: true }
         );
-      } else if (!ordersSnap.empty) {
-        const orderDoc = ordersSnap.docs[0];
+      } else if (matchedOrders.length === 1) {
+        const orderDoc = matchedOrders[0];
         // Per-refund ledger + monotonic total, computed inside one
         // transaction (compare-and-set). Each gateway refund id is counted
         // EXACTLY ONCE:
@@ -906,7 +1116,11 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         //    same rupees twice.
         const amountPaise = Math.round((Number(amount) || 0) * 100);
         const refundOutcome = await db.runTransaction(async (tx) => {
-          const snap = await tx.get(orderDoc.ref);
+          // `matchedOrders` comes from the dual-shape lookup and is untyped at
+          // the SDK boundary; cast the transaction so the DocumentReference
+          // overload is chosen (a bare `any` selects the Query overload and
+          // makes `snap` a QuerySnapshot at compile time).
+          const snap: any = await (tx as any).get(orderDoc.ref);
           const data = (snap.exists ? snap.data() : {}) as any;
           const existingTotal = Number(data.refundedTotalPaise) || 0;
           const ledger: Record<string, number> =
@@ -919,6 +1133,20 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             typeof refundId === "string" && !!refundId && amountPaise > 0 && !(refundId in ledger);
           if (isNewRefund) {
             ledger[refundId] = amountPaise;
+          }
+          const scalarRefundId =
+            typeof data.refundId === "string" && data.refundId.trim() ? data.refundId.trim() : null;
+          const scalarRefundPaise =
+            typeof data.refundAmount === "number" && Number.isFinite(data.refundAmount)
+              ? Math.round(data.refundAmount * 100)
+              : 0;
+          if (
+            scalarRefundId &&
+            scalarRefundId !== refundId &&
+            scalarRefundPaise > 0 &&
+            !(scalarRefundId in ledger)
+          ) {
+            ledger[scalarRefundId] = scalarRefundPaise;
           }
           const ledgerTotal = Object.values(ledger).reduce(
             (sum, v) => sum + (Number(v) || 0),
@@ -1003,15 +1231,21 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         if (refundOutcome.isNewRefund) {
         try {
           const orderData = orderDoc.data() as any;
-          const { pushToCustomer } = await import("../notifications/fcmClient");
-          await pushToCustomer(
-            orderData?.customerId || orderData?.userId,
-            "↩️ Refund processed",
-            `₹${amount} refund for order #${orderDoc.id.substring(0, 6)} is on its way (5–7 business days).`,
-            { type: "refund_processed", orderId: orderDoc.id }
-          );
+          const recipientUid = orderData?.customerId || orderData?.userId;
+          // Classified `orderUpdates`, targetId = order id, body carries the
+          // amount but never the order id or any name.
+          if (recipientUid) {
+            await dispatchCustomerAccountNotification({
+              purpose: "orderUpdates",
+              recipientUid,
+              targetId: orderDoc.id,
+              type: "refund_processed",
+              title: "Refund processed",
+              body: `₹${amount} refund for your order is on its way (5–7 business days).`,
+            });
+          }
         } catch {
-          // Non-blocking (see pushToCustomer).
+          // Non-blocking: a push failure never affects the refund record.
         }
         }
       } else {
@@ -1038,13 +1272,24 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
     }
 
     // Complete the idempotency claim (merge — the claim doc already exists).
+    // Refund-only and transfer-only deliveries carry no `payment.entity`, so
+    // these two lookups are `undefined` there. Firestore rejects an explicit
+    // undefined value, which made the audit write throw AFTER the money event
+    // had been handled: the handler answered 500, the claim never completed,
+    // and Razorpay retried the same refund forever. Omit absent identifiers.
+    const auditedPaymentId = payload.payload?.payment?.entity?.id;
+    const auditedOrderId = payload.payload?.payment?.entity?.notes?.orderId;
     await auditDocRef.set(
       {
         eventId,
         event,
         payloadSummary: {
-          paymentId: payload.payload?.payment?.entity?.id,
-          orderId: payload.payload?.payment?.entity?.notes?.orderId,
+          ...(typeof auditedPaymentId === "string" && auditedPaymentId
+            ? { paymentId: auditedPaymentId }
+            : {}),
+          ...(typeof auditedOrderId === "string" && auditedOrderId
+            ? { orderId: auditedOrderId }
+            : {}),
         },
         completedAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),

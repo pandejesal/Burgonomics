@@ -10,7 +10,12 @@ import {
   isSafeDocId,
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
-import { markOrderReconciliation } from "./reconciliation";
+import {
+  markOrderReconciliation,
+  parkTerminalPaymentCapture,
+  claimCapturedPaymentInTx,
+  isMoneyClaimFresh,
+} from "./reconciliation";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
 import { resolveBranchId } from "./branchResolver";
@@ -21,6 +26,8 @@ import {
   attemptRouteTransfer,
   retryPendingRouteTransfersWorker,
   calculateRouteSplit,
+  isOrderTerminalForRouteTransfer,
+  recordTerminalRefusalInTx,
 } from "./routeTransfers";
 
 export { retryPendingRouteTransfersWorker, calculateRouteSplit } from "./routeTransfers";
@@ -124,7 +131,7 @@ function slug(v: unknown): string {
  */
 function readRecordedPaymentField(
   doc: any,
-  field: "razorpayPaymentId" | "razorpayOrderId"
+  field: "razorpayPaymentId" | "razorpayOrderId" | "capturedPaymentId"
 ): string | null {
   const nested =
     doc?.payment && typeof doc.payment === "object" ? doc.payment[field] : undefined;
@@ -132,6 +139,69 @@ function readRecordedPaymentField(
   if (typeof nested === "string" && nested) return nested;
   if (typeof dotted === "string" && dotted) return dotted;
   return null;
+}
+
+/**
+ * Deterministically parks a second distinct captured payment into
+ * `payment_discrepancies/dis_<order>_<payment>` with reason SECOND_CAPTURE_MISMATCH,
+ * captures an error snapshot, and throws structured 409 SECOND_CAPTURE_MISMATCH.
+ * Shared across the pre-read guard, executeRouteSplit claim backstop, and
+ * finishVerifiedPayment transactional backstop.
+ */
+async function parkSecondCaptureMismatch(params: {
+  orderId: string;
+  razorpayOrderId?: string | null;
+  razorpayPaymentId: string;
+  expectedPaise?: number | null;
+  capturedAmountPaise?: number | null;
+  recordedPaymentId?: string | null;
+  recordedRazorpayOrderId?: string | null;
+  orderStatus?: string | null;
+}): Promise<never> {
+  const {
+    orderId,
+    razorpayOrderId,
+    razorpayPaymentId,
+    expectedPaise,
+    capturedAmountPaise,
+    recordedPaymentId,
+    recordedRazorpayOrderId,
+    orderStatus,
+  } = params;
+
+  await db
+    .collection("payment_discrepancies")
+    .doc(`dis_${slug(orderId)}_${slug(razorpayPaymentId)}`)
+    .set(
+      {
+        orderId,
+        razorpayOrderId: razorpayOrderId || null,
+        razorpayPaymentId,
+        expectedPaise: Number.isFinite(expectedPaise) ? expectedPaise : null,
+        actualPaise: typeof capturedAmountPaise === "number" ? capturedAmountPaise : null,
+        gatewayStatus: typeof capturedAmountPaise === "number" ? "captured" : null,
+        reason: "SECOND_CAPTURE_MISMATCH",
+        status: "needs_review",
+        recordedPaymentId: recordedPaymentId || null,
+        recordedRazorpayOrderId: recordedRazorpayOrderId || null,
+        orderStatus: orderStatus || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  await captureErrorSnapshot({
+    source: "payments",
+    severity: "high",
+    message: `Second distinct captured payment ${razorpayPaymentId} for order ${orderId} already confirmed by ${recordedPaymentId || recordedRazorpayOrderId || "an earlier capture"} — parked in payment_discrepancies, order NOT re-confirmed, no split`,
+    orderId,
+    razorpayPaymentId,
+  }).catch(() => undefined);
+  const secondCaptureErr: any = new Error(
+    "This order is already confirmed by a different payment — verification refused. Contact support if money left your account."
+  );
+  secondCaptureErr.statusCode = 409;
+  secondCaptureErr.code = "SECOND_CAPTURE_MISMATCH";
+  throw secondCaptureErr;
 }
 
 /**
@@ -294,9 +364,13 @@ async function resolveOrderBranchForPayment(orderData: any): Promise<string> {
  * prove ownership never opens).
  *
  * PAY-13: it also RETURNS the order document, because that document — not the
- * request body — is the cart the money is computed from.
+ * request body — is the cart the money is computed from (the KOT builder
+ * fulfils `orders/{orderId}.items`).
  */
-async function assertPayableOrderDoc(orderId: string, customerId: string): Promise<any> {
+async function assertPayableOrderDoc(
+  orderId: string,
+  customerId: string
+): Promise<Record<string, any>> {
   if (!db || typeof db.collection !== "function") {
     const err: any = new Error("Order verification is temporarily unavailable — please retry checkout.");
     err.statusCode = 503;
@@ -718,6 +792,133 @@ async function resolveLostClaim(args: {
 }
 
 /**
+ * P1 basket binding: the request body is NOT the order of record.
+ *
+ * `createPaymentOrder` used to price the request-body `items`/`branchId`/
+ * `orderType` and stamp only `pricing` onto the existing orders/{orderId} doc.
+ * The customer paid for THAT basket while the KOT builder
+ * (`pushOrderPetpooja` → `order.items`, `order.fulfillmentType || order.orderType`)
+ * fulfilled the STORED one — a different basket, at a different branch, for a
+ * different fulfillment type, charged to the same customer.
+ *
+ * The persisted doc is therefore the single source of truth whenever it
+ * carries a usable basket:
+ *   • items        — priced AS STORED (the exact lines the kitchen will cook);
+ *   • branchId     — priced AS STORED (royalty/packaging belong to that branch);
+ *   • orderType    — canonicalized from orderType/fulfillmentType/fulfillment;
+ * and any request that disagrees is refused BEFORE pricing, before the intent
+ * lease, and before any gateway order is minted. `BASKET_MISMATCH` is a
+ * non-retryable 409: retrying the same body can never converge.
+ *
+ * A legacy order doc with no `items` array has no basket to bind, so the
+ * historical request-priced behaviour is preserved (nothing else could be
+ * priced, and refusing would strand every pre-`items` checkout).
+ */
+const STORED_ORDER_TYPE_ALIASES: Record<string, "delivery" | "takeaway" | "dinein"> = {
+  delivery: "delivery",
+  takeaway: "takeaway",
+  pickup: "takeaway",
+  dinein: "dinein",
+  "dine-in": "dinein",
+};
+
+/** Canonical fulfillment literal for a persisted order doc, or null when absent/unknown. */
+function readStoredOrderType(
+  doc: any
+): "delivery" | "takeaway" | "dinein" | null {
+  const candidates = [doc?.orderType, doc?.fulfillmentType, doc?.fulfillment];
+  for (const raw of candidates) {
+    if (typeof raw !== "string") continue;
+    const canonical = STORED_ORDER_TYPE_ALIASES[raw.trim().toLowerCase()];
+    if (canonical) return canonical;
+  }
+  return null;
+}
+
+/**
+ * Price-agnostic identity of ONE basket line: product, quantity, and the
+ * addon deltas the customer chose. Item *prices* are deliberately excluded —
+ * the catalog (not the client) is the price authority, so a stale cart price
+ * is repriced rather than treated as a different basket. Addon deltas ARE
+ * included: they are client-supplied money the pricing engine trusts, so a
+ * (cheap garnish → expensive garnish) swap is a different basket.
+ */
+function basketLineKey(item: any): string {
+  const productId = String(item?.productId || item?.id || "").trim();
+  const quantity = Math.floor(Number(item?.quantity) || 0);
+  const addons = [
+    ...(Array.isArray(item?.customizations) ? item.customizations : []).map(
+      (c: any) => `c:${String(c?.id ?? c?.name ?? "")}:${Number(c?.price) || 0}`
+    ),
+    ...(Array.isArray(item?.modifiers) ? item.modifiers : []).map(
+      (m: any) => `m:${String(m?.id ?? m?.name ?? "")}:${Number(m?.priceDelta) || 0}`
+    ),
+  ].sort();
+  return `${productId}|${quantity}|${addons.join(",")}`;
+}
+
+/** Order-independent fingerprint of a basket's line identities. */
+function basketFingerprint(items: any): string {
+  const lines = Array.isArray(items) ? items : [];
+  return lines.map(basketLineKey).sort().join("||");
+}
+
+function basketMismatchError(): Error {
+  const err: any = new Error(
+    "Your cart no longer matches the order on file — nothing was charged. Please review your basket and start a new order."
+  );
+  err.statusCode = 409;
+  err.code = "BASKET_MISMATCH";
+  return err;
+}
+
+/**
+ * Binds the payable basket to the persisted order. Throws BASKET_MISMATCH when
+ * the request describes a different basket/branch/fulfillment than the one
+ * stored on orders/{orderId}; returns the STORED basket to price otherwise.
+ */
+function bindBasketToStoredOrder(args: {
+  storedOrder: Record<string, any> | null;
+  requestItems: any[];
+  requestBranchId: string;
+  requestOrderType: "delivery" | "takeaway" | "dinein";
+}): { items: any[]; branchId: string; orderType: "delivery" | "takeaway" | "dinein" } {
+  const { storedOrder, requestItems, requestBranchId, requestOrderType } = args;
+
+  const storedItems =
+    storedOrder && Array.isArray(storedOrder.items) && storedOrder.items.length > 0
+      ? storedOrder.items
+      : null;
+  if (!storedItems) {
+    // No persisted basket to bind (legacy doc): keep request pricing.
+    return { items: requestItems, branchId: requestBranchId, orderType: requestOrderType };
+  }
+
+  if (basketFingerprint(storedItems) !== basketFingerprint(requestItems)) {
+    throw basketMismatchError();
+  }
+
+  const storedBranchId =
+    typeof storedOrder?.branchId === "string" && storedOrder.branchId
+      ? storedOrder.branchId
+      : "";
+  if (storedBranchId && storedBranchId !== requestBranchId) {
+    throw basketMismatchError();
+  }
+
+  const storedOrderType = readStoredOrderType(storedOrder);
+  if (storedOrderType && storedOrderType !== requestOrderType) {
+    throw basketMismatchError();
+  }
+
+  return {
+    items: storedItems,
+    branchId: storedBranchId || requestBranchId,
+    orderType: storedOrderType || requestOrderType,
+  };
+}
+
+/**
  * Creates a Razorpay server order with authoritative price calculation and route notes.
  */
 export async function createPaymentOrder(params: CreateOrderParams) {
@@ -825,7 +1026,9 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       // PAY-13: and bound to the SAME cart. The intent stores the fingerprint
       // of the doc-derived cart it was priced for; an order whose items,
       // coupon or redemption changed (or an intent predating this contract,
-      // which has no fingerprint) can never be reused at a stale amount.
+      // which has no fingerprint) can never be reused at a stale amount. This
+      // is the same non-retryable refusal polish's basket binding produced,
+      // now keyed on the order document (PAY-13) instead of the request.
       if (reusableIntent.cartFingerprint !== fingerprint) {
         throw paymentIntentCartMismatchError();
       }
@@ -1241,7 +1444,9 @@ export async function verifyPayment(
     const code = typeof (fresh as any)?.status === "string" ? (fresh as any).status : (fresh as any)?.status?.code;
     return {
       statusCode: String(code || "").toUpperCase(),
-      recordedPaymentId: readRecordedPaymentField(fresh, "razorpayPaymentId"),
+      recordedPaymentId:
+        readRecordedPaymentField(fresh, "razorpayPaymentId") ||
+        readRecordedPaymentField(fresh, "capturedPaymentId"),
       recordedRazorpayOrderId: readRecordedPaymentField(fresh, "razorpayOrderId"),
     };
   });
@@ -1317,39 +1522,16 @@ export async function verifyPayment(
   const foreignGatewayOrder =
     !!firstCapturedGatewayOrderId && !!razorpayOrderId && firstCapturedGatewayOrderId !== razorpayOrderId;
   if (provenCaptured && (foreignPayment || foreignGatewayOrder)) {
-    await db
-      .collection("payment_discrepancies")
-      .doc(`dis_${slug(orderId)}_${slug(razorpayPaymentId)}`)
-      .set(
-        {
-          orderId,
-          razorpayOrderId,
-          razorpayPaymentId,
-          expectedPaise: Number.isFinite(expectedPaise) ? expectedPaise : null,
-          actualPaise: typeof capturedAmountPaise === "number" ? capturedAmountPaise : null,
-          gatewayStatus: typeof capturedAmountPaise === "number" ? "captured" : null,
-          reason: "SECOND_CAPTURE_MISMATCH",
-          status: "needs_review",
-          recordedPaymentId: firstCapturedPaymentId,
-          recordedRazorpayOrderId: firstCapturedGatewayOrderId,
-          orderStatus: statusBeforeSplit || null,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    await captureErrorSnapshot({
-      source: "payments",
-      severity: "high",
-      message: `Second distinct captured payment ${razorpayPaymentId} for order ${orderId} already confirmed by ${firstCapturedPaymentId || firstCapturedGatewayOrderId || "an earlier capture"} — parked in payment_discrepancies, order NOT re-confirmed, no split`,
+    await parkSecondCaptureMismatch({
       orderId,
+      razorpayOrderId,
       razorpayPaymentId,
-    }).catch(() => undefined);
-    const secondCaptureErr: any = new Error(
-      "This order is already confirmed by a different payment — verification refused. Contact support if money left your account."
-    );
-    secondCaptureErr.statusCode = 409;
-    secondCaptureErr.code = "SECOND_CAPTURE_MISMATCH";
-    throw secondCaptureErr;
+      expectedPaise,
+      capturedAmountPaise,
+      recordedPaymentId: firstCapturedPaymentId,
+      recordedRazorpayOrderId: firstCapturedGatewayOrderId,
+      orderStatus: statusBeforeSplit || null,
+    });
   }
 
   // 4. Execute the Razorpay Route split. Claim-then-work lives inside
@@ -1361,8 +1543,22 @@ export async function verifyPayment(
     orderId,
     orderData,
     razorpayPaymentId,
+    razorpayOrderId,
     capturedAmountPaise,
   });
+
+  if (splitOutcome.state === "conflict") {
+    await parkSecondCaptureMismatch({
+      orderId,
+      razorpayOrderId,
+      razorpayPaymentId,
+      expectedPaise,
+      capturedAmountPaise,
+      recordedPaymentId: splitOutcome.recordedPaymentId,
+      recordedRazorpayOrderId: splitOutcome.recordedRazorpayOrderId,
+      orderStatus: splitOutcome.orderStatus,
+    });
+  }
 
   if (splitOutcome.state === "busy") {
     // Winner still mid-flight: return a 202 retry signal IMMEDIATELY (no
@@ -1398,6 +1594,38 @@ export async function verifyPayment(
     capturedAmountPaise,
     gatewayCreatedAtMs,
   });
+
+  if (finished.conflict) {
+    await parkSecondCaptureMismatch({
+      orderId,
+      razorpayOrderId,
+      razorpayPaymentId,
+      expectedPaise,
+      capturedAmountPaise,
+      recordedPaymentId: finished.recordedPaymentId,
+      recordedRazorpayOrderId: finished.recordedRazorpayOrderId,
+      orderStatus: finished.orderStatus,
+    });
+  }
+
+  // KOT PARITY WITH THE WEBHOOK CHANNEL. `payment.captured` pushes a paid order
+  // to the POS right after it confirms (webhookHandler.ts), but this channel
+  // used to confirm and never tell the kitchen: a verify-only payer — webhook
+  // delayed, dropped, or not yet configured — got a confirmed order that never
+  // rang at the outlet.
+  //
+  // Idempotency is owned by pushOrderToPetpooja itself: it dedupes on the
+  // persisted `petpoojaOrderId` / `petpoojaAcceptedNoId` markers and serializes
+  // concurrent callers through its own claim transaction, so a webhook racing
+  // this push (or the customer re-verifying) cannot ring the kitchen twice.
+  //
+  // A POS failure must NEVER un-confirm a captured payment: orderPush parks the
+  // order in its existing retry/reconciliation state and returns false, and the
+  // helper swallows unexpected throws. The payment result below is reported
+  // truthfully either way.
+  if (finished.success) {
+    await pushConfirmedOrderToPos(orderId);
+  }
 
   const orderSummary = {
     id: orderId,
@@ -1457,7 +1685,13 @@ export type RouteSplitOutcome =
   | { state: "busy" }
   | { state: "flagged"; error: string }
   | { state: "not_required" }
-  | { state: "no_split" };
+  | { state: "no_split" }
+  | {
+      state: "conflict";
+      recordedPaymentId?: string | null;
+      recordedRazorpayOrderId?: string | null;
+      orderStatus?: string | null;
+    };
 
 /**
  * Executes the Razorpay Route payout split for ONE captured payment.
@@ -1483,9 +1717,10 @@ export async function executeRouteSplit(args: {
   orderId: string;
   orderData: any;
   razorpayPaymentId: string;
+  razorpayOrderId?: string;
   capturedAmountPaise?: number;
 }): Promise<RouteSplitOutcome> {
-  const { orderRef, orderId, orderData, razorpayPaymentId, capturedAmountPaise } = args;
+  const { orderRef, orderId, orderData, razorpayPaymentId, razorpayOrderId, capturedAmountPaise } = args;
 
   if (orderData.routeTransferStatus === "transferred") {
     // Already settled — reuse the receipt. A missing receipt here is a data
@@ -1529,6 +1764,42 @@ export async function executeRouteSplit(args: {
     return { state: "flagged", error };
   };
 
+  /**
+   * F5/F7 ordering (review): a REFUNDED-before-transfer order still gets its
+   * ZERO hold stamped, so the order carries one payout truth (`monthlyFeeHold`)
+   * and no earnings are ever counted. Non-refunded terminal refusals are left
+   * unstamped — there is no refunded money to reconcile. The hold helper itself
+   * recognises the refunded shape and never touches the month ledger.
+   */
+  const stampRefundedHold = async (): Promise<void> => {
+    const refunded = Number(orderData?.refundedTotalPaise);
+    const hasRefundMarker =
+      (Number.isFinite(refunded) && refunded > 0) ||
+      (orderData?.refundStatus !== undefined &&
+        orderData?.refundStatus !== null &&
+        orderData?.refundStatus !== "");
+    if (!hasRefundMarker || !branchId) return;
+    try {
+      await ensureMonthlyFeeHold({
+        orderRef,
+        orderId,
+        branchId: branchId as string,
+        earnedPaise: 0,
+        courierFeePaise: 0,
+        gatewayCreatedAtMs:
+          Number(orderData?.payment?.gatewayCreatedAtMs) ||
+          Number(orderData?.["payment.gatewayCreatedAtMs"]) ||
+          undefined,
+      });
+    } catch (err: any) {
+      // The refusal itself already parks the payment; the stamp is best effort.
+      console.warn(
+        `[Payments] zero monthly-fee hold stamp failed for ${orderId}:`,
+        err?.message || err
+      );
+    }
+  };
+
   if (!branchId) {
     return flagManualSettlement("Order has no branchId — cannot execute Route split");
   }
@@ -1536,20 +1807,80 @@ export async function executeRouteSplit(args: {
   let racedTransfer: any = null;
 
   if (db && typeof (db as any).runTransaction === "function") {
-    const claim: "claimed" | "done" | "busy" = await (db as any).runTransaction(
+    type ClaimResult =
+      | { kind: "claimed" }
+      | { kind: "done" }
+      | { kind: "busy" }
+      | {
+          kind: "conflict";
+          recordedPaymentId?: string | null;
+          recordedRazorpayOrderId?: string | null;
+          orderStatus?: string | null;
+        }
+      | {
+          kind: "terminal_refusal";
+          reason: string;
+          orderStatus: string;
+        };
+
+    const claimResult: ClaimResult = await (db as any).runTransaction(
       async (tx: any) => {
         const fresh = await tx.get(orderRef as any);
-        const freshData = (fresh.exists ? fresh.data() : undefined) as any;
-        if (!freshData) return "busy";
-        if (freshData.routeTransferStatus === "transferred") {
+        if (!fresh || !fresh.exists) {
+          // Fail closed: never use stale snapshot if fresh read fails!
+          return { kind: "busy" };
+        }
+        const freshData = fresh.data() as any;
+        if (!freshData) {
+          return { kind: "busy" };
+        }
+
+        if (
+          freshData.routeTransferStatus === "transferred" ||
+          freshData.payment?.routeTransfer ||
+          freshData["payment.routeTransfer"]
+        ) {
           racedTransfer =
             freshData.payment?.routeTransfer ?? freshData["payment.routeTransfer"] ?? null;
-          return "done";
+          return { kind: "done" };
         }
-        // Another verify/webhook/worker owns the transfer right now — never
-        // POST ours. Stale-claim takeover: a crash between claim and POST
-        // must not park the order in `transferring` forever (every future
-        // attempt would otherwise 202/503 forever).
+
+        // 1. FRESH SNAPSHOT BINDING CHECK (Finding 1)
+        const provenCaptured =
+          typeof capturedAmountPaise === "number" || config.mock.paymentGateway === true;
+        const recordedPaymentId =
+          readRecordedPaymentField(freshData, "razorpayPaymentId") ||
+          readRecordedPaymentField(freshData, "capturedPaymentId");
+        const recordedRazorpayOrderId =
+          readRecordedPaymentField(freshData, "razorpayOrderId");
+        const foreignPayment =
+          !!recordedPaymentId && !!razorpayPaymentId && recordedPaymentId !== razorpayPaymentId;
+        const incomingGatewayOrderId =
+          razorpayOrderId ||
+          orderData.payment?.razorpayOrderId ||
+          orderData.razorpayOrderId ||
+          null;
+        const foreignGatewayOrder =
+          !!recordedRazorpayOrderId &&
+          !!incomingGatewayOrderId &&
+          recordedRazorpayOrderId !== incomingGatewayOrderId;
+
+        if (provenCaptured && (foreignPayment || foreignGatewayOrder)) {
+          // Return conflict: NO writes, NO transfer claim!
+          return {
+            kind: "conflict",
+            recordedPaymentId,
+            recordedRazorpayOrderId,
+            orderStatus:
+              typeof freshData.status === "string"
+                ? freshData.status
+                : freshData.status?.code,
+          };
+        }
+
+        // Another worker may already have a payout POST in flight. Preserve
+        // its live lease even if cancellation arrived meanwhile; recording a
+        // refusal here would falsely imply that no payout was sent.
         if (freshData.routeTransferStatus === "transferring") {
           const claimedAt = freshData.routeTransferClaimedAt;
           const claimedMs =
@@ -1558,15 +1889,60 @@ export async function executeRouteSplit(args: {
               : claimedAt && typeof claimedAt.toMillis === "function"
                 ? claimedAt.toMillis()
                 : 0;
-          if (Date.now() - claimedMs < TRANSFER_CLAIM_TTL_MS) return "busy";
+          if (Date.now() - claimedMs < TRANSFER_CLAIM_TTL_MS) return { kind: "busy" };
         }
-        // NUMERIC local-clock lease (never a serverTimestamp sentinel): a
-        // sentinel reads back as null until the server resolves it, and a
-        // null lease reads as "claimable" — the exact instant false-takeover
-        // the worker/autoRefund/schedulerLock leases already avoid. It also
-        // keeps ONE clock domain (function Date.now()) across every reader
-        // (verify, webhook, retry worker, stale sweep), so the 10-minute TTL
-        // is measured consistently.
+
+        // T3.3 — REFUND-SIDE-EFFECT SERIALIZATION (Phase 3 MONEY): a FRESH
+        // refund claim (refundActiveClaim / legacy refundClaimedAt, < the
+        // shared TTL in reconciliation.ts) means a reverse_all refund may
+        // already be on the wire — claiming a payout behind it would race a
+        // reversal at the provider. Yield (busy): after the refund settles
+        // the order reads refunded and the terminal check refuses it, or a
+        // new attempt re-claims. A STALE refund lease is a dead claim — the
+        // recovery takeover proceeds (never held hostage by a crashed claim).
+        {
+          const refundClaimActive =
+            freshData.refundActiveClaim && typeof freshData.refundActiveClaim === "object"
+              ? freshData.refundActiveClaim.claimedAt
+              : freshData.refundClaimedAt ?? null;
+          if (refundClaimActive != null && isMoneyClaimFresh(refundClaimActive)) {
+            return { kind: "busy" };
+          }
+        }
+
+        // 2. TERMINAL / CANCELLED REFUND SPLIT GUARD (Finding 2)
+        const termCheck = isOrderTerminalForRouteTransfer(freshData);
+        if (termCheck.isTerminal) {
+          recordTerminalRefusalInTx(tx, db, {
+            orderRef,
+            orderId,
+            paymentId: razorpayPaymentId,
+            razorpayOrderId:
+              razorpayOrderId ||
+              recordedRazorpayOrderId ||
+              freshData.payment?.razorpayOrderId ||
+              freshData.razorpayOrderId ||
+              null,
+            capturedAmountPaise:
+              typeof capturedAmountPaise === "number"
+                ? capturedAmountPaise
+                : typeof freshData.payment?.capturedAmountPaise === "number"
+                  ? freshData.payment.capturedAmountPaise
+                  : typeof freshData.pricing?.grandTotal === "number"
+                    ? Math.round(freshData.pricing.grandTotal * 100)
+                    : undefined,
+            reason: termCheck.reason!,
+            orderStatus: termCheck.orderStatus || "TERMINAL",
+            source: "route_transfers_verify",
+          });
+          return {
+            kind: "terminal_refusal",
+            reason: termCheck.reason!,
+            orderStatus: termCheck.orderStatus || "TERMINAL",
+          };
+        }
+
+        // Claim a new or expired lease only after the fresh guards.
         tx.set(
           orderRef as any,
           {
@@ -1575,11 +1951,61 @@ export async function executeRouteSplit(args: {
           },
           { merge: true }
         );
-        return "claimed";
+        return { kind: "claimed" };
       }
     );
-    if (claim === "busy") return { state: "busy" };
-    if (claim === "done") return { state: "transferred", transfer: racedTransfer };
+
+    if (claimResult.kind === "busy") return { state: "busy" };
+    if (claimResult.kind === "done") return { state: "transferred", transfer: racedTransfer };
+    if (claimResult.kind === "conflict") {
+      return {
+        state: "conflict",
+        recordedPaymentId: claimResult.recordedPaymentId,
+        recordedRazorpayOrderId: claimResult.recordedRazorpayOrderId,
+        orderStatus: claimResult.orderStatus,
+      };
+    }
+    if (claimResult.kind === "terminal_refusal") {
+      const refusalError = `Refused route transfer: order is ${claimResult.orderStatus} (${claimResult.reason})`;
+      await stampRefundedHold();
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Route transfer refused for order ${orderId}: order is ${claimResult.orderStatus} (${claimResult.reason}) — parked in unmatched_payments`,
+        orderId,
+        branchId,
+        razorpayPaymentId,
+      }).catch(() => undefined);
+      return { state: "flagged", error: refusalError };
+    }
+  } else {
+    const termCheck = isOrderTerminalForRouteTransfer(orderData);
+    if (termCheck.isTerminal) {
+      await parkTerminalPaymentCapture(db, {
+        orderId,
+        razorpayPaymentId,
+        razorpayOrderId,
+        amountPaise: capturedAmountPaise,
+        reason: termCheck.reason!,
+        orderStatus: termCheck.orderStatus || "TERMINAL",
+        source: "route_transfers_verify",
+      });
+      await orderRef.set(
+        {
+          routeTransferStatus: "failed",
+          routeTransferTerminalRefusal: true,
+          routeTransferError: `Refused route transfer: order is ${termCheck.orderStatus} (${termCheck.reason})`,
+          routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      await stampRefundedHold();
+      return {
+        state: "flagged",
+        error: `Refused route transfer: order is ${termCheck.orderStatus} (${termCheck.reason})`,
+      };
+    }
   }
 
   // F5: hold the monthly fee in its OWN transaction, after the lease is won
@@ -1908,7 +2334,65 @@ async function finishVerifiedPayment(args: {
   ]);
   const txOutcome: any = await (db as any).runTransaction(async (tx: any) => {
     const snap = await tx.get(orderRef);
-    const fresh: any = (snap && snap.exists ? snap.data() : orderData) || {};
+    if (!snap || !snap.exists) {
+      const missing: any = new Error(`Cannot confirm payment: order ${orderId} no longer exists.`);
+      missing.code = "ORDER_NOT_FOUND";
+      missing.statusCode = 404;
+      throw missing;
+    }
+    const fresh: any = snap.data() || {};
+
+    // FRESH SNAPSHOT BINDING CHECK (Finding 1 transactional backstop)
+    const provenCaptured =
+      typeof capturedAmountPaise === "number" || config.mock.paymentGateway === true;
+    const recordedPaymentId =
+      readRecordedPaymentField(fresh, "razorpayPaymentId") ||
+      readRecordedPaymentField(fresh, "capturedPaymentId");
+    const recordedRazorpayOrderId =
+      readRecordedPaymentField(fresh, "razorpayOrderId");
+    const foreignPayment =
+      !!recordedPaymentId && !!razorpayPaymentId && recordedPaymentId !== razorpayPaymentId;
+    const foreignGatewayOrder =
+      !!recordedRazorpayOrderId && !!razorpayOrderId && recordedRazorpayOrderId !== razorpayOrderId;
+
+    if (provenCaptured && (foreignPayment || foreignGatewayOrder)) {
+      // Return conflict outcome: NO writes, NO OTP mint, NO audit, NO coin debit
+      return {
+        conflict: true,
+        recordedPaymentId,
+        recordedRazorpayOrderId,
+        orderStatus: typeof fresh?.status === "string" ? fresh.status : fresh?.status?.code,
+      };
+    }
+
+    // T3.2 — ATOMIC CAPTURED-PAYMENT CLAIM (verify path): mirrored from the
+    // webhook confirm tx. One captured payment may confirm at most ONE
+    // internal order; a claim owned by a DIFFERENT order suppresses this
+    // confirmation before any write, OTP mint, audit or coin debit. No
+    // live-API fetch here — the binding decision stays inside the tx.
+    const t32Claim = await (async () => {
+      return claimCapturedPaymentInTx(tx, db, {
+        razorpayPaymentId,
+        orderId,
+        razorpayOrderId,
+        amountPaise:
+          typeof capturedAmountPaise === "number"
+            ? capturedAmountPaise
+            : Number(fresh?.pricing?.grandTotal) > 0
+            ? Math.round(Number(fresh.pricing.grandTotal) * 100)
+            : null,
+      });
+    })();
+    if (t32Claim.kind === "reused_by_other_order") {
+      return {
+        conflict: true,
+        reusedCapture: true,
+        recordedPaymentId,
+        recordedRazorpayOrderId,
+        reusedByOrderId: t32Claim.recordedOrderId,
+        orderStatus: typeof fresh?.status === "string" ? fresh.status : fresh?.status?.code,
+      };
+    }
 
     const statusCodeRaw =
       typeof fresh?.status === "string" ? fresh.status : fresh?.status?.code;
@@ -1922,7 +2406,9 @@ async function finishVerifiedPayment(args: {
       fresh?.status?.terminal === true ||
       fresh?.terminal === true;
     const terminalCanceledOrRefunded =
-      normalized === "CANCELLED" || normalized === "REFUNDED";
+      normalized === "CANCELLED" ||
+      normalized === "REFUNDED" ||
+      isOrderTerminalForRouteTransfer(fresh).isTerminal;
     const hasHash = hasDeliveryOtpHash(fresh);
 
     const performedConfirm = !alreadyCompleted && !laterStatus && !terminalCanceledOrRefunded;
@@ -1932,8 +2418,14 @@ async function finishVerifiedPayment(args: {
     // hash is never overwritten.
     if (performedConfirm) {
       const mintedOtp = mintDeliveryOtp(fresh);
+      const capturedPaiseStamp =
+        typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
+          ? capturedAmountPaise
+          : undefined;
       const updatePayload: Record<string, any> = {
         paymentStatus: "completed",
+        // Legacy dotted aliases kept during migration: both-shape readers in
+        // the apps and older functions read the literal form directly.
         "payment.status": "completed",
         // F8: the payment stream marker. Clients can never write it, so an
         // analytics reader can tell a gateway capture from cash/counter.
@@ -1946,12 +2438,16 @@ async function finishVerifiedPayment(args: {
         ...(typeof gatewayCreatedAtMs === "number" && Number.isFinite(gatewayCreatedAtMs)
           ? { "payment.gatewayCreatedAtMs": gatewayCreatedAtMs }
           : {}),
-        ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
-          ? { "payment.capturedAmountPaise": capturedAmountPaise }
+        ...(capturedPaiseStamp !== undefined
+          ? { "payment.capturedAmountPaise": capturedPaiseStamp }
           : {}),
         // Mirror the same truth into the nested object the apps actually read.
-        // Without this the customer app sees payment.status=pending after a
-        // successful capture and refuses to finalize the paid order.
+        // CANONICAL nested payment map (the queryable shape) — the refund.processed
+        // webhook looks orders up by `where("payment.razorpayPaymentId", …)`,
+        // i.e. the NESTED path; a top-level dotted-literal field is invisible to
+        // that query. Without this the customer app also sees
+        // payment.status=pending after a successful capture and refuses to
+        // finalize the paid order.
         payment: {
           ...(fresh?.payment && typeof fresh.payment === "object" && !Array.isArray(fresh.payment)
             ? fresh.payment
@@ -1960,8 +2456,8 @@ async function finishVerifiedPayment(args: {
           razorpayPaymentId,
           razorpayOrderId,
           transactionId: razorpayPaymentId,
-          ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
-            ? { capturedAmountPaise }
+          ...(capturedPaiseStamp !== undefined
+            ? { capturedAmountPaise: capturedPaiseStamp }
             : {}),
           ...(typeof gatewayCreatedAtMs === "number" && Number.isFinite(gatewayCreatedAtMs)
             ? { gatewayCreatedAtMs }
@@ -2033,6 +2529,22 @@ async function finishVerifiedPayment(args: {
     };
   });
 
+  if (txOutcome.conflict) {
+    return {
+      conflict: true,
+      success: false,
+      reusedCapture: !!txOutcome.reusedCapture,
+      reusedByOrderId: txOutcome.reusedByOrderId ?? null,
+      recordedPaymentId: txOutcome.recordedPaymentId,
+      recordedRazorpayOrderId: txOutcome.recordedRazorpayOrderId,
+      orderStatus: txOutcome.orderStatus,
+      confirmedOrderId: orderId,
+      paymentId: razorpayPaymentId,
+      transfer: null,
+      deliveryOtp: undefined,
+    };
+  }
+
   if (txOutcome.performedConfirm) {
     const auditId = `aud_${Date.now()}_${razorpayPaymentId.substring(0, 10)}`;
     await db.collection("payment_audits").doc(auditId).set({
@@ -2081,11 +2593,58 @@ async function finishVerifiedPayment(args: {
   };
 }
 
+/**
+ * Post-confirm KOT dispatch for the client verify channel (webhook parity).
+ *
+ * Deliberately never throws. The payment is already captured, so a POS problem
+ * is a kitchen-sync problem, not a payment problem: `pushOrderToPetpooja`
+ * writes the authoritative failure state itself (`pending_retry`, or
+ * `reconciliation_required` for a transport-ambiguous POST) and releases its
+ * claim, and swallowing here keeps that state from being masked by a 500 to
+ * the payer.
+ */
+async function pushConfirmedOrderToPos(orderId: string): Promise<void> {
+  try {
+    // Lazy: the POS barrel is not on the payment path's import cost, and tests
+    // that never confirm never load it.
+    const { pushOrderToPetpooja } = await import("../petpooja");
+    const pushed = await pushOrderToPetpooja(orderId);
+    if (!pushed) {
+      console.warn(
+        `[Payments] KOT push deferred for order ${orderId} — POS sync outstanding, existing retry/reconciliation state owns it`
+      );
+    }
+  } catch (err: any) {
+    console.warn(
+      `[Payments] KOT push failed for order ${orderId}:`,
+      err?.message || err
+    );
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Post-confirm KOT push threw for order ${orderId} — paid order stays confirmed, POS retry/reconciliation owns the sync`,
+      orderId,
+      errorStack: err?.stack,
+    }).catch(() => undefined);
+  }
+}
+
 export interface RefundParams {
   orderId: string;
   razorpayPaymentId: string;
   amountRupees?: number;
   reason?: string;
+  refundRequestId?: string;
+}
+
+/**
+ * Fixed-width collision-resistant hash of unambiguous [orderId, paymentId, requestId].
+ * Formats a bounded, safe idempotency key for the Razorpay X-Refund-Idempotency header.
+ */
+export function computeGatewayRefundKey(orderId: string, paymentId: string, requestId: string): string {
+  const unambiguous = JSON.stringify([orderId, paymentId, requestId]);
+  const digest = crypto.createHash("sha256").update(unambiguous).digest("hex");
+  return `rfnd_${digest}`;
 }
 
 /**
@@ -2106,7 +2665,35 @@ export async function autoRefund(
   // ever leaving the gateway).
   assertLivePaymentsContext("autoRefund");
 
-  const { orderId, razorpayPaymentId, amountRupees, reason } = params;
+  const { orderId, razorpayPaymentId, amountRupees, reason, refundRequestId } = params;
+
+  // Validation: refundRequestId format (8-128 chars [A-Za-z0-9_-])
+  if (refundRequestId !== undefined) {
+    if (
+      typeof refundRequestId !== "string" ||
+      refundRequestId.length < 8 ||
+      refundRequestId.length > 128 ||
+      !/^[A-Za-z0-9_-]+$/.test(refundRequestId)
+    ) {
+      const invalid: any = new Error(
+        "Invalid refundRequestId: must be 8-128 characters matching [A-Za-z0-9_-]"
+      );
+      invalid.statusCode = 400;
+      invalid.code = "INVALID_REFUND_REQUEST_ID";
+      throw invalid;
+    }
+  }
+
+  // Fail-closed live guard: LIVE refunds REQUIRE a caller-provided refundRequestId.
+  // Missing-id mock/test-only calls retain legacy pinned behavior.
+  if (!config.mock.paymentGateway && !refundRequestId) {
+    const missing: any = new Error(
+      "Cannot refund: refundRequestId is required for live refund execution."
+    );
+    missing.statusCode = 400;
+    missing.code = "REFUND_REQUEST_ID_REQUIRED";
+    throw missing;
+  }
 
   const orderRef = db.collection("orders").doc(orderId);
   const orderSnap = await orderRef.get();
@@ -2189,9 +2776,37 @@ export async function autoRefund(
     Number.isFinite(storedGrandTotal) && storedGrandTotal > 0
       ? Math.round(storedGrandTotal * 100)
       : null;
+  const defaultGatewayKey = refundRequestId
+    ? computeGatewayRefundKey(orderId, capturedPaymentId, refundRequestId)
+    : `refund_${orderId}_${requestedPaise ?? "full"}`;
+  const reqDocId = refundRequestId
+    ? `prfnd_${crypto.createHash("sha256").update(JSON.stringify([orderId, capturedPaymentId, refundRequestId])).digest("hex").slice(0, 48)}`
+    : null;
+  const reqRef = reqDocId ? db.collection("payment_refund_requests").doc(reqDocId) : null;
   const claimed = await runTx(async (tx) => {
     const snap = await tx.get(orderRef);
+    const reqSnap = reqRef ? await tx.get(reqRef) : null;
+    if (!snap.exists) {
+      const missing: any = new Error(`Cannot refund: order ${orderId} not found.`);
+      missing.statusCode = 404;
+      missing.code = "ORDER_NOT_FOUND";
+      throw missing;
+    }
     const data = ((snap.exists ? snap.data() : {}) || {}) as any;
+
+    // Transactionally re-verify branch access and captured payment proof inside tx
+    if (caller) await assertOrderBranchAccess(caller, data);
+    const capturedInTx =
+      data.payment?.razorpayPaymentId ?? data["payment.razorpayPaymentId"] ?? null;
+    if (!capturedInTx || capturedInTx !== razorpayPaymentId) {
+      const unpaid: any = new Error(
+        "Cannot refund: no captured Razorpay payment found for this order (COD or unpaid)."
+      );
+      unpaid.statusCode = 409;
+      unpaid.code = "NO_CAPTURED_PAYMENT";
+      throw unpaid;
+    }
+
     const existingTotal = Number(data.refundedTotalPaise) || 0;
 
     // F7a: a refund must not race a live transfer lease. A `transferring`
@@ -2210,6 +2825,27 @@ export async function autoRefund(
       }
     }
 
+    // Legacy scalar receipt (pre-ledger shape): a gateway refund recorded only
+    // as refundId/refundAmount. It is NOT an adoptable identity (no request id,
+    // no per-refund ledger entry), but it IS money already returned and must
+    // both consume the cumulative cap and refuse same-amount re-payouts.
+    const scalarRefundId =
+      typeof data.refundId === "string" && data.refundId.trim() ? data.refundId.trim() : null;
+    const scalarRefundAmountPaise =
+      typeof data.refundAmount === "number" && Number.isFinite(data.refundAmount)
+        ? Math.round(data.refundAmount * 100)
+        : null;
+    const ledgerHasScalarReceipt =
+      !!scalarRefundId &&
+      !!data.refundLedger &&
+      typeof data.refundLedger === "object" &&
+      !Array.isArray(data.refundLedger) &&
+      Object.prototype.hasOwnProperty.call(data.refundLedger, scalarRefundId);
+    // Only fold when the ledger does not already account for this receipt,
+    // otherwise max(total, ledger, scalar) would double-count the same money.
+    const scalarReceiptUnrepresented =
+      !!scalarRefundId && scalarRefundAmountPaise !== null && !ledgerHasScalarReceipt;
+
     // Refund-claim guard's FULLNESS is decided by the recorded LEDGER against
     // the known capture — never by the bare status string. The webhook +
     // autoRefund post-gateway writes stamp "partially_refunded" while the
@@ -2223,7 +2859,10 @@ export async function autoRefund(
             0
           )
         : 0;
-    const recordedRefundedPaise = Math.max(existingTotal, ledgerSum);
+    const recordedRefundedPaise = Math.max(
+      existingTotal,
+      ledgerSum + (scalarReceiptUnrepresented ? (scalarRefundAmountPaise as number) : 0)
+    );
     // Capture AUTHORITY (B1): the live gateway capture truth
     // (payment.capturedAmountPaise, both storage shapes) outranks the priced
     // total — a points-discounted payable captures LESS than grandTotal, and
@@ -2239,32 +2878,184 @@ export async function autoRefund(
         ? recordedCapturePaise
         : capturedPaise;
 
-    // Idempotent replay (B2) — LEDGER-KEYED first: refund identity is the
-    // (order, amount) refund, the same key the gateway-side
-    // X-Refund-Idempotency fingerprint uses. Any ledger entry worth exactly
-    // the requested paise IS that refund — replay its stored receipt instead
-    // of POSTing (and never double-count it in the record write). A
-    // DIFFERENT amount falls through: no entry matches ⇒ not a replay.
-    const replayEntry =
-      requestedPaise !== null
-        ? Object.entries(ledgerSum > 0 ? (data.refundLedger as Record<string, number>) : {}).find(
-            ([, paise]) => Math.round(Number(paise) || 0) === requestedPaise
-          )
-        : undefined;
-    if (replayEntry) {
-      return { replay: { id: replayEntry[0], payment_id: razorpayPaymentId, status: "processed", reused: true as const } };
+    // Server-only top-level payment_refund_requests doc.
+    const existingReq = reqSnap && reqSnap.exists ? (reqSnap.data() as any) : null;
+
+    // Known pending identity recovery check:
+    let isMatchingPendingRecovery = false;
+    let gatewayKeyToUse = defaultGatewayKey;
+
+    // 1. KEYED REPLAY & PENDING RECOVERY (B2 companion):
+    if (refundRequestId && existingReq) {
+      if (existingReq.status === "completed") {
+        const paymentMatches = existingReq.paymentId === razorpayPaymentId;
+        const amountMatches = existingReq.requestedPaise === requestedPaise;
+        const reasonMatches = (existingReq.reason ?? null) === (reason ?? null);
+        if (!paymentMatches || !amountMatches || !reasonMatches) {
+          const conflict: any = new Error(
+            `Refund request ${refundRequestId} was previously completed with a different payload — conflict refused.`
+          );
+          conflict.statusCode = 409;
+          conflict.code = "REFUND_REQUEST_CONFLICT";
+          throw conflict;
+        }
+        if (!existingReq.refundId || typeof existingReq.refundId !== "string" || !existingReq.refundId.trim()) {
+          const corrupt: any = new Error(
+            "Cannot replay refund: stored record is missing valid gateway refund ID — reconciliation required."
+          );
+          corrupt.statusCode = 409;
+          corrupt.code = "REFUND_RECONCILIATION_REQUIRED";
+          throw corrupt;
+        }
+        return {
+          replay: {
+            id: existingReq.refundId,
+            payment_id: razorpayPaymentId,
+            status: "processed",
+            reused: true as const,
+          },
+        };
+      } else if (existingReq.status === "pending") {
+        // Pending attempt validation: must strictly bind all fields (paymentId, amount, reason, gatewayKey)
+        const paymentMatches = existingReq.paymentId === razorpayPaymentId;
+        const amountMatches = existingReq.requestedPaise === requestedPaise;
+        const reasonMatches = (existingReq.reason ?? null) === (reason ?? null);
+        const keyMatches = existingReq.gatewayKey && existingReq.gatewayKey === defaultGatewayKey;
+        if (!paymentMatches || !amountMatches || !reasonMatches || !keyMatches) {
+          const conflict: any = new Error(
+            `Pending refund request ${refundRequestId} payload or gateway key mismatch — conflict refused.`
+          );
+          conflict.statusCode = 409;
+          conflict.code = "REFUND_REQUEST_CONFLICT";
+          throw conflict;
+        }
+        isMatchingPendingRecovery = true;
+        gatewayKeyToUse = existingReq.gatewayKey;
+      }
     }
-    // Legacy fallback for pre-ledger docs only (ledgerSum === 0): the status
-    // replay that predates the ledger. Docs WITH a ledger never reach this —
-    // their scripts write per-refund amounts sometimes cumulative (webhook
-    // refundAmount = running total), which would false-positive.
-    if (
-      ledgerSum === 0 &&
-      (data.refundStatus === "refunded" || data.refundStatus === "partially_refunded") &&
-      data.refundId &&
-      (data.refundAmount ?? undefined) === (amountRupees ?? undefined)
-    ) {
-      return { replay: { id: data.refundId, payment_id: razorpayPaymentId, status: "processed", reused: true as const } };
+
+    if (!refundRequestId) {
+      // 2. UNKEYED LEGACY REPLAY (Mock/test-only pinned behavior):
+      const replayEntry =
+        requestedPaise !== null
+          ? Object.entries(ledgerSum > 0 ? (data.refundLedger as Record<string, number>) : {}).find(
+              ([, paise]) => Math.round(Number(paise) || 0) === requestedPaise
+            )
+          : undefined;
+      if (replayEntry) {
+        return { replay: { id: replayEntry[0], payment_id: razorpayPaymentId, status: "processed", reused: true as const } };
+      }
+      if (
+        ledgerSum === 0 &&
+        (data.refundStatus === "refunded" || data.refundStatus === "partially_refunded") &&
+        data.refundId &&
+        (data.refundAmount ?? undefined) === (amountRupees ?? undefined)
+      ) {
+        return { replay: { id: data.refundId, payment_id: razorpayPaymentId, status: "processed", reused: true as const } };
+      }
+    }
+
+    // Outstanding identity / active lease check:
+    // Enforced independently of scalar refundStatus (webhookHandler sets partially_refunded/refunded
+    // while autoRefund still has an active pending attempt).
+    const hasActiveClaimObj =
+      data.refundActiveClaim &&
+      typeof data.refundActiveClaim === "object" &&
+      !Array.isArray(data.refundActiveClaim) &&
+      typeof data.refundActiveClaim.claimedAt === "number" &&
+      Number.isFinite(data.refundActiveClaim.claimedAt) &&
+      data.refundActiveClaim.claimedAt > 0;
+
+    const hasClaimedAt =
+      typeof data.refundClaimedAt === "number" &&
+      Number.isFinite(data.refundClaimedAt) &&
+      data.refundClaimedAt > 0;
+
+    const activeClaim = hasActiveClaimObj
+      ? data.refundActiveClaim
+      : hasClaimedAt
+      ? {
+          requestId: data.refundClaimedRequestId ?? null,
+          claimedAt: Number(data.refundClaimedAt),
+          paymentId: data.refundClaimedPaymentId ?? null,
+          requestedPaise: data.refundClaimedPaise ?? null,
+          gatewayKey: data.refundClaimedKey ?? null,
+          reason: data.refundClaimedReason ?? null,
+        }
+      : null;
+
+    if (activeClaim) {
+      const claimedAt = Number(activeClaim.claimedAt) || 0;
+      const isLeaseActive = Date.now() - claimedAt < REFUND_CLAIM_TTL_MS;
+      if (isLeaseActive) {
+        const busy: any = new Error("A refund for this order is already in progress — do not retry.");
+        busy.statusCode = 409;
+        busy.code = "REFUND_IN_PROGRESS";
+        throw busy;
+      }
+      // Stale lease (>10m): previous worker died mid-flight. Take over safety requirements:
+      // - Stale same-id lease takeover reuses same gateway key and asserts immutable payload (including reason);
+      // - Different unresolved identity (including old unkeyed in-flight attempt) requires reconciliation,
+      //   no blind new-key POST.
+      if (refundRequestId && activeClaim.requestId === refundRequestId) {
+        const claimedPayment = activeClaim.paymentId;
+        const claimedPaise = activeClaim.requestedPaise;
+        const claimedReason = activeClaim.reason;
+        if (
+          (claimedPayment && claimedPayment !== razorpayPaymentId) ||
+          (claimedPaise !== undefined && claimedPaise !== requestedPaise) ||
+          (claimedReason !== undefined && (claimedReason ?? null) !== (reason ?? null))
+        ) {
+          const conflict: any = new Error(
+            `Stale in-flight refund claim ${refundRequestId} payload mismatch — conflict refused.`
+          );
+          conflict.statusCode = 409;
+          conflict.code = "REFUND_REQUEST_CONFLICT";
+          throw conflict;
+        }
+        if (activeClaim.gatewayKey) {
+          gatewayKeyToUse = activeClaim.gatewayKey;
+        }
+      } else {
+        const unrec: any = new Error(
+          "Cannot refund: an earlier in-flight refund attempt with different or unresolved identity is pending reconciliation."
+        );
+        unrec.statusCode = 409;
+        unrec.code = "REFUND_RECONCILIATION_REQUIRED";
+        throw unrec;
+      }
+    }
+
+    // Fail-closed unkeyed legacy completed ledger ambiguity:
+    // If an explicit new ID is submitted, but the order already contains an UNKEYED completed
+    // ledger entry matching the requested amount, we cannot adopt it and cannot blindly pay again.
+    // Matching pending recovery is immune because its money was already accounted for / may be in ledger from webhook.
+    if (!isMatchingPendingRecovery && refundRequestId && requestedPaise !== null) {
+      const keyedRefundIds = new Set<string>();
+      if (data.refundKeyedReceipts && typeof data.refundKeyedReceipts === "object") {
+        for (const rid of Object.keys(data.refundKeyedReceipts)) keyedRefundIds.add(rid);
+      }
+      const matchingUnkeyedLegacy = Object.entries(
+        (data.refundLedger || {}) as Record<string, number>
+      ).find(([rid, p]) => !keyedRefundIds.has(rid) && Math.round(Number(p) || 0) === requestedPaise);
+
+      // Same rule for the pre-ledger scalar shape: the amount may already have
+      // been returned by the receipt, and nothing proves this key is a new
+      // intent. Never adopt it as this request's identity, and never pay the
+      // same amount twice. A bare "refunded" status is deliberately left to
+      // the fullness check below: the webhook's positive-amount partial stamp
+      // must still allow the designed remainder refund.
+      const scalarMatchesRequest =
+        scalarReceiptUnrepresented && scalarRefundAmountPaise === requestedPaise;
+
+      if (matchingUnkeyedLegacy || scalarMatchesRequest) {
+        const unrec: any = new Error(
+          "Cannot process refund: an unkeyed completed legacy refund of matching amount exists on this order. Reconciliation is required before issuing new refunds."
+        );
+        unrec.statusCode = 409;
+        unrec.code = "REFUND_RECONCILIATION_REQUIRED";
+        throw unrec;
+      }
     }
 
     // Terminal-without-proof: "refunded" is trusted as FULL only when
@@ -2283,24 +3074,11 @@ export async function autoRefund(
       authorityCapturePaise !== null
         ? recordedRefundedPaise >= authorityCapturePaise || fullIntentShape
         : data.refundStatus === "refunded" && !!data.refundId;
-    if (fullyRefunded) {
+    if (fullyRefunded && !isMatchingPendingRecovery) {
       const dup: any = new Error("Order is already fully refunded — refusing a second refund.");
       dup.statusCode = 409;
       dup.code = "ALREADY_REFUNDED";
       throw dup;
-    }
-
-    if (data.refundStatus === "refunding") {
-      const claimedAt = Number(data.refundClaimedAt) || 0;
-      if (Date.now() - claimedAt < REFUND_CLAIM_TTL_MS) {
-        const busy: any = new Error("A refund for this order is already in progress — do not retry.");
-        busy.statusCode = 409;
-        busy.code = "REFUND_IN_PROGRESS";
-        throw busy;
-      }
-      // Stale lease: previous worker died mid-flight. Take over (the old
-      // worker's gateway POST, if it landed, is reconciled by the
-      // refund.processed webhook's monotonic totals).
     }
 
     // Cumulative partial-refund cap: sequential partials may never exceed
@@ -2310,45 +3088,115 @@ export async function autoRefund(
     // after partials is refused with the exact remaining paise (operator
     // refunds the remainder explicitly — no magic remainder that could
     // double-pay).
-    if (requestedPaise !== null && authorityCapturePaise !== null) {
-      if (requestedPaise + recordedRefundedPaise > authorityCapturePaise) {
-        const over: any = new Error(
-          `Refund of ${requestedPaise}pa exceeds the remaining refundable ${authorityCapturePaise - recordedRefundedPaise}pa — refused.`
+    if (!isMatchingPendingRecovery) {
+      if (requestedPaise !== null && authorityCapturePaise !== null) {
+        if (requestedPaise + recordedRefundedPaise > authorityCapturePaise) {
+          const over: any = new Error(
+            `Refund of ${requestedPaise}pa exceeds the remaining refundable ${authorityCapturePaise - recordedRefundedPaise}pa — refused.`
+          );
+          over.statusCode = 400;
+          over.code = "REFUND_EXCEEDS_REMAINING";
+          throw over;
+        }
+      }
+      // Fail-closed (B6): with an unknown capture a second partial cannot be
+      // bounded — refuse rather than refund blindly. Same-request replays above
+      // still work (identity is the durable refund request id); the legacy
+      // unkeyed amount replay is the only path that still matches by amount.
+      if (requestedPaise !== null && authorityCapturePaise === null && recordedRefundedPaise > 0) {
+        const unsure: any = new Error(
+          "Refund amount cannot be bounded against an unknown captured total — record the capture first."
         );
-        over.statusCode = 400;
-        over.code = "REFUND_EXCEEDS_REMAINING";
-        throw over;
+        unsure.statusCode = 409;
+        unsure.code = "REFUND_CAPTURE_UNKNOWN";
+        throw unsure;
+      }
+      if (requestedPaise === null && recordedRefundedPaise > 0 && authorityCapturePaise !== null) {
+        const partials: any = new Error(
+          `Order already has partial refunds (${recordedRefundedPaise}pa) — refund the remaining ${authorityCapturePaise - recordedRefundedPaise}pa explicitly.`
+        );
+        partials.statusCode = 409;
+        partials.code = "REFUND_PARTIALS_EXIST";
+        throw partials;
       }
     }
-    // Fail-closed (B6): with an unknown capture a second partial cannot be
-    // bounded — refuse rather than refund blindly. Same-amount replays above
-    // still work (identity = (order, amount)).
-    if (requestedPaise !== null && authorityCapturePaise === null && recordedRefundedPaise > 0) {
-      const unsure: any = new Error(
-        "Refund amount cannot be bounded against an unknown captured total — record the capture first."
-      );
-      unsure.statusCode = 409;
-      unsure.code = "REFUND_CAPTURE_UNKNOWN";
-      throw unsure;
-    }
-    if (requestedPaise === null && recordedRefundedPaise > 0 && authorityCapturePaise !== null) {
-      const partials: any = new Error(
-        `Order already has partial refunds (${recordedRefundedPaise}pa) — refund the remaining ${authorityCapturePaise - recordedRefundedPaise}pa explicitly.`
-      );
-      partials.statusCode = 409;
-      partials.code = "REFUND_PARTIALS_EXIST";
-      throw partials;
+
+    // T3.3 — TRANSFER-SIDE-EFFECT SERIALIZATION (Phase 3 MONEY): a FRESH
+    // Route-transfer claim (`routeTransferStatus:"transferring"` with a live
+    // lease) means the payout POST may already be on the wire — a concurrent
+    // reverse_all refund would race it at the provider. Refuse (409, no
+    // blind retry, no state flip): the operator retries after the transfer
+    // settles — the terminal/fullness checks then handle the outcome. A
+    // STALE transfer lease is a dead claim (recovery domain) and does NOT
+    // block the refund; existing reconciliation covers its unknown outcome.
+    {
+      const transferClaimMs = data?.routeTransferClaimedAt ?? null;
+      if (
+        data?.routeTransferStatus === "transferring" &&
+        transferClaimMs != null &&
+        isMoneyClaimFresh(transferClaimMs)
+      ) {
+        const conflicting: any = new Error(
+          "A Route transfer payout for this order is currently in flight — refund after it settles (do not refund mid-payout)."
+        );
+        conflicting.statusCode = 409;
+        conflicting.code = "ROUTE_TRANSFER_IN_PROGRESS";
+        throw conflicting;
+      }
     }
 
-    tx.set(
-      orderRef,
-      {
-        refundStatus: "refunding",
-        refundClaimedAt: Date.now(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    const orderClaimData: Record<string, any> = {
+      refundStatus: "refunding",
+      refundClaimedAt: Date.now(),
+      refundClaimedRequestId: refundRequestId ?? null,
+      refundClaimedPaymentId: razorpayPaymentId,
+      refundClaimedPaise: requestedPaise,
+      refundClaimedKey: gatewayKeyToUse,
+      refundClaimedReason: reason ?? null,
+      refundActiveClaim: {
+        requestId: refundRequestId ?? null,
+        claimedAt: Date.now(),
+        paymentId: razorpayPaymentId,
+        requestedPaise,
+        gatewayKey: gatewayKeyToUse,
+        reason: reason ?? null,
       },
-      { merge: true }
-    );
+      ...(scalarReceiptUnrepresented
+        ? {
+            refundLedger: {
+              ...(data.refundLedger &&
+              typeof data.refundLedger === "object" &&
+              !Array.isArray(data.refundLedger)
+                ? (data.refundLedger as Record<string, number>)
+                : {}),
+              [scalarRefundId as string]: scalarRefundAmountPaise as number,
+            },
+          }
+        : {}),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    tx.set(orderRef, orderClaimData, { merge: true });
+
+    if (reqRef && refundRequestId) {
+      tx.set(
+        reqRef,
+        {
+          orderId,
+          paymentId: razorpayPaymentId,
+          refundRequestId,
+          requestedPaise,
+          reason: reason ?? null,
+          status: "pending",
+          gatewayKey: gatewayKeyToUse,
+          claimedAt: Date.now(),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+
     // The post-gateway record write re-reads the ledger fresh inside its own
     // transaction, so no claim-time ledger snapshot is needed here. The prior
     // status is returned so a gateway failure can release the claim WITHOUT
@@ -2358,6 +3206,7 @@ export async function autoRefund(
       priorRefundStatus: typeof data.refundStatus === "string" ? data.refundStatus : null,
       routeTransferStatus:
         typeof data.routeTransferStatus === "string" ? data.routeTransferStatus : null,
+      gatewayKey: gatewayKeyToUse,
     };
   });
   if ((claimed as any).replay) return (claimed as any).replay;
@@ -2365,6 +3214,7 @@ export async function autoRefund(
     | string
     | null
     | undefined;
+  const gatewayKey = (claimed as any).gatewayKey as string;
   // F7a: `reverse_all` is sent ONLY when a transfer actually exists to reverse.
   // Razorpay's partial-refund behaviour is undocumented, so the key is omitted
   // for every non-settled lane instead of asking the gateway to decide.
@@ -2388,8 +3238,11 @@ export async function autoRefund(
   let refundResult: any;
 
   if (config.mock.paymentGateway) {
+    const mockRefundId = refundRequestId
+      ? `rfnd_mock_${crypto.createHash("sha256").update(gatewayKey).digest("hex").slice(0, 16)}`
+      : `rfnd_mock_${Date.now()}`;
     refundResult = {
-      id: `rfnd_mock_${Date.now()}`,
+      id: mockRefundId,
       payment_id: razorpayPaymentId,
       amount: refundPayload.amount || 10000,
       status: "processed",
@@ -2398,23 +3251,23 @@ export async function autoRefund(
     try {
       // Key validation + mock-mode refusal live in getRazorpayClient; the
       // POST itself goes over raw HTTPS (not the SDK) so we can send
-      // X-Refund-Idempotency: a stable per-(order, amount) fingerprint.
+      // X-Refund-Idempotency: a fixed-width deterministic hash of
+      // [orderId, paymentId, refundRequestId] via computeGatewayRefundKey.
       // Razorpay dedupes retries with the same key server-side — a
       // lost-response retry replays the ORIGINAL refund instead of posting
       // a second one. A retry with a DIFFERENT body is rejected outright.
-      const idempotencyKey = `refund_${orderId}_${requestedPaise ?? "full"}`;
       if (refundPostOverride) {
         refundResult = await refundPostOverride(
           razorpayPaymentId,
           refundPayload,
-          idempotencyKey
+          gatewayKey
         );
       } else {
         getRazorpayClient();
         refundResult = await postRefundWithIdempotency(
           razorpayPaymentId,
           refundPayload,
-          idempotencyKey
+          gatewayKey
         );
       }
     } catch (err: any) {
@@ -2458,7 +3311,7 @@ export async function autoRefund(
 
   // Update order record. refundedTotalPaise accumulates monotonically so
   // sequential partials and webhook replays converge instead of overwriting
-  // (see webhookHandler refund.processed). The lease marker is cleared.
+  // (see webhookHandler refund.processed). The lease marker is cleared if still owned.
   //
   // Written INSIDE one transaction with a FRESH read (M3): a refund.processed
   // webhook can land between the claim and this write, and a plain merge-set
@@ -2469,8 +3322,8 @@ export async function autoRefund(
   // refundLedger counts each gateway refund id EXACTLY ONCE (M2): autoRefund
   // and the refund.processed webhook both land for the same refund under
   // different triggers, and the gateway can also ECHO BACK an id that is
-  // already in the ledger (lost-response retry of the same (order, amount)
-  // key). A replayed id adds NO new money — merging it only refreshes the map;
+  // already in the ledger (lost-response retry of the same gateway key).
+  // A replayed id adds NO new money — merging it only refreshes the map;
   // never `total + refundedPaise` again on top of an already-counted id.
   // (M3) The full-vs-partial intent marker is decided once, from the request.
   const isFullRequest = amountRupees === undefined || amountRupees === null;
@@ -2488,11 +3341,20 @@ export async function autoRefund(
     if (refundId && (Number(refundResult.amount) || 0) > 0 && freshLedger[refundId] === undefined) {
       freshLedger[refundId] = Number(refundResult.amount);
     }
+    const freshScalarId = typeof fresh.refundId === "string" ? fresh.refundId : null;
+    const freshScalarPaise =
+      freshScalarId &&
+      freshScalarId !== refundResult.id &&
+      freshLedger[freshScalarId] === undefined &&
+      typeof fresh.refundAmount === "number" &&
+      Number.isFinite(fresh.refundAmount)
+        ? Math.round(fresh.refundAmount * 100)
+        : 0;
+    if (freshScalarId && freshScalarPaise > 0) {
+      freshLedger[freshScalarId] = freshScalarPaise;
+    }
     const ledgerTotal = Object.values(freshLedger).reduce((sum, v) => sum + (Number(v) || 0), 0);
     const freshTotal = Number(fresh.refundedTotalPaise) || 0;
-    // Monotonic merge: never below the fresh basis, never double-carrying an
-    // already-ledgered id. The claim tx also snapshotted this refund with it,
-    // so a NEW id typically grows the ledger sum by exactly its paise.
     const nextTotal = Math.max(freshTotal, ledgerTotal);
     // State honesty (mirrors refund.processed): the terminal "refunded" stamp
     // means the order is genuinely done, not merely "a refund happened".
@@ -2514,22 +3376,80 @@ export async function autoRefund(
       isFullRequest || captureAuthority === null || nextTotal >= captureAuthority
         ? "refunded"
         : "partially_refunded";
-    tx.set(
-      orderRef,
-      {
-        refundStatus: refundStatusValue,
-        refundAmount: amountRupees ?? null,
-        refundedTotalPaise: nextTotal,
-        refundLedger: freshLedger,
-        refundClaimedAt: admin.firestore.FieldValue.delete(),
-        refundId: refundResult.id,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+
+    const freshHasClaimObj =
+      fresh.refundActiveClaim &&
+      typeof fresh.refundActiveClaim === "object" &&
+      !Array.isArray(fresh.refundActiveClaim) &&
+      typeof fresh.refundActiveClaim.claimedAt === "number" &&
+      Number.isFinite(fresh.refundActiveClaim.claimedAt) &&
+      fresh.refundActiveClaim.claimedAt > 0;
+
+    const freshHasClaimedAt =
+      typeof fresh.refundClaimedAt === "number" &&
+      Number.isFinite(fresh.refundClaimedAt) &&
+      fresh.refundClaimedAt > 0;
+
+    const freshClaim = freshHasClaimObj
+      ? fresh.refundActiveClaim
+      : freshHasClaimedAt
+      ? {
+          requestId: fresh.refundClaimedRequestId ?? null,
+        }
+      : null;
+
+    // Stale completed-record transaction must NOT delete or overwrite another owner's active lease!
+    const stillOwnsClaim =
+      !freshClaim || (freshClaim.requestId ?? null) === (refundRequestId ?? null);
+
+    const orderCompleteData: Record<string, any> = {
+      refundAmount: amountRupees ?? null,
+      refundedTotalPaise: nextTotal,
+      refundLedger: freshLedger,
+      refundId: refundResult.id,
+      refundKeyedReceipts: {
+        ...(fresh.refundKeyedReceipts || {}),
+        ...(refundRequestId ? { [refundResult.id]: refundRequestId } : {}),
       },
-      { merge: true }
-    );
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (stillOwnsClaim) {
+      orderCompleteData.refundStatus = refundStatusValue;
+      orderCompleteData.refundClaimedAt = admin.firestore.FieldValue.delete();
+      orderCompleteData.refundClaimedRequestId = admin.firestore.FieldValue.delete();
+      orderCompleteData.refundClaimedPaymentId = admin.firestore.FieldValue.delete();
+      orderCompleteData.refundClaimedPaise = admin.firestore.FieldValue.delete();
+      orderCompleteData.refundClaimedKey = admin.firestore.FieldValue.delete();
+      orderCompleteData.refundClaimedReason = admin.firestore.FieldValue.delete();
+      orderCompleteData.refundActiveClaim = admin.firestore.FieldValue.delete();
+    }
+
+    tx.set(orderRef, orderCompleteData, { merge: true });
     // F7: release the held monthly fee (and count the refund) in the SAME
-    // transaction as the refund record, so no recovery worker is needed.
+    // transaction as the refund record, so no recovery worker is needed. Runs
+    // even on a lost-lease takeover: the money moved, and the release is
+    // idempotent through releasedPaise/refundLedgeredPaise.
     applyRefundToMonthlyFee(tx, orderRef, fresh, nextTotal);
+
+    if (reqRef && refundRequestId) {
+      tx.set(
+        reqRef,
+        {
+          orderId,
+          paymentId: razorpayPaymentId,
+          refundRequestId,
+          requestedPaise,
+          reason: reason ?? null,
+          status: "completed",
+          refundId: refundResult.id,
+          gatewayKey,
+          completedAt: Date.now(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
     // Coins are restored only when the WHOLE captured amount is back with the
     // customer. A partial refund leaves the order live, so its redeemed coins
     // stay spent (PAY-03).
@@ -2578,6 +3498,7 @@ export async function autoRefund(
     amountRupees: amountRupees ?? null,
     action: "refund_processed",
     reason: reason ?? null,
+    refundRequestId: refundRequestId ?? null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
@@ -2593,6 +3514,7 @@ export async function autoRefund(
       razorpayPaymentId,
       refundId: refundResult.id,
       amountRupees: amountRupees ?? null,
+      refundRequestId: refundRequestId ?? null,
     },
   });
 

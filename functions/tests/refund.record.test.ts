@@ -260,7 +260,7 @@ describe("PAY-02: refund claim release on gateway failure", () => {
       throw new Error("gateway timeout");
     });
     await expect(
-      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1" })
+      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1" , refundRequestId: "refund_req_f1_release" })
     ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
     // "MOCK_DELETE" is the FieldValue.delete() sentinel in this rig.
     expect(savedDocs["orders/ord_f1"].refundClaimedAt).toBe("MOCK_DELETE");
@@ -278,7 +278,7 @@ describe("PAY-02: refund claim release on gateway failure", () => {
       throw new Error("gateway refused");
     });
     await expect(
-      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1", amountRupees: 200 })
+      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1", amountRupees: 200 , refundRequestId: "refund_req_f1_restore" })
     ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
     expect(savedDocs["orders/ord_f1"].refundStatus).toBe("partially_refunded");
     expect(savedDocs["orders/ord_f1"].refundClaimedAt).toBe("MOCK_DELETE");
@@ -291,7 +291,7 @@ describe("PAY-02: refund claim release on gateway failure", () => {
       throw new Error("gateway timeout");
     });
     await expect(
-      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1" })
+      autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1" , refundRequestId: "refund_req_f1_release_fail" })
     ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
     // Release failed: the lease marker is still the numeric claim timestamp.
     expect(typeof savedDocs["orders/ord_f1"].refundClaimedAt).toBe("number");

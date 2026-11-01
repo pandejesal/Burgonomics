@@ -70,6 +70,7 @@ import {
   dispatchCancel,
   savePorterManualBooking,
   autoRebookDispatchWorker,
+  sweepStaleDispatchClaims,
   handleDispatchWebhook,
 } from "./modules/dispatch";
 import {
@@ -101,6 +102,17 @@ import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
 import { resolveTopicCaller } from "./modules/notifications/topicCaller";
+import { registerDeviceToken, httpResponseFor } from "./core/deviceTokenRegister";
+import { authorizeDispatch } from "./modules/notifications/registry";
+import {
+  auditAdminDispatch,
+  resolveDispatchTarget,
+} from "./modules/notifications/sendGate";
+import {
+  DevicePrefsVersionConflict,
+  getDevicePreferences,
+  updateDevicePreferences,
+} from "./modules/notifications/devicePrefs";
 import {
   setUserCustomClaims,
   assignUserRole,
@@ -145,6 +157,8 @@ import {
   dispatchNotificationSchema,
   registerTokenSchema,
   unregisterTokenSchema,
+  notificationInstallationIdSchema,
+  updateNotificationPreferencesSchema,
   topicSubscriptionSchema,
   setClaimsSchema,
   assignRoleSchema,
@@ -207,7 +221,9 @@ const limiter = rateLimit({
   skip: (req) => WEBHOOK_RATE_LIMIT_EXEMPT_PREFIXES.some((p) => req.path === p),
 });
 
-const app = express();
+// Exported for behavioural route tests (they drive the real middleware chain
+// with stubbed services instead of pinning handler source text).
+export const app = express();
 app.set("trust proxy", 1);
 
 // Fail-closed production-key guard (see enforceProductionKeysOnce above): the
@@ -289,6 +305,7 @@ app.use(
     "/notifications/unsubscribe",
     "/notifications/registerToken",
     "/notifications/unregisterToken",
+    "/notifications/preferences",
     "/auth/setClaims",
     "/auth/assignRole",
     "/auth/revokeRole",
@@ -566,13 +583,25 @@ app.post(
 app.post("/petpooja/stockWebhook", verifyPetpoojaAuth, async (req, res) => {
   const p = req.body || {};
   try {
-    await handlePetpoojaStockWebhook(p);
+    // F6: a stock toggle that was NOT applied must be answered non-2XX. Two
+    // shapes used to answer 200 while nothing happened — a version conflict (the
+    // park document has no drainer) and an unclassified local write failure (the
+    // handler fell off the end). Both are silent 86ing losses: the item stays
+    // orderable for customers while the kitchen believes it is out. 503 tells
+    // Petpooja to redeliver, and the redelivery re-reads the product.
+    const result = await handlePetpoojaStockWebhook(p);
+    const retryable = result?.retryable === true;
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/stockWebhook",
-      outcome: "ok",
+      outcome: retryable ? "error" : "ok",
       restId: p.rest_id ?? p.restID ?? p.restId ?? null,
       itemId: p.item_id ?? p.itemID ?? p.itemId ?? null,
+      detail: retryable ? `not applied (${result.reason || "retry"}) — answered 503 for redelivery` : undefined,
     });
+    if (retryable) {
+      res.status(503).json({ status: "retry", reason: "stock toggle not applied — redeliver" });
+      return;
+    }
     res.status(200).json({ status: "success" });
   } catch (err: any) {
     await auditPetpoojaWebhook({
@@ -735,11 +764,23 @@ app.post(
       const result = await runPetpoojaTestScenario(req.body, req.user);
       res.status(200).json(result);
     } catch (err: any) {
-      // 403 = the zero-mock production refusal raised by the runner itself;
-      // any other failure stays 500.
-      res
-        .status(err.statusCode === 403 ? 403 : 500)
-        .json({ error: err.message || "Petpooja test runner failed" });
+      // 403 = zero-mock production refusal or forbidden branch access;
+      // other staff errors map via staffErrorStatus, or keep err.statusCode.
+      const status = err.statusCode || staffErrorStatus(err, 500);
+      // Wire fix (relay catch): a 409 BLOCKED_CONFIGURATION previously lost
+      // its code and gap detail in the generic { error } envelope — support
+      // could not act on WHY the relay refused. Surface them safely; every
+      // other failure keeps its previous generic shape (RBAC wording
+      // preserved).
+      if (err?.code === "BLOCKED_CONFIGURATION") {
+        res.status(409).json({
+          code: "BLOCKED_CONFIGURATION",
+          gaps: Array.isArray(err?.petpoojaDetail) ? err.petpoojaDetail : err?.petpoojaDetail,
+          error: err.message || "Petpooja test runner blocked by configuration",
+        });
+        return;
+      }
+      res.status(status).json({ error: err.message || "Petpooja test runner failed" });
     }
   }
 );
@@ -1191,21 +1232,33 @@ app.post(
 app.post(
   "/notifications/dispatch",
   requireAuth,
-  requireRole(["brand_owner", "developer", "support", "branch_owner"]),
+  requireRole([
+    "brand_owner",
+    "developer",
+    "support",
+    "regional_manager",
+    "branch_owner",
+    "branch_staff",
+  ]),
   validateBody(dispatchNotificationSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
-      // Topic/token validation already done by schema; enforce role scoping
-      const { topic, token, title, body, data } = req.body as {
+      // Topic/token validation already done by schema; enforce role scoping.
+      const { topic, token, title, body, data, purpose } = req.body as {
         topic?: string;
         token?: string;
         title: string;
         body: string;
         data?: Record<string, string>;
+        purpose?: "operational" | "orderUpdates" | "supportReplies";
       };
       const caller = await resolveTopicCaller(req.user as any);
       const isBrandAdmin = caller.isBrandAdmin === true;
+      // The server-resolved caller is authoritative; the token claim is the
+      // fallback for the downstream role matrix / audit actor.
+      const role = caller.role ?? ((req.user as any)?.role as string | undefined);
       if (topic) {
+        // Topic path is unchanged (contract §3.5): staff operational only.
         const clean = filterSubscribableTopics([topic], caller);
         if (clean.length === 0) {
           res.status(403).json({ error: "Forbidden: topic is outside your role scope" });
@@ -1218,18 +1271,56 @@ app.post(
             return;
           }
         }
-      } else {
-        // Token path
-        if (!isBrandAdmin) {
-          const { db } = await import("./core/firebase");
-          const tokenDoc = await db.collection("device_tokens").doc(token as string).get();
-          if (!tokenDoc.exists) {
-            res.status(403).json({ error: "Forbidden: token is not a registered device" });
-            return;
-          }
-        }
+        const success = await dispatchFCM({
+          topic,
+          title,
+          body,
+          data,
+          purpose: "operational",
+          actor: { uid: req.user?.uid, role, trusted: true },
+        });
+        res.status(200).json({ success });
+        return;
       }
-      const success = await dispatchFCM({ topic, token, title, body, data });
+
+      // Token path (§3): resolve the ledger owner, then apply the role matrix.
+      // Every denial is the same generic body — no existence oracle.
+      const target = await resolveDispatchTarget(token as string);
+      const decision = authorizeDispatch({
+        caller: {
+          uid: req.user?.uid,
+          role,
+          branchIds: Array.isArray((req.user as any)?.branchIds)
+            ? ((req.user as any).branchIds as string[])
+            : [],
+          isBrandAdmin: (req.user as any)?.isBrandAdmin === true,
+        },
+        tokenOwner: target ? { uid: target.ownerUid, role: target.role, branchIds: target.branchIds } : null,
+        requestedPurpose: purpose,
+      });
+      if (!decision.allowed || !decision.ownerUid) {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
+
+      if (decision.auditRequired && req.user?.uid) {
+        await auditAdminDispatch({
+          actorUid: req.user.uid,
+          purpose: decision.purpose,
+          recipientUid: decision.ownerUid,
+          token: token as string,
+        });
+      }
+
+      const success = await dispatchFCM({
+        token,
+        title,
+        body,
+        data,
+        purpose: decision.purpose,
+        recipientUid: decision.ownerUid,
+        actor: { uid: req.user?.uid, role, trusted: true },
+      });
       res.status(200).json({ success });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to dispatch notification" });
@@ -1243,10 +1334,11 @@ app.post(
 // beyond rules). This endpoint validates, stamps metadata, and links both.
 app.post("/notifications/registerToken", requireAuth, validateBody(registerTokenSchema), async (req: AuthenticatedRequest, res) => {
   try {
-    const { token, platform, appVersion } = req.body as {
+    const { token, platform, appVersion, installationId } = req.body as {
       token?: string;
       platform?: string;
       appVersion?: string;
+      installationId?: string;
     };
     if (!token || typeof token !== "string" || token.length < 10 || token.length > 500) {
       res.status(400).json({ error: "valid token is required" });
@@ -1269,8 +1361,7 @@ app.post("/notifications/registerToken", requireAuth, validateBody(registerToken
     // foreign/ownerless binding refuses race-safe, and the exact wire
     // contract (200 {success}, generic 409) is pinned by httpResponseFor's
     // unit tests.
-    const { registerDeviceToken, httpResponseFor } = await import("./core/deviceTokenRegister");
-    const result = await registerDeviceToken({ token, uid, platform, appVersion });
+    const result = await registerDeviceToken({ token, uid, platform, appVersion, installationId });
     const http = httpResponseFor(result);
     res.status(http.status).json(http.body);
   } catch (err: any) {
@@ -1295,6 +1386,79 @@ app.post("/notifications/unregisterToken", requireAuth, validateBody(unregisterT
     res.status(200).json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to unregister token" });
+  }
+});
+
+// Canonical per-installation notification preferences (contract §7, §8).
+// The server is the only writer of users/{uid}/device_prefs/{installationId};
+// the body can never carry a uid, category enum, or security field (strict
+// schema), and every write is CAS-guarded by expectedVersion.
+//
+// GET is the canonical read the customer hydration barrier depends on. An
+// absent record is a normal 200 with documented defaults at version 0 — never
+// a 404 (404 means route/build mismatch and must stay terminal on the client).
+app.get("/notifications/preferences", requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const parsed = notificationInstallationIdSchema.safeParse(req.query?.installationId);
+    if (!parsed.success) {
+      res.status(400).json({ error: "valid installationId is required" });
+      return;
+    }
+    const result = await getDevicePreferences({ uid, installationId: parsed.data });
+    res.status(200).json(result);
+  } catch {
+    res.status(500).json({ error: "Failed to read notification preferences" });
+  }
+});
+
+app.post("/notifications/preferences", requireAuth, validateBody(updateNotificationPreferencesSchema), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { installationId, notificationPrefs, expectedVersion, mutationId } = req.body as {
+      installationId: string;
+      notificationPrefs: Record<string, boolean>;
+      expectedVersion: number;
+      mutationId?: string;
+    };
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const result = await updateDevicePreferences({
+      uid,
+      installationId,
+      notificationPrefs,
+      expectedVersion,
+      mutationId,
+    });
+    res.status(200).json(result);
+  } catch (err: any) {
+    if (
+      err instanceof DevicePrefsVersionConflict ||
+      err?.code === "PREF_VERSION_CONFLICT" ||
+      err?.code === "idempotency_conflict"
+    ) {
+      const code =
+        err?.code === "idempotency_conflict" ? "idempotency_conflict" : "PREF_VERSION_CONFLICT";
+      // The customer conflict card rebases on these values; omitting them makes
+      // "Keep mine" send expectedVersion 0 against an existing doc forever.
+      res.status(409).json({
+        error:
+          code === "idempotency_conflict"
+            ? "idempotency conflict"
+            : "preferences version conflict",
+        code,
+        currentVersion: typeof err?.currentVersion === "number" ? err.currentVersion : 0,
+        currentPrefs: err?.currentPrefs ?? null,
+      });
+      return;
+    }
+    res.status(500).json({ error: "Failed to update notification preferences" });
   }
 });
 
@@ -1559,6 +1723,10 @@ export const retryPetpoojaOrders = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (M2): the 100-doc window × 15s abort budget can
+    // overrun the 60s v2 default and die mid-claim. 9 minutes bounds it
+    // comfortably (worst case ~375s) so a claimed batch always finishes.
+    timeoutSeconds: 540,
   },
   async () => {
     const { ran, result } = await withSchedulerLock(
@@ -1601,6 +1769,10 @@ export const retryRouteTransfers = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (M2): 40 claimed docs × up-to-45s gateway
+    // budget overruns the 60s v2 default and dies mid-claim. 9 minutes
+    // bounds it comfortably (worst case ~450s).
+    timeoutSeconds: 540,
   },
   async () => {
     const { ran, result } = await withSchedulerLock(
@@ -1668,6 +1840,10 @@ export const autoRebookCancelledDispatches = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // Stress sweep 2026-10-24 (F11): up to AUTO_REBOOK_QUERY_LIMIT orders, each
+    // with a fresh quote fan-out + book call (60–90s+ worst case) overruns the
+    // 60s v2 default and would die mid-walk. Matches its sibling workers.
+    timeoutSeconds: 540,
   },
   async () => {
     const { ran, result } = await withSchedulerLock(
@@ -1681,6 +1857,36 @@ export const autoRebookCancelledDispatches = onSchedule(
     }
     console.log(
       `[Auto Rebook Worker] scanned ${result!.scanned} — rebooked ${result!.rebooked}, failed ${result!.failed}, busy ${result!.busy}, manual ${result!.manual}, skipped ${result!.skipped}, exhausted ${result!.exhausted}`
+    );
+  }
+);
+
+// Stale-claim sweep (F10 crash lane): an order whose dispatch process died
+// between the provider's create-order POST and our success write keeps only a
+// `dispatch_pending` lease. Once that lease expires, a retry would book a
+// SECOND rider. This sweep parks such orders `needs_reconciliation` (never
+// rebooks) so staff reconcile the possible remote booking.
+export const sweepStaleDispatchClaimsJob = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+    // 25 per tick, each with a transaction re-read + park write: minutes, not
+    // seconds, on a hot collection — never the 60s v2 default.
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "sweep-stale-dispatch-claims",
+      4 * 60 * 1000,
+      () => sweepStaleDispatchClaims()
+    );
+    if (!ran) {
+      console.log("[Stale Claim Sweep] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Stale Claim Sweep] scanned ${result!.scanned} — parked ${result!.parked}`
     );
   }
 );

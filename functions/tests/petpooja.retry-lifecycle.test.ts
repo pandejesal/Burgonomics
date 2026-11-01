@@ -134,14 +134,26 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     savedDocs["branches/branch_ahmedabad_1"] = {
+      // H2 fixture — captured Petpooja tax catalogue (no builder default).
+      petpoojaTaxes: [
+        { id: "3928", name: "CGST", rate: 2.5 },
+        { id: "3929", name: "SGST", rate: 2.5 },
+      ],
       name: "Ahmedabad Main",
       petpoojaStoreId: "res_ahm_01",
     };
-    // POS-11: POS lines are priced from the catalog (a real order's products
-    // exist there). These tests exercise retry/lease mechanics, not money, so
-    // one catalog price per fixture line id is enough.
-    savedDocs["products/itm_1"] = { price: 200, inStock: true };
-    savedDocs["products/itm_2"] = { price: 180, inStock: true };
+    // POS-11: POS lines are priced from the catalog (branch-scoped id).
+    savedDocs["products/prod_branch_ahmedabad_1_7765862"] = {
+      id: "prod_branch_ahmedabad_1_7765862",
+      branchId: "branch_ahmedabad_1",
+      petpoojaItemId: "7765862",
+      price: 200,
+      inStock: true,
+      petpoojaItemTaxIds: ["3928", "3929"],
+      petpoojaTaxInclusive: false,
+      petpoojaTaxUnsupported: false,
+      petpoojaGstType: "goods",
+    };
   });
 
   afterEach(() => {
@@ -156,7 +168,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Busy Case",
       customerPhone: "+919825000001",
-      items: [{ id: "itm_1", name: "Burger", price: 199, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 199, quantity: 1 }],
       pricing: { grandTotal: 199, gst: 9.95 },
       status: "pending",
       petpoojaPushClaimedAt: Date.now(), // Active push in flight
@@ -182,7 +194,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Sequential Retry Test",
       customerPhone: "+919825000002",
-      items: [{ id: "itm_1", name: "Smash Burger", price: 250, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Smash Burger", price: 250, quantity: 1 }],
       pricing: { grandTotal: 250, gst: 12.5 },
       status: "pending",
       petpoojaStatus: "pending_retry",
@@ -236,7 +248,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Competing Push Test",
       customerPhone: "+919825000003",
-      items: [{ id: "itm_1", name: "Burger", price: 200, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
       petpoojaStatus: "pending_retry",
@@ -264,7 +276,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Candidate 1",
       customerPhone: "+919825000004",
-      items: [{ id: "itm_1", name: "Burger 1", price: 150, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger 1", price: 150, quantity: 1 }],
       pricing: { grandTotal: 150, gst: 7.5 },
       status: "pending",
       petpoojaStatus: "pending_retry",
@@ -277,7 +289,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Candidate 2",
       customerPhone: "+919825000005",
-      items: [{ id: "itm_2", name: "Burger 2", price: 180, quantity: 1 }],
+      items: [{ id: "itm_2", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger 2", price: 180, quantity: 1 }],
       pricing: { grandTotal: 180, gst: 9.0 },
       status: "pending",
       petpoojaStatus: "pending_retry",
@@ -310,7 +322,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Crashed Pusher Order",
       customerPhone: "+919825000006",
-      items: [{ id: "itm_1", name: "Burger", price: 200, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
       petpoojaStatus: "processing",
@@ -346,7 +358,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Live Processing Order",
       customerPhone: "+919825000007",
-      items: [{ id: "itm_1", name: "Burger", price: 200, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
       petpoojaStatus: "processing",
@@ -376,7 +388,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Racer Won Order",
       customerPhone: "+919825000008",
-      items: [{ id: "itm_1", name: "Burger", price: 200, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
       petpoojaStatus: "processing",
@@ -401,7 +413,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Pre-read Reconcile Order",
       customerPhone: "+919825000010",
-      items: [{ id: "itm_1", name: "Burger", price: 200, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
       petpoojaStatus: "processing", // initial pre-read passes reconciliation guard at line 466
@@ -437,7 +449,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Non-Tx Stale Order",
       customerPhone: "+919825000011",
-      items: [{ id: "itm_1", name: "Burger", price: 200, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
       petpoojaStatus: "processing",
@@ -474,7 +486,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Busy Push Test",
       customerPhone: "+919825000012",
-      items: [{ id: "itm_1", name: "Burger", price: 200, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
       petpoojaStatus: "pending_retry",
@@ -514,7 +526,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       branchId: "branch_ahmedabad_1",
       customerName: "Won Racer Cleanup",
       customerPhone: "+919825000014",
-      items: [{ id: "itm_1", name: "Burger", price: 200, quantity: 1 }],
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
       pricing: { grandTotal: 200, gst: 10 },
       status: "pending",
       petpoojaStatus: "processing",

@@ -1,0 +1,6 @@
+﻿{
+    "scope":  "Unchanged full suite after isolated refund-file pass; initial timeout evidence preserved in tests-doc-review.log",
+    "timeoutOrAssertionsChanged":  false,
+    "testsExit":  0,
+    "command":  "npm test -- --maxWorkers=1 --no-file-parallelism"
+}

@@ -2,7 +2,7 @@ import * as crypto from "crypto";
 import { db } from "../../core/firebase";
 import { config, assertLiveDispatchContext } from "../../config/env";
 import { extractRiderGps } from "../dispatch/dispatch.webhooks";
-import { ACTIVE_DELIVERY_STATUSES } from "../dispatch/types";
+import { ACTIVE_DELIVERY_STATUSES, hasOwnedLiveBooking } from "../dispatch/types";
 import {
   timingSafeEqual,
   verifyPorterWebhookSignature,
@@ -288,6 +288,7 @@ function isManualBranchAssignmentActive(order: any): boolean {
  * stay assignable in-house.
  */
 function hasActiveProviderBinding(order: any): boolean {
+  if (hasOwnedLiveBooking(order)) return true;
   const active = (ACTIVE_DELIVERY_STATUSES as readonly string[]).includes(
     order?.deliveryStatus || ""
   );
@@ -486,7 +487,12 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
     // on top of a live manual assignment is two riders for one order.
     if (active && isManualBranchAssignmentActive(d)) return "in_house";
     // Another provider owns an active dispatch (porterOrderId absent = not ours).
-    if (active && d?.dispatchOrderId && !d?.porterOrderId) return "conflict";
+    // An owned live booking counts even when the deliveryStatus sidecar was not
+    // rewound (promoted correlated callback), so a stale "cancelled" sidecar
+    // can never let a second paid rider be booked on top.
+    if ((active || hasOwnedLiveBooking(d)) && d?.dispatchOrderId && !d?.porterOrderId) {
+      return "conflict";
+    }
     // The router holds a fresh generic claim — same 202 retry contract.
     if (isFreshGenericDispatchClaim(d)) {
       return "busy";
@@ -1484,6 +1490,8 @@ export async function handlePorterWebhook(
           title: "Rider cancelled — rebook needed",
           body: `Order #${orderRef.id.substring(0, 6)} lost its rider. Open the delivery queue to rebook.`,
           data: { type: "rider_cancelled", orderId: orderRef.id, needsRebook: "true" },
+          purpose: "operational",
+          actor: { trusted: true },
         });
       }
     } catch (err: any) {
@@ -1818,6 +1826,15 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
     if (d.porterDispatchStatus === "needs_reconciliation") {
       return { needsReconciliation: true as const };
     }
+    // STRESS SWEEP 2026-10-24: the BORZO/SHADOWFAX ambiguous-book path parks
+    // the SAME reconciliation state on `dispatchStatus` with all provider ids
+    // released (dispatch.router.ts buildReleasedBindingWrite) — a remote
+    // courier may already be booked even though every id has been nulled.
+    // Refusing only the Porter spelling let an in-house rider be layered over
+    // that booking (two riders, one order).
+    if (d.dispatchStatus === "needs_reconciliation") {
+      return { needsReconciliation: true as const };
+    }
 
     tx.set(orderDoc.ref, manualWrite, { merge: true });
     return { ok: true as const };
@@ -1921,6 +1938,8 @@ export async function pollActivePorterOrdersWorker(): Promise<{
               title: "Delivery tracking lost — review needed",
               body: `Order #${doc.id.substring(0, 6)} has no courier updates. Check Porter or rebook.`,
               data: { type: "porter_tracking_lost", orderId: doc.id, needsRebook: "true" },
+              purpose: "operational",
+              actor: { trusted: true },
             });
           } catch {
             // Alert best-effort; snapshot above is the durable trail.

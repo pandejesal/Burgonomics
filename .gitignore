@@ -4,6 +4,8 @@
 .swarm/
 .swarm-worktrees/
 .firebase/
+~/.local/
+**/opencode-nexus/
 
 # Secrets & credentials (never commit)
 CLIENT_HANDOVER_AND_KEYS.md

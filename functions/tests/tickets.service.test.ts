@@ -62,7 +62,7 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { resolveTicket, resolveTicketNote, addTicketMessage } from "../src/modules/tickets/tickets.service";
+import { resolveTicket, resolveTicketNote, addTicketMessage, escalateTicket } from "../src/modules/tickets/tickets.service";
 import { config } from "../src/config/env";
 
 const BASE = {
@@ -236,7 +236,7 @@ describe("resolveTicket (real money paths)", () => {
     expect(auditsAfterSecond).toBe(1);
   });
 
-  it("replays idempotently across tickets on the same order, refuses a different amount", async () => {
+  it("treats two tickets on one order as two refund intents — equal amounts are not a replay", async () => {
     savedDocs["support_tickets/tk_rfnd_a"] = {
       ticketNumber: "TICK-2026-0006",
       orderId: "order_rfnd_1",
@@ -248,7 +248,7 @@ describe("resolveTicket (real money paths)", () => {
       customerId: "cust_3",
     };
     savedDocs["orders/order_rfnd_1"] = {
-      payment: { razorpayPaymentId: "pay_live_3" },
+      payment: { razorpayPaymentId: "pay_live_3", capturedAmountPaise: 50000 },
     };
     const first = await resolveTicket({
       ...BASE,
@@ -261,20 +261,27 @@ describe("resolveTicket (real money paths)", () => {
       k.startsWith("payment_audits/")
     ).length;
     expect(auditsAfterFirst).toBe(1);
-    // Same order + same amount on a second ticket: stored receipt replayed,
-    // no second charge, no new audit.
-    const replay = await resolveTicket({
+    // F10: refund identity is the durable request id (ticket + action), not
+    // (order, amount). A different ticket is a different intent, so the same
+    // ₹50 is a NEW refund that must still respect the cumulative captured cap —
+    // it is neither replayed as the first receipt nor silently collapsed.
+    const second = await resolveTicket({
       ...BASE,
       ticketId: "tk_rfnd_b",
       action: "partial_refund",
       amount: 50,
     });
-    expect(replay.success).toBe(true);
-    expect(replay.resolution.refundResult.reused).toBe(true);
-    const auditsAfterReplay = Object.keys(savedDocs).filter((k) =>
+    expect(second.success).toBe(true);
+    expect(second.resolution.refundResult.reused).not.toBe(true);
+    expect(second.resolution.refundResult.id).not.toBe(first.resolution.refundResult.id);
+    const auditsAfterSecond = Object.keys(savedDocs).filter((k) =>
       k.startsWith("payment_audits/")
     ).length;
-    expect(auditsAfterReplay).toBe(1);
+    expect(auditsAfterSecond).toBe(2);
+    const order = savedDocs["orders/order_rfnd_1"];
+    expect(order.refundedTotalPaise).toBe(10000);
+    expect(Object.keys(order.refundLedger)).toHaveLength(2);
+    expect(order.refundStatus).toBe("partially_refunded");
   });
 
   it("refuses a different-amount refund on an already-refunded order (ALREADY_REFUNDED)", async () => {
@@ -454,5 +461,138 @@ describe("resolveTicketNote (non-money resolution)", () => {
       })
     ).rejects.toThrow(/outside your assigned branches/);
     expect(savedDocs["support_tickets/tk_note"].status).toBe("open");
+  });
+});
+
+describe("escalateTicket — server-side monotonicity", () => {
+  const GLOBAL_CALLER = { uid: "staff_1", role: "brand_owner" } as const;
+  const escalate = (overrides: Record<string, any> = {}) =>
+    escalateTicket({
+      ticketId: "tk_esc",
+      targetTier: "brand_support",
+      reason: "needs a second look",
+      escalatedBy: "staff_1",
+      escalatedByName: "Staff One",
+      caller: GLOBAL_CALLER,
+      ...overrides,
+    } as any);
+
+  const snapshotDocs = () =>
+    Object.keys(savedDocs).filter((key) => key.startsWith("dev_error_snapshots/"));
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+  });
+
+  it("L3 (developer_team) cannot be demoted to L2 (brand_support)", async () => {
+    savedDocs["support_tickets/tk_esc"] = {
+      ticketNumber: "TICK-2026-9001",
+      branchId: "branch_a",
+      status: "escalated",
+      assignedTo: { tier: "developer_team" },
+    };
+
+    const err: any = await escalate({ targetTier: "brand_support" }).then(
+      (res) => ({ unexpectedSuccess: res }),
+      (e) => e
+    );
+
+    expect(err.code).toBe("TICKET_ESCALATION_NOT_UPWARD");
+    expect(err.statusCode).toBe(409);
+    expect(err.unexpectedSuccess).toBeUndefined();
+    // No write, no timeline event, no developer snapshot.
+    expect(savedDocs["support_tickets/tk_esc"].assignedTo).toEqual({ tier: "developer_team" });
+    expect(savedDocs["support_tickets/tk_esc"]["assignedTo.tier"]).toBeUndefined();
+    expect(savedDocs["support_tickets/tk_esc"].timeline).toBeUndefined();
+    expect(snapshotDocs()).toHaveLength(0);
+  });
+
+  it("the same tier cannot be re-escalated", async () => {
+    savedDocs["support_tickets/tk_esc"] = {
+      ticketNumber: "TICK-2026-9002",
+      branchId: "branch_a",
+      status: "escalated",
+      assignedTo: { tier: "brand_support" },
+    };
+
+    await expect(escalate({ targetTier: "brand_support" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "TICKET_ESCALATION_NOT_UPWARD",
+    });
+    expect(savedDocs["support_tickets/tk_esc"].timeline).toBeUndefined();
+  });
+
+  it.each(["resolved", "closed"] as const)(
+    "a %s ticket cannot escalate (409, no write)",
+    async (status) => {
+      savedDocs["support_tickets/tk_esc"] = {
+        ticketNumber: `TICK-2026-90${status === "resolved" ? "03" : "04"}`,
+        branchId: "branch_a",
+        status,
+        assignedTo: { tier: "branch" },
+      };
+
+      await expect(escalate({ targetTier: "brand_support" })).rejects.toMatchObject({
+        statusCode: 409,
+        code: "TICKET_ALREADY_RESOLVED",
+      });
+      expect(savedDocs["support_tickets/tk_esc"].status).toBe(status);
+      expect(savedDocs["support_tickets/tk_esc"].timeline).toBeUndefined();
+      expect(snapshotDocs()).toHaveLength(0);
+    }
+  );
+
+  it("an unrecognized current tier is refused rather than ranked by guess", async () => {
+    savedDocs["support_tickets/tk_esc"] = {
+      ticketNumber: "TICK-2026-9005",
+      branchId: "branch_a",
+      status: "escalated",
+      assignedTo: { tier: "regional_ops" },
+    };
+
+    await expect(escalate({ targetTier: "developer_team" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "TICKET_ESCALATION_TIER_UNKNOWN",
+    });
+    expect(savedDocs["support_tickets/tk_esc"].timeline).toBeUndefined();
+    expect(snapshotDocs()).toHaveLength(0);
+  });
+
+  it("a valid L1 -> L2 escalation still succeeds", async () => {
+    savedDocs["support_tickets/tk_esc"] = {
+      ticketNumber: "TICK-2026-9006",
+      branchId: "branch_a",
+      status: "open",
+      assignedTo: { tier: "branch" },
+    };
+
+    const res = await escalate({ targetTier: "brand_support" });
+
+    expect(res).toMatchObject({ success: true, ticketId: "tk_esc", targetTier: "brand_support" });
+    const stored = savedDocs["support_tickets/tk_esc"];
+    expect(stored.status).toBe("escalated");
+    // The service writes Firestore's dotted path; the flat test harness stores
+    // it as a literal key (production interprets it as assignedTo.tier).
+    expect(stored["assignedTo.tier"]).toBe("brand_support");
+    expect(Array.isArray(stored.timeline)).toBe(true);
+    expect(stored.timeline[0]).toMatchObject({ action: "escalated_to_brand_support" });
+    // brand_support does not mint a developer snapshot.
+    expect(snapshotDocs()).toHaveLength(0);
+  });
+
+  it("a valid L2 -> L3 escalation still mints the developer snapshot", async () => {
+    savedDocs["support_tickets/tk_esc"] = {
+      ticketNumber: "TICK-2026-9007",
+      branchId: "branch_a",
+      status: "escalated",
+      assignedTo: { tier: "brand_support" },
+    };
+
+    const res = await escalate({ targetTier: "developer_team" });
+
+    expect(res.success).toBe(true);
+    expect(res.snapshotId).toBeTruthy();
+    expect(savedDocs["support_tickets/tk_esc"]["assignedTo.tier"]).toBe("developer_team");
+    expect(snapshotDocs().length).toBeGreaterThan(0);
   });
 });

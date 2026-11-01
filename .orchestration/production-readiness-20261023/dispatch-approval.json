@@ -1,0 +1,26 @@
+{
+  "scope": "dispatch",
+  "base": "31e82c3c415757064e3b33010ade4d2b0d8ebd6f",
+  "reviewSession": "ses_e9865155fffepNPXpD5BxYyg0t",
+  "reviewModel": "opencode/glm-5.3-flash-free",
+  "verdict": "APPROVE",
+  "focusedTests": 70,
+  "gate": "FULL_GATE_PENDING",
+  "files": [
+    {
+      "path": "functions/src/modules/porter/porter.service.ts",
+      "blob": "dccb7742d8156d52be8a18a2b8c5e6c3d083e740",
+      "sha256": "a8b25b72b611f16304feffcb5e27ac9a34728f4b5f69518035c305292b174c05"
+    },
+    {
+      "path": "functions/src/modules/dispatch/dispatch.router.ts",
+      "blob": "b8f47bbdba2a38212accd083e8b556adf1b04dfa",
+      "sha256": "db935eb013d5d670987027b82149b14ea7f4bf83608e844405361782f78e7c3f"
+    },
+    {
+      "path": "functions/tests/dispatch.manual-assignment-race.test.ts",
+      "blob": "a4286406b76e52c97900f7e54cc7fe6e4be1cce4",
+      "sha256": "00beef490386b244fad4ecae96be529a528bb6a87a16eacb8d6083bab16e61d2"
+    }
+  ]
+}

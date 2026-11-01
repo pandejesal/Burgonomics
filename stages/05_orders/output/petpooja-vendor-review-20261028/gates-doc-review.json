@@ -1,0 +1,6 @@
+﻿{
+    "scope":  "Documentation-only changes; passing suite does not resolve documented financial gaps",
+    "buildExit":  0,
+    "testsExit":  1,
+    "typecheckExit":  0
+}
