@@ -97,8 +97,11 @@ service cloud.firestore {
       return [
         'deliveryOtp', 'deliveryOtpHash', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
         'refund', 'refundStatus', 'refundId', 'refundAmount',
+        'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
         'pricing', 'pricingSnapshot', 'petpoojaOrderId', 'dispatchStatus',
-        'routeTransferStatus'
+        'routeTransferStatus', 'routeTransferNeedsManualSettlement',
+        'routeTransferRetryCount', 'routeTransferClaimedAt',
+        'paymentChannel', 'monthlyFeeHold'
       ];
     }
 
@@ -111,7 +114,9 @@ service cloud.firestore {
         'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
         'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount',
         'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
-        'routeTransferStatus',
+        'routeTransferStatus', 'routeTransferNeedsManualSettlement',
+        'routeTransferRetryCount', 'routeTransferClaimedAt',
+        'paymentChannel', 'monthlyFeeHold',
         'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil'
       ];
     }
@@ -340,7 +345,10 @@ service cloud.firestore {
       allow update: if isBrandOwner() || (
         ownsBranch(branchId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'servicedRadiusKm'
+          'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'servicedRadiusKm',
+          // F9: money config is brand-only. A branch may not move its own
+          // monthly fee or packaging price.
+          'monthlyFee', 'packaging', 'packagingFee', 'royaltyPercentage', 'brandRoyaltyPercent'
         ])
       );
       allow delete: if isBrandOwner();
@@ -364,7 +372,11 @@ service cloud.firestore {
       allow create: if isBrandOwner() || (
         isBranchOwner() && ownsBranch(request.resource.data.branchId) &&
         !request.resource.data.keys().hasAny([
-          'costPrice', 'compareAtPrice', 'discountPercentage', 'petpoojaItemId'
+          'costPrice', 'compareAtPrice', 'discountPercentage', 'petpoojaItemId',
+          // F9: priced selections and catalog packing data moved into the
+          // rules: `customizations` now sets what customers pay, so it gets the
+          // same protection as `price`.
+          'customizations', 'packingCharge', 'priceAvailable'
         ])
       );
       allow update: if isBrandOwner() || (
@@ -372,7 +384,8 @@ service cloud.firestore {
         ownsBranch(resource.data.branchId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'price', 'costPrice', 'compareAtPrice', 'discountPercentage', 'name', 'description',
-          'categoryId', 'categoryName', 'branchId', 'restId', 'petpoojaItemId', 'id'
+          'categoryId', 'categoryName', 'branchId', 'restId', 'petpoojaItemId', 'id',
+          'customizations', 'packingCharge', 'priceAvailable'
         ])
       );
       allow delete: if isBrandOwner();
@@ -810,6 +823,14 @@ service cloud.firestore {
         && request.resource.data.customerId == request.auth.uid;
       allow update: if isBrandOwner();
       allow delete: if isBrandOwner();
+    }
+
+    // F4/F9: the monthly-fee ledger. Server-only writes; a brand owner may read
+    // any branch's statement, a branch owner only its own. No catch-all exists
+    // in this file, so every other identity is denied by default.
+    match /branch_monthly_fees/{docId} {
+      allow read: if isBrandOwner() || ownsBranch(resource.data.branchId);
+      allow write: if false;
     }
 
     match /coupons/{couponCode} {
