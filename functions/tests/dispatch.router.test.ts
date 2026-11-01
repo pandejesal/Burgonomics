@@ -618,6 +618,26 @@ describe("savePorterManualBooking (DR8 paste lane)", () => {
 });
 
 describe("dispatchCancel", () => {
+  it("does not send concurrent Shadowfax cancellation requests", async () => {
+    config.shadowfax.apiKey = "your_api_token";
+    config.shadowfax.baseUrl = "https://hlbackend.staging.shadowfax.in";
+    seedOrder("ord_sfx_concurrent", { deliveryStatus: "dispatched", dispatchProvider: "shadowfax", dispatchOrderId: "21030620" });
+    let release!: (response: Response) => void;
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => { started = resolve; });
+    fetchHandler = (() => {
+      if (fetchCalls.length > 1) return new Response(null, { status: 500 });
+      started(); return new Promise<Response>((resolve) => { release = resolve; });
+    }) as any;
+    const first = dispatchCancel({ orderId: "ord_sfx_concurrent" });
+    await waiting;
+    const second = dispatchCancel({ orderId: "ord_sfx_concurrent" });
+    const result = await second.catch((err) => err);
+    release(new Response(null, { status: 200 }));
+    await first;
+    expect(result).toMatchObject({ code: "DISPATCH_CANCEL_IN_PROGRESS" });
+    expect(fetchCalls).toHaveLength(1);
+  });
   it("cancels Shadowfax remotely before releasing its binding", async () => {
     config.shadowfax.apiKey = "your_api_token";
     config.shadowfax.baseUrl = "https://hlbackend.staging.shadowfax.in";

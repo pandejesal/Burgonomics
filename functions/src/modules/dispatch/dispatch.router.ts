@@ -1853,6 +1853,30 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     ? String(order.dispatchOrderId || order.shadowfaxOrderId || "")
     : null;
   if (remoteShadowfaxId !== null) {
+    if (!db || typeof (db as any).runTransaction !== "function") {
+      const err: any = new Error("Shadowfax cancellation requires transactional booking protection");
+      err.statusCode = 503;
+      err.code = "DISPATCH_CANCEL_TRANSACTION_REQUIRED";
+      throw err;
+    }
+    await (db as any).runTransaction(async (tx: any) => {
+      const snapshot = await tx.get(orderDoc.ref);
+      const fresh = snapshot.exists ? snapshot.data() : null;
+      if (!fresh || fresh.dispatchProvider !== "shadowfax" || String(fresh.dispatchOrderId || fresh.shadowfaxOrderId || "") !== remoteShadowfaxId || !isActiveDispatch(fresh) || terminalDeliveryStatus(fresh)) {
+        const err: any = new Error("Dispatch binding changed before Shadowfax cancellation");
+        err.statusCode = 409;
+        err.code = "DISPATCH_BINDING_CHANGED";
+        throw err;
+      }
+      if (caller) await assertOrderBranchAccess(caller, fresh);
+      if (fresh.dispatchCancelPending) {
+        const err: any = new Error("Shadowfax cancellation is pending or requires reconciliation");
+        err.statusCode = 409;
+        err.code = "DISPATCH_CANCEL_IN_PROGRESS";
+        throw err;
+      }
+      tx.set(orderDoc.ref, { dispatchCancelPending: { provider: "shadowfax", providerOrderId: remoteShadowfaxId } }, { merge: true });
+    });
     await cancelShadowfaxOrder(remoteShadowfaxId);
   }
 
@@ -1860,6 +1884,7 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     deliveryStatus: "rider_cancelled",
     dispatchStatus: "cancelled_by_store",
     dispatchProviderCancel: p === "shadowfax" ? "confirmed" : "manual-required",
+    ...(p === "shadowfax" ? { dispatchCancelPending: null } : {}),
     needsRebook: true,
     // Staff-initiated cancel: the auto-rebook worker must NEVER re-dispatch
     // this one (only carrier_cancelled / dispatch_failed triggers auto-rebook).
@@ -1938,7 +1963,18 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
   const provider: ProviderId | null =
     (order.dispatchProvider as ProviderId) || (order.porterOrderId ? "porter" : null);
 
-  await orderDoc.ref.set(buildCancelPayload(order, provider), { merge: true });
+  const latest = await orderDoc.ref.get();
+  const fresh = latest.exists ? latest.data() : null;
+  if (!fresh || (fresh.dispatchProvider || null) !== (order.dispatchProvider || null) ||
+      String(fresh.dispatchOrderId || fresh.porterOrderId || "") !== String(order.dispatchOrderId || order.porterOrderId || "") ||
+      !isActiveDispatch(fresh) || terminalDeliveryStatus(fresh)) {
+    const err: any = new Error("Dispatch binding changed before cancellation");
+    err.statusCode = 409;
+    err.code = "DISPATCH_BINDING_CHANGED";
+    throw err;
+  }
+  if (caller) await assertOrderBranchAccess(caller, fresh);
+  await orderDoc.ref.set(buildCancelPayload(fresh, provider), { merge: true });
 
   return {
     success: true,
