@@ -138,6 +138,16 @@ describe("R4b restaurant due, delivery flags and cash collection", () => {
     expect(info.Order.details).toMatchObject({ order_type: "D", payment_type: "COD", collect_cash: "10.00", enable_delivery: 0, total: "10.00" });
   });
 
+  it("relays paid staff walk-in UPI and card tenders as CARD only", () => {
+    for (const paymentMethod of ["upi", "razorpay"]) {
+      const walkin = order({ customerId: "cust_walkin", userId: "staff_1", paymentStatus: "completed", orderType: "takeaway", paymentMethod, pricing: { grandTotal: 10, gst: 0 }, items: [{ itemId: "l1", petpoojaItemId: "101", name: "Item", price: 10, quantity: 1 }] });
+      expect(details(walkin).Order.details).toMatchObject({ order_type: "P", payment_type: "CARD", collect_cash: "0.00", enable_delivery: 0, total: "10.00" });
+      expect(() => details({ ...walkin, customerId: "customer_1" })).toThrow(/unverified payment type/);
+      expect(() => details({ ...walkin, userId: "cust_walkin" })).toThrow(/unverified payment type/);
+      expect(() => details({ ...walkin, paymentStatus: "pending" })).toThrow(/unverified payment type/);
+    }
+  });
+
   it("refuses unknown fulfillment or tender", () => {
     expect(() => details(order({ fulfillment: "unknown", paymentMethod: "cod" }))).toThrow(PetpoojaStructuralError);
     expect(() => details(order({ fulfillment: "takeaway", paymentMethod: "unknown" }))).toThrow(PetpoojaStructuralError);

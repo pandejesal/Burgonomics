@@ -373,7 +373,12 @@ function resolveKotType(order: any): { orderType: "delivery" | "takeaway" | "din
   const raw = String(order?.fulfillmentType || order?.orderType || order?.fulfillment || "").trim().toLowerCase().replace(/[ -]/g, "_");
   const orderType = raw === "delivery" ? "delivery" : raw === "takeaway" || raw === "pickup" || raw === "pick_up" ? "takeaway" : raw === "dinein" || raw === "dine_in" ? "dinein" : null;
   const tender = String(order?.paymentMethod || order?.payment?.method || "").trim().toLowerCase();
-  const paymentType = order?.paymentChannel === "razorpay" ? "ONLINE" : tender === "cod" || tender === "cash" ? "COD" : tender === "card" ? "CARD" : null;
+  // Rules reserve this sentinel for a scoped staff create, protect both ids
+  // and paymentStatus thereafter, and require the staff uid as userId.
+  const paidWalkIn = order?.customerId === "cust_walkin" &&
+    typeof order?.userId === "string" && order.userId.trim() !== "" &&
+    order.userId !== "cust_walkin" && order?.paymentStatus === "completed";
+  const paymentType = order?.paymentChannel === "razorpay" ? "ONLINE" : tender === "cod" || tender === "cash" ? "COD" : paidWalkIn && ["card", "upi", "razorpay"].includes(tender) ? "CARD" : null;
   const gaps: PetpoojaStructuralGap[] = [];
   if (!orderType) gaps.push({ field: "Order.details.order_type", reason: `unknown fulfillment type ${raw || "(missing)"}` });
   if (!paymentType) gaps.push({ field: "Order.details.payment_type", reason: `unverified payment type ${tender || "(missing)"}` });
