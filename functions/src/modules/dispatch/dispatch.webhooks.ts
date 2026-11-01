@@ -177,6 +177,25 @@ function cancelReasonText(payload: any): string {
   return found ? String(found).trim().slice(0, 300) : "";
 }
 
+/**
+ * Documented integer cancellation cause. Shadowfax spells the same 0-24 table
+ * differently per status: `cancel_reason` on CANCELLED, `reason` (a NUMBER) on
+ * CANCELLED_BY_CUSTOMER — so `reason` is only read here when it is numeric,
+ * never when it is the free-text string `cancelReasonText` already consumed.
+ */
+function cancelReasonCode(payload: any): number | null {
+  const candidates: any[] = [
+    payload?.cancel_reason,
+    payload?.reason,
+    payload?.delivery?.cancel_reason,
+    payload?.order?.cancel_reason,
+  ];
+  const found = candidates.find(
+    (c) => typeof c === "number" && Number.isInteger(c) && c >= 0 && c <= 24
+  );
+  return typeof found === "number" ? found : null;
+}
+
 /** Reason-text signals. Order matters: customer/returned win over carrier. */
 const CUSTOMER_CANCEL_TEXT = /\b(customer|client|buyer|consumer)\b/i;
 const RETURNED_TEXT = /\b(return(ed|ing)?|rts)\b/i;
@@ -184,7 +203,39 @@ const SELLER_TEXT = /\b(seller|store|merchant|restaurant|vendor|branch)\b/i;
 const CARRIER_CANCEL_TEXT =
   /\b(no riders?|no couriers?|no drivers?|no captains?|no partners?)\b|\b(rider|courier|driver|captain|partner|delivery)\b.{0,40}\b(too busy|busy|unavailable|not available|cancell?ed|cancel|rejected|dropped|did not|didn'?t|refused|no show|no-show|absent)\b|\bunfulfillable\b|\bunable to (deliver|fulfil|fulfill)\b|\bdelivery (failed|unavailable|not possible)\b|\bout of (coverage|range)\b|\bnot serviceable\b|\b(rejected|refused)\b/i;
 
-export function classifyCancelCause(rawEvent: string, reasonText: string): CancelCause {
+/**
+ * Shadowfax `cancel_reason` table, transcribed from the published callbacks
+ * page (CANCELLED and CANCELLED_BY_CUSTOMER share the same 0-24 codes).
+ *
+ * Only the codes that name a side UNAMBIGUOUSLY are listed. Seller-side codes
+ * (6 cancelled by seller, 15 delivered by seller, 16 item not available,
+ * 17 incorrect seller location) and genuinely ambiguous ones (3 duplicate
+ * order, 4 unserviceable address, 5 operational issue, 20 placed by mistake,
+ * 21 order item not read) are deliberately absent: they fall through to
+ * manual review, because none of them justifies buying a second rider
+ * automatically. Unknown codes are ignored for the same reason.
+ */
+const SHADOWFAX_CARRIER_CANCEL_CODES = new Set([
+  1, // Rider Not Available or is Late
+  7, // Rider not having enough cash for purchase
+  24, // Delivery partner refused pickup
+]);
+const SHADOWFAX_CUSTOMER_CANCEL_CODES = new Set([
+  0, // Cancelled by Customer
+  2, // Customer Not Available
+  19, // Customer Not responding / Phone switched off
+  22, // Got faster option from other provider
+  23, // Expected a shorter wait time
+]);
+
+function classifyCancelCode(code: number | null | undefined): CancelCause | null {
+  if (typeof code !== "number" || !Number.isInteger(code)) return null;
+  if (SHADOWFAX_CARRIER_CANCEL_CODES.has(code)) return "carrier";
+  if (SHADOWFAX_CUSTOMER_CANCEL_CODES.has(code)) return "customer";
+  return null;
+}
+
+export function classifyCancelCause(rawEvent: string, reasonText: string, reasonCode?: number | null): CancelCause {
   const key = normalizeEventKey(rawEvent);
   if (key === "CANCELLED_BY_CUSTOMER") return "customer";
   if (key === "RETURNED_TO_SELLER") return "returned";
@@ -200,6 +251,14 @@ export function classifyCancelCause(rawEvent: string, reasonText: string): Cance
     if (RETURNED_TEXT.test(text) && mentionsCancel) return "returned";
     if (CARRIER_CANCEL_TEXT.test(text)) return "carrier";
   }
+  // Documented integer cause (`cancel_reason` on CANCELLED, `reason` on
+  // CANCELLED_BY_CUSTOMER — the vendor's own two spellings). Resolved AFTER
+  // the text so a specific free-text reason still wins, but BEFORE the
+  // unverified fallback: the vendor's examples show sparse bodies, and
+  // "unverified" for a documented code 1/24 left a refused pick-up in manual
+  // review instead of letting the rebook worker replace that rider.
+  const byCode = classifyCancelCode(reasonCode);
+  if (byCode) return byCode;
   return "unverified";
 }
 
@@ -584,7 +643,7 @@ function computeWebhookEventPatch(
       // reason text so a customer call-off / returned parcel (or an
       // unrecognised reason) is manual review, not an automatic rebook.
       const reasonText = cancelReasonText(payload);
-      riderCancelOutcome = classifyCancelCause(rawEvent, reasonText);
+      riderCancelOutcome = classifyCancelCause(rawEvent, reasonText, cancelReasonCode(payload));
       const manualReview = riderCancelOutcome !== "carrier";
       const reason =
         reasonText ||
