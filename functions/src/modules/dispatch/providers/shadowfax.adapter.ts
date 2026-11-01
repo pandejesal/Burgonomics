@@ -370,6 +370,13 @@ export const shadowfaxAdapter: ProviderAdapter = {
     // missing clientCode throws.
     const shadowfaxBase = assertShadowfaxBaseUrl("book");
 
+    if (typeof ctx.orderId !== "string" || !ctx.orderId.trim()) {
+      const err: any = new Error("Shadowfax booking requires a client order id");
+      err.statusCode = 422;
+      err.code = "DISPATCH_ORDER_ID_MISSING";
+      throw err;
+    }
+
     // Trimmed like the token (GLM r2 finding 3): a whitespace-pasted
     // SHADOWFAX_CLIENT_CODE is not a code — it would reach the wire verbatim
     // as a guaranteed 4xx mislabelled transient; refuse it as missing instead.
@@ -429,7 +436,7 @@ export const shadowfaxAdapter: ProviderAdapter = {
           order_details: {
             order_value: orderValueInr(ctx),
             paid: paidFlag(ctx),
-            ...(ctx.orderId ? { client_order_id: ctx.orderId } : {}),
+            client_order_id: ctx.orderId,
           },
           pickup_details: {
             // No invented locality: an empty city is "unknown", a hardcoded

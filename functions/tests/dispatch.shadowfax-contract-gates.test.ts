@@ -108,6 +108,14 @@ async function capture(promise: Promise<unknown>): Promise<any> {
 }
 
 describe("shadowfax empty-credential refusal (pre-wire)", () => {
+  it("refuses a Marketplace booking without the required client order id before sending", async () => {
+    config.shadowfax.apiKey = "your_api_token";
+    const err = await capture(shadowfaxAdapter.book({ ...ctx(), orderId: "  ", quote: undefined as any }));
+    expect(err.code).toBe("DISPATCH_ORDER_ID_MISSING");
+    expect(err).not.toBeInstanceOf(ProviderDispatchError);
+    expect(fetchCalls).toHaveLength(0);
+  });
+
   it("limits both Marketplace addresses to the documented 255 characters", async () => {
     config.shadowfax.apiKey = "your_api_token";
     fetchHandler = () => okJson({ message: "Order placed", data: { sfx_order_id: 21030620 } }, 201);
