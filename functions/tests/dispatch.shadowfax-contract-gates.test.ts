@@ -108,6 +108,13 @@ async function capture(promise: Promise<unknown>): Promise<any> {
 }
 
 describe("shadowfax empty-credential refusal (pre-wire)", () => {
+  it("extracts a schema-derived Shadowfax detail error without a JSON wrapper", async () => {
+    config.shadowfax.apiKey = "your_api_token";
+    // Schema-derived DetailErrorResponse, not a captured provider response.
+    fetchHandler = () => okJson({ detail: "Order in non-serviceable area" }, 400);
+    const err = await capture(shadowfaxAdapter.quote(ctx()));
+    expect(err.message).toBe("shadowfax HTTP 400 (not_serviced): Order in non-serviceable area");
+  });
   it("calls the documented status and dispatch-ready endpoints", async () => {
     config.shadowfax.apiKey = "your_api_token";
     fetchHandler = () => okJson({ message: "done successfully" });

@@ -90,7 +90,7 @@ export async function fetchProviderJson(
 export function assertProviderOk(res: ProviderHttpResponse, provider: ProviderId): void {
   if (!res.ok) {
     const detail =
-      (res.data && (res.data.message || res.data.error)) ||
+      (res.data && (res.data.message || res.data.error || res.data.detail)) ||
       res.text.slice(0, 200) ||
       undefined;
     throw classifyHttpStatus(provider, res.status, detail);
