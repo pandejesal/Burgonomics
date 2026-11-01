@@ -5,6 +5,7 @@ import { config, assertLivePaymentsContext } from "../../config/env";
 import { verifyRazorpayWebhookSignature, isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { markOrderReconciliation } from "./reconciliation";
+import { applyRefundToMonthlyFee } from "./monthlyFee";
 import { pushOrderToPetpooja } from "../petpooja";
 
 /**
@@ -976,6 +977,8 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             },
             { merge: true }
           );
+          // F7: the monthly-fee release commits with the refund record.
+          applyRefundToMonthlyFee(tx, orderDoc.ref, data, nextTotal);
           return { isNewRefund, overCapturedPaise, refundWithoutCapture };
         });
         // A refund total above the recorded capture is a money-truth anomaly:

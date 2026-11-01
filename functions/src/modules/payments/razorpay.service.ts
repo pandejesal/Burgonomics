@@ -14,7 +14,7 @@ import { markOrderReconciliation } from "./reconciliation";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
 import { resolveBranchId } from "./branchResolver";
-import { ensureMonthlyFeeHold, type MonthlyFeeHold } from "./monthlyFee";
+import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } from "./monthlyFee";
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
 import {
@@ -2194,6 +2194,22 @@ export async function autoRefund(
     const data = ((snap.exists ? snap.data() : {}) || {}) as any;
     const existingTotal = Number(data.refundedTotalPaise) || 0;
 
+    // F7a: a refund must not race a live transfer lease. A `transferring`
+    // order under an unexpired lease is actively paying the branch; reversing
+    // or releasing against a moving target is what this refuses.
+    const TRaNSFER_TTL_MS = 10 * 60 * 1000;
+    if (data.routeTransferStatus === "transferring") {
+      const claimedAt = Number(data.routeTransferClaimedAt) || 0;
+      if (Date.now() - claimedAt < TRaNSFER_TTL_MS) {
+        const wait: any = new Error(
+          "A Route transfer is in progress for this order — retry the refund in a few minutes."
+        );
+        wait.statusCode = 409;
+        wait.code = "REFUND_WAIT_TRANSFER";
+        throw wait;
+      }
+    }
+
     // Refund-claim guard's FULLNESS is decided by the recorded LEDGER against
     // the known capture — never by the bare status string. The webhook +
     // autoRefund post-gateway writes stamp "partially_refunded" while the
@@ -2340,6 +2356,8 @@ export async function autoRefund(
     return {
       existingTotal,
       priorRefundStatus: typeof data.refundStatus === "string" ? data.refundStatus : null,
+      routeTransferStatus:
+        typeof data.routeTransferStatus === "string" ? data.routeTransferStatus : null,
     };
   });
   if ((claimed as any).replay) return (claimed as any).replay;
@@ -2347,9 +2365,16 @@ export async function autoRefund(
     | string
     | null
     | undefined;
+  // F7a: `reverse_all` is sent ONLY when a transfer actually exists to reverse.
+  // Razorpay's partial-refund behaviour is undocumented, so the key is omitted
+  // for every non-settled lane instead of asking the gateway to decide.
+  const transferStatusForRefund = (claimed as any).routeTransferStatus as string | null;
+  const canReverseTransfer =
+    transferStatusForRefund === "transferred" ||
+    transferStatusForRefund === "needs_reconciliation";
 
   const refundPayload: any = {
-    reverse_all: true, // Automatically reverses split transfer proportionally from branch
+    ...(canReverseTransfer ? { reverse_all: true } : {}),
     notes: {
       orderId,
       reason: reason || "Customer support resolution / item rejection",
@@ -2502,6 +2527,9 @@ export async function autoRefund(
       },
       { merge: true }
     );
+    // F7: release the held monthly fee (and count the refund) in the SAME
+    // transaction as the refund record, so no recovery worker is needed.
+    applyRefundToMonthlyFee(tx, orderRef, fresh, nextTotal);
     // Coins are restored only when the WHOLE captured amount is back with the
     // customer. A partial refund leaves the order live, so its redeemed coins
     // stay spent (PAY-03).
