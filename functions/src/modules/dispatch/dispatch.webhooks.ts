@@ -710,7 +710,8 @@ function eventTimestampMs(payload: any): number | null {
     payload?.customer_doorstep_arrival_time ??
     payload?.delivery_time ??
     payload?.return_time ??
-    payload?.rts_time;
+    payload?.rts_time ??
+    payload?.time;
   if (raw === undefined || raw === null) return null;
   if (typeof raw === "number" && Number.isFinite(raw)) {
     return raw < 1e12 ? raw * 1000 : raw;
