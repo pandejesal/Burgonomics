@@ -1,0 +1,150 @@
+# =============================================================================
+# Root rules × customer harness gate — DEC-09 required PR check.
+#
+# On a Pull Request that changes the ROOT repo's Firestore rules or Firebase
+# wiring, the PR's firestore.rules must prove themselves against the REAL
+# local-emulator browser lane (tests/emulator) inside the IMMUTABLE pinned
+# customer harness — a fixed commit SHA declared in
+# .github/customer-emulator-harness.json (repo + commit, 40-hex only).
+#
+# Guarantees (fail-closed):
+#   - no manifest / invalid pin / moving ref -> job fails with
+#     NEEDS_FINAL_HARNESS_SHA guidance (no sibling checkout, no moving
+#     default, no baseline fallback);
+#   - the PR's rules bytes are copied INTO the pinned harness checkout and
+#     hash-proven equal before the lane runs (tested rule bytes == PR bytes);
+#   - no credentials anywhere; demo emulator project only; no deploy;
+#   - artifacts (parity proof, lane report/manifest/raw logs/screenshots)
+#     upload even on failure; an all-skipped lane run can never pass.
+#
+# The two checkouts are independent (root PR + pinned customer harness).
+# No cross-repo dispatch, no remote variables, no other worktrees.
+# =============================================================================
+
+name: Customer emulator harness gate (root rules)
+
+on:
+  pull_request:
+    paths:
+      - "firestore.rules"
+      - "firebase.json"
+      - "firestore.indexes.json"
+      - ".firebaserc"
+      - "functions/**"
+      - ".github/customer-emulator-harness.json"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: customer-harness-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  root-rules-parity-browser-lane:
+    name: PR rules = pinned-customer-harness lane bytes (parity + 7/7 browser + negative)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Official actions pinned to verified v4 tag commit SHAs (gh api
+      # repos/actions/.../commits/<sha>, verified 2026-10-27).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (root PR)
+
+      # Fail-closed: absent/invalid manifest -> NEEDS_FINAL_HARNESS_SHA.
+      - id: pin
+        name: Validate the immutable customer-harness pin
+        run: node .github/workflows/scripts/validate-customer-harness-pin.mjs .github/customer-emulator-harness.json >> "$GITHUB_OUTPUT"
+
+      # SECOND, independent checkout: the PINNED customer harness commit
+      # only — never a sibling worktree, never a moving default branch.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (pinned customer harness)
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: customer-harness
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: customer-harness/package-lock.json
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install harness workspace dependencies (clean, lockfile-pinned)
+        run: npm ci
+        working-directory: customer-harness
+
+      - name: Install exact pinned lane tooling into an ephemeral prefix
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ci-tool"
+          printf '%s\n' '{"name":"burgonomics-root-gate-tool","private":true,"version":"0.0.0"}' > "$RUNNER_TEMP/ci-tool/package.json"
+          npm install --prefix "$RUNNER_TEMP/ci-tool" --no-fund --no-audit \
+            firebase-tools@15.32.1 @playwright/test@1.63.0
+          "$RUNNER_TEMP/ci-tool/node_modules/.bin/playwright" install --with-deps chromium
+
+      - name: Route lane resolution through the pinned ephemeral toolchain
+        run: |
+          set -euo pipefail
+          rm -rf customer-harness/node_modules/firebase-tools customer-harness/node_modules/@playwright/test
+          {
+            # Pinned prefix first (exact firebase-tools/@playwright/test), then
+            # the harness lockfile node_modules (yaml parser for the static
+            # contract self-check + remaining harness deps).
+            echo "NODE_PATH=$RUNNER_TEMP/ci-tool/node_modules:$GITHUB_WORKSPACE/customer-harness/node_modules"
+            echo "EMULATOR_ALLOW_DOWNLOAD=1"
+            echo "EMULATOR_LANE_ARTIFACTS=$RUNNER_TEMP/emu-lane-artifacts"
+            echo "EMULATOR_JAVA_HOME=${JAVA_HOME}"
+          } >> "$GITHUB_ENV"
+
+      - name: Assert exact pinned tool versions (fail closed on drift)
+        run: |
+          node -e "const pathOf=(m)=>require.resolve(m+'/package.json');const versionOf=(m)=>require(pathOf(m)).version;const bad=[];if(versionOf('firebase-tools')!=='15.32.1')bad.push('firebase-tools '+versionOf('firebase-tools'));if(versionOf('@playwright/test')!=='1.63.0')bad.push('@playwright/test '+versionOf('@playwright/test'));require.resolve('firebase-tools/lib/bin/firebase.js');require.resolve('firebase-tools/lib/emulator/downloadableEmulatorInfo.json');require.resolve('@playwright/test/cli');if(bad.length){console.error('UNPINNED TOOLCHAIN: '+bad.join('; '));process.exit(1)}console.log('toolchain pinned: firebase-tools@15.32.1, @playwright/test@1.63.0')"
+
+      # Runs AFTER the harness npm ci so the deep YAML syntax check inside the
+      # static test resolves the harness lockfile's `yaml` parser — it can
+      # never silently skip on CI for want of a parser.
+      - name: Static contract self-check of this gate's scripts + workflow
+        run: node --test .github/workflows/scripts/test/validate-customer-harness-pin.test.mjs .github/workflows/scripts/test/root-rule-parity.test.mjs .github/workflows/scripts/test/customer-harness-gate.workflow.test.mjs
+
+      # Copy the PR's rules bytes INTO the pinned harness and prove equality:
+      # tested rule bytes == root PR canonical bytes.
+      - name: Route PR rules into the harness with hash parity proof
+        run: |
+          mkdir -p "$RUNNER_TEMP/root-rules-parity"
+          node .github/workflows/scripts/root-rule-parity.mjs \
+            --root-rules "$GITHUB_WORKSPACE/firestore.rules" \
+            --harness-rules "$GITHUB_WORKSPACE/customer-harness/firestore.rules" \
+            --proof "$RUNNER_TEMP/root-rules-parity/parity-proof.json"
+          {
+            echo "EMULATOR_CANONICAL_RULES=$GITHUB_WORKSPACE/customer-harness/firestore.rules"
+          } >> "$GITHUB_ENV"
+
+      - name: Run local emulator browser lane against the PR rules
+        run: node tests/emulator/run-lane.mjs
+        working-directory: customer-harness
+        timeout-minutes: 20
+
+      # Belt-and-braces over the lane's own exit code (same contract as the
+      # customer workflow): missing/invalid/non-PASS/skipping manifest fails.
+      - name: Fail unless the lane manifest proves a real PASS (0 skips + parity proof)
+        if: always()
+        run: |
+          node -e "const fs=require('fs');const file=process.env.EMULATOR_LANE_ARTIFACTS+'/manifest.json';let m;try{m=JSON.parse(fs.readFileSync(file,'utf8'))}catch(e){console.error('lane manifest missing/unreadable at '+file+': '+e.message);process.exit(1)}const problems=[];if(m.verdict!=='PASS')problems.push('verdict='+m.verdict+' problems='+(m.problems||[]).join(' | '));const gates=m.suiteGates||{};const pos=gates.positive;if(!pos)problems.push('no positive suite gate');else{if(pos.ok!==true)problems.push('positive.ok=false');const c=pos.counts||{};if(c.expected!==7)problems.push('positive.expected='+(c.expected??'<missing>')+' (required 7/7, no all-skipped runs)');if(c.skipped!==0)problems.push('positive.skipped='+(c.skipped??'<missing>'));if(c.unexpected!==0)problems.push('positive.unexpected='+(c.unexpected??'<missing>'));if(c.flaky!==0)problems.push('positive.flaky='+(c.flaky??'<missing>'))}if(!gates.negativeProbe||gates.negativeProbe.ok!==true)problems.push('negativeProbe.ok!==true');if(!gates.negativeInverted||gates.negativeInverted.ok!==true)problems.push('negativeInverted.ok!==true');if(m.env&&m.env.credentialValuesCopied===true)problems.push('manifest reports credential values copied');if(!fs.existsSync(process.env.ROOT_RULES_PARITY_PROOF))problems.push('root-PR rules parity proof missing');if(problems.length){console.error('FAIL lane-manifest gate: '+problems.join('; '));process.exit(1)}console.log('lane manifest gate OK: verdict PASS; positive 7/7/0-skip; negative inversion proven; root-PR rules parity proven')"
+        env:
+          ROOT_RULES_PARITY_PROOF: ${{ runner.temp }}/root-rules-parity/parity-proof.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: root-rules-harness-gate-artifacts
+          path: |
+            ${{ runner.temp }}/emu-lane-artifacts/
+            ${{ runner.temp }}/root-rules-parity/
+          if-no-files-found: error
+          retention-days: 7
