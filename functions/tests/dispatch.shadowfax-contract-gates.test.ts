@@ -108,6 +108,17 @@ async function capture(promise: Promise<unknown>): Promise<any> {
 }
 
 describe("shadowfax empty-credential refusal (pre-wire)", () => {
+  it("limits both Marketplace addresses to the documented 255 characters", async () => {
+    config.shadowfax.apiKey = "your_api_token";
+    fetchHandler = () => okJson({ message: "Order placed", data: { sfx_order_id: 21030620 } }, 201);
+    const example = ctx();
+    example.order = { ...example.order, branchAddress: "Store address in plain text".repeat(20), deliveryAddress: { full: "Customer address in plain text".repeat(20), city: "Delhi" } };
+    await shadowfaxAdapter.book({ ...example, orderId: "379984400", quote: undefined as any });
+    const body = JSON.parse(fetchCalls[0].init.body);
+    expect(body.pickup_details.address).toHaveLength(255);
+    expect(body.drop_details.address).toHaveLength(255);
+  });
+
   it("quote() refuses with a typed LOCAL config error and never reaches the wire", async () => {
     const err = await capture(shadowfaxAdapter.quote(ctx()));
 
