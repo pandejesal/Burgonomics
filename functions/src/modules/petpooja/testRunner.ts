@@ -50,11 +50,8 @@ export function assertPetpoojaRelayAccess(
  * and tax ids "11213"/"20375"/"301"/"302", none of which names anything in
  * this outlet.
  *
- * Scenarios 2 and 5 cannot be matched by the POS as the outlet is currently
- * configured: it publishes `addongroups: []`, sets `itemallowaddon: "0"` on all
- * 166 items, and sets `itemallowvariation: "1"` on 81 items while defining no
- * variation. The lines are still emitted so the relay is exercised, but the
- * outlet needs addon/variation configuration before they can resolve.
+ * Cases 2, 3 and 5 use the real 2026-11-01 push: group 17259, add-on
+ * 93021, and variation rows 10657618 / 10657617 (variationid 14178).
  *
  * Relay policy (fail-closed, mirrors orderPush.ts): a live POS call happens
  * ONLY when mock mode is off AND credentials are configured AND a branchId is
@@ -101,12 +98,15 @@ export interface ScenarioModifier {
    *  gate BLOCKED (never relayed); a sendable scenario always carries the true
    *  integer. */
   groupId: number;
+  groupName?: string;
 }
 
 /** Optional variant (size/style) on an item line. */
 export interface ScenarioVariation {
   id: string;
   name: string;
+  /** Variation row id, distinct from both the parent itemid and variationid. */
+  itemId?: string;
 }
 
 export interface ScenarioItem {
@@ -184,7 +184,7 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
   {
     id: "takeaway-with-modifiers",
     aliases: ["addons"],
-    description: "Real item plus two addon lines, takeaway",
+    description: "Real item plus its required Soft Drinks add-on, takeaway",
     orderType: "takeaway",
     items: [
       {
@@ -193,14 +193,8 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
         price: 310,
         quantity: 1,
         isVeg: true,
-        // NOT EXPRESSIBLE AS CAPTURED: the demo outlet publishes
-        // `addongroups: []` and sets `itemallowaddon: "0"` on all 166 items, so
-        // it defines no addon and no GROUP these ids could resolve to (M4:
-        // groupId intentionally UNCONFIGURED here — the sendability gate must
-        // report the addon gaps AND missing group; never relayed).
         modifiers: [
-          { id: "mod_extra_cheese", name: "Extra Cheese", price: 30, groupId: 0 },
-          { id: "mod_brioche_bun", name: "Brioche Bun Upgrade", price: 40, groupId: 0 },
+          { id: "93021", name: "Coke", price: 10, groupId: 17259, groupName: "Soft Drinks" },
         ],
       },
     ],
@@ -213,10 +207,10 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
   {
     id: "delivery-gst-fee",
     aliases: ["variations"],
-    description: "Two real items, delivery, 5% GST + delivery fee math",
+    description: "Real Malai Tikka variation, delivery, 5% GST + delivery fee math",
     orderType: "delivery",
     items: [
-      { id: "30672", name: "Tandoori Paneer Tikka [8 Pieces]", price: 270, quantity: 2, isVeg: true },
+      { id: "30673", name: "Paneer Malai Tikka [8 Pieces]", price: 290, quantity: 2, isVeg: true, variation: { id: "14178", itemId: "10657618", name: "Full [8 Pieces]" } },
     ],
     gstRate: 0.05,
     deliveryFee: 49,
@@ -241,30 +235,12 @@ export const PETPOOJA_TEST_SCENARIOS: ReadonlyArray<PetpoojaTestScenario> = [
   {
     id: "bulk-party-order",
     aliases: ["addon_variation"],
-    description: "High-quantity stress order (12 real lines) for POS load testing",
+    description: "Real Tandoori Paneer variation with its required Soft Drinks add-on",
     orderType: "takeaway",
     items: [
-      { id: "30791", name: "Tandoori Dahi Kebab", price: 350, quantity: 2, isVeg: true },
-      { id: "30778", name: "Tandoori Dahi Ke Sholey", price: 350, quantity: 2, isVeg: true },
-      { id: "30674", name: "Paneer Achari Tikka [8 Pieces]", price: 310, quantity: 1, isVeg: true },
-      { id: "30789", name: "Crispy Corn Salt And Pepper", price: 300, quantity: 1, isVeg: true },
-      { id: "30673", name: "Paneer Malai Tikka [8 Pieces]", price: 290, quantity: 2, isVeg: true },
-      { id: "30790", name: "Corn Salt And Pepper", price: 280, quantity: 1, isVeg: true },
-      { id: "30672", name: "Tandoori Paneer Tikka [8 Pieces]", price: 270, quantity: 1, isVeg: true },
-      { id: "30676", name: "Paneer Kali Mirch Tikka [8 Pieces]", price: 249, quantity: 1, isVeg: true },
-      // One non-veg line, so `item_attribute` "2" is exercised rather than
-      // assumed — the catalog carries 37 non-veg items but the old scenario
-      // only ever sent veg.
-      {
-        id: "30663",
-        name: "Butter Chicken + Boondi Raita + Choice Of Breads [1 Piece]",
-        price: 249,
-        quantity: 2,
-        isVeg: false,
-      },
-      { id: "30787", name: "French Fries", price: 220, quantity: 1, isVeg: true },
-      { id: "30786", name: "Cheese Balls", price: 200, quantity: 1, isVeg: true },
-      { id: "30785", name: "Onion Rings", price: 160, quantity: 1, isVeg: true },
+      { id: "30672", name: "Tandoori Paneer Tikka [8 Pieces]", price: 270, quantity: 1, isVeg: true,
+        variation: { id: "14178", itemId: "10657617", name: "Full [8 Pieces]" },
+        modifiers: [{ id: "93021", name: "Coke", price: 10, groupId: 17259, groupName: "Soft Drinks" }] },
     ],
     gstRate: 0.05,
     deliveryFee: 0,
@@ -504,15 +480,15 @@ export function formatPetpoojaV21Payload(
     const addons = (item.modifiers || []).map((mod) => ({
       id: mod.id,
       name: mod.name,
-      group_name: "Addons",
+      group_name: mod.groupName || "Addons",
       price: money(mod.price),
       group_id: mod.groupId,
       quantity: "1",
     }));
 
     return {
-      id: item.id,
-      name: item.name,
+      id: item.variation?.itemId || item.id,
+      name: item.variation ? `${item.name} (${item.variation.name})` : item.name,
       // The runner adds GST ON TOP of its item prices, so this must be false.
       tax_inclusive: false,
       gst_liability: liability,

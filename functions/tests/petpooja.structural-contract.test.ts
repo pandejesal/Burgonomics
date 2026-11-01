@@ -254,23 +254,13 @@ describe("sandbox runner builder (testRunner.formatPetpoojaV21Payload) — vendo
 });
 
 describe("dry-run scenario outputs — scenario verdicts are structural, never acceptance", () => {
-  it("reports exactly which MT-01-like scenarios are BLOCKED_CONFIGURATION on the unconfigured outlet", () => {
-    // The captured demo outlet publishes `addongroups: []`,
-    // `itemallowaddon: "0"` on all items and no variation definitions —
-    // scenarios whose payloads would need an addon or variation mapping are
-    // reported BLOCKED_CONFIGURATION; the relay does NOT POST them and the
-    // dry-run never claims acceptance (success:1 is NOT acceptance).
+  it("real-menu scenarios pass structural checks without claiming vendor acceptance", () => {
     const verdicts = PETPOOJA_TEST_SCENARIOS.map((s) => ({
       id: s.id,
       gaps: evaluatePetpoojaTestOrderSendability(buildPetpoojaTestOrder(s.id) as any),
     }));
     for (const v of verdicts) {
-      if (v.id === "takeaway-with-modifiers") {
-        expect(v.gaps.length).toBeGreaterThan(0);
-        expect(v.gaps.every((g) => g.field === "OrderItem.details[].AddonItem")).toBe(true);
-      } else {
-        expect(v.gaps).toEqual([]);
-      }
+      expect(v.gaps).toEqual([]);
     }
   });
 });

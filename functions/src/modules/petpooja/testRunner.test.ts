@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const { mockDb } = vi.hoisted(() => {
   const mockDb = {
@@ -99,6 +101,45 @@ const ALIASES: Record<string, string> = {
 };
 
 describe("runPetpoojaTestScenario (MT-01 sandbox relay)", () => {
+  it.each(["addons", "variations", "addon_variation"])("pins every id and price in %s to the real push", (scenarioId) => {
+    const fixture = JSON.parse(readFileSync(resolve(__dirname, "../../../tests/fixtures/petpooja-push-real-20261101.json"), "utf8"));
+    const order = buildPetpoojaTestOrder(scenarioId);
+    order.items = order.items.map(i => ({ ...i, gstType: "services" }));
+    const taxes = fixture.taxes.map((t: any) => ({ id: t.taxid, name: t.taxname, rate: Number(t.tax) }));
+    const payload: any = formatPetpoojaV21Payload(order, "31z58ciw0h", "test-real", "https://example.com/callback", new Date(), taxes);
+    const lines = payload.orderinfo.OrderInfo.OrderItem.details;
+    for (const [index, item] of order.items.entries()) {
+      const source = fixture.items.find((i: any) => i.itemid === item.id);
+      expect(source, `real item ${item.id}`).toBeDefined();
+      expect(item.name).toBe(source.itemname);
+      if (item.variation) {
+        const row = source.variation.find((v: any) => v.variationid === item.variation!.id);
+        expect(row).toBeDefined();
+        expect(lines[index].id).toBe(row.id);
+        expect(item.variation.name).toBe(row.name);
+        expect(item.price).toBe(Number(row.price));
+      } else expect(item.price).toBe(Number(source.price));
+      for (const mod of item.modifiers || []) {
+        const group = fixture.addongroups.find((g: any) => Number(g.addongroupid) === mod.groupId);
+        expect(group).toBeDefined();
+        const attachment = [...source.addon, ...source.variation.flatMap((v: any) => v.addon)].find((a: any) => Number(a.addon_group_id) === mod.groupId);
+        expect(attachment).toBeDefined();
+        const option = group.addongroupitems.find((o: any) => o.addonitemid === mod.id);
+        expect(mod).toMatchObject({ name: option.addonitem_name, price: Number(option.addonitem_price) });
+        expect(Number.isInteger(mod.groupId)).toBe(true);
+      }
+      expect(lines[index].tax_inclusive).toBe(false);
+      expect(lines[index].gst_liability).toBe("vendor"); // current services mapping, not a new override
+    }
+    const details = payload.orderinfo.OrderInfo.Order.details;
+    expect(Number(details.total)).toBe(order.pricing.grandTotal - order.pricing.deliveryFee - order.pricing.gst);
+    expect(details.collect_cash).toBe("0.00"); // preserve merged runner; differs from accepted round
+    expect(details.enable_delivery).toBe(0);
+    expect(Number(details.tax_total)).toBe(order.pricing.gst);
+    if (scenarioId !== "addons") expect(order.items.some(i => i.variation)).toBe(true);
+    if (scenarioId !== "variations") expect(order.items.some(i => i.modifiers?.length)).toBe(true);
+    if (scenarioId === "addon_variation") expect(order.items.some(i => i.variation && i.modifiers?.length)).toBe(true);
+  });
   const originalMockFlag = config.mock.petpoojaPos;
 
   beforeEach(() => {
@@ -253,26 +294,26 @@ describe("runPetpoojaTestScenario (MT-01 sandbox relay)", () => {
       expect(order.pricing.grandTotal).toBeGreaterThan(0);
     });
 
-    it("takeaway with modifiers: extra cheese + brioche bun priced in", () => {
+    it("takeaway with the real required Coke add-on priced in", () => {
       const order = buildPetpoojaTestOrder("takeaway-with-modifiers");
       expect(order.orderType).toBe("takeaway");
       const modifiers = order.items[0].modifiers || [];
       expect(modifiers.map((m) => m.name)).toEqual(
-        expect.arrayContaining(["Extra Cheese", "Brioche Bun Upgrade"])
+        ["Coke"]
       );
-      // 310 base + 30 extra cheese + 40 brioche = 380, + 20 packaging + 5% GST.
-      expect(order.pricing.itemTotal).toBe(380);
-      expect(order.pricing.gst).toBe(19);
-      expect(order.pricing.grandTotal).toBe(419);
+      // 310 base + 10 Coke = 320, + unchanged 20 packaging + 5% GST.
+      expect(order.pricing.itemTotal).toBe(320);
+      expect(order.pricing.gst).toBe(16);
+      expect(order.pricing.grandTotal).toBe(356);
     });
 
     it("delivery: 5% GST and delivery fee math", () => {
       const order = buildPetpoojaTestOrder("delivery-gst-fee");
       const { itemTotal, gst, deliveryFee, grandTotal } = order.pricing;
-      expect(itemTotal).toBe(540); // 270 x 2
-      expect(gst).toBe(27); // 5% of 540
+      expect(itemTotal).toBe(580); // real 290 variation x 2
+      expect(gst).toBe(29); // 5% of 580
       expect(deliveryFee).toBe(49);
-      expect(grandTotal).toBe(616); // 540 + 27 + 49
+      expect(grandTotal).toBe(658); // 580 + 29 + unchanged 49 delivery
     });
 
     it("cancel/refund: discount is applied before GST", () => {
@@ -284,10 +325,12 @@ describe("runPetpoojaTestScenario (MT-01 sandbox relay)", () => {
       expect(grandTotal).toBe(252); // 240 + 12
     });
 
-    it("bulk party order: 12 lines for POS load", () => {
+    it("combined case has one honest variation-plus-addon line", () => {
       const order = buildPetpoojaTestOrder("bulk-party-order");
-      expect(order.items.length).toBeGreaterThanOrEqual(10);
-      expect(order.pricing.grandTotal).toBeGreaterThan(0);
+      expect(order.items).toHaveLength(1);
+      expect(order.items[0].variation?.itemId).toBe("10657617");
+      expect(order.items[0].modifiers?.[0].id).toBe("93021");
+      expect(order.pricing.grandTotal).toBe(334);
     });
   });
 
@@ -502,7 +545,9 @@ describe("evaluatePetpoojaTestOrderSendability — structural verdicts, never fa
   });
 
   it("reports BLOCKED_CONFIGURATION for the unconfigured addon fixture", () => {
-    const gaps = evaluatePetpoojaTestOrderSendability(buildPetpoojaTestOrder("takeaway-with-modifiers"));
+    const order = structuredClone(buildPetpoojaTestOrder("takeaway-with-modifiers"));
+    order.items[0].modifiers = [{ id: "missing-addon", name: "Unconfigured", price: 10, groupId: 0 }];
+    const gaps = evaluatePetpoojaTestOrderSendability(order);
     expect(gaps.length).toBeGreaterThanOrEqual(2);
     for (const g of gaps) {
       expect(g.field).toBe("OrderItem.details[].AddonItem");
@@ -537,10 +582,9 @@ describe("evaluatePetpoojaTestOrderSendability — structural verdicts, never fa
       config.petpooja.appSecret = "test_app_secret";
       config.petpooja.accessToken = "test_access_token";
       vi.stubGlobal("fetch", fetchMock);
-      // The fixture's addons have no verified POS ids: the structural gate
-      // must block BEFORE any vendor call, with the blocked reason surfaced.
+      // An outlet with no captured catalogue must block even with real ids.
       await expect(
-        runPetpoojaTestScenario({ scenarioId: "takeaway-with-modifiers", branchId: "branch_test_1" })
+        runPetpoojaTestScenario({ scenarioId: "takeaway-with-modifiers", branchId: "branch_without_catalog" })
       ).rejects.toMatchObject({
         code: "BLOCKED_CONFIGURATION",
         statusCode: 409,
