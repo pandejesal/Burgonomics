@@ -24,7 +24,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
  * call, no credentials.
  */
 
-import { shadowfaxAdapter } from "../src/modules/dispatch/providers/shadowfax.adapter";
+import { shadowfaxAdapter, cancelShadowfaxOrder } from "../src/modules/dispatch/providers/shadowfax.adapter";
 import { config } from "../src/config/env";
 import { ProviderDispatchError, type DispatchQuoteContext } from "../src/modules/dispatch/types";
 
@@ -108,6 +108,15 @@ async function capture(promise: Promise<unknown>): Promise<any> {
 }
 
 describe("shadowfax empty-credential refusal (pre-wire)", () => {
+  it("cancels a Shadowfax order using the documented Seller example", async () => {
+    config.shadowfax.apiKey = "your_api_token";
+    fetchHandler = () => new Response(null, { status: 200 });
+    await cancelShadowfaxOrder("21030620", "Seller missing items");
+    expect(fetchCalls[0].url).toBe("https://hlbackend.staging.shadowfax.in/api/v2/orders/21030620/cancel/");
+    expect(fetchCalls[0].init.method).toBe("PUT");
+    expect(fetchCalls[0].init.headers.Authorization).toBe("Token your_api_token");
+    expect(JSON.parse(fetchCalls[0].init.body)).toEqual({ reason: "Seller missing items", user: "Seller" });
+  });
   it("refuses a Marketplace booking without the required client order id before sending", async () => {
     config.shadowfax.apiKey = "your_api_token";
     const err = await capture(shadowfaxAdapter.book({ ...ctx(), orderId: "  ", quote: undefined as any }));

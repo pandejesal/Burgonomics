@@ -196,6 +196,24 @@ function assertShadowfaxBaseUrl(operation: string): string {
   return parsed.origin;
 }
 
+/** Cancel a remote booking before releasing its local binding. */
+export async function cancelShadowfaxOrder(providerOrderId: string, reason = "Cancelled by restaurant"): Promise<void> {
+  assertShadowfaxCredentials("cancel");
+  const base = assertShadowfaxBaseUrl("cancel");
+  if (!/^\d+$/.test(providerOrderId)) {
+    const err: any = new Error("Shadowfax cancellation requires a numeric provider order id");
+    err.statusCode = 422;
+    err.code = "DISPATCH_PROVIDER_ORDER_ID_INVALID";
+    throw err;
+  }
+  const response = await fetchProviderJson("shadowfax", `${base}/api/v2/orders/${providerOrderId}/cancel/`, {
+    method: "PUT",
+    headers: shadowfaxHeaders(),
+    body: JSON.stringify({ reason: (reason.trim() || "Cancelled by restaurant").slice(0, 128), user: "Seller" }),
+  });
+  assertProviderOk(response, "shadowfax");
+}
+
 /** Shadowfax `paid` is the string "true"/"false" (never a boolean). */
 function paidFlag(ctx: DispatchQuoteContext): string {
   const status = String(ctx.order?.paymentStatus || "").toLowerCase();
