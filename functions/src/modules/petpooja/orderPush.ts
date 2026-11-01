@@ -370,7 +370,7 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
 
 /** Canonical order type for KOT/pricing purposes. */
 function kotOrderType(order: any): "delivery" | "takeaway" | "dinein" {
-  const rawType = String(order?.fulfillmentType || order?.orderType || "delivery").toLowerCase();
+  const rawType = String(order?.fulfillmentType || order?.orderType || order?.fulfillment || "delivery").toLowerCase();
   return rawType === "takeaway" || rawType === "pickup"
     ? "takeaway"
     : rawType === "dinein" || rawType === "dine_in"

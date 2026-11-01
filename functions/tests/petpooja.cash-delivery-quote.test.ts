@@ -179,6 +179,16 @@ afterEach(() => {
 });
 
 describe("R6b cash delivery KOT — quote binding", () => {
+  it("does not flag a customer-app takeaway as an unverified delivery", async () => {
+    seedOrder("ord_takeaway", { fulfillmentType: undefined, fulfillment: "takeaway", paymentMethod: undefined, payment: { method: "cod", status: "PAY_AT_STORE" }, status: { code: "PICKED_UP", kind: "completed", terminal: true } });
+    expect(await pushOrderToPetpooja("ord_takeaway")).toBe(true);
+    const details = deliveredPayload().orderinfo.OrderInfo.Order.details;
+    expect(details.delivery_charges).toBe("0.00");
+    expect(details.total).toBe("250.00");
+    expect(savedDocs["orders/ord_takeaway"].deliveryFeeUnverified).toBe(false);
+    expect(savedDocs["orders/ord_takeaway"].deliveryFeeUnverifiedReason).toBeNull();
+  });
+
   it("binds a valid quote and charges its fee", async () => {
     seedOrder("ord_cash_1", { deliveryQuoteId: "dfq_cash_1" });
     seedQuote("dfq_cash_1");
