@@ -235,6 +235,27 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     tx.update(orderRef, payload);
   });
 
+  // Shadowfax dispatch-ready (docs: "Notify Shadowfax when the shipment is
+  // ready for pickup so the rider can collect it"). STRICTLY post-commit: the
+  // kitchen's bump is already durable, so this can never fail the transition —
+  // a provider fault is recorded on the order and resent by the 5-minute
+  // reconciler with the SAME timestamp. Shadowfax bookings only.
+  if (canonical === "ready") {
+    try {
+      const { signalShadowfaxDispatchReady } = await import("../dispatch/shadowfax.reconcile");
+      const fresh = await orderRef.get();
+      const live = fresh.exists ? ((fresh.data() || {}) as any) : {};
+      await signalShadowfaxDispatchReady(orderId, { ...live });
+    } catch (err: any) {
+      // Belt-and-braces: signalShadowfaxDispatchReady does not throw, but a
+      // failed import or read must not surface as a kitchen error either.
+      console.warn(
+        `[OrderStatus] Shadowfax dispatch-ready skipped for order ${orderId}:`,
+        err?.message || err
+      );
+    }
+  }
+
   // PAY-03: a cancelled order gives back the Grill Coins its payment debited.
   // Partial refunds never reach here — only a cancel (or a full refund in
   // autoRefund) restores. A restore failure must never fail the cancel, and

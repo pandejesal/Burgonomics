@@ -1,7 +1,11 @@
 import * as admin from "firebase-admin";
+import * as crypto from "crypto";
 import { config } from "../../config/env";
 import { db } from "../../core/firebase";
-import { getShadowfaxOrderStatus } from "./providers/shadowfax.adapter";
+import {
+  getShadowfaxOrderStatus,
+  markShadowfaxDispatchReady,
+} from "./providers/shadowfax.adapter";
 
 /**
  * Shadowfax status-poll reconciliation (Hyperlocal Marketplace).
@@ -420,3 +424,176 @@ export async function pollActiveShadowfaxOrdersWorker(): Promise<ShadowfaxPollRe
 
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Dispatch-ready indicator (KDS ready transition)
+// ---------------------------------------------------------------------------
+
+/**
+ * The COID Shadowfax must be told. `PUT /api/v2/orders/{coid}/dispatch-ready/`
+ * identifies the order by the CLIENT order id we sent at placement, and the
+ * dispatcher mints that as its durable correlation token (recorded on the order
+ * as `dispatchClientOrderId`). Orders booked before that stamp existed are
+ * recomputed from the SAME deterministic formula (orderId + dispatchGeneration)
+ * rather than guessed: an unknown COID would 404 at the provider and silently
+ * keep the rider uninformed.
+ */
+function shadowfaxClientOrderId(orderId: string, order: any): string | null {
+  const stamped = order?.dispatchClientOrderId;
+  if (typeof stamped === "string" && stamped.trim()) return stamped.trim();
+  const generation = typeof order?.dispatchGeneration === "number" ? order.dispatchGeneration : null;
+  if (generation === null || generation < 1) return null;
+  // Local recompute of dispatch.router.mintDispatchCorrelationToken. Kept as a
+  // copy, not an import: orderStatus -> router -> adapters would be a cycle for
+  // two lines of hashing, and the formula is pinned by test.
+  const hash = crypto.createHash("sha256").update(`${orderId}:${generation}`).digest("hex").slice(0, 16);
+  return `cr_${hash}_${generation}`;
+}
+
+function isShadowfaxBookingLive(order: any): boolean {
+  if (order?.dispatchProvider !== "shadowfax") return false;
+  if (!String(order?.dispatchOrderId ?? order?.shadowfaxOrderId ?? "")) return false;
+  if (order?.needsRebook === true) return false;
+  return (
+    order?.deliveryStatus === "dispatched" ||
+    order?.deliveryStatus === "in_transit" ||
+    order?.deliveryStatus === "driver_allocated"
+  );
+}
+
+/**
+ * PUT the dispatch-ready signal for one order and record the outcome.
+ *
+ * NEVER THROWS to its caller: it runs after the KDS bump has committed, and a
+ * provider fault must not turn a successful kitchen transition into a 500 that
+ * makes staff re-tap (the second tap then 409s as stale). A failure sets
+ * `shadowfaxDispatchReady.pending = true` with the SAME timestamp, which
+ * `retryPendingShadowfaxReadySignals` resends — the provider must learn when
+ * the food was actually ready, not when the retry happened.
+ */
+export async function signalShadowfaxDispatchReady(
+  orderId: string,
+  order: Record<string, any>
+): Promise<{ sent: boolean; reason?: string }> {
+  if (!isShadowfaxBookingLive(order)) return { sent: false, reason: "not_a_live_shadowfax_booking" };
+
+  const clientOrderId =
+    (typeof order.dispatchClientOrderId === "string" && order.dispatchClientOrderId.trim()) ||
+    shadowfaxClientOrderId(orderId, order);
+  if (!clientOrderId) return { sent: false, reason: "no_client_order_id" };
+
+  // Already signalled for THIS booking: a duplicate signal is provider noise
+  // (and the docs require callbacks to be idempotent, so we owe the same).
+  const previous = order.shadowfaxDispatchReady;
+  const bookingId = String(order.dispatchOrderId ?? order.shadowfaxOrderId ?? "");
+  if (
+    previous &&
+    previous.pending === false &&
+    previous.clientOrderId === clientOrderId &&
+    previous.sentAtBookingId === bookingId
+  ) {
+    return { sent: false, reason: "already_signalled" };
+  }
+
+  const timestamp =
+    previous?.pending === true &&
+    typeof previous.timestamp === "string" &&
+    previous.clientOrderId === clientOrderId &&
+    !Number.isNaN(Date.parse(previous.timestamp))
+      ? previous.timestamp
+      : new Date().toISOString();
+
+  try {
+    await markShadowfaxDispatchReady(clientOrderId, timestamp);
+    await db
+      .collection("orders")
+      .doc(orderId)
+      .set(
+        {
+          shadowfaxDispatchReady: {
+            pending: false,
+            clientOrderId,
+            timestamp,
+            sentAtBookingId: bookingId,
+            attempts: Number(previous?.attempts || 0) + 1,
+            lastError: null,
+            sentAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    return { sent: true };
+  } catch (err: any) {
+    const message = String(err?.message || err).slice(0, 300);
+    console.warn(
+      `[Shadowfax Ready] dispatch-ready failed for order ${orderId} (kitchen bump already committed, signal left retryable):`,
+      message
+    );
+    try {
+      await db
+        .collection("orders")
+        .doc(orderId)
+        .set(
+          {
+            shadowfaxDispatchReady: {
+              pending: true,
+              clientOrderId,
+              timestamp,
+              sentAtBookingId: null,
+              attempts: Number(previous?.attempts || 0) + 1,
+              lastError: message,
+            },
+          },
+          { merge: true }
+        );
+    } catch (writeErr: any) {
+      // The bump already succeeded; record-keeping for the retry is best-effort
+      // and a failed stamp must not surface as a kitchen error.
+      console.warn(
+        `[Shadowfax Ready] could not record the pending signal for order ${orderId}:`,
+        writeErr?.message || writeErr
+      );
+    }
+    return { sent: false, reason: "provider_error" };
+  }
+}
+
+export interface ShadowfaxReadyRetryResult {
+  scanned: number;
+  retriedCount: number;
+  failedCount: number;
+}
+
+/**
+ * Resends dispatch-ready for signals that never landed. Same 5-minute schedule
+ * as the status poll; bounded per tick; each retry reuses the ORIGINAL
+ * timestamp so the rider learns the real ready time.
+ */
+export async function retryPendingShadowfaxReadySignals(): Promise<ShadowfaxReadyRetryResult> {
+  const result: ShadowfaxReadyRetryResult = { scanned: 0, retriedCount: 0, failedCount: 0 };
+  if (!(config.shadowfax.apiKey || "").trim()) return result;
+
+  let snap: any;
+  try {
+    snap = await db
+      .collection("orders")
+      .where("shadowfaxDispatchReady.pending", "==", true)
+      .limit(SHADOWFAX_POLL_QUERY_LIMIT)
+      .get();
+  } catch (err: any) {
+    console.error("[Shadowfax Ready] query failed:", err?.message || err);
+    return result;
+  }
+
+  for (const doc of snap?.docs || []) {
+    result.scanned++;
+    const order = doc.data ? doc.data() : undefined;
+    if (!order) continue;
+    const outcome = await signalShadowfaxDispatchReady(doc.id, order);
+    if (outcome.sent) result.retriedCount++;
+    else if (outcome.reason === "provider_error") result.failedCount++;
+  }
+  return result;
+}
+

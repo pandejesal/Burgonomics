@@ -963,7 +963,7 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
 
       const result = await adapter.book({ ...ctx, orderId: outboundOrderId, quote });
       if (result.kind === "booked") {
-        booked = { ...result, quote };
+        booked = { ...result, quote, clientOrderId: outboundOrderId };
         attempts.push({ provider: quote.provider, outcome: "booked", at: Date.now() });
         break;
       }
@@ -1118,6 +1118,14 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   write.porterOrderId = booked.provider === "porter" ? booked.providerOrderId : null;
   write.borzoOrderId = booked.provider === "borzo" ? booked.providerOrderId : null;
   write.shadowfaxOrderId = booked.provider === "shadowfax" ? booked.providerOrderId : null;
+  // The COID actually sent to the provider, recorded as a FACT. Shadowfax's
+  // dispatch-ready endpoint identifies the order by this client id
+  // (`PUT /api/v2/orders/{coid}/dispatch-ready/`), so the KDS ready bump must
+  // never have to re-derive it. It is the id the book call sent as
+  // `order_details.client_order_id`; providers that take no COID get null.
+  write.dispatchClientOrderId =
+    booked.provider === "shadowfax" ? String(booked.clientOrderId || correlationToken) : null;
+  write.shadowfaxDispatchReady = null;
 
   // `order.delivery` sub-object mirror (frontend tracking contract): a
   // COMPLETE snapshot built from the pre-write order + this book result, so
