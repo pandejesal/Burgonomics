@@ -368,14 +368,21 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
   return lines;
 }
 
-/** Canonical order type for KOT/pricing purposes. */
+/** One fail-closed interpretation shared by pricing, fee binding and the wire. */
+function resolveKotType(order: any): { orderType: "delivery" | "takeaway" | "dinein"; paymentType: "COD" | "CARD" | "ONLINE" } {
+  const raw = String(order?.fulfillmentType || order?.orderType || order?.fulfillment || "").trim().toLowerCase().replace(/[ -]/g, "_");
+  const orderType = raw === "delivery" ? "delivery" : raw === "takeaway" || raw === "pickup" || raw === "pick_up" ? "takeaway" : raw === "dinein" || raw === "dine_in" ? "dinein" : null;
+  const tender = String(order?.paymentMethod || order?.payment?.method || "").trim().toLowerCase();
+  const paymentType = order?.paymentChannel === "razorpay" ? "ONLINE" : tender === "cod" || tender === "cash" ? "COD" : tender === "card" ? "CARD" : null;
+  const gaps: PetpoojaStructuralGap[] = [];
+  if (!orderType) gaps.push({ field: "Order.details.order_type", reason: `unknown fulfillment type ${raw || "(missing)"}` });
+  if (!paymentType) gaps.push({ field: "Order.details.payment_type", reason: `unverified payment type ${tender || "(missing)"}` });
+  if (gaps.length || !orderType || !paymentType) throw new PetpoojaStructuralError(gaps);
+  return { orderType, paymentType };
+}
+
 function kotOrderType(order: any): "delivery" | "takeaway" | "dinein" {
-  const rawType = String(order?.fulfillmentType || order?.orderType || order?.fulfillment || "delivery").toLowerCase();
-  return rawType === "takeaway" || rawType === "pickup"
-    ? "takeaway"
-    : rawType === "dinein" || rawType === "dine_in"
-      ? "dinein"
-      : "delivery";
+  return resolveKotType(order).orderType;
 }
 
 interface KotDeliveryFeeBinding {
@@ -530,19 +537,14 @@ export function formatPetpoojaOrderPayload(
    */
   catalogLines?: PosCatalogLine[]
 ) {
-  const fulfillment = (order.fulfillmentType || order.orderType || "DELIVERY").toUpperCase();
+  const { orderType: fulfillment, paymentType } = resolveKotType(order);
   // Official V2.1.0 order_type is a letter code: H (home delivery),
   // P (parcel/takeaway), D (dine-in). The numeric 1/2/3 form the old code sent
   // is not part of the documented contract — both are emitted so the POS
   // parser reads whichever it implements.
   const orderTypeCode =
-    fulfillment === "DELIVERY" ? "H" : fulfillment === "TAKEAWAY" || fulfillment === "PICKUP" ? "P" : "D";
-  const orderTypeLegacy = fulfillment === "DELIVERY" ? "1" : fulfillment === "TAKEAWAY" || fulfillment === "PICKUP" ? "2" : "3";
-
-  const paymentMethod = (order.paymentMethod || "").toUpperCase();
-  // Petpooja accepts COD / CARD / ONLINE. "Prepaid" is NOT a valid value —
-  // anything that is not cash on delivery is an online (captured) payment.
-  const paymentType = paymentMethod === "COD" || paymentMethod === "CASH" ? "COD" : "ONLINE";
+    fulfillment === "delivery" ? "H" : fulfillment === "takeaway" ? "P" : "D";
+  const orderTypeLegacy = fulfillment === "delivery" ? "1" : fulfillment === "takeaway" ? "2" : "3";
 
   // Hoisted so each line can carry its own share of the tax: Petpooja expects
   // `item_tax[]` on the line, and a line's share can only be derived once the

@@ -237,6 +237,8 @@ const seedPending = (id: string, retryCount = 0, createdAt = 1700000000000 - 600
     };
   savedDocs[`orders/${id}`] = {
     id,
+    fulfillment: "takeaway",
+    paymentChannel: "razorpay",
     branchId: "branch_ahmedabad_1",
     customerName: "Ambiguous Case",
     customerPhone: "+919825000001",

@@ -269,6 +269,8 @@ afterEach(() => {
 const seedOrder = (id: string, extra: Record<string, any> = {}) => {
   setMockDoc(`orders/${id}`, {
     id,
+    fulfillment: "takeaway",
+    payment: { method: "cod" },
     branchId: "branch_pos_1",
     customerName: "Integrity Customer",
     customerPhone: "+919825000123",

@@ -179,6 +179,14 @@ afterEach(() => {
 });
 
 describe("R6b cash delivery KOT — quote binding", () => {
+  it("parks a client-claimed online payment without a verified capture", async () => {
+    seedOrder("ord_unverified_online", { fulfillmentType: "TAKEAWAY", paymentMethod: "razorpay" });
+    expect(await pushOrderToPetpooja("ord_unverified_online")).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(savedDocs["orders/ord_unverified_online"].petpoojaStatus).toBe("blocked_configuration");
+    expect(savedDocs["orders/ord_unverified_online"].lastPetpoojaError).toMatch(/unverified payment type/);
+  });
+
   it("does not flag a customer-app takeaway as an unverified delivery", async () => {
     seedOrder("ord_takeaway", { fulfillmentType: undefined, fulfillment: "takeaway", paymentMethod: undefined, payment: { method: "cod", status: "PAY_AT_STORE" }, status: { code: "PICKED_UP", kind: "completed", terminal: true } });
     expect(await pushOrderToPetpooja("ord_takeaway")).toBe(true);

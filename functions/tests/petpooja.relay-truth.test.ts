@@ -117,6 +117,8 @@ describe("KOT Truth & Relay Semantics (Review Finding 5 & Limitations)", () => {
 
     savedDocs["orders/ord_truth_1"] = {
       id: "ord_truth_1",
+      fulfillment: "takeaway",
+      payment: { method: "cod" },
       branchId: "branch_truth_1",
       customerName: "Relay Truth Customer",
       customerPhone: "+919825000001",

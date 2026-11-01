@@ -191,6 +191,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
 
     savedDocs["orders/ord_seq_retry"] = {
       id: "ord_seq_retry",
+      fulfillment: "takeaway", payment: { method: "cod" },
       branchId: "branch_ahmedabad_1",
       customerName: "Sequential Retry Test",
       customerPhone: "+919825000002",
@@ -273,6 +274,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
 
     savedDocs["orders/ord_cand_1"] = {
       id: "ord_cand_1",
+      fulfillment: "takeaway", payment: { method: "cod" },
       branchId: "branch_ahmedabad_1",
       customerName: "Candidate 1",
       customerPhone: "+919825000004",
@@ -286,6 +288,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
 
     savedDocs["orders/ord_cand_2"] = {
       id: "ord_cand_2",
+      fulfillment: "takeaway", payment: { method: "cod" },
       branchId: "branch_ahmedabad_1",
       customerName: "Candidate 2",
       customerPhone: "+919825000005",
@@ -523,6 +526,7 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
 
     savedDocs["orders/ord_won_racer_cleanup"] = {
       id: "ord_won_racer_cleanup",
+      fulfillment: "takeaway", payment: { method: "cod" },
       branchId: "branch_ahmedabad_1",
       customerName: "Won Racer Cleanup",
       customerPhone: "+919825000014",

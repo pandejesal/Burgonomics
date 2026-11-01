@@ -177,6 +177,7 @@ describe("Petpooja POS Bridge Service", () => {
         branchId: "branch_surat_01",
         fulfillmentType: "DELIVERY",
         paymentMethod: "RAZORPAY",
+        paymentChannel: "razorpay",
         customerName: "Aarav Mehta",
         customerPhone: "+919825100001",
         address: { street: "123 Adajan Main Rd" },
@@ -513,6 +514,7 @@ describe("Petpooja POS Bridge Service", () => {
         id: "ord_1003",
         fulfillmentType: "DINE_IN",
         paymentMethod: "PREPAID",
+        paymentChannel: "razorpay",
         items: [],
         pricing: { grandTotal: 0 },
       };

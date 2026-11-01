@@ -93,6 +93,8 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     };
     savedDocs["orders/kot_1"] = {
       id: "kot_1",
+      fulfillment: "takeaway",
+      payment: { method: "cod" },
       branchId: "branch_k1",
       customerName: "Test Customer",
       customerPhone: "+919825000001",

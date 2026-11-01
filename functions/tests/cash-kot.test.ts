@@ -160,6 +160,7 @@ describe("CASH-KOT push on staff acceptance", () => {
     savedDocs["products/itm_1"] = { price: 199, inStock: true };
     savedDocs["orders/ord_cash_1"] = {
       id: "ord_cash_1",
+      fulfillment: "takeaway",
       branchId: "branch_a",
       customerName: "Test Customer",
       customerPhone: "+919825000001",

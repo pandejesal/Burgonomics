@@ -102,6 +102,7 @@ function order(extra: Record<string, any> = {}) {
   return {
     id: "ord_r4b_1",
     branchId: "b1",
+    paymentMethod: "COD",
     customerName: "Aarav Mehta",
     customerPhone: "+919825100001",
     address: { street: "123 Adajan Main Rd" },
@@ -127,6 +128,22 @@ function details(o: any) {
 }
 
 describe("R4b restaurant due, delivery flags and cash collection", () => {
+  it("serializes a customer takeaway COD using its real nested fields", () => {
+    const info = details(order({ fulfillment: "takeaway", paymentMethod: undefined, payment: { method: "cod" }, createdAt: "2026-11-01T09:11:08.034Z", pricing: { foodSubtotal: 10, gst: 0, packagingFee: 0, deliveryFee: 0, discount: 0, loyaltyDiscount: 0, grandTotal: 10 }, items: [{ id: "l1", petpoojaItemId: "101", name: "Item", price: 10, quantity: 1 }] }));
+    expect(info.Order.details).toMatchObject({ order_type: "P", payment_type: "COD", collect_cash: "10.00", enable_delivery: 0, total: "10.00" });
+  });
+
+  it("serializes a walk-in counter order", () => {
+    const info = details(order({ customerId: "cust_walkin", orderType: "dinein", paymentMethod: "cod", createdAt: { toDate: () => new Date("2026-11-01T09:11:08.034Z") }, pricing: { foodSubtotal: 10, gst: 0, packagingFee: 0, deliveryFee: 0, discount: 0, loyaltyDiscount: 0, grandTotal: 10 }, items: [{ itemId: "l1", petpoojaItemId: "101", name: "Item", price: 10, quantity: 1 }] }));
+    expect(info.Order.details).toMatchObject({ order_type: "D", payment_type: "COD", collect_cash: "10.00", enable_delivery: 0, total: "10.00" });
+  });
+
+  it("refuses unknown fulfillment or tender", () => {
+    expect(() => details(order({ fulfillment: "unknown", paymentMethod: "cod" }))).toThrow(PetpoojaStructuralError);
+    expect(() => details(order({ fulfillment: "takeaway", paymentMethod: "unknown" }))).toThrow(PetpoojaStructuralError);
+    expect(() => details(order({ fulfillment: "takeaway", paymentMethod: "razorpay" }))).toThrow(/unverified payment type/);
+  });
+
   it("keeps GST-inclusive line prices and declares tax_inclusive true", () => {
     const info = details(order({ fulfillmentType: "DELIVERY" }));
     for (const line of info.OrderItem.details) {
@@ -202,6 +219,7 @@ describe("R4b restaurant due, delivery flags and cash collection", () => {
       order({
         fulfillmentType: "DELIVERY",
         paymentMethod: "RAZORPAY",
+        paymentChannel: "razorpay",
         dispatchType: "manual_branch_terminal",
       })
     );
