@@ -12,6 +12,7 @@ import {
 } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
+import { assertOnlineOrderPaid } from "../orders/paymentGate";
 import {
   dropGpsMissingError,
   pickupGpsMissingError,
@@ -602,6 +603,9 @@ export async function bookPorterRider(
 
   const order = orderDoc.data()!;
   if (caller) await assertOrderBranchAccess(caller, order);
+
+  // CUS-16: unpaid online orders are not dispatchable (see paymentGate.ts).
+  assertOnlineOrderPaid(order);
 
   // Fail loudly: booking a rider against a fake/missing contact or address
   // produces a "successful" dispatch nobody can complete. Real data or error.
@@ -1791,6 +1795,10 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
 
     const terminal = porterTerminalStatus(d);
     if (terminal) return { terminal };
+    // CUS-16 re-check on the FRESH document: a capture may have landed after
+    // the pre-read, or (more importantly) may still be absent — no in-house
+    // rider is assigned to an unpaid online order. A paid channel passes.
+    assertOnlineOrderPaid(d);
     // An ACTIVE external binding is a live dispatch: staff must cancel it.
     if (hasActiveProviderBinding(d)) {
       return {

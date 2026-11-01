@@ -5,6 +5,7 @@ import { config } from "../../config/env";
 import { isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
+import { assertOnlineOrderPaid } from "../orders/paymentGate";
 import {
   dropGpsMissingError,
   isRealCoordinatePair,
@@ -835,6 +836,9 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   const order = orderDoc.data()!;
   if (caller) await assertOrderBranchAccess(caller, order);
 
+  // CUS-16: no courier may be booked for an online order with no server
+  // capture marker — the courier webhooks would then advance/deliver it.
+  assertOnlineOrderPaid(order);
   assertDispatchNotLocked(order);
   assertOrderDispatchable(order);
   // Pickup GPS resolved BEFORE the claim (a bad order never parks a lease):

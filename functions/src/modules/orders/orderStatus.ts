@@ -6,6 +6,10 @@ import {
   isBrandAdminClaim,
   type StaffCaller,
 } from "../../core/middleware";
+import {
+  assertOnlineOrderPaid,
+  isAbandonedUnpaidOnlineOrder,
+} from "./paymentGate";
 
 /**
  * Server-side KDS order-status bump. Mirrors the partner
@@ -91,6 +95,13 @@ export interface BumpOrderStatusParams {
   cancellationReason?: string;
   timelineEvent?: { title: string; actor?: string; description?: string };
   caller?: StaffCaller;
+  /**
+   * Expiry-worker guard: inside the cancel transaction, refuse unless the order
+   * is STILL the abandoned unpaid online order that was screened. A capture
+   * that lands in the same moment writes the payment marker first, this check
+   * sees it, and the cancel loses — money and kitchen state stay consistent.
+   */
+  onlyIfUnpaid?: boolean;
 }
 
 export async function bumpOrderStatus(params: BumpOrderStatusParams) {
@@ -205,6 +216,19 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
       throw serviceError(
         "STALE_ORDER_STATUS",
         `Order ${orderId} moved to ${current.code || "unknown"} since the screen loaded; refresh before acting`,
+        409,
+      );
+    }
+    // CUS-16: an online order becomes kitchen-eligible only once a server
+    // capture wrote `paymentChannel: "razorpay"`. PLACED (a no-op re-bump) and
+    // cancelled are always allowed; cash/COD/walk-in are not gated.
+    if (canonical !== "pending" && canonical !== "cancelled") {
+      assertOnlineOrderPaid(freshOrder);
+    }
+    if (params.onlyIfUnpaid && !isAbandonedUnpaidOnlineOrder(freshOrder)) {
+      throw serviceError(
+        "ORDER_NOT_PAID",
+        `Order ${orderId} is no longer an abandoned unpaid order; refusing to cancel it`,
         409,
       );
     }
