@@ -117,14 +117,19 @@ describe("shadowfax empty-credential refusal (pre-wire)", () => {
   });
   it("calls the documented status and dispatch-ready endpoints", async () => {
     config.shadowfax.apiKey = "your_api_token";
-    fetchHandler = () => okJson({ message: "done successfully" });
-    await getShadowfaxOrderStatus("21030620");
+    // Schema-derived OrderSuccessResponse envelope: the docs publish the
+    // `{ message, data: OrderData }` wrapper but no example body for this call.
+    fetchHandler = () => okJson({ message: "done successfully", data: { status: "DISPATCHED", sfx_order_id: 21030620 } });
+    const status = await getShadowfaxOrderStatus("21030620");
     await markShadowfaxDispatchReady("379984400", "2022-09-14T17:50:00Z");
     expect(fetchCalls[0].url).toBe("https://hlbackend.staging.shadowfax.in/api/v2/orders/21030620/status/");
     expect(fetchCalls[0].init.method).toBe("GET");
     expect(fetchCalls[1].url).toBe("https://hlbackend.staging.shadowfax.in/api/v2/orders/379984400/dispatch-ready/");
     expect(fetchCalls[1].init.method).toBe("PUT");
     expect(JSON.parse(fetchCalls[1].init.body)).toEqual({ shipment_ready_timestamp: "2022-09-14T17:50:00Z" });
+    // The pull caller gets OrderData, never the envelope: `status` and
+    // `rider_details` live inside `data`.
+    expect(status).toEqual({ status: "DISPATCHED", sfx_order_id: 21030620 });
   });
   it("cancels a Shadowfax order using the documented Seller example", async () => {
     config.shadowfax.apiKey = "your_api_token";

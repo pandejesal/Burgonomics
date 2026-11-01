@@ -214,7 +214,16 @@ export async function cancelShadowfaxOrder(providerOrderId: string, reason = "Ca
   assertProviderOk(response, "shadowfax");
 }
 
-export async function getShadowfaxOrderStatus(providerOrderId: string): Promise<unknown> {
+/**
+ * GET `.../status/` → the documented `OrderData` body.
+ *
+ * The endpoint (like every Marketplace order endpoint) answers
+ * `OrderSuccessResponse` = `{ message, data: OrderData }`, so the pull caller
+ * must not be handed the envelope: `data.status` / `data.rider_details` are the
+ * fields the reconciler reads. The flat shape is kept as a compatibility
+ * fallback, the same rule the book path uses for `sfx_order_id`.
+ */
+export async function getShadowfaxOrderStatus(providerOrderId: string): Promise<any> {
   assertShadowfaxCredentials("status");
   const base = assertShadowfaxBaseUrl("status");
   if (!/^\d+$/.test(providerOrderId)) throw new Error("Shadowfax status requires a numeric provider order id");
@@ -222,7 +231,10 @@ export async function getShadowfaxOrderStatus(providerOrderId: string): Promise<
     method: "GET", headers: shadowfaxHeaders(),
   });
   assertProviderOk(response, "shadowfax");
-  return response.data;
+  const body = response.data;
+  return body && typeof body === "object" && body.data && typeof body.data === "object"
+    ? body.data
+    : body;
 }
 
 export async function markShadowfaxDispatchReady(clientOrderId: string, timestamp: string): Promise<void> {

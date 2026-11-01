@@ -77,6 +77,7 @@ import {
   assertDispatchReadinessIfRequired,
   assertDispatchBookingReadinessIfRequired,
 } from "./modules/dispatch/readiness";
+import { pollActiveShadowfaxOrdersWorker } from "./modules/dispatch/shadowfax.reconcile";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
@@ -1829,6 +1830,37 @@ export const pollActivePorterDeliveries = onSchedule(
     }
     console.log(
       `[Porter Polling Worker] Polled ${result!.polledCount} orders, updated ${result!.updatedCount} orders`
+    );
+  }
+);
+
+// Shadowfax status-poll reconciliation. Shadowfax retries a callback at
+// 5-minute intervals for only 7 attempts (35 minutes) and its own docs say to
+// use "Get Order Details as a reconciliation fallback" — so a missed callback is
+// otherwise permanent: the order sits on the Shadowfax binding with a frozen
+// customer tracker. Shadowfax orders only; advancing states only; never books,
+// rebooks or cancels (a pull-observed cancellation is parked for a human).
+export const pollActiveShadowfaxDeliveries = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+    // Up to 25 stale orders per tick, each a provider GET + a transaction:
+    // never the 60s v2 default (matches its Porter sibling's posture).
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "poll-active-shadowfax",
+      4 * 60 * 1000,
+      () => pollActiveShadowfaxOrdersWorker()
+    );
+    if (!ran) {
+      console.log("[Shadowfax Poll Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Shadowfax Poll Worker] Polled ${result!.polledCount} orders, updated ${result!.updatedCount}, parked ${result!.parkedCount}`
     );
   }
 );
