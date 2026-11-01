@@ -1877,7 +1877,34 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
       }
       tx.set(orderDoc.ref, { dispatchCancelPending: { provider: "shadowfax", providerOrderId: remoteShadowfaxId } }, { merge: true });
     });
-    await cancelShadowfaxOrder(remoteShadowfaxId);
+    try {
+      await cancelShadowfaxOrder(remoteShadowfaxId);
+    } catch (cancelErr) {
+      // The guard serializes CONCURRENT cancellations, it is not a permanent
+      // ban: a provider fault (5xx/timeout/4xx) must leave the booking
+      // cancellable, otherwise the order is wedged on `dispatched` forever —
+      // no cancel (the guard 409s) and no rebook (the binding is still active).
+      // Released ONLY while the guard still names THIS booking, so a newer
+      // attempt that took it over is never de-serialized by a stale failure.
+      try {
+        await (db as any).runTransaction(async (tx: any) => {
+          const snapshot = await tx.get(orderDoc.ref);
+          const fresh = snapshot.exists ? snapshot.data() : null;
+          const pending = fresh?.dispatchCancelPending;
+          if (!pending || pending.provider !== "shadowfax") return;
+          if (String(pending.providerOrderId || "") !== remoteShadowfaxId) return;
+          tx.set(orderDoc.ref, { dispatchCancelPending: null }, { merge: true });
+        });
+      } catch (cleanupErr: any) {
+        // Never mask the provider failure staff must act on; the guard's clear
+        // is best-effort and a stale guard is still recoverable by support.
+        console.warn(
+          "[Dispatch] failed to release the Shadowfax cancellation guard:",
+          cleanupErr?.message || cleanupErr
+        );
+      }
+      throw cancelErr;
+    }
   }
 
   const buildCancelPayload = (d: any, p: ProviderId | null) => ({

@@ -657,6 +657,51 @@ describe("dispatchCancel", () => {
     await expect(dispatchCancel({ orderId: "ord_sfx_failure" })).rejects.toThrow();
     expect(docOf("ord_sfx_failure").dispatchOrderId).toBe("21030620");
   });
+
+  it("releases the cancellation guard after a failed Shadowfax cancel so staff can retry", async () => {
+    // The guard exists to serialize CONCURRENT cancel requests, not to blacklist
+    // the order: leaving it set after a provider fault wedges the booking on
+    // `dispatched` forever (no cancel, and no rebook past the active binding).
+    config.shadowfax.apiKey = "your_api_token";
+    config.shadowfax.baseUrl = "https://hlbackend.staging.shadowfax.in";
+    seedOrder("ord_sfx_retry", { deliveryStatus: "dispatched", dispatchProvider: "shadowfax", dispatchOrderId: "21030620" });
+    fetchHandler = () => new Response(null, { status: 500 });
+    await expect(dispatchCancel({ orderId: "ord_sfx_retry" })).rejects.toThrow();
+    expect(docOf("ord_sfx_retry").dispatchCancelPending ?? null).toBeNull();
+    expect(docOf("ord_sfx_retry").dispatchOrderId).toBe("21030620");
+
+    fetchHandler = () => new Response(null, { status: 200 });
+    const res = await dispatchCancel({ orderId: "ord_sfx_retry", staffName: "Ops" });
+    expect(res.providerCancel).toBe("confirmed");
+    expect(fetchCalls).toHaveLength(2);
+    expect(fetchCalls[1].url).toBe(
+      "https://hlbackend.staging.shadowfax.in/api/v2/orders/21030620/cancel/"
+    );
+  });
+
+  it("does not clear a newer cancellation's guard when an older attempt fails", async () => {
+    // Fresh-binding recheck on the CLEANUP path: the failing attempt may only
+    // release the guard while it still names the booking it tried to cancel. A
+    // concurrent attempt that took the guard over (same order, newer booking)
+    // keeps it, so its remote cancel is never de-serialized by a stale failure.
+    config.shadowfax.apiKey = "your_api_token";
+    config.shadowfax.baseUrl = "https://hlbackend.staging.shadowfax.in";
+    seedOrder("ord_sfx_stale_fail", { deliveryStatus: "dispatched", dispatchProvider: "shadowfax", dispatchOrderId: "21030620" });
+    fetchHandler = () => {
+      // The winner replaces the binding + guard while our request is in flight.
+      savedDocs["orders/ord_sfx_stale_fail"] = {
+        ...savedDocs["orders/ord_sfx_stale_fail"],
+        dispatchOrderId: "21030621",
+        dispatchCancelPending: { provider: "shadowfax", providerOrderId: "21030621" },
+      };
+      return new Response(null, { status: 500 });
+    };
+    await expect(dispatchCancel({ orderId: "ord_sfx_stale_fail" })).rejects.toThrow();
+    expect(docOf("ord_sfx_stale_fail").dispatchCancelPending).toEqual({
+      provider: "shadowfax",
+      providerOrderId: "21030621",
+    });
+  });
   it("409 NOTHING_TO_CANCEL when no dispatch is active", async () => {
     seedOrder("ord_cxl_no");
     await expect(dispatchCancel({ orderId: "ord_cxl_no" })).rejects.toMatchObject({
