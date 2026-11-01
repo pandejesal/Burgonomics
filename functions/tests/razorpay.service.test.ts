@@ -73,6 +73,7 @@ import {
 import { calculateRouteSplit, attemptRouteTransfer } from "../src/modules/payments/routeTransfers";
 import { getRazorpayKeyId } from "../src/modules/payments/razorpayClient";
 import { config } from "../src/config/env";
+import { istMonthKey } from "../src/modules/payments/monthlyFee";
 
 describe("verifyPayment fail-closed (B2-S1)", () => {
   const LIVE_SECRET = "test_rzp_b2s1_sig_secret";
@@ -305,7 +306,19 @@ describe("verifyPayment fail-closed (B2-S1)", () => {
     savedDocs["orders/order_manual_1"] = {
       branchId: "branch_unlinked_1",
       orderType: "delivery",
-      pricing: { grandTotal: 100, split: { branchTransferPaise: 9500, brandRoyaltyPaise: 500 } },
+      pricing: { grandTotal: 100, split: { branchTransferPaise: 9500, courierFeePaise: 0 } },
+    };
+    // The branch exists but has no linked Route account.
+    savedDocs["branches/branch_unlinked_1"] = { razorpayAccountId: "" };
+    // F5: fee already met this month so a payout is owed and the unlinked
+    // branch path is actually reached.
+    savedDocs[`branch_monthly_fees/branch_unlinked_1_${istMonthKey()}`] = {
+      branchId: "branch_unlinked_1",
+      feePaise: 250000,
+      feeCollectedPaise: 250000,
+      razorpayOrders: 1,
+      razorpayEarnedPaise: 250000,
+      razorpayRefundedPaise: 0,
     };
     const res = await verifyPayment({
       orderId: "order_manual_1",
@@ -349,11 +362,13 @@ describe("verifyPayment fail-closed (B2-S1)", () => {
     expect(() => calculateRouteSplit(Number.NaN)).toThrow(/positive integer/);
     expect(() => calculateRouteSplit(-100)).toThrow(/positive integer/);
     expect(() => calculateRouteSplit(100.5)).toThrow(/positive integer/);
-    expect(() => calculateRouteSplit(10000, 1)).toThrow(/\[0, 1\)/);
-    expect(() => calculateRouteSplit(10000, -0.1)).toThrow(/\[0, 1\)/);
-    // Rounding dust always lands on the branch leg, never vanishes.
-    const odd = calculateRouteSplit(9999);
-    expect(odd.brandRoyaltyPaise + odd.branchTransferPaise).toBe(9999);
+    // An impossible courier fee is refused, never clamped.
+    expect(() => calculateRouteSplit(10000, 10001)).toThrow(/courierFeePaise/);
+    expect(() => calculateRouteSplit(10000, -1)).toThrow(/courierFeePaise/);
+    // No per-order royalty (F3): the branch leg is the total minus courier.
+    const odd = calculateRouteSplit(9999, 0);
+    expect(odd.branchTransferPaise).toBe(9999);
+    expect(odd).not.toHaveProperty("brandRoyaltyPaise");
   });
 });
 

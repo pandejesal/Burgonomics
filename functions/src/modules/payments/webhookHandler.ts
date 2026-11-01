@@ -481,9 +481,20 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         // orders — handover was impossible. Shared implementation: eligible only
         // (delivery / legacy no-orderType), never overwrite an existing hash.
         const { mintDeliveryOtp } = await import("./razorpay.service");
+         // F2: the gateway payment's own creation time decides the fee month.
+        const gatewayCreatedRaw = Number(paymentEntity?.created_at);
+        const gatewayCreatedAtMs =
+          Number.isFinite(gatewayCreatedRaw) && gatewayCreatedRaw > 0
+            ? Math.round(gatewayCreatedRaw * 1000)
+            : undefined;
          const basePayload = {
           paymentStatus: "completed",
           "payment.status": "completed",
+          // F8: the stream marker survives a suppressed confirm.
+          paymentChannel: "razorpay",
+          ...(typeof gatewayCreatedAtMs === "number"
+            ? { "payment.gatewayCreatedAtMs": gatewayCreatedAtMs }
+            : {}),
           // order.paid carries no payment id — never write undefined.
           ...(razorpayPaymentId ? { "payment.razorpayPaymentId": razorpayPaymentId } : {}),
           // Live gateway truth in paise for the Route split over-transfer
@@ -554,6 +565,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             ...(typeof capturedPaise === "number"
               ? { capturedAmountPaise: capturedPaise }
               : {}),
+            ...(typeof gatewayCreatedAtMs === "number" ? { gatewayCreatedAtMs } : {}),
             verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
           };
           tx.set(

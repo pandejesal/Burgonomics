@@ -134,6 +134,21 @@ import {
   __resetRazorpayClientForTests,
 } from "../src/modules/payments/razorpayClient";
 import { config } from "../src/config/env";
+import { branchMonthlyFeeId, istMonthKey } from "../src/modules/payments/monthlyFee";
+
+/** Marks this month's fixed fee as fully collected for a branch. */
+function seededMonthlyFeeMet(branchId: string): void {
+  const monthKey = istMonthKey();
+  savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(branchId, monthKey)}`] = {
+    branchId,
+    monthKey,
+    feePaise: 250000,
+    feeCollectedPaise: 250000,
+    razorpayOrders: 1,
+    razorpayEarnedPaise: 250000,
+    razorpayRefundedPaise: 0,
+  };
+}
 
 describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
   let prevMock: boolean;
@@ -154,6 +169,9 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
     config.mock.paymentGateway = true;
     process.env.OTP_HMAC_SECRET = "test_otp_contract_spec_only";
     savedDocs["branches/branch_c1"] = { razorpayAccountId: "acc_c1d2e3" };
+    // F5: the branch's monthly fee is already met this month, so these
+    // transfer/over-capture suites keep exercising the payout lanes.
+    seededMonthlyFeeMet("branch_c1");
   });
 
   afterEach(() => {

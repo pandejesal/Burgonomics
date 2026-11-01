@@ -102,6 +102,7 @@ vi.mock("firebase-admin", () => {
 
 import { handleRazorpayWebhook } from "../src/modules/payments/webhookHandler";
 import { config } from "../src/config/env";
+import { branchMonthlyFeeId, istMonthKey } from "../src/modules/payments/monthlyFee";
 
 function mockReqRes(payload: any) {
   const req: any = { headers: {}, body: payload };
@@ -577,6 +578,11 @@ describe("Razorpay webhook idempotency (real handler)", () => {
       },
     };
     savedDocs["branches/branch_surat_01"] = { razorpayAccountId: "acc_surat_1" };
+    // F5: fee already met this month, so the replay suites still transfer.
+    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`] = {
+      branchId: "branch_surat_01", monthKey: istMonthKey(), feePaise: 250000,
+      feeCollectedPaise: 250000, razorpayOrders: 1, razorpayEarnedPaise: 250000, razorpayRefundedPaise: 0,
+    };
 
     const captured = mockReqRes(capturedPayload("evt_split_once_1"));
     await handleRazorpayWebhook(captured.req, captured.res);

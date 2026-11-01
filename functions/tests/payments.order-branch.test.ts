@@ -160,11 +160,10 @@ describe("PAY-15 the branch comes from the order document", () => {
     // Branch A packaging (22), not the request's B (15).
     expect(res.pricing.packagingFee).toBe(22);
     expect(res.pricing.grandTotal).toBe(522);
-    // Royalty is A's 20% on the ex-GST food value, not B's 5%.
-    expect(res.pricing.split.royaltyPercentage).toBe(20);
-    expect(res.pricing.split.brandRoyaltyPaise).toBe(
-      Math.round(((50000 - Math.round(res.pricing.gst * 100)) * 20) / 100)
-    );
+    // No per-order royalty survives anywhere on the split (F3).
+    expect(res.pricing.split).not.toHaveProperty("royaltyPercentage");
+    expect(res.pricing.split).not.toHaveProperty("brandRoyaltyPaise");
+    expect(res.pricing.split.branchTransferPaise).toBe(52200);
     // The stamped order and the intent (the Route transfer target) carry A.
     expect(savedDocs["orders/ord_branch"].pricing.packagingFee).toBe(22);
   });
@@ -187,8 +186,10 @@ describe("PAY-15 the branch comes from the order document", () => {
     const res = await createPaymentOrder(
       request({ orderId: "ord_store", branchId: BRANCH_B })
     );
+    // Binding asserts the branch from the doc drives the money: branch A's
+    // packaging (22), not the request's B (15).
     expect(res.pricing.packagingFee).toBe(22);
-    expect(res.pricing.split.royaltyPercentage).toBe(20);
+    expect(res.pricing.split).not.toHaveProperty("royaltyPercentage");
   });
 
   it("binds the delivery quote against the resolved (doc) branch", async () => {

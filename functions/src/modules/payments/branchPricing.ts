@@ -13,18 +13,21 @@ import type { PetpoojaPackaging } from "../petpooja/packaging";
 
 /** Documented default packaging fee, used when Petpooja has given no value. */
 export const DEFAULT_PACKAGING_FEE = 15;
-/** Default brand royalty (spec: 95/5 split). */
-export const DEFAULT_ROYALTY_PERCENTAGE = 5;
 
 export interface BranchPricingConfig {
-  royaltyPercentage: number;
   /** Effective fee (branch value, else DEFAULT_PACKAGING_FEE). */
   packagingFee: number;
   /** Raw branch `packagingFee` when the doc carries one (fallback source). */
   branchPackagingFee?: number;
   /** Raw Petpooja packaging contract captured by the menu sync (P1). */
   packaging?: PetpoojaPackaging | null;
+  /** F1: the branch's fixed monthly fee in paise (default 2500 rupees). */
+  monthlyFeePaise: number;
+  /** F1: true when `monthlyFee` is negative or non-finite (capture flags it). */
+  monthlyFeeInvalid?: boolean;
 }
+
+export const DEFAULT_MONTHLY_FEE_RUPEES = 2500;
 
 /** 60s in-memory branch config cache (royalty/packaging change rarely). */
 const branchConfigCache = new Map<string, BranchPricingConfig & { at: number }>();
@@ -47,18 +50,19 @@ export async function resolveBranchPricingConfig(
 ): Promise<BranchPricingConfig> {
   if (!branchId || !db || typeof db.collection !== "function") {
     return {
-      royaltyPercentage: DEFAULT_ROYALTY_PERCENTAGE,
       packagingFee: DEFAULT_PACKAGING_FEE,
+      monthlyFeePaise: DEFAULT_MONTHLY_FEE_RUPEES * 100,
     };
   }
 
   const cached = branchConfigCache.get(branchId);
   if (cached && Date.now() - cached.at < BRANCH_CACHE_TTL_MS) {
     return {
-      royaltyPercentage: cached.royaltyPercentage,
       packagingFee: cached.packagingFee,
       branchPackagingFee: cached.branchPackagingFee,
       packaging: cached.packaging ?? null,
+      monthlyFeePaise: cached.monthlyFeePaise,
+      ...(cached.monthlyFeeInvalid ? { monthlyFeeInvalid: true } : {}),
     };
   }
 
@@ -81,22 +85,21 @@ export async function resolveBranchPricingConfig(
 
     const branchData = branchSnap.data() as any;
     const config: BranchPricingConfig = {
-      royaltyPercentage: DEFAULT_ROYALTY_PERCENTAGE,
       packagingFee: DEFAULT_PACKAGING_FEE,
+      monthlyFeePaise: DEFAULT_MONTHLY_FEE_RUPEES * 100,
     };
 
-    if (typeof branchData?.royaltyPercentage === "number") {
-      const rp = branchData.royaltyPercentage;
-      // Bounds before use: a corrupt rate (>100%, negative, NaN) would mint a
-      // NEGATIVE branch leg (split > 100% of net food), which
-      // attemptRouteTransfer then refuses forever — a permanently stuck Route
-      // settlement for every order at this branch. Refuse to price instead.
-      if (!Number.isFinite(rp) || rp < 0 || rp > 100) {
-        throw new Error(
-          `branch royaltyPercentage ${String(rp)} outside [0,100] for ${branchId} — refusing to price (corrupt royalty config would strand the Route split)`
-        );
+    // F1: the fixed monthly fee (rupees). Absent → 2500; 0 is valid and means
+    // no fee; negative/non-finite is recorded as invalid (capture flags it for
+    // manual settlement) — it never blocks the customer's checkout.
+    const monthlyFeeRaw = branchData?.monthlyFee;
+    if (monthlyFeeRaw !== undefined && monthlyFeeRaw !== null) {
+      const rupees = typeof monthlyFeeRaw === "number" ? monthlyFeeRaw : Number(monthlyFeeRaw);
+      if (!Number.isFinite(rupees) || rupees < 0) {
+        config.monthlyFeeInvalid = true;
+      } else {
+        config.monthlyFeePaise = Math.round(rupees * 100);
       }
-      config.royaltyPercentage = rp;
     }
     if (typeof branchData?.packagingFee === "number") {
       // Same bound: a negative or non-finite packaging fee must never credit

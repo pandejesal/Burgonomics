@@ -1,7 +1,6 @@
 import { db } from "../../core/firebase";
 import {
   DEFAULT_PACKAGING_FEE,
-  DEFAULT_ROYALTY_PERCENTAGE,
   computePackagingFee,
   resolveBranchPricingConfig,
   type BranchPricingConfig,
@@ -61,11 +60,16 @@ export interface PricingBreakdown {
   /** True when branch/coupon reads fell back to defaults — price is degraded. */
   pricingDegraded: boolean;
   split: {
-    royaltyPercentage: number;
-    brandRoyaltyAmount: number;
-    branchTransferAmount: number;
-    brandRoyaltyPaise: number;
+    /**
+     * F3 (owner decision 2026-11-01): the courier fee the customer paid stays
+     * with the brand (one Borzo account pays every courier), so it is NOT
+     * branch earnings. 0 off-delivery.
+     */
+    courierFeePaise: number;
+    /** Branch earnings on this order (grand total minus the courier fee). */
     branchTransferPaise: number;
+    /** The charged total in paise (kept so the split always reconciles). */
+    totalAmountPaise: number;
   };
 }
 
@@ -365,7 +369,6 @@ export async function calculateOrderPricing(
   // is the SOLE source of packaging/royalty, shared with POST /checkout/fees
   // through resolveBranchPricingConfig; client-supplied fees are untrusted.
   // Coupons collection is the SOLE discount authority (no hardcoded fallback).
-  let royaltyPercentage = DEFAULT_ROYALTY_PERCENTAGE;
   let packagingFee = DEFAULT_PACKAGING_FEE;
   const branchState: { config: BranchPricingConfig | null } = { config: null };
   let couponDoc: any = null;
@@ -373,7 +376,6 @@ export async function calculateOrderPricing(
   const couponCode = input.couponCode?.trim().toUpperCase();
   const branchRead: Promise<void> = resolveBranchPricingConfig(input.branchId).then(
     (cfg) => {
-      royaltyPercentage = cfg.royaltyPercentage;
       branchState.config = cfg;
     }
   );
@@ -508,7 +510,6 @@ export async function calculateOrderPricing(
   // never change the amount the customer pays. Packaging and delivery sit
   // outside the base (unchanged).
   const netFood = round2(Math.max(0, foodSubtotal - discount - loyaltyDiscount));
-  const netFoodPaise = Math.round(netFood * 100);
   const gst = round2((netFood * GST_RATE) / (1 + GST_RATE));
   const gstPaise = Math.round(gst * 100);
   // Split in paise so CGST + SGST always equals GST exactly.
@@ -520,13 +521,12 @@ export async function calculateOrderPricing(
   const grandTotal = round2(Math.max(0, netFood + packagingFee + deliveryFee));
   const grandPaise = Math.round(grandTotal * 100);
 
-  // 7. Razorpay Route Marketplace Royalty Split (in Paise). R3: royalty is on
-  // the EX-GST food value (unchanged historic meaning — the branch keeps and
-  // remits the GST), and the branch leg takes the remainder, so the two legs
-  // always sum to the charged total.
-  const exGstPaise = netFoodPaise - gstPaise;
-  const brandRoyaltyPaise = Math.round((exGstPaise * royaltyPercentage) / 100);
-  const branchTransferPaise = grandPaise - brandRoyaltyPaise;
+  // 7. Branch earnings (F3, owner decision 2026-11-01): NO per-order royalty.
+  // The courier fee the customer paid stays with the brand (one Borzo account
+  // pays every courier, D6); everything else is the branch's earnings for this
+  // order, before the fixed monthly fee is applied at capture (F5).
+  const courierFeePaise = Math.round(deliveryFee * 100);
+  const branchTransferPaise = Math.max(0, grandPaise - courierFeePaise);
 
   return {
     foodSubtotal,
@@ -540,11 +540,9 @@ export async function calculateOrderPricing(
     grandTotal,
     pricingDegraded,
     split: {
-      royaltyPercentage,
-      brandRoyaltyAmount: brandRoyaltyPaise / 100,
-      branchTransferAmount: branchTransferPaise / 100,
-      brandRoyaltyPaise,
+      courierFeePaise,
       branchTransferPaise,
+      totalAmountPaise: grandPaise,
     },
   };
 }

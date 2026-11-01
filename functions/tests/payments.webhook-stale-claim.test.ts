@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /**
  * Razorpay webhook idempotency-claim regression (granted by the payments owner
@@ -209,6 +209,21 @@ vi.mock("firebase-admin", () => {
 
 import { handleRazorpayWebhook } from "../src/modules/payments/webhookHandler";
 import { config } from "../src/config/env";
+import { branchMonthlyFeeId, istMonthKey } from "../src/modules/payments/monthlyFee";
+
+/** This month's fixed branch fee already met — keeps payout lanes under test. */
+function monthlyFeeMet(branchId: string): Record<string, any> {
+  const monthKey = istMonthKey();
+  return {
+    branchId,
+    monthKey,
+    feePaise: 250000,
+    feeCollectedPaise: 250000,
+    razorpayOrders: 1,
+    razorpayEarnedPaise: 250000,
+    razorpayRefundedPaise: 0,
+  };
+}
 
 const transferWrites = () =>
   writeLog.filter((e) => e.path.startsWith("orders/") && e.data?.routeTransferStatus === "transferred");
@@ -284,6 +299,7 @@ describe("Razorpay webhook idempotency claim (granted regression)", () => {
   it("positive control: a FRESH claim applies exactly once (one settlement, one KOT)", async () => {
     control.seed("orders/order_fresh_1", pendingOrder("order_fresh_1", "pay_fresh_1"));
     control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+    control.seed(`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`, monthlyFeeMet("branch_surat_01"));
 
     const call = mockReqRes(capturedPayload("evt_fresh_1", "order_fresh_1", "pay_fresh_1"));
     await handleRazorpayWebhook(call.req, call.res);
@@ -358,6 +374,7 @@ describe("Razorpay webhook idempotency claim (granted regression)", () => {
   it("D1: two CONCURRENT takeovers of the SAME stale claim cannot double-settle", async () => {
     control.seed("orders/order_race_stale_1", pendingOrder("order_race_stale_1", "pay_race_stale_1"));
     control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+    control.seed(`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`, monthlyFeeMet("branch_surat_01"));
     control.seed("payment_audits/aud_evt_evt_race_stale_1", staleClaim("evt_race_stale_1"), false);
 
     // Both claim reads observe the stale lease before either re-stamps it.
@@ -383,7 +400,7 @@ describe("Razorpay webhook idempotency claim (granted regression)", () => {
     expect(claimDocKeys()).toHaveLength(1);
     // PROOF the D1 window really opened: both concurrent callers observed the
     // stale lease and re-stamped it (read-then-set, no CAS), i.e. both took
-    // over — and the money-safety assertions above still hold.
+    // over � and the money-safety assertions above still hold.
     const takeovers = writeLog.filter(
       (e) =>
         e.path === "payment_audits/aud_evt_evt_race_stale_1" &&
@@ -415,7 +432,7 @@ describe("Razorpay webhook idempotency claim (granted regression)", () => {
     expect(call.out().statusCode).toBe(200);
     const order = docs.get("orders/order_conf_1")!.data;
     // D2 containment: CONFIRMED is not in WH_CONFIRMED_LATER, so the confirm
-    // re-write may run — but the settlement receipt and KOT marker must not.
+    // re-write may run � but the settlement receipt and KOT marker must not.
     expect(order.status).toMatchObject({ code: "CONFIRMED" });
     expect(order.paymentStatus).toBe("completed");
     expect(order["payment.routeTransfer"].id).toBe("trf_sentinel_confirmed");

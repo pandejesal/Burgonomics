@@ -119,7 +119,7 @@ describe("Pricing Engine", () => {
     expect(breakdown.grandTotal).toBe(450); // 400 + 15 + 35, no tax on top
   });
 
-  it("computes Razorpay Route marketplace royalty split accurately", async () => {
+  it("branch earnings exclude the courier fee (F3, no per-order royalty)", async () => {
     const breakdown = await calculateOrderPricing({
       items: [
         {
@@ -137,17 +137,18 @@ describe("Pricing Engine", () => {
       packagingFee: 15,
     });
 
-    // Subtotal = 500 (GST-inclusive), GST included = 23.81, Packaging = 15,
-    // Delivery = 35, Total = 550
-    // Royalty 7% of the ex-GST ₹476.19 = ₹33.33 (3333 paise)
-    // Branch Transfer = 55000 - 3333 = ₹516.67 (51667 paise)
+    // Total = 500 + 15 + 35 = 550. The courier's ₹35 stays with the brand
+    // (one Borzo account pays every courier, D6), so the branch earns ₹515.
     expect(breakdown.foodSubtotal).toBe(500);
     expect(breakdown.gst).toBe(23.81);
-    expect(breakdown.split.brandRoyaltyAmount).toBe(33.33);
-    expect(breakdown.split.branchTransferAmount).toBe(516.67);
-    expect(breakdown.split.brandRoyaltyPaise + breakdown.split.branchTransferPaise).toBe(
+    expect(breakdown.split.courierFeePaise).toBe(3500);
+    expect(breakdown.split.branchTransferPaise).toBe(51500);
+    expect(breakdown.split.totalAmountPaise).toBe(
       Math.round(breakdown.grandTotal * 100)
     );
+    // No royalty surfaces anywhere on the split.
+    expect(breakdown.split).not.toHaveProperty("brandRoyaltyPaise");
+    expect(breakdown.split).not.toHaveProperty("royaltyPercentage");
   });
 
   it("applies coupon discounts and loyalty points accurately", async () => {
@@ -306,7 +307,6 @@ describe("GST-inclusive menu prices (R1/R2/R3)", () => {
     cgst: number;
     sgst: number;
     grandTotal: number;
-    royaltyPaise: number;
     branchPaise: number;
   }
 
@@ -322,8 +322,7 @@ describe("GST-inclusive menu prices (R1/R2/R3)", () => {
       cgst: 2.5,
       sgst: 2.5,
       grandTotal: 120,
-      royaltyPaise: 700,
-      branchPaise: 11300,
+      branchPaise: 12000,
     },
     {
       name: "a ₹50 coupon + ₹20 loyalty reduces the GST base to ₹330",
@@ -338,8 +337,7 @@ describe("GST-inclusive menu prices (R1/R2/R3)", () => {
       cgst: 7.86,
       sgst: 7.85,
       grandTotal: 345,
-      royaltyPaise: 2200,
-      branchPaise: 32300,
+      branchPaise: 34500,
     },
     {
       name: "delivery adds the courier quote and no tax on top",
@@ -353,8 +351,7 @@ describe("GST-inclusive menu prices (R1/R2/R3)", () => {
       cgst: 11.91,
       sgst: 11.9,
       grandTotal: 550,
-      royaltyPaise: 3333,
-      branchPaise: 51667,
+      branchPaise: 51500,
     },
     {
       name: "paise-bearing total (courier quote ₹42.55) stays exact in paise",
@@ -368,8 +365,7 @@ describe("GST-inclusive menu prices (R1/R2/R3)", () => {
       cgst: 9.53,
       sgst: 9.52,
       grandTotal: 457.55,
-      royaltyPaise: 2667,
-      branchPaise: 43088,
+      branchPaise: 41500,
     },
     {
       name: "dine-in ₹105: no packaging, no delivery, total is the menu price",
@@ -382,8 +378,7 @@ describe("GST-inclusive menu prices (R1/R2/R3)", () => {
       cgst: 2.5,
       sgst: 2.5,
       grandTotal: 105,
-      royaltyPaise: 700,
-      branchPaise: 9800,
+      branchPaise: 10500,
     },
     {
       name: "₹0 total: nothing to tax, nothing to split",
@@ -396,7 +391,6 @@ describe("GST-inclusive menu prices (R1/R2/R3)", () => {
       cgst: 0,
       sgst: 0,
       grandTotal: 0,
-      royaltyPaise: 0,
       branchPaise: 0,
     },
   ];
@@ -435,18 +429,15 @@ describe("GST-inclusive menu prices (R1/R2/R3)", () => {
       );
     }
 
-    // R3: royalty on the ex-GST food value; the split sums to the total.
-    const netFoodPaise = Math.round(c.netFood * 100);
-    const gstPaise = Math.round(c.gst * 100);
-    const exGstPaise = netFoodPaise - gstPaise;
-    expect(b.split.brandRoyaltyPaise).toBe(Math.round((exGstPaise * 7) / 100));
-    expect(b.split.brandRoyaltyPaise).toBe(c.royaltyPaise);
+    // F3: branch earnings are the total minus the courier fee (no royalty).
+    const courierPaise = Math.round(c.delivery * 100);
+    const expectedBranchPaise = Math.round(c.grandTotal * 100) - courierPaise;
+    expect(b.split.courierFeePaise).toBe(courierPaise);
+    expect(b.split.branchTransferPaise).toBe(expectedBranchPaise);
     expect(b.split.branchTransferPaise).toBe(c.branchPaise);
-    expect(b.split.brandRoyaltyPaise + b.split.branchTransferPaise).toBe(
+    expect(b.split.courierFeePaise + b.split.branchTransferPaise).toBe(
       Math.round(c.grandTotal * 100)
     );
-    expect(Number.isInteger(b.split.brandRoyaltyPaise)).toBe(true);
-    expect(Number.isInteger(b.split.branchTransferPaise)).toBe(true);
   });
 
   it("reports the inclusive GST share, which is never 5% of the inclusive amount", async () => {

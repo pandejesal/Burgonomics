@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /**
  * Route-transfer retry-worker LEASE RACE regression (granted by the payments
@@ -223,6 +223,7 @@ vi.mock("firebase-admin", () => {
 
 import { retryPendingRouteTransfersWorker } from "../src/modules/payments/routeTransfers";
 import { config } from "../src/config/env";
+import { branchMonthlyFeeId, istMonthKey } from "../src/modules/payments/monthlyFee";
 
 /** The worker's own success write is emitted exactly once per real transfer
  *  attempt (routeTransfers.ts:572-582), so it is the offline proxy for
@@ -247,6 +248,16 @@ const seedPendingOrder = (id: string, paymentId = "pay_lease_1") => {
     routeTransferError: "Transient gateway failure",
   });
   control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+  // F5: fee already met this month, so the worker still pays the branch.
+  control.seed(`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`, {
+    branchId: "branch_surat_01",
+    monthKey: istMonthKey(),
+    feePaise: 250000,
+    feeCollectedPaise: 250000,
+    razorpayOrders: 1,
+    razorpayEarnedPaise: 250000,
+    razorpayRefundedPaise: 0,
+  });
 };
 
 describe("route transfer retry worker lease race (granted regression)", () => {

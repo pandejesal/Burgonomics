@@ -165,6 +165,7 @@ import {
 } from "../src/modules/porter/porter.service";
 import { config } from "../src/config/env";
 import { computeHmacSha256 } from "../src/core/security";
+import { branchMonthlyFeeId, istMonthKey } from "../src/modules/payments/monthlyFee";
 
 describe("End-to-End Platform Integration Flow", () => {
   // Explicit sandbox opt-in (was auto-mock): fail-closed env defaults to
@@ -225,12 +226,11 @@ describe("End-to-End Platform Integration Flow", () => {
     // R2: 497 + 15 + 35 = 547 — no tax on top, no whole-rupee rounding.
     expect(pricing.grandTotal).toBe(547);
 
-    // Route split: default 5% brand royalty (spec 95/5) on the EX-GST food
-    // value (R3): round(47333 * 5 / 100) = 2367 paise; the branch takes the
-    // remainder of the charged total.
-    expect(pricing.split.brandRoyaltyAmount).toBe(23.67);
-    expect(pricing.split.branchTransferAmount).toBe(523.33);
-    expect(pricing.split.brandRoyaltyPaise + pricing.split.branchTransferPaise).toBe(
+    // Route split (F3): no per-order royalty. The branch earns the total minus
+    // the courier fee (D6); this order has a ₹35 courier fee.
+    expect(pricing.split.courierFeePaise).toBe(3500);
+    expect(pricing.split.branchTransferPaise).toBe(51200);
+    expect(pricing.split.courierFeePaise + pricing.split.branchTransferPaise).toBe(
       Math.round(pricing.grandTotal * 100)
     );
 
@@ -254,6 +254,19 @@ describe("End-to-End Platform Integration Flow", () => {
         lat: 23.0338,
         lng: 72.5262,
       },
+    };
+
+    // F5: this branch's fixed monthly fee is already met this month, so the
+    // lifecycle below still exercises a real transfer (the first ₹2,500 of a
+    // month is held, which the monthly-fee suite covers directly).
+    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(branchId, istMonthKey())}`] = {
+      branchId,
+      monthKey: istMonthKey(),
+      feePaise: 250000,
+      feeCollectedPaise: 250000,
+      razorpayOrders: 2,
+      razorpayEarnedPaise: 250000,
+      razorpayRefundedPaise: 0,
     };
 
     // 2. Create Razorpay Payment Order with Route Notes

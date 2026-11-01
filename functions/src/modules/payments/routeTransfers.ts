@@ -3,11 +3,15 @@ import { db } from "../../core/firebase";
 import { config, assertLivePaymentsContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getRazorpayClient } from "./razorpayClient";
+import { ensureMonthlyFeeHold, type MonthlyFeeHold } from "./monthlyFee";
 
 export interface RoutePricingSplit {
   branchTransferPaise: number;
-  brandRoyaltyPaise: number;
-  totalAmountPaise: number;
+  /** The courier fee the brand keeps (D6), never transferred. */
+  courierFeePaise?: number;
+  /** The part of this order's earnings held against the fixed monthly fee. */
+  monthlyFeeHoldPaise?: number;
+  totalAmountPaise?: number;
 }
 
 export interface RouteTransferAttempt {
@@ -121,36 +125,30 @@ function isDefiniteGatewayRejection(err: any): boolean {
 }
 
 /**
- * Calculates the branch/brand royalty split in paise.
+ * F3/F6 (owner decision 2026-11-01): NO per-order royalty. The branch is owed
+ * everything except the courier fee; the fixed monthly fee is applied per
+ * capture by `ensureMonthlyFeeHold`, never here.
  *
- * Fail-closed input gate: the split feeds a real money transfer, so a NaN,
- * fractional, or negative paise total (or a rate outside [0,1)) must throw
- * instead of producing `NaN` paise that a downstream `> 0` check could leak
- * past. `branchTransferPaise` is derived as `total - royalty` so the two legs
- * ALWAYS sum to the captured total — no rounding dust is created or lost.
+ * Kept as a pure helper for callers that only have a total and a courier fee.
  */
 export function calculateRouteSplit(
   totalAmountPaise: number,
-  royaltyRate = 0.05
+  courierFeePaise = 0
 ): RoutePricingSplit {
   const total = Number(totalAmountPaise);
-  const rate = Number(royaltyRate);
+  const courier = Number(courierFeePaise);
   if (!Number.isInteger(total) || total <= 0) {
     throw new Error(
       `calculateRouteSplit: totalAmountPaise must be a positive integer of whole paise (got ${String(totalAmountPaise)})`
     );
   }
-  if (!Number.isFinite(rate) || rate < 0 || rate >= 1) {
+  if (!Number.isInteger(courier) || courier < 0 || courier > total) {
     throw new Error(
-      `calculateRouteSplit: royaltyRate must be a fraction in [0, 1) (got ${String(royaltyRate)})`
+      `calculateRouteSplit: courierFeePaise must be a whole, non-negative paise amount not above the total (got ${String(courierFeePaise)})`
     );
   }
-  const brandRoyaltyPaise = Math.round(total * rate);
-  const branchTransferPaise = total - brandRoyaltyPaise;
-
   return {
-    branchTransferPaise,
-    brandRoyaltyPaise,
+    branchTransferPaise: total - courier,
     totalAmountPaise: total,
   };
 }
@@ -163,7 +161,7 @@ export function buildRouteTransferPayload(
   amountPaise: number,
   orderId: string,
   branchId: string,
-  brandRoyaltyPaise?: number
+  monthlyFeeHoldPaise?: number
 ) {
   return [
     {
@@ -173,7 +171,8 @@ export function buildRouteTransferPayload(
       notes: {
         orderId,
         branchId,
-        brandRoyaltyPaise: brandRoyaltyPaise ?? 0,
+        // F6: the amount of THIS order's earnings held against the monthly fee.
+        monthlyFeeHoldPaise: monthlyFeeHoldPaise ?? 0,
       },
       linked_account_notes: ["orderId"],
       on_hold: false,
@@ -189,7 +188,7 @@ export function buildRouteTransferPayload(
 export async function attemptRouteTransfer(
   paymentId: string,
   branchId: string,
-  pricingSplit: { branchTransferPaise: number; brandRoyaltyPaise?: number; brandRoyaltyAmount?: number },
+  pricingSplit: { branchTransferPaise: number; monthlyFeeHoldPaise?: number },
   orderId: string,
   // Pre-resolved linked account from the worker's batched branch prefetch.
   // `undefined` (direct callers/tests) keeps the old inline branch read.
@@ -308,7 +307,7 @@ export async function attemptRouteTransfer(
       splitPaise,
       orderId,
       branchId,
-      pricingSplit.brandRoyaltyPaise ?? pricingSplit.brandRoyaltyAmount
+      pricingSplit.monthlyFeeHoldPaise
     );
 
     let result: any;
@@ -507,7 +506,7 @@ export async function retryPendingRouteTransfersWorker() {
       order.payment?.razorpayPaymentId || order.razorpayPaymentId || order["payment.razorpayPaymentId"];
 
     try {
-      if (!branchId || !pricingSplit || pricingSplit.branchTransferPaise <= 0 || !paymentId) {
+      if (!branchId || !pricingSplit || !paymentId) {
         await doc.ref.set(
           {
             routeTransferStatus: "failed",
@@ -519,10 +518,75 @@ export async function retryPendingRouteTransfersWorker() {
         return false;
       }
 
+      // F5: the SAME idempotent hold as executeRouteSplit. A webhook that died
+      // after CONFIRMED (F5a) leaves `pending_retry`; this worker finishes the
+      // order — holding the fee exactly once and transferring the stamped
+      // amount. An order that already carries a hold reuses it untouched.
+      let hold: MonthlyFeeHold;
+      try {
+        const held = await ensureMonthlyFeeHold({
+          orderRef: doc.ref,
+          orderId,
+          branchId,
+          earnedPaise: Number(pricingSplit.branchTransferPaise) || 0,
+          courierFeePaise: Number(pricingSplit.courierFeePaise) || 0,
+          gatewayCreatedAtMs:
+            Number(order?.payment?.gatewayCreatedAtMs) ||
+            Number((order as any)["payment.gatewayCreatedAtMs"]) ||
+            undefined,
+        });
+        hold = held.hold;
+        if (held.manualSettlement) {
+          await doc.ref.set(
+            {
+              routeTransferStatus: "failed",
+              routeTransferNeedsManualSettlement: true,
+              routeTransferError: held.reason || "monthly fee hold could not be applied",
+              routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          return false;
+        }
+      } catch (err: any) {
+        await doc.ref.set(
+          {
+            routeTransferStatus: "failed",
+            routeTransferNeedsManualSettlement: true,
+            routeTransferError: `monthly fee hold failed (${err?.message || err}) — settle manually`,
+            routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return false;
+      }
+
+      // F6: nothing to pay the branch is SUCCESS, not failure — never mark
+      // such an order failed and never retry it.
+      if (hold.branchTransferPaise <= 0) {
+        await doc.ref.set(
+          {
+            routeTransferStatus: "not_required",
+            routeTransferError: admin.firestore.FieldValue.delete(),
+            routeTransferRetryAt: admin.firestore.FieldValue.delete(),
+            routeTransferRetryCount: admin.firestore.FieldValue.delete(),
+            routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return true;
+      }
+
       const attempt = await attemptRouteTransfer(
         paymentId,
         branchId,
-        pricingSplit,
+        {
+          branchTransferPaise: hold.branchTransferPaise,
+          monthlyFeeHoldPaise: hold.holdPaise,
+        },
         orderId,
         branchAccounts.has(branchId) ? branchAccounts.get(branchId) ?? null : undefined,
         // Captured ceiling for the over-transfer guard: live gateway truth

@@ -157,14 +157,14 @@ describe("pricing parity — 20 baskets", () => {
       expect(r.loyaltyDiscount).toBeLessThanOrEqual(b.loyaltyPointsToRedeem);
     }
 
-    // Razorpay split conserves money (paise-exact) and sums to the TOTAL —
-    // royalty is on the ex-GST food value (R3).
-    const netPaise = Math.round(netFood * 100);
-    const gstPaise = Math.round(r.gst * 100);
-    expect(r.split.brandRoyaltyPaise).toBe(
-      Math.round(((netPaise - gstPaise) * 5) / 100)
+    // F3: branch earnings are the charged total minus the courier fee; the two
+    // always sum to the total, and no royalty exists.
+    const courierPaise = Math.round(delivery * 100);
+    expect(r.split.courierFeePaise).toBe(courierPaise);
+    expect(r.split.branchTransferPaise).toBe(
+      Math.round(r.grandTotal * 100) - courierPaise
     );
-    expect(r.split.brandRoyaltyPaise + r.split.branchTransferPaise).toBe(
+    expect(r.split.courierFeePaise + r.split.branchTransferPaise).toBe(
       Math.round(r.grandTotal * 100)
     );
 
@@ -173,7 +173,7 @@ describe("pricing parity — 20 baskets", () => {
       expect(Number.isFinite(v)).toBe(true);
       expect(v).toBeGreaterThanOrEqual(0);
     }
-    expect(Number.isInteger(r.split.brandRoyaltyPaise)).toBe(true);
+    expect(Number.isInteger(r.split.courierFeePaise)).toBe(true);
     expect(Number.isInteger(r.split.branchTransferPaise)).toBe(true);
   });
 

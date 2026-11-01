@@ -29,10 +29,20 @@ const { mockDb, writes, seed } = vi.hoisted(() => {
   const mockDb: any = {
     collection: (colName: string) => ({
       doc: (docId: string) => ({
-        get: async () =>
-          colName === "branches"
-            ? { exists: true, data: () => ({ razorpayAccountId: seed.branchAccount }) }
-            : { exists: false, data: () => ({}) },
+        get: async () => {
+          if (colName === "branches") {
+            return { exists: true, data: () => ({ razorpayAccountId: seed.branchAccount }) };
+          }
+          // F5: this month's fixed fee is already met, so the worker still
+          // attempts the transfer (the guards below are what is under test).
+          if (colName === "branch_monthly_fees") {
+            return {
+              exists: true,
+              data: () => ({ feePaise: 250000, feeCollectedPaise: 250000 }),
+            };
+          }
+          return { exists: false, data: () => ({}) };
+        },
         set: async (data: any) => {
           writes.push({ ref: `${colName}/${docId}`, data });
         },
@@ -96,44 +106,38 @@ describe("Prompt 16: Razorpay Payments, Route Splits & Webhooks Suite", () => {
   const webhookSecret = "whsec_test_secret_burgonomics_12345";
   const keySecret = "rzp_secret_mock_789xyz";
 
-  describe("1. Razorpay Route 95/5 Split Calculations", () => {
-    it("calculates 95% branch transfer and 5% brand royalty accurately in paise", () => {
-      const totalAmountRupees = 500;
-      const totalAmountPaise = totalAmountRupees * 100; // 50,000 paise
+  describe("1. Razorpay Route branch earnings (no per-order royalty)", () => {
+    it("earns the total minus the courier fee, paise-exact", () => {
+      const totalAmountPaise = 50000;
+      const split = calculateRouteSplit(totalAmountPaise, 0);
+      expect(split.branchTransferPaise).toBe(50000);
+      expect(split.totalAmountPaise).toBe(totalAmountPaise);
+      expect(split).not.toHaveProperty("brandRoyaltyPaise");
 
-      const split = calculateRouteSplit(totalAmountPaise, 0.05);
-
-      // 5% of 50,000 paise = 2,500 paise (₹25)
-      expect(split.brandRoyaltyPaise).toBe(2500);
-      // 95% of 50,000 paise = 47,500 paise (₹475)
-      expect(split.branchTransferPaise).toBe(47500);
-      // Sum must strictly equal total amount
-      expect(split.branchTransferPaise + split.brandRoyaltyPaise).toBe(totalAmountPaise);
+      // With a courier fee the brand keeps it (D6).
+      const withCourier = calculateRouteSplit(50000, 3500);
+      expect(withCourier.branchTransferPaise).toBe(46500);
     });
 
-    it("handles fractional amounts cleanly by rounding paise", () => {
-      const totalAmountPaise = 34900; // ₹349.00
-      const split = calculateRouteSplit(totalAmountPaise, 0.05);
-
-      // 5% of 34900 = 1745 paise
-      expect(split.brandRoyaltyPaise).toBe(1745);
-      expect(split.branchTransferPaise).toBe(33155);
-      expect(split.branchTransferPaise + split.brandRoyaltyPaise).toBe(totalAmountPaise);
+    it("handles fractional amounts cleanly and refuses an impossible courier fee", () => {
+      const split = calculateRouteSplit(34900, 0);
+      expect(split.branchTransferPaise).toBe(34900);
+      expect(() => calculateRouteSplit(1000, 1500)).toThrow(/courierFeePaise/);
     });
 
-    it("constructs valid Razorpay Route transfer payload", () => {
+    it("constructs a valid Route transfer payload carrying the held amount", () => {
       const accountId = "acc_FranchiseBranchSurat01";
       const transferPaise = 47500;
       const orderId = "ord_surat_9921";
       const branchId = "branch_surat_01";
-      const royaltyPaise = 2500;
+      const monthlyFeeHoldPaise = 2500;
 
       const transfers = buildRouteTransferPayload(
         accountId,
         transferPaise,
         orderId,
         branchId,
-        royaltyPaise
+        monthlyFeeHoldPaise
       );
 
       expect(transfers).toHaveLength(1);
@@ -143,7 +147,8 @@ describe("Prompt 16: Razorpay Payments, Route Splits & Webhooks Suite", () => {
       expect(transfers[0].on_hold).toBe(false);
       expect(transfers[0].notes.orderId).toBe(orderId);
       expect(transfers[0].notes.branchId).toBe(branchId);
-      expect(transfers[0].notes.brandRoyaltyPaise).toBe(royaltyPaise);
+      expect(transfers[0].notes.monthlyFeeHoldPaise).toBe(monthlyFeeHoldPaise);
+      expect(transfers[0].notes).not.toHaveProperty("brandRoyaltyPaise");
       expect(transfers[0].linked_account_notes).toContain("orderId");
     });
   });

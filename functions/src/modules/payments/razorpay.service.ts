@@ -14,6 +14,7 @@ import { markOrderReconciliation } from "./reconciliation";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
 import { resolveBranchId } from "./branchResolver";
+import { ensureMonthlyFeeHold, type MonthlyFeeHold } from "./monthlyFee";
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
 import {
@@ -925,7 +926,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           branchId,
           customerId: params.customerId,
           orderType,
-          brandRoyaltyPaise: pricing.split.brandRoyaltyPaise,
+          // F3: no per-order royalty. Notes carry the branch's earnings only.
           branchTransferPaise: pricing.split.branchTransferPaise,
         },
       });
@@ -1208,8 +1209,9 @@ export async function verifyPayment(
     Number.isFinite(intentPaiseRaw) && intentPaiseRaw > 0 ? intentPaiseRaw : null;
   const expectedPaise = hasStoredTotal ? Math.round(storedGrandTotal * 100) : intentPaise;
   let capturedAmountPaise: number | undefined;
+  let gatewayCreatedAtMs: number | undefined;
   if (!config.mock.paymentGateway && expectedPaise !== null) {
-    capturedAmountPaise = await assertLivePaymentMatchesOrder({
+    const gatewayTruth = await assertLivePaymentMatchesOrder({
       orderRef,
       orderId,
       orderData,
@@ -1217,6 +1219,8 @@ export async function verifyPayment(
       razorpayPaymentId,
       expectedPaise,
     });
+    capturedAmountPaise = gatewayTruth.amountPaise;
+    gatewayCreatedAtMs = gatewayTruth.createdAtMs;
   }
 
   // R06 corrective: terminal orders (cancelled/refunded) must be detected
@@ -1392,6 +1396,7 @@ export async function verifyPayment(
     razorpayPaymentId,
     transferResult,
     capturedAmountPaise,
+    gatewayCreatedAtMs,
   });
 
   const orderSummary = {
@@ -1451,6 +1456,7 @@ export type RouteSplitOutcome =
   | { state: "transferred"; transfer: any }
   | { state: "busy" }
   | { state: "flagged"; error: string }
+  | { state: "not_required" }
   | { state: "no_split" };
 
 /**
@@ -1492,8 +1498,9 @@ export async function executeRouteSplit(args: {
 
   const branchId = orderData.branchId;
   const pricingSplit = orderData.pricing?.split;
-  const splitPaise = Number(pricingSplit?.branchTransferPaise);
-  if (!Number.isFinite(splitPaise) || splitPaise <= 0) {
+  const earningsPaise = Number(pricingSplit?.branchTransferPaise);
+  const courierFeePaise = Number(pricingSplit?.courierFeePaise) || 0;
+  if (!Number.isFinite(earningsPaise)) {
     // Nothing to split (legacy/no-pricing doc): no claim, no write, no POST.
     return { state: "no_split" };
   }
@@ -1575,10 +1582,54 @@ export async function executeRouteSplit(args: {
     if (claim === "done") return { state: "transferred", transfer: racedTransfer };
   }
 
+  // F5: hold the monthly fee in its OWN transaction, after the lease is won
+  // and before any transfer POST. Independently idempotent, so a crash between
+  // the lease and the POST is harmless: the next caller re-reads the stamp.
+  let hold: MonthlyFeeHold;
+  try {
+    const held = await ensureMonthlyFeeHold({
+      orderRef,
+      orderId,
+      branchId: branchId as string,
+      earnedPaise: earningsPaise,
+      courierFeePaise,
+      gatewayCreatedAtMs:
+        Number(orderData?.payment?.gatewayCreatedAtMs) ||
+        Number(orderData?.["payment.gatewayCreatedAtMs"]) ||
+        undefined,
+    });
+    hold = held.hold;
+    if (held.manualSettlement) {
+      // A payout bookkeeping problem must never fail the charged customer.
+      return flagManualSettlement(held.reason || "monthly fee hold could not be applied");
+    }
+  } catch (err: any) {
+    return flagManualSettlement(
+      `monthly fee hold failed (${err?.message || err}) — settle manually`
+    );
+  }
+
+  // F6: nothing to pay the branch. This is a successful outcome, not a
+  // failure: never retried, never flagged.
+  if (hold.branchTransferPaise <= 0) {
+    await orderRef.set(
+      {
+        routeTransferStatus: "not_required",
+        routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { state: "not_required" };
+  }
+
   const attempt = await attemptRouteTransfer(
     razorpayPaymentId,
     branchId,
-    pricingSplit,
+    {
+      branchTransferPaise: hold.branchTransferPaise,
+      monthlyFeeHoldPaise: hold.holdPaise,
+    },
     orderId,
     undefined,
     capturedAmountPaise
@@ -1703,7 +1754,7 @@ async function assertLivePaymentMatchesOrder(args: {
   razorpayOrderId: string;
   razorpayPaymentId: string;
   expectedPaise: number;
-}): Promise<number> {
+}): Promise<{ amountPaise: number; createdAtMs?: number }> {
   const { orderRef, orderId, razorpayOrderId, razorpayPaymentId, expectedPaise } = args;
 
   let payment: any;
@@ -1809,7 +1860,14 @@ async function assertLivePaymentMatchesOrder(args: {
     throw err;
   }
 
-  return Number(payment.amount);
+  const capturedPaise = Number(payment.amount);
+  const gatewayCreatedRaw = Number(payment.created_at);
+  return {
+    amountPaise: capturedPaise,
+    ...(Number.isFinite(gatewayCreatedRaw) && gatewayCreatedRaw > 0
+      ? { createdAtMs: Math.round(gatewayCreatedRaw * 1000) }
+      : {}),
+  };
 }
 
 /**
@@ -1826,8 +1884,10 @@ async function finishVerifiedPayment(args: {
   transferResult: any;
   /** Live-fetched captured paise (undefined on mock/legacy paths). */
   capturedAmountPaise?: number;
+  /** F2: the gateway payment's own time (ms), so the fee month cannot move. */
+  gatewayCreatedAtMs?: number;
 }) {
-  const { orderRef, orderData, orderId, razorpayOrderId, razorpayPaymentId, transferResult, capturedAmountPaise } = args;
+  const { orderRef, orderData, orderId, razorpayOrderId, razorpayPaymentId, transferResult, capturedAmountPaise, gatewayCreatedAtMs } = args;
 
   // R06 corrective pass: real transactions only. Tests implement the
   // required `db.runTransaction` interface instead of a non-atomic shim.
@@ -1875,9 +1935,17 @@ async function finishVerifiedPayment(args: {
       const updatePayload: Record<string, any> = {
         paymentStatus: "completed",
         "payment.status": "completed",
+        // F8: the payment stream marker. Clients can never write it, so an
+        // analytics reader can tell a gateway capture from cash/counter.
+        paymentChannel: "razorpay",
         "payment.razorpayPaymentId": razorpayPaymentId,
         "payment.razorpayOrderId": razorpayOrderId,
         "payment.verifiedAt": admin.firestore.FieldValue.serverTimestamp(),
+        // F2: the gateway payment's own creation time (ms) — the monthly-fee
+        // month is decided by when the customer paid, not by our clock.
+        ...(typeof gatewayCreatedAtMs === "number" && Number.isFinite(gatewayCreatedAtMs)
+          ? { "payment.gatewayCreatedAtMs": gatewayCreatedAtMs }
+          : {}),
         ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
           ? { "payment.capturedAmountPaise": capturedAmountPaise }
           : {}),
@@ -1894,6 +1962,9 @@ async function finishVerifiedPayment(args: {
           transactionId: razorpayPaymentId,
           ...(typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
             ? { capturedAmountPaise }
+            : {}),
+          ...(typeof gatewayCreatedAtMs === "number" && Number.isFinite(gatewayCreatedAtMs)
+            ? { gatewayCreatedAtMs }
             : {}),
           verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
         },

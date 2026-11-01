@@ -210,6 +210,21 @@ vi.mock("firebase-admin", () => {
 import { handleRazorpayWebhook } from "../src/modules/payments/webhookHandler";
 import { verifyPayment } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
+import { branchMonthlyFeeId, istMonthKey } from "../src/modules/payments/monthlyFee";
+
+/** This month's fixed branch fee already met — keeps payout lanes under test. */
+function monthlyFeeMet(branchId: string): Record<string, any> {
+  const monthKey = istMonthKey();
+  return {
+    branchId,
+    monthKey,
+    feePaise: 250000,
+    feeCollectedPaise: 250000,
+    razorpayOrders: 1,
+    razorpayEarnedPaise: 250000,
+    razorpayRefundedPaise: 0,
+  };
+}
 
 const confirmAudits = () =>
   [...docs.keys()].filter(
@@ -458,6 +473,7 @@ describe("payment confirmation concurrency (webhook path)", () => {
       // Linked payout account → a split-first ordering transfers for real
       // (`transferred` + `trf_mock_*`) instead of merely flagging the order.
       control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+    control.seed(`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`, monthlyFeeMet("branch_surat_01"));
 
       const eventId = `evt_r29_${code.toLowerCase()}`;
       // Amount matches the priced total on purpose: an amount mismatch would
@@ -571,6 +587,7 @@ describe("payment confirmation concurrency (webhook path)", () => {
       paymentStatus: "pending",
     });
     control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+    control.seed(`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`, monthlyFeeMet("branch_surat_01"));
 
     const call = mockReqRes(capturedPayload("evt_race_ok_1"));
     await handleRazorpayWebhook(call.req, call.res);
@@ -597,6 +614,7 @@ describe("payment confirmation concurrency (webhook path)", () => {
       paymentStatus: "pending",
     });
     control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+    control.seed(`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`, monthlyFeeMet("branch_surat_01"));
 
     const call = mockReqRes(capturedPayload("evt_b4_1", "order_b4_1", "pay_b4_123", 25000));
     await handleRazorpayWebhook(call.req, call.res);
@@ -637,6 +655,7 @@ describe("payment confirmation concurrency (webhook path)", () => {
       },
     });
     control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+    control.seed(`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`, monthlyFeeMet("branch_surat_01"));
     // Prove the fixture really carries the marker, so the assertion below is
     // about clearing it and not about it never having been there.
     expect(docs.get("orders/order_b5_clear")!.data.reconciliation).toMatchObject({
@@ -660,6 +679,7 @@ describe("payment confirmation concurrency (webhook path)", () => {
       paymentStatus: "pending",
     });
     control.seed("branches/branch_surat_01", { razorpayAccountId: "acc_surat_1" });
+    control.seed(`branch_monthly_fees/${branchMonthlyFeeId("branch_surat_01", istMonthKey())}`, monthlyFeeMet("branch_surat_01"));
 
     const first = mockReqRes(capturedPayload("evt_race_cc_1"));
     const second = mockReqRes(capturedPayload("evt_race_cc_2"));
