@@ -593,14 +593,12 @@ export function formatPetpoojaV21Payload(
             dc_tax_percentage: "0",
             dc_tax_amount: money(0),
             dc_gst_details: [
-              { gst_liable: "vendor", amount: money(0) },
               { gst_liable: "restaurant", amount: money(0) },
             ],
             packing_charges: money(order.pricing.packagingFee),
             pc_tax_amount: money(0),
             pc_tax_percentage: "0",
             pc_gst_details: [
-              { gst_liable: "vendor", amount: money(0) },
               { gst_liable: "restaurant", amount: money(0) },
             ],
             order_type: orderTypeCode,
@@ -754,7 +752,7 @@ async function relayScenarioToPetpooja(
           capturedGst === "goods" || capturedGst === "services"
             ? capturedGst
             : "restaurant"; // R4: our own menu is restaurant-liable.
-        petpoojaGstLiability(gstType); // Unknown must block, never default.
+        petpoojaGstLiability(gstType); // Captured gst_type cannot override written liability policy.
         resolved.push({ ...item, gstType });
       }
       order = { ...order, items: resolved as any };

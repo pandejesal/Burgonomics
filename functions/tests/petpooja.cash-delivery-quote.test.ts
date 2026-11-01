@@ -191,7 +191,7 @@ describe("R6b cash delivery KOT — quote binding", () => {
     expect(details.delivery_charges).toBe("60.00");
     // A courier fee is never in the restaurant due (corrected R4).
     expect(details.total).toBe("250.00");
-    expect(details.collect_cash).toBe("0.00");
+    expect(details.collect_cash).toBe("250.00");
     expect(details.tax_total).toBe("11.19");
     expect(savedDocs["orders/ord_cash_1"].deliveryFeeUnverified).toBe(false);
   });

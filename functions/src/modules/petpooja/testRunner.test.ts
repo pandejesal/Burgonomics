@@ -129,16 +129,29 @@ describe("runPetpoojaTestScenario (MT-01 sandbox relay)", () => {
         expect(Number.isInteger(mod.groupId)).toBe(true);
       }
       expect(lines[index].tax_inclusive).toBe(false);
-      expect(lines[index].gst_liability).toBe("vendor"); // current services mapping, not a new override
+      expect(lines[index].gst_liability).toBe("restaurant");
     }
     const details = payload.orderinfo.OrderInfo.Order.details;
-    expect(Number(details.total)).toBe(order.pricing.grandTotal - order.pricing.deliveryFee - order.pricing.gst);
-    expect(details.collect_cash).toBe("0.00"); // preserve merged runner; differs from accepted round
+    expect(Number(details.total)).toBe(order.pricing.grandTotal - order.pricing.deliveryFee);
+    expect(details.collect_cash).toBe(details.total);
     expect(details.enable_delivery).toBe(0);
     expect(Number(details.tax_total)).toBe(order.pricing.gst);
     if (scenarioId !== "addons") expect(order.items.some(i => i.variation)).toBe(true);
     if (scenarioId !== "variations") expect(order.items.some(i => i.modifiers?.length)).toBe(true);
     if (scenarioId === "addon_variation") expect(order.items.some(i => i.variation && i.modifiers?.length)).toBe(true);
+  });
+  it.each([["dinein-basic-kot", "598.50", "28.50"], ["cancel-refund-sync", "252.00", "12.00"]])("reproduces accepted round3 financials for %s", (id, total, taxTotal) => {
+    // petpooja-submit-round3.log: bgx_items_tax_1793423643684 and
+    // bgx_discount_tax_1793423647838; written vendor approval is authoritative.
+    const order = buildPetpoojaTestOrder(id);
+    order.items = order.items.map(i => ({ ...i, gstType: "services" }));
+    const body: any = formatPetpoojaV21Payload(order, "31z58ciw0h", "round3-reproduction", "https://example.com/callback", new Date(), [{ id: "3928", name: "CGST", rate: 2.5 }, { id: "3929", name: "SGST", rate: 2.5 }]);
+    const info = body.orderinfo.OrderInfo;
+    expect(info.Order.details).toMatchObject({ total, tax_total: taxTotal, collect_cash: total, enable_delivery: 0 });
+    expect(info.OrderItem.details.every((i: any) => i.gst_liability === "restaurant" && i.tax_inclusive === false)).toBe(true);
+    expect(info.Tax.details.every((t: any) => t.restaurant_liable_amt === t.tax)).toBe(true);
+    expect(info.Order.details.dc_gst_details.every((t: any) => t.gst_liable === "restaurant")).toBe(true);
+    expect(info.Order.details.pc_gst_details.every((t: any) => t.gst_liable === "restaurant")).toBe(true);
   });
   const originalMockFlag = config.mock.petpoojaPos;
 
@@ -407,7 +420,7 @@ describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-2
     }
   });
 
-  it("carries the order callback, restaurant-only total and no third-party merchant cash instruction", () => {
+  it("carries the callback and COD cash equal to restaurant-only total", () => {
     const payload = formatPetpoojaV21Payload(
       vendorShapeOrder(),
       "test_rest_id",
@@ -425,8 +438,8 @@ describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-2
     expect(order.orderID).toBe("bgx_fixture_2");
     expect(order.callback_url).toBe("https://callback.example.test/petpooja/webhook");
     expect(order.payment_type).toBe("COD");
-    // No merchant rider: exclude courier cost and do not instruct cash collection.
-    expect(order.collect_cash).toBe("0.00");
+    // Exclude courier cost, but COD cash still equals the restaurant due.
+    expect(order.collect_cash).toBe("335.00");
     expect(order.total).toBe("335.00");
     expect(order.tax_total).toBe("15.00");
     expect(order).not.toHaveProperty("tax");
@@ -439,11 +452,9 @@ describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-2
     expect(order.dc_tax_percentage).toBe("0");
     expect(order.dc_tax_amount).toBe("0.00");
     expect(order.dc_gst_details).toEqual([
-      { gst_liable: "vendor", amount: "0.00" },
       { gst_liable: "restaurant", amount: "0.00" },
     ]);
     expect(order.pc_gst_details).toEqual([
-      { gst_liable: "vendor", amount: "0.00" },
       { gst_liable: "restaurant", amount: "0.00" },
     ]);
     expect(order.otp).toBe("");

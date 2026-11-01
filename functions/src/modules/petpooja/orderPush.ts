@@ -860,14 +860,12 @@ export function formatPetpoojaOrderPayload(
     dc_tax_percentage: "0",
     dc_tax_amount: money(0),
     dc_gst_details: [
-      { gst_liable: "vendor", amount: money(0) },
       { gst_liable: "restaurant", amount: money(0) },
     ],
     packing_charges: money(packagingFee),
     pc_tax_amount: money(0),
     pc_tax_percentage: "0",
     pc_gst_details: [
-      { gst_liable: "vendor", amount: money(0) },
       { gst_liable: "restaurant", amount: money(0) },
     ],
     // Documented letter code: H (home delivery), P (parcel/takeaway), D (dine-in).

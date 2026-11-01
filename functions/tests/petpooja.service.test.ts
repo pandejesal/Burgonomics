@@ -275,12 +275,11 @@ describe("Petpooja POS Bridge Service", () => {
       expect(orderDetails.dc_tax_percentage).toBe("0");
       expect(orderDetails.dc_tax_amount).toBe("0.00");
       expect(orderDetails.dc_gst_details).toEqual([
-        { gst_liable: "vendor", amount: "0.00" },
         { gst_liable: "restaurant", amount: "0.00" },
       ]);
       expect(orderDetails.pc_tax_percentage).toBe("0");
       expect(orderDetails.pc_tax_amount).toBe("0.00");
-      expect(orderDetails.pc_gst_details).toHaveLength(2);
+      expect(orderDetails.pc_gst_details).toEqual([{ gst_liable: "restaurant", amount: "0.00" }]);
       expect(orderDetails.ondc_bap).toBe("");
       expect(orderDetails.advanced_order).toBe("N");
       expect(orderDetails.urgent_order).toBe(false);
@@ -418,7 +417,7 @@ describe("Petpooja POS Bridge Service", () => {
       expect(details.delivery_charges).toBe("35.00");
       expect(details.packing_charges).toBe("15.00");
       expect(details.enable_delivery).toBe(0);
-      expect(details.collect_cash).toBe("0.00");
+      expect(details.collect_cash).toBe("590.00");
       // The vendor rule: total contains tax_total, never the other way round.
       expect(Number(details.total)).toBeGreaterThan(Number(details.tax_total));
       // Packaging and delivery are outside the GST base: no tax on either.

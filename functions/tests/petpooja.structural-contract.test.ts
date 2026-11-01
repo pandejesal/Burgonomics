@@ -190,7 +190,7 @@ describe("app-order builder (orderPush.formatPetpoojaOrderPayload) — vendor sa
     // Config-derived callback (the same URL the status webhook lives on).
     expect(order_.callback_url).toMatch(/\/petpooja\/webhook$/);
     expect(order_.payment_type).toBe("COD");
-    expect(order_.collect_cash).toBe("0.00"); // Not merchant self-delivery.
+    expect(order_.collect_cash).toBe("300.00"); // COD equals restaurant due, not courier fee.
     expect(order_.total).toBe("300.00"); // Inclusive food 280 + packing; courier excluded, GST not re-added.
     expect(order_.enable_delivery).toBe(0);
     expect(order_.dc_tax_percentage).toBe("0");
@@ -242,7 +242,7 @@ describe("sandbox runner builder (testRunner.formatPetpoojaV21Payload) — vendo
       expect(order_.orderID).toBe(`bgx_${scenario.id}_1111111111`);
       expect(order_.callback_url).toBe(CALLBACK);
       // The synthetic cases do not assign a merchant rider.
-      expect(order_.collect_cash).toBe("0.00");
+      expect(order_.collect_cash).toBe(order_.total);
       expect(order_.enable_delivery).toBe(0);
       // Synthetic contacts are non-empty and unmistakably fictional.
       const customer = payload.orderinfo.OrderInfo.Customer.details;

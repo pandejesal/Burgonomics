@@ -15,8 +15,8 @@ import { resolve } from "node:path";
  *  - a courier fee appears in delivery_charges and NOT in total;
  *  - a restaurant self-delivery fee does appear in total;
  *  - `enable_delivery` is 1 only for self-delivery;
- *  - `collect_cash` is the customer total only for COD + self-delivery;
- *  - takeaway is unaffected;
+ *  - COD `collect_cash` equals restaurant total, including takeaway;
+ *  - online `collect_cash` remains zero;
  *  - the payload matches the vendor attachment's documented keys/types.
  */
 
@@ -84,7 +84,7 @@ import {
   pushOrderToPetpooja,
   PetpoojaStructuralError,
 } from "../src/modules/petpooja/orderPush";
-import { petpoojaFinancials, petpoojaGstLiability } from "../src/modules/petpooja/financials";
+import { petpoojaFinancials, petpoojaGstLiability, restaurantLiableItemTax } from "../src/modules/petpooja/financials";
 import { formatPetpoojaV21Payload } from "../src/modules/petpooja/testRunner";
 import { config } from "../src/config/env";
 
@@ -173,7 +173,7 @@ describe("R4b restaurant due, delivery flags and cash collection", () => {
     // 575 inclusive + 15 packaging; the courier's 60 is not restaurant due.
     expect(info.Order.details.total).toBe("590.00");
     expect(info.Order.details.enable_delivery).toBe(0);
-    expect(info.Order.details.collect_cash).toBe("0.00");
+    expect(info.Order.details.collect_cash).toBe("590.00");
     // The vendor rule: total contains tax_total.
     expect(Number(info.Order.details.total)).toBeGreaterThan(
       Number(info.Order.details.tax_total)
@@ -209,14 +209,14 @@ describe("R4b restaurant due, delivery flags and cash collection", () => {
     expect(info.Order.details.collect_cash).toBe("0.00");
   });
 
-  it("takeaway is unaffected: no delivery in total, nothing to collect", () => {
+  it("takeaway COD collects restaurant total, without a delivery fee", () => {
     const info = details(
       order({ fulfillmentType: "TAKEAWAY", paymentMethod: "COD", dispatchType: "manual_branch_terminal" })
     );
     expect(info.Order.details.delivery_charges).toBe("60.00");
     expect(info.Order.details.total).toBe("590.00"); // 575 + 15 packaging
     expect(info.Order.details.enable_delivery).toBe(0);
-    expect(info.Order.details.collect_cash).toBe("0.00");
+    expect(info.Order.details.collect_cash).toBe("590.00");
   });
 
   it("applies coupon and coin discounts to the restaurant due", () => {
@@ -429,10 +429,10 @@ describe("R4b structural park (no relay)", () => {
 
 /**
  * Vendor-accepted financial primitives (36cdd6b / 3c2dafc), reconciled with
- * R1/R4: the GST liability split is kept per line, but `tax_included` decides
- * whether the kept tax is ADDED or already inside the line price.
+ * R1/R4: all GST belongs to the restaurant; `tax_included` decides
+ * whether tax is ADDED or already inside the line price.
  */
-describe("financial primitives: liability split and inclusive-vs-exclusive", () => {
+describe("financial primitives: restaurant liability and inclusive-vs-exclusive", () => {
   const line = (liability: "restaurant" | "vendor") => ({
     final_price: "200.00",
     quantity: "1",
@@ -452,10 +452,11 @@ describe("financial primitives: liability split and inclusive-vs-exclusive", () 
     paymentType: "COD",
   };
 
-  it("defines both documented GST ownership modes without a default", () => {
-    expect(petpoojaGstLiability("services")).toBe("vendor");
+  it("uses the vendor's written restaurant liability regardless of captured gst_type", () => {
+    expect(petpoojaGstLiability("services")).toBe("restaurant");
     expect(petpoojaGstLiability("goods")).toBe("restaurant");
-    expect(() => petpoojaGstLiability(undefined)).toThrow(/BLOCKED_CONFIGURATION/);
+    expect(petpoojaGstLiability(undefined)).toBe("restaurant");
+    expect(petpoojaGstLiability("unknown")).toBe("restaurant");
   });
 
   it("does not allow an order discount larger than its items", () => {
@@ -474,13 +475,14 @@ describe("financial primitives: liability split and inclusive-vs-exclusive", () 
     ).toThrow(/BLOCKED_CONFIGURATION/);
   });
 
-  it("adds only restaurant-liable GST when the caller declares EXCLUSIVE prices", () => {
+  it("adds all restaurant GST with EXCLUSIVE prices, ignoring stale vendor liability", () => {
     const goods = petpoojaFinancials({ ...base, items: [line("restaurant")], taxIncluded: false });
     expect(goods.total).toBe("230.00"); // 200 + 10 kept tax + 20 packaging
     const vendor = petpoojaFinancials({ ...base, items: [line("vendor")], taxIncluded: false });
-    expect(vendor.total).toBe("220.00"); // integrator-remitted tax is not our due
+    expect(vendor.total).toBe("230.00"); // stale liability metadata cannot remove restaurant GST
     expect(goods.enable_delivery).toBe(0);
-    expect(goods.collect_cash).toBe("0.00");
+    expect(goods.collect_cash).toBe(goods.total);
+    expect(restaurantLiableItemTax([line("vendor")], "11")).toBe(5);
   });
 
   it("never adds the included GST again when prices are INCLUSIVE (R1/R4)", () => {
@@ -488,6 +490,19 @@ describe("financial primitives: liability split and inclusive-vs-exclusive", () 
     const vendor = petpoojaFinancials({ ...base, items: [line("vendor")], taxIncluded: true });
     expect(goods.total).toBe("220.00");
     expect(vendor.total).toBe("220.00");
+  });
+
+  it.each(["COD", "ONLINE"])("balances inclusive/exclusive totals and courier cash for %s", (paymentType) => {
+    for (const taxIncluded of [true, false]) {
+      for (const mode of ["pickup", "courier", "self"] as const) {
+        const result = petpoojaFinancials({ ...base, items: [line("restaurant")], taxIncluded, paymentType,
+          isDelivery: mode !== "pickup", restaurantDelivery: mode === "self" });
+        const expected = 200 + 20 + (taxIncluded ? 0 : 10) + (mode === "self" ? 40 : 0);
+        expect(result.total).toBe(expected.toFixed(2));
+        expect(result.collect_cash).toBe(paymentType === "COD" ? result.total : "0.00");
+        expect(result.enable_delivery).toBe(mode === "self" ? 1 : 0);
+      }
+    }
   });
 
   it("sandbox runner declares tax_inclusive false and keeps the captured tax rows", () => {
@@ -517,6 +532,6 @@ describe("financial primitives: liability split and inclusive-vs-exclusive", () 
     expect(info.Order.details.tax_total).toBe("10.00");
     expect(info.Tax.details.map((row: any) => row.restaurant_liable_amt)).toEqual(["5.00", "5.00"]);
     expect(info.Order.details.enable_delivery).toBe(0);
-    expect(info.Order.details.collect_cash).toBe("0.00");
+    expect(info.Order.details.collect_cash).toBe("230.00");
   });
 });
