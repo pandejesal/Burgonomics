@@ -15,7 +15,7 @@ import { dispatchFCM } from "../notifications/fcm.service";
  *      HMAC-SHA256 in X-DV-Signature (Callback Secret Key, doc-confirmed);
  *      Shadowfax has NO native HMAC — the configured secret is accepted as a
  *      static shared value in x-shadowfax-signature (custom header arranged
- *      with the Shadowfax team), with HMAC accepted as an alternative form.
+ *      with the Shadowfax team).
  *   2. Provider-aware payload extraction (real doc shapes): Borzo wraps
  *      `{event_type, event_datetime, order|delivery:{status, order_id,
  *      client_order_id, courier}}`, Shadowfax sends
@@ -208,8 +208,7 @@ export function classifyCancelCause(rawEvent: string, reasonText: string): Cance
  * Borzo: HMAC-SHA256(rawBody, Callback Secret Key) in `X-DV-Signature`
  * (doc-confirmed); bare hex or `sha256=<hex>` prefix accepted. Shadowfax has
  * no native HMAC — their callbacks carry a custom header we ask the team to
- * configure with SHADOWFAX_WEBHOOK_SECRET as a static shared value; a plain
- * HMAC over the body is also accepted so either contract verifies.
+ * configure with SHADOWFAX_WEBHOOK_SECRET as a static shared value.
  */
 export function verifyDispatchWebhookSignature(
   provider: DispatchWebhookProvider,
@@ -218,9 +217,7 @@ export function verifyDispatchWebhookSignature(
 ): boolean {
   const secret = webhookSecretFor(provider);
   if (!rawBody || !signature || !secret) return false;
-  if (provider === "shadowfax" && timingSafeEqual(secret, signature.trim())) {
-    return true;
-  }
+  if (provider === "shadowfax") return timingSafeEqual(secret, signature.trim());
   // The vendor doc specifies "a HMAC hash using SHA256 and Callback Secret Key"
   // but NOT the encoding of the header value. Our verifier historically used
   // hex only, so a base64-sending Borzo would 401 forever and the status leg

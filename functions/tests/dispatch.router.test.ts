@@ -715,12 +715,12 @@ describe("dispatch webhooks (DR10)", () => {
     expect(verifyDispatchWebhookSignature("borzo", raw, "")).toBe(false);
   });
 
-  it("verifies shadowfax callbacks via static shared secret or HMAC, never empty", () => {
-    const raw = JSON.stringify({ order_status: "DELIVERED", sfx_order_id: "SFX-1" });
+  it("verifies Shadowfax's agreed static header, not an invented HMAC", () => {
+    const raw = JSON.stringify({ order_id: "8145671314", rider_name: "Amit Kumar", rider_longitude: 77.66824096441269, time: "2017-11-30T09:25:17.000000Z", rider_latitude: 12.991595437657885, sfx_rider_id: 3419, location_accuracy: "31.0", pickup_eta: 3, drop_eta: 18 });
     config.shadowfax.webhookSecret = TEST_SFX_WEBHOOK_SECRET;
 
     // Shadowfax has no native HMAC — the team configures our secret as a
-    // custom callback header value (static match), HMAC also accepted.
+    // custom callback header value (static match).
     expect(verifyDispatchWebhookSignature("shadowfax", raw, TEST_SFX_WEBHOOK_SECRET)).toBe(true);
     expect(
       verifyDispatchWebhookSignature(
@@ -728,7 +728,7 @@ describe("dispatch webhooks (DR10)", () => {
         raw,
         computeHmacSha256(raw, TEST_SFX_WEBHOOK_SECRET)
       )
-    ).toBe(true);
+    ).toBe(false);
     expect(verifyDispatchWebhookSignature("shadowfax", raw, "deadbeef")).toBe(false);
     expect(verifyDispatchWebhookSignature("shadowfax", raw, "")).toBe(false);
 
