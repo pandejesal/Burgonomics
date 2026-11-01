@@ -24,7 +24,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
  * call, no credentials.
  */
 
-import { shadowfaxAdapter, cancelShadowfaxOrder } from "../src/modules/dispatch/providers/shadowfax.adapter";
+import { shadowfaxAdapter, cancelShadowfaxOrder, getShadowfaxOrderStatus, markShadowfaxDispatchReady } from "../src/modules/dispatch/providers/shadowfax.adapter";
 import { config } from "../src/config/env";
 import { ProviderDispatchError, type DispatchQuoteContext } from "../src/modules/dispatch/types";
 
@@ -108,6 +108,17 @@ async function capture(promise: Promise<unknown>): Promise<any> {
 }
 
 describe("shadowfax empty-credential refusal (pre-wire)", () => {
+  it("calls the documented status and dispatch-ready endpoints", async () => {
+    config.shadowfax.apiKey = "your_api_token";
+    fetchHandler = () => okJson({ message: "done successfully" });
+    await getShadowfaxOrderStatus("21030620");
+    await markShadowfaxDispatchReady("379984400", "2022-09-14T17:50:00Z");
+    expect(fetchCalls[0].url).toBe("https://hlbackend.staging.shadowfax.in/api/v2/orders/21030620/status/");
+    expect(fetchCalls[0].init.method).toBe("GET");
+    expect(fetchCalls[1].url).toBe("https://hlbackend.staging.shadowfax.in/api/v2/orders/379984400/dispatch-ready/");
+    expect(fetchCalls[1].init.method).toBe("PUT");
+    expect(JSON.parse(fetchCalls[1].init.body)).toEqual({ shipment_ready_timestamp: "2022-09-14T17:50:00Z" });
+  });
   it("cancels a Shadowfax order using the documented Seller example", async () => {
     config.shadowfax.apiKey = "your_api_token";
     fetchHandler = () => new Response(null, { status: 200 });

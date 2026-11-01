@@ -214,6 +214,27 @@ export async function cancelShadowfaxOrder(providerOrderId: string, reason = "Ca
   assertProviderOk(response, "shadowfax");
 }
 
+export async function getShadowfaxOrderStatus(providerOrderId: string): Promise<unknown> {
+  assertShadowfaxCredentials("status");
+  const base = assertShadowfaxBaseUrl("status");
+  if (!/^\d+$/.test(providerOrderId)) throw new Error("Shadowfax status requires a numeric provider order id");
+  const response = await fetchProviderJson("shadowfax", `${base}/api/v2/orders/${providerOrderId}/status/`, {
+    method: "GET", headers: shadowfaxHeaders(),
+  });
+  assertProviderOk(response, "shadowfax");
+  return response.data;
+}
+
+export async function markShadowfaxDispatchReady(clientOrderId: string, timestamp: string): Promise<void> {
+  assertShadowfaxCredentials("dispatch-ready");
+  const base = assertShadowfaxBaseUrl("dispatch-ready");
+  if (!clientOrderId.trim() || !Number.isFinite(Date.parse(timestamp))) throw new Error("Shadowfax dispatch-ready requires a client order id and timestamp");
+  const response = await fetchProviderJson("shadowfax", `${base}/api/v2/orders/${encodeURIComponent(clientOrderId)}/dispatch-ready/`, {
+    method: "PUT", headers: shadowfaxHeaders(), body: JSON.stringify({ shipment_ready_timestamp: timestamp }),
+  });
+  assertProviderOk(response, "shadowfax");
+}
+
 /** Shadowfax `paid` is the string "true"/"false" (never a boolean). */
 function paidFlag(ctx: DispatchQuoteContext): string {
   const status = String(ctx.order?.paymentStatus || "").toLowerCase();
