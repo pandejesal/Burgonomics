@@ -596,3 +596,99 @@ describe("escalateTicket — server-side monotonicity", () => {
     expect(snapshotDocs().length).toBeGreaterThan(0);
   });
 });
+
+// The request schemas make display names optional and the partner app omits them.
+// Real Firestore rejects a document holding `undefined`, on the resolve path AFTER
+// the refund has left. This mock db does not, so these tests look for it directly.
+const undefinedPaths = (value: unknown, path = ""): string[] => {
+  if (value === undefined) return [path];
+  if (Array.isArray(value)) return value.flatMap((v, i) => undefinedPaths(v, `${path}[${i}]`));
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([k, v]) => undefinedPaths(v, path ? `${path}.${k}` : k));
+  }
+  return [];
+};
+
+describe("ticket writes when the client sends no display name", () => {
+  const prevMock = config.mock.paymentGateway;
+  const STAFF = { uid: "staff_1", role: "brand_owner" } as const;
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    config.mock.paymentGateway = true;
+  });
+  afterEach(() => {
+    config.mock.paymentGateway = prevMock;
+  });
+
+  it("a full refund resolves the ticket instead of failing after the money moved", async () => {
+    savedDocs["support_tickets/tk_noname"] = {
+      ticketNumber: "TICK-2026-9100",
+      orderId: "order_noname",
+      customerId: "cust_1",
+    };
+    savedDocs["orders/order_noname"] = { payment: { razorpayPaymentId: "pay_noname" } };
+
+    await resolveTicket({
+      ticketId: "tk_noname",
+      resolvedBy: "staff_1",
+      notes: "test resolution",
+      action: "full_refund",
+      caller: STAFF,
+    } as any);
+
+    const ticket = savedDocs["support_tickets/tk_noname"];
+    expect(undefinedPaths(ticket)).toEqual([]);
+    expect(ticket.status).toBe("resolved");
+    expect(ticket.resolution.resolvedByName).toBe("Staff");
+  });
+
+  it("an escalation to developers writes no undefined field", async () => {
+    savedDocs["support_tickets/tk_esc2"] = {
+      ticketNumber: "TICK-2026-9101",
+      branchId: "branch_a",
+      status: "escalated",
+      assignedTo: { tier: "brand_support" },
+    };
+
+    await escalateTicket({
+      ticketId: "tk_esc2",
+      targetTier: "developer_team",
+      reason: "needs a second look",
+      escalatedBy: "staff_1",
+      caller: STAFF,
+    } as any);
+
+    const written = Object.keys(savedDocs).flatMap((key) => undefinedPaths(savedDocs[key], key));
+    expect(written).toEqual([]);
+    expect(savedDocs["support_tickets/tk_esc2"].timeline[0].actorName).toBe("Staff");
+  });
+
+  it("a message names the sender by role", async () => {
+    savedDocs["support_tickets/tk_msg"] = {
+      ticketNumber: "TICK-2026-9102",
+      customerId: "cust_1",
+      branchId: "branch_a",
+      status: "open",
+    };
+
+    const fromCustomer = await addTicketMessage({
+      ticketId: "tk_msg",
+      senderId: "cust_1",
+      senderRole: "customer",
+      text: "Where is my order?",
+      caller: { uid: "cust_1", role: "customer" },
+    } as any);
+    const fromStaff = await addTicketMessage({
+      ticketId: "tk_msg",
+      senderId: "staff_1",
+      senderRole: "brand_owner",
+      text: "Checking now.",
+      caller: STAFF,
+    } as any);
+
+    expect(fromCustomer.actorName).toBe("Customer");
+    expect(fromStaff.actorName).toBe("Staff");
+    expect(undefinedPaths(savedDocs["support_tickets/tk_msg"])).toEqual([]);
+  });
+});
