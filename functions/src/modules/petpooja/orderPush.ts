@@ -5,7 +5,7 @@ import { petpoojaFinancials } from "./financials";
 import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
-import { calculateOrderPricing, applyCatalogBasePrice } from "../payments/pricing.engine";
+import { calculateOrderPricing, applyCatalogBasePrice, validateOptionSelections } from "../payments/pricing.engine";
 import * as admin from "firebase-admin";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 
@@ -269,6 +269,10 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
     }
 
     const customizations = optionsByKey.get(key);
+    // M2a: the same server-side selection rules as the pricing engine, so a
+    // cash order with a skipped required option / over-limit group /
+    // unavailable option parks instead of printing a wrong KOT.
+    validateOptionSelections(item, customizations);
     // option id -> { option, group } across every group on the product.
     const optionIndex = new Map<string, { option: any; group: any }>();
     if (Array.isArray(customizations)) {
@@ -1403,10 +1407,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     const structural =
       err instanceof PetpoojaStructuralError
         ? err
-        : err?.code === "ITEM_OPTION_UNVERIFIED"
+        : ["ITEM_OPTION_UNVERIFIED", "ITEM_OPTION_REQUIRED", "ITEM_OPTION_LIMIT", "ITEM_OPTION_UNAVAILABLE"].includes(
+              String(err?.code || "")
+            )
           ? new PetpoojaStructuralError([
               {
-                field: "OrderItem.details[].item_tax/options",
+                field: "OrderItem.details[].options",
                 reason: String(err?.message || "order option could not be verified"),
               },
             ])

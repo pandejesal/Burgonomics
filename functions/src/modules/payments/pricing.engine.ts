@@ -142,6 +142,85 @@ function itemOptionUnverified(itemName: string, detail: string): Error {
   return err;
 }
 
+function itemOptionError(code: string, itemName: string, detail: string): Error {
+  const err: any = new Error(`${itemName}: ${detail}`);
+  err.statusCode = 422;
+  err.code = code;
+  return err;
+}
+
+/**
+ * M2a: the SERVER enforces the product's own selection rules, so a tampered
+ * client cannot skip a required variation and pay the base price, stack more
+ * options than a group allows, or pick an unavailable option.
+ *
+ * The customer app enforces the same limits (ProductCustomizerModal:
+ * required groups block Add-to-cart, multi-select is capped at maxSelect, and
+ * out-of-stock options are disabled), so an honest order is never refused.
+ *
+ * No customizations on the product → nothing to enforce.
+ */
+export function validateOptionSelections(
+  item: PricingLineItem,
+  productCustomizations?: any[]
+): void {
+  if (!Array.isArray(productCustomizations)) return;
+  const itemName = String((item as any)?.name || "An item");
+
+  const selectedIds = new Set<string>();
+  for (const c of item.customizations || []) {
+    const id = String(c?.id ?? (c as any)?.optionId ?? "").trim();
+    if (id) selectedIds.add(id);
+  }
+  for (const m of item.modifiers || []) {
+    const id = String(m?.id ?? (m as any)?.optionId ?? "").trim();
+    if (id) selectedIds.add(id);
+  }
+
+  for (const group of productCustomizations) {
+    if (!group || typeof group !== "object") continue;
+    const options: any[] = Array.isArray(group.options) ? group.options : [];
+    const groupId = String(group.id ?? "");
+    const selectedInGroup = options.filter((option) =>
+      selectedIds.has(String(option?.id ?? "").trim())
+    );
+
+    const minSelections = Number(group.minSelections) || 0;
+    const required = minSelections > 0 || group.required === true;
+    if (required && selectedInGroup.length === 0) {
+      throw itemOptionError(
+        "ITEM_OPTION_REQUIRED",
+        itemName,
+        `a required option group${group.name ? ` "${group.name}"` : ""} has no selection`
+      );
+    }
+
+    const maxSelections = Number(group.maxSelections);
+    if (
+      Number.isFinite(maxSelections) &&
+      maxSelections > 0 &&
+      selectedInGroup.length > maxSelections
+    ) {
+      throw itemOptionError(
+        "ITEM_OPTION_LIMIT",
+        itemName,
+        `option group${group.name ? ` "${group.name}"` : ""} allows ${maxSelections} selection(s), got ${selectedInGroup.length}`
+      );
+    }
+
+    for (const option of selectedInGroup) {
+      if (option?.isAvailable === false) {
+        throw itemOptionError(
+          "ITEM_OPTION_UNAVAILABLE",
+          itemName,
+          `option "${String(option?.name ?? option?.id ?? "")}" is not available`
+        );
+      }
+    }
+    void groupId;
+  }
+}
+
 /**
  * Unit price for a line from its AUTHORITATIVE catalog price plus its own
  * add-on deltas (the engine's own rule). Exported for the POS relay (POS-11),
@@ -177,17 +256,21 @@ export function applyCatalogBasePrice(
     }
   }
 
+  // M2a: enforce required groups, per-group limits and availability whether or
+  // NOT the line carries selections — a tampered client could otherwise skip a
+  // required variation entirely and pay the base price.
+  const itemName = String(item?.name || "An item");
+  validateOptionSelections(item, productCustomizations);
+
   if (selections.length > 0) {
-    const itemName = String(item?.name || "An item");
-    const optionLabels = selections
-      .map((s) => s.label || s.id)
-      .filter((label) => label !== "")
-      .join(", ");
     const optionPrices = catalogOptionPrices(productCustomizations);
     if (!optionPrices) {
       throw itemOptionUnverified(
         itemName,
-        `the menu has no option data for this product (selected: ${optionLabels || "unnamed option"})`
+        `the menu has no option data for this product (selected: ${selections
+          .map((s) => s.label || s.id)
+          .filter((label) => label !== "")
+          .join(", ") || "unnamed option"})`
       );
     }
     for (const selection of selections) {
