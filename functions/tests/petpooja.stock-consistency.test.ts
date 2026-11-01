@@ -320,11 +320,14 @@ describe("Petpooja Stock Consistency & Canonical Product Updates (Part B)", () =
 
   it("incoming unlinked-outlet webhook does not mutate canonical products and writes bounded safe quarantine doc", async () => {
     // Unlinked rest_id (not in branches)
-    await handlePetpoojaStockWebhook({
+    await handlePetpoojaStockWebhook(
+      {
       rest_id: "unlinked_outlet_99",
       item_id: "pp_item_99",
       in_stock: 0,
-    });
+      },
+      { authenticated: true }
+    );
 
     expect(savedDocs["products/prod_unlinked_pp_item_99"]).toBeUndefined();
     const productKeys = Object.keys(savedDocs).filter((k) => k.startsWith("products/"));
@@ -345,11 +348,14 @@ describe("Petpooja Stock Consistency & Canonical Product Updates (Part B)", () =
     const unsafeOutlet = "outlet/with/path/escape/../../../etc/" + "X".repeat(500);
     const itemId = "item_safe_1";
 
-    await handlePetpoojaStockWebhook({
+    await handlePetpoojaStockWebhook(
+      {
       rest_id: unsafeOutlet,
       item_id: itemId,
       in_stock: 0,
-    });
+      },
+      { authenticated: true }
+    );
 
     const qId = computeStockQuarantineDocId(unsafeOutlet, itemId);
     // Bounded and safe format
@@ -363,11 +369,14 @@ describe("Petpooja Stock Consistency & Canonical Product Updates (Part B)", () =
   });
 
   it("omitted in_stock maps to fail-closed false and writes defined/null marker without writing undefined", async () => {
-    await handlePetpoojaStockWebhook({
+    await handlePetpoojaStockWebhook(
+      {
       rest_id: "unlinked_outlet_omit",
       item_id: "pp_item_omit",
       // in_stock omitted entirely
-    });
+      },
+      { authenticated: true }
+    );
 
     const qId = computeStockQuarantineDocId("unlinked_outlet_omit", "pp_item_omit");
     const evidence = savedDocs[`unmatched_petpooja_stock/${qId}`];
@@ -390,11 +399,14 @@ describe("Petpooja Stock Consistency & Canonical Product Updates (Part B)", () =
     });
 
     // Incoming webhook claims outlet res_ahm_01 (branch_ahmedabad_1)
-    await handlePetpoojaStockWebhook({
+    await handlePetpoojaStockWebhook(
+      {
       rest_id: "res_ahm_01",
       item_id: "pp_item_clobber",
       in_stock: 0,
-    });
+      },
+      { authenticated: true }
+    );
 
     // Existing product ownership must NOT be overwritten!
     const canonical = savedDocs["products/prod_branch_ahmedabad_1_pp_item_clobber"];
@@ -434,11 +446,14 @@ describe("Petpooja Stock Consistency & Canonical Product Updates (Part B)", () =
     });
 
     try {
-      await handlePetpoojaStockWebhook({
+      await handlePetpoojaStockWebhook(
+      {
         rest_id: "res_ahm_01",
         item_id: "item_concurrent_86",
         in_stock: 0,
-      });
+      },
+      { authenticated: true }
+    );
 
       // Canonical state is preserved with staff's newer toggle (inStock: true)
       const canonical = savedDocs["products/prod_branch_ahmedabad_1_item_concurrent_86"];

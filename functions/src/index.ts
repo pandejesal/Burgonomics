@@ -583,13 +583,14 @@ app.post(
 app.post("/petpooja/stockWebhook", verifyPetpoojaAuth, async (req, res) => {
   const p = req.body || {};
   try {
-    // F6: a stock toggle that was NOT applied must be answered non-2XX. Two
-    // shapes used to answer 200 while nothing happened — a version conflict (the
-    // park document has no drainer) and an unclassified local write failure (the
-    // handler fell off the end). Both are silent 86ing losses: the item stays
-    // orderable for customers while the kitchen believes it is out. 503 tells
-    // Petpooja to redeliver, and the redelivery re-reads the product.
-    const result = await handlePetpoojaStockWebhook(p);
+    // F6: a stock toggle that was NOT applied must be answered non-2XX (a
+    // version conflict or local write failure used to answer 200: a silent
+    // 86ing loss). 503 tells Petpooja to redeliver.
+    // Default-deny: only the flag `verifyPetpoojaAuth` sets may 86 an item —
+    // an unverified call leaves a hint row and touches no stock.
+    const result = await handlePetpoojaStockWebhook(p, {
+      authenticated: (req as any).petpoojaAuthenticated === true,
+    });
     const retryable = result?.retryable === true;
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/stockWebhook",
@@ -668,12 +669,13 @@ app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
 app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
   const p = req.body || {};
   try {
-    // `petpoojaAuthenticated` is false only when the middleware admitted the call
-    // by callback SHAPE (the vendor sends no credential header). The handler uses
-    // it to keep sync state — the POS id and "synced" — out of reach of an
-    // unauthenticated caller.
+    // `petpoojaAuthenticated` is set by verifyPetpoojaAuth: true only after a
+    // verified credential (app-key token or raw-body HMAC signature), false for
+    // the credential-less callback admitted by SHAPE. The handler is
+    // default-deny, so pass a strict boolean — an absent flag must never read
+    // as trusted.
     await handlePetpoojaWebhook(p, {
-      authenticated: (req as any).petpoojaAuthenticated !== false,
+      authenticated: (req as any).petpoojaAuthenticated === true,
     });
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/webhook",

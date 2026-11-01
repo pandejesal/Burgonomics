@@ -273,7 +273,7 @@ describe("Petpooja status webhook — atomic terminal/replay transaction race de
     expect(savedDocs["orders/ord_concurrent_1"]["payment.refundStatus"]).toBe("PENDING_APPROVAL");
   });
 
-  it("Untrusted callbacks admitted by shape can update a NON-terminal kitchen status but CANNOT terminal-flip (cancel), park refunds, or write sync state", async () => {
+  it("Untrusted callbacks admitted by shape CANNOT change status (terminal or not), park refunds, or write sync state", async () => {
     seedInProgress("ord_untrusted_1");
 
     await handlePetpoojaWebhook(
@@ -412,11 +412,14 @@ describe("Petpooja status webhook — atomic terminal/replay transaction race de
     };
 
     // Callback with proven POS id PP-RACE-1
-    await handlePetpoojaWebhook({
-      restID: "store_race_1",
-      orderID: "PP-RACE-1",
-      status: "Accept",
-    });
+    await handlePetpoojaWebhook(
+      {
+        restID: "store_race_1",
+        orderID: "PP-RACE-1",
+        status: "Accept",
+      },
+      { authenticated: true }
+    );
 
     // Should not turn stale proven mapping into new proof:
     // Order must NOT be stamped synced or have kitchen status updated on stale binding

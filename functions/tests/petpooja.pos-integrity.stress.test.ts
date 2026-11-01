@@ -420,11 +420,14 @@ describe("F6 — inbound 86ing conflict is retryable, not a silent 200", () => {
     });
 
     try {
-      const result = await handlePetpoojaStockWebhook({
+      const result = await handlePetpoojaStockWebhook(
+        {
         rest_id: "res_pos_1",
         item_id: "item_86",
         in_stock: 0,
-      });
+        },
+        { authenticated: true }
+      );
 
       // NOT a success: the route answers 503 so Petpooja redelivers.
       expect(result.outcome).toBe("retry");
@@ -459,11 +462,14 @@ describe("F6 — inbound 86ing conflict is retryable, not a silent 200", () => {
     });
 
     try {
-      const result = await handlePetpoojaStockWebhook({
+      const result = await handlePetpoojaStockWebhook(
+        {
         rest_id: "res_pos_1",
         item_id: "item_86",
         in_stock: 0,
-      });
+        },
+        { authenticated: true }
+      );
       expect(result.retryable).toBe(true);
       // Nothing was applied, but nothing pretended to be either.
       expect(savedDocs["products/prod_branch_pos_1_item_86"].inStock).toBe(true);
@@ -474,11 +480,14 @@ describe("F6 — inbound 86ing conflict is retryable, not a silent 200", () => {
 
   it("a clean apply still reports applied (the retry signal is not blanket)", async () => {
     seedProduct();
-    const result = await handlePetpoojaStockWebhook({
+    const result = await handlePetpoojaStockWebhook(
+        {
       rest_id: "res_pos_1",
       item_id: "item_86",
       in_stock: 0,
-    });
+        },
+        { authenticated: true }
+      );
     expect(result).toEqual({ outcome: "applied", retryable: false });
     expect(savedDocs["products/prod_branch_pos_1_item_86"].inStock).toBe(false);
   });

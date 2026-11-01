@@ -1,0 +1,18 @@
+Merge launch/backend-webhook-20261028 (ef4cbfd): default-deny Petpooja callbacks
+
+- Handlers now trust ONLY { authenticated: true } set by verifyPetpoojaAuth
+  (isTrustedPetpoojaAuth). Omitted / {} / malformed / false is untrusted.
+- Stock webhook: untrusted calls write a bounded petpooja_stock_hints row and
+  return stockIgnored("unauthenticated") — no product doc is touched; the
+  route still forwards the verified flag AND answers 503 on result.retryable
+  (F6 kept from review/polish).
+- Order webhook: one default-deny gate parks the event (bounded) with reason
+  untrusted_terminal_status for terminal intents, unauthenticated_callback
+  otherwise; canonical state (status, POS acceptance, refunds, payment) is
+  never written. Review's earlier shape-admitted non-terminal lane is gone
+  (the default-deny branch wins; that test was rewritten to assert the
+  stronger refusal).
+- Tests: verified-context calls updated; stock-shim mocks gained update() for
+  the version-precondition commit; the default-deny suite's trusted stock
+  case now uses the linked canonical product (the handler never creates
+  orphan prod_unlinked_* docs).

@@ -105,10 +105,30 @@ const stockRetry = (reason: string): PetpoojaStockWebhookResult => ({
 });
 
 /**
+ * True ONLY when the verified webhook context proves the caller presented a
+ * credential `verifyPetpoojaAuth` accepted (static app-key token or an
+ * HMAC-SHA256 signature over the raw body).
+ *
+ * Default-deny: an omitted context (`{}` by default), `null`, a non-object, a
+ * non-boolean `authenticated`, or an explicit `false` is UNTRUSTED. A caller
+ * cannot opt in with a truthy string/number — only the boolean `true` the
+ * middleware itself sets authorises canonical writes.
+ */
+export function isTrustedPetpoojaAuth(auth: unknown): boolean {
+  if (!auth || typeof auth !== "object" || Array.isArray(auth)) return false;
+  return (auth as { authenticated?: unknown }).authenticated === true;
+}
+
+/**
  * Instant stock-out (86ing) webhook handler from Petpooja physical POS.
+ *
+ * Default-deny: `auth` is the verified context from `verifyPetpoojaAuth`.
+ * Without an explicit `authenticated: true` the toggle is recorded as a hint
+ * row for review and NO product stock is written.
  */
 export async function handlePetpoojaStockWebhook(
-  payload: any
+  payload: any,
+  auth: unknown = {}
 ): Promise<PetpoojaStockWebhookResult> {
   // Field-name tolerance: the published callback samples and our own route
   // contract disagree on `rest_id`/`restID` and `in_stock`/`inStock`. Read
@@ -118,6 +138,45 @@ export async function handlePetpoojaStockWebhook(
   const rest_id = p.rest_id ?? p.restID ?? p.restId;
   const item_id = p.item_id ?? p.itemID ?? p.itemId;
   const in_stock = p.in_stock ?? p.inStock;
+
+  if (!isTrustedPetpoojaAuth(auth)) {
+    // Hint row only. An unverified caller must not 86 (or un-86) a live item:
+    // a wrong "available" sells food the kitchen cannot make, and a wrong
+    // "86" hides sellable inventory. `isSafeDocId` is enforced because the id
+    // comes straight from the payload; an unsafe id gets a fixed marker.
+    const hintItemId =
+      item_id !== null && item_id !== undefined && isSafeDocId(String(item_id))
+        ? String(item_id)
+        : null;
+    try {
+      await db
+        .collection("petpooja_stock_hints")
+        .doc(`sh_${hintItemId ?? "unidentified"}`)
+        .set(
+          {
+            restId: boundedParkedString(rest_id ?? null, PARKED_REF_MAX_CHARS),
+            itemId: boundedParkedString(hintItemId, PARKED_REF_MAX_CHARS),
+            rawInStock: typeof in_stock === "object" ? null : in_stock ?? null,
+            trusted: false,
+            reason: "unauthenticated Petpooja 86ing webhook — stock not applied",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+    } catch (err: any) {
+      console.warn(
+        "[Petpooja 86ing] failed to record unauthenticated hint:",
+        err?.message || err
+      );
+    }
+    console.warn(
+      `[Petpooja 86ing] REFUSED unauthenticated stock toggle item=${
+        hintItemId ?? "unknown"
+      } rest=${rest_id ?? "unknown"} — hint recorded, stock unchanged`
+    );
+    return stockIgnored("unauthenticated");
+  }
+
   if (!item_id) {
     // Loop 6: a malformed 86ing payload (no item_id) used to log-and-drop —
     // silent stock-toggle loss. Snapshot loud so ops sees it; return (no
@@ -874,22 +933,33 @@ async function resolveOrderByPosOrderId(posOrderId: string, branchId: string | n
   }
 }
 
+/**
+ * The verified auth context callers SHOULD pass. The handlers accept `unknown`
+ * at the parameter boundary so a malformed value cannot bypass the runtime
+ * default-deny check (a compile-time-only contract would not protect a
+ * JavaScript caller or an untyped route).
+ */
 export interface PetpoojaWebhookAuth {
   /**
-   * False when `verifyPetpoojaAuth` admitted the call by callback SHAPE rather
-   * than by credential. An untrusted call may still apply a bounded status
-   * change, but must not write sync state (the POS id / "synced") that the retry
-   * worker and the outbound dedupe key off — a forged one would silently drop a
-   * genuinely un-pushed order from the retry queue.
+   * True ONLY when `verifyPetpoojaAuth` proved the caller's credential (static
+   * app-key token or a valid HMAC signature over the raw body) or otherwise
+   * admitted a verified call. Every other value — omitted, `{}`, `null`, a
+   * non-boolean, or an explicit false (the middleware's credential-less
+   * SHAPE admission) — is UNTRUSTED and may not write canonical state.
    */
   authenticated?: boolean;
 }
 
 export async function handlePetpoojaWebhook(
   payload: any,
-  auth: PetpoojaWebhookAuth = {}
+  auth: unknown = {}
 ): Promise<void> {
-  const untrusted = auth.authenticated === false;
+  // Default-deny. This used to read `auth.authenticated === false`, so an
+  // omitted/empty/malformed auth context fell through to the trusted path and
+  // could rewrite canonical order status, POS acceptance, refunds and payment
+  // facts. Only the boolean `true` set after verification is trusted.
+  const trusted = isTrustedPetpoojaAuth(auth);
+  const untrusted = !trusted;
   // Our own order references. `order_id` / `clientOrderID` are the legacy
   // client fields. The documented order-status callback instead carries
   // `orderID` = "Unique client order id which is used to update order status at
@@ -939,6 +1009,9 @@ export async function handlePetpoojaWebhook(
             restId,
             branchId: branchId ?? null,
             rawStatus: boundedParkedString(rawStatus ?? null, PARKED_STATUS_MAX_CHARS),
+            // A hint row is allowed for an unverified caller (it changes no
+            // canonical state), but triage must be able to tell them apart.
+            trusted,
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
@@ -1081,6 +1154,7 @@ export async function handlePetpoojaWebhook(
             ),
             restId: boundedParkedString(restIdRaw || null, PARKED_REF_MAX_CHARS),
             status: "needs_review",
+            trusted,
             reason: parkReason,
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -1109,61 +1183,67 @@ export async function handlePetpoojaWebhook(
 
   const claimedBranch = scopedBranchId;
 
-  // An unauthenticated caller (a callback admitted by SHAPE) must not steer
-  // another outlet's order. The POS-id path already scopes by branch; this
-  // covers the doc-id path, where the caller supplied our internal order id
-  // directly: require a restID that resolves to a linked branch AND an order
-  // that belongs to it.
-  if (untrusted) {
-    const orderBranch = String(((orderDoc.data() || {}) as Record<string, any>).branchId ?? "");
-    if (!claimedBranch || !orderBranch || orderBranch !== claimedBranch) {
-      // Caller-controlled strings: bound the log, the parked fields and the
-      // doc id (the full resolvedOrderId is still used for real writes below).
-      const parkedOrderId =
-        boundedParkedString(resolvedOrderId, PARKED_REF_MAX_CHARS) || "unknown";
-      console.warn(
-        `[Petpooja Webhook] untrusted callback for order ${parkedOrderId} refused: restID ${boundedParkedString(
-          restIdRaw || "absent",
-          PARKED_REF_MAX_CHARS
-        )} resolves to ${claimedBranch || "UNLINKED"}, order belongs to ${
-          orderBranch || "none"
-        }`
-      );
-      try {
-        await db
-          .collection("unmatched_petpooja_orders")
-          .doc(parkedDocId("upo_", resolvedOrderId))
-          .set(
-            {
-              orderId: parkedOrderId,
-              // Same rule as the primary park: a client ref is never labelled a
-              // POS id in the review queue.
-              posOrderId: boundedParkedString(
-                (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
-                PARKED_REF_MAX_CHARS
-              ),
-              callbackOrderId: boundedParkedString(
-                callbackOrderId || null,
-                PARKED_REF_MAX_CHARS
-              ),
-              rawStatus: boundedParkedString(
-                payload.status || payload.order_status || null,
-                PARKED_STATUS_MAX_CHARS
-              ),
-              restId: boundedParkedString(restIdRaw || null, PARKED_REF_MAX_CHARS),
-              status: "needs_review",
-              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-      } catch (err) {
-        console.warn(
-          `[Petpooja Webhook] Failed to park refused untrusted order ${parkedOrderId}:`,
-          (err as any)?.message || err
+  // ---- Default-deny gate ----
+  // Only a VERIFIED auth context may reach canonical writes. Everything else
+  // (omitted auth, `{}`, a malformed value, or an explicit false from the
+  // middleware's credential-less SHAPE admission) is a HINT: the event is
+  // parked for human review and returns here — before status, POS acceptance,
+  // refunds, payment facts or any other canonical field can be touched. The
+  // store-status recording above is unchanged because it changes no canonical
+  // state.
+  if (!trusted) {
+    const terminalIntent =
+      normalizePetpoojaStatus(payload.status || payload.order_status) === "cancelled" ||
+      normalizePetpoojaStatus(payload.status || payload.order_status) === "delivered";
+    console.warn(
+      `[Petpooja Webhook] UNTRUSTED callback for order ${boundedParkedString(
+        resolvedOrderId,
+        PARKED_REF_MAX_CHARS
+      )} — hint recorded, canonical state unchanged`
+    );
+    try {
+      await db
+        .collection("unmatched_petpooja_orders")
+        .doc(`upo_${resolvedOrderId}`)
+        .set(
+          {
+            orderId: boundedParkedString(resolvedOrderId, PARKED_REF_MAX_CHARS),
+            // Same rule as the primary park: a client ref is never labelled a
+            // POS id in the review queue.
+            posOrderId: boundedParkedString(
+              (resolvedBy === "pos" ? posOrderId : explicitPosOrderId) || null,
+              PARKED_REF_MAX_CHARS
+            ),
+            callbackOrderId: boundedParkedString(callbackOrderId || null, PARKED_REF_MAX_CHARS),
+            rawStatus: boundedParkedString(
+              payload.status || payload.order_status || null,
+              PARKED_STATUS_MAX_CHARS
+            ),
+            restId: boundedParkedString(restIdRaw || null, PARKED_REF_MAX_CHARS),
+            status: "needs_review",
+            trusted: false,
+            // POS-03's machine-readable label is kept for terminal intents
+            // (operators/tests key on it); every other unverified event gets
+            // the neutral label. Either way NOTHING canonical is written.
+            reason: terminalIntent
+              ? "untrusted_terminal_status"
+              : "unauthenticated_callback",
+            detail: terminalIntent
+              ? `unauthenticated terminal status "${String(
+                  boundedParkedString(payload.status || payload.order_status, PARKED_STATUS_MAX_CHARS)
+                )}" refused — a credential is required to complete or cancel an order`
+              : "unauthenticated Petpooja callback — canonical state not applied",
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
         );
-      }
-      return;
+    } catch (err) {
+      console.warn(
+        `[Petpooja Webhook] Failed to park untrusted order ${resolvedOrderId}:`,
+        (err as any)?.message || err
+      );
     }
+    return;
   }
 
   const rawStatus = payload.status || payload.order_status;
