@@ -78,6 +78,7 @@ import {
   assertDispatchBookingReadinessIfRequired,
 } from "./modules/dispatch/readiness";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
+import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
 import {
   createTicket,
@@ -1910,6 +1911,40 @@ export const cleanupExpiredGuestSessions = onSchedule(
       return;
     }
     console.log(`[Guest Cleanup Worker] Purged ${result!.cleanedCartsCount} expired guest carts`);
+  }
+);
+
+// CUS-16: abandon-and-close unpaid online orders. The customer app creates the
+// order before Razorpay opens, so closing the sheet leaves a PLACED/pending
+// order that nothing else expires (and the KDS would list it). Cancels only
+// after the gateway confirms no authorized/captured payment, transactionally,
+// so a late capture wins. MUST DEPLOY ONLY AFTER the live payment test that
+// pays an existing unpaid order: this job would cancel those fixtures once they
+// are 30 minutes old.
+export const expireAbandonedUnpaidOrdersJob = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/10 * * * *", // Every 10 minutes
+    timeZone: "Asia/Kolkata",
+    // Up to 100 scanned orders × (intent read + gateway fetch + cancel) — the
+    // 60s v2 default would die mid-batch on a busy tick.
+    timeoutSeconds: 300,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "expire-abandoned-unpaid-orders",
+      9 * 60 * 1000,
+      () => expireAbandonedUnpaidOrders()
+    );
+    if (!ran) {
+      console.log("[Unpaid Expiry] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Unpaid Expiry] scanned ${result!.scanned}, candidates ${result!.candidates}, ` +
+        `cancelled ${result!.cancelled}, authorized ${result!.skippedAuthorized}, ` +
+        `unknown ${result!.skippedUnknown}, failed ${result!.failed}`
+    );
   }
 );
 
