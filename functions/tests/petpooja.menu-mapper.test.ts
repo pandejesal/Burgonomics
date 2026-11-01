@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
@@ -88,12 +88,15 @@ vi.mock("firebase-admin", () => {
 
 import { syncPetpoojaMenu } from "../src/modules/petpooja/menuSyncWebhook";
 import { calculateOrderPricing } from "../src/modules/payments/pricing.engine";
+import { config } from "../src/config/env";
 
 const fixture = JSON.parse(
   readFileSync(resolve(__dirname, "fixtures/petpooja-push-docsample.json"), "utf8")
 ).payload;
 
 const BRANCH = "branch_m";
+const realFixture = JSON.parse(readFileSync(resolve(__dirname, "fixtures/petpooja-push-real-20261101.json"), "utf8"));
+const realEvidence = "C:/Users/DELL/Desktop/staging-review-20261030/06-provider-evidence/petpooja-console/menu-push-payload.json";
 const product = (itemid: string) => savedDocs[`products/prod_${BRANCH}_${itemid}`];
 const logs = () =>
   Object.keys(savedDocs)
@@ -107,6 +110,64 @@ beforeEach(() => {
 });
 
 describe("M2 mapper", () => {
+  it("pins the trimmed real push, including uniform variation-scoped add-ons and replay", async () => {
+    await syncPetpoojaMenu(BRANCH, undefined, realFixture);
+    expect(product("30674").customizations[0]).toMatchObject({ id: "17259", kind: "addon", minSelections: 1, maxSelections: 1, posGroupId: 17259 });
+    expect(Number.isInteger(product("30674").customizations[0].posGroupId)).toBe(true);
+    expect(product("30674").customizations[0].options.map((o: any) => [o.id, o.price])).toEqual([["93021",10],["93023",20],["93019",30],["93027",40],["93025",50]]);
+    for (const [id, row, price] of [["30673","10657618",290],["30672","10657617",270]] as const) {
+      expect(product(id).price).toBe(price);
+      expect(product(id).customizations[0].options).toEqual([{ id: row, name: "Full [8 Pieces]", price: 0, absolutePrice: price, packingCharge: 0, isAvailable: true, posItemId: row, posVariationId: "14178" }]);
+    }
+    expect(product("30672").customizations[1]).toEqual(product("30674").customizations[0]);
+    expect(savedDocs[`branches/${BRANCH}`].petpoojaTaxes).toEqual([{ id: "3928", name: "CGST", rate: 2.5 }, { id: "3929", name: "SGST", rate: 2.5 }]);
+    expect(product("30791")).toMatchObject({ price: 350, priceAvailable: true, packingCharge: 0, petpoojaItemTaxIds: ["3928","3929"], petpoojaTaxInclusive: false, petpoojaTaxUnsupported: false });
+    expect(product("30791").customizations).toBeUndefined();
+    expect(product("30768")).toMatchObject({ price: 0, priceAvailable: false, inStock: false });
+    expect(lastLog()).toMatchObject({ addonGroupCount: 1, itemsAllowingAddons: 2, itemsAllowingVariations: 3, itemsWithVariationsDefined: 2, itemsWithVariationScopedAddons: 1, itemsWithUnsupportedVariationScopedAddons: 0 });
+    const before = structuredClone(Object.fromEntries(Object.entries(savedDocs).filter(([k]) => k.startsWith("products/"))));
+    await syncPetpoojaMenu(BRANCH, undefined, realFixture);
+    expect(Object.fromEntries(Object.entries(savedDocs).filter(([k]) => k.startsWith("products/")))).toEqual(before);
+  });
+
+  it.each(["groups", "limits"])("fails closed when active variations disagree on %s", async (difference) => {
+    const body = structuredClone(realFixture);
+    const item = body.items.find((i: any) => i.itemid === "30672");
+    const second = { ...structuredClone(item.variation[0]), id: "test-second-row" };
+    if (difference === "groups") second.addon = [];
+    else second.addon[0].addon_item_selection_min = "0";
+    item.variation.push(second);
+    const previous = config.petpooja.unknownStockPolicy;
+    config.petpooja.unknownStockPolicy = "available";
+    try {
+      await syncPetpoojaMenu(BRANCH, undefined, body);
+      expect(product("30672").inStock).toBe(false);
+      expect(product("30672").customizations).toHaveLength(1);
+      expect(lastLog().itemsWithUnsupportedVariationScopedAddons).toBe(1);
+    } finally { config.petpooja.unknownStockPolicy = previous; }
+  });
+
+  it("lifts identical limits across multiple active variations, ignoring inactive differences", async () => {
+    const body = structuredClone(realFixture);
+    const item = body.items.find((i: any) => i.itemid === "30672");
+    item.variation.push({ ...structuredClone(item.variation[0]), id: "test-second-row" });
+    item.variation.push({ ...structuredClone(item.variation[0]), id: "test-inactive-row", active: "0", addon: [] });
+    await syncPetpoojaMenu(BRANCH, undefined, body);
+    expect(product("30672").customizations[1]).toMatchObject({ id: "17259", minSelections: 1, maxSelections: 1 });
+    expect(lastLog().itemsWithUnsupportedVariationScopedAddons).toBe(0);
+  });
+
+  it.skipIf(!existsSync(realEvidence))("maps the whole 166-item evidence payload and prints its census", async () => {
+    const body = JSON.parse(readFileSync(realEvidence, "utf8").replace(/^\uFEFF/, ""));
+    await syncPetpoojaMenu(BRANCH, undefined, body);
+    const log = lastLog();
+    const census = Object.fromEntries(Object.entries(log).filter(([k]) => /Count$|^items|rawInStockValues|packagingUnderstood/.test(k)));
+    console.log("REAL_PUSH_CENSUS", JSON.stringify(census));
+    expect(body.items).toHaveLength(166);
+    expect(Object.keys(savedDocs).filter(k => k.startsWith("products/"))).toHaveLength(166);
+    expect(log).toMatchObject({ addonGroupCount: 1, itemsAllowingAddons: 2, itemsAllowingVariations: 83, itemsWithVariationsDefined: 2, itemsWithVariationScopedAddons: 1, itemsWithUnsupportedVariationScopedAddons: 0, packagingUnderstood: true });
+    expect(product("30672").customizations[1].posGroupId).toBe(17259);
+  });
   it("29: item 118829149 maps to its two add-on groups with the doc's ids", async () => {
     await syncPetpoojaMenu(BRANCH, undefined, fixture);
     const groups = product("118829149").customizations;

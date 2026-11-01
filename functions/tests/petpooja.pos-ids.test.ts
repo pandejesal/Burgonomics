@@ -82,6 +82,7 @@ vi.mock("firebase-admin", () => {
 
 import { pushOrderToPetpooja } from "../src/modules/petpooja/orderPush";
 import { config } from "../src/config/env";
+import { addonGroupIndex, buildItemCustomizations } from "../src/modules/petpooja/menuMapper";
 
 const fixture = JSON.parse(
   readFileSync(resolve(__dirname, "fixtures/petpooja-push-docsample.json"), "utf8")
@@ -202,6 +203,16 @@ afterEach(() => {
 });
 
 describe("M3 POS ids from the catalog", () => {
+  it("relays the real combined variation and its lifted required add-on on one line", async () => {
+    const real = JSON.parse(readFileSync(resolve(__dirname, "fixtures/petpooja-push-real-20261101.json"), "utf8"));
+    const item = real.items.find((i: any) => i.itemid === "30672");
+    savedDocs["products/prod_real"] = { price: 270, inStock: true, customizations: buildItemCustomizations(item, addonGroupIndex(real)) };
+    seedOrder("ord_real", [{ id: "l1", petpoojaItemId: item.itemid, name: item.itemname, productId: "prod_real", price: 280, quantity: 1, customizations: [{ id: "10657617", name: "Full [8 Pieces]", price: 0 }, { id: "93021", name: "Coke", price: 10 }] }], { foodSubtotal: 280, gst: 13.33, packagingFee: 0, deliveryFee: 0, discount: 0, loyaltyDiscount: 0, grandTotal: 280 });
+    expect(await pushOrderToPetpooja("ord_real")).toBe(true);
+    const line = payload().orderinfo.OrderInfo.OrderItem.details[0];
+    expect(line).toMatchObject({ id: "10657617", variation_id: "14178", variation_name: "Full [8 Pieces]", price: "280.00" });
+    expect(line.AddonItem.details).toEqual([{ id: "93021", name: "Coke", group_name: "Soft Drinks", price: "10.00", group_id: 17259, quantity: "1" }]);
+  });
   it("31: a variation line matches the vendor sample exactly", async () => {
     seedOrder(
       "ord_var",

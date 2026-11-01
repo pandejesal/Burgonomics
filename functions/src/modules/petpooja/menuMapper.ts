@@ -156,6 +156,20 @@ export function addonGroupIndex(menuData: any): Map<string, any> {
   return index;
 }
 
+/** Lift only identical active-variation contracts; never discard a required group. */
+export function variationAddonContract(item: any): { attachments: any[]; unsupported: boolean } {
+  const active = (Array.isArray(item?.variation) ? item.variation : []).filter((v: any) => isActive(v?.active));
+  const normalize = (v: any) => (Array.isArray(v?.addon) ? v.addon : []).map((a: any) => ({
+    addon_group_id: String(a?.addon_group_id ?? "").trim(),
+    addon_item_selection_min: finiteNumber(a?.addon_item_selection_min),
+    addon_item_selection_max: finiteNumber(a?.addon_item_selection_max),
+  })).sort((a: any, b: any) => a.addon_group_id.localeCompare(b.addon_group_id));
+  if (!active.length) return { attachments: [], unsupported: false };
+  const attachments = normalize(active[0]);
+  const same = active.every((v: any) => JSON.stringify(normalize(v)) === JSON.stringify(attachments));
+  return { attachments: same ? attachments : [], unsupported: !same };
+}
+
 /**
  * The item's `customizations` array, or null when it has neither add-ons nor
  * variations. Null means "write nothing": a doc the push does not enrich must
@@ -165,7 +179,11 @@ export function buildItemCustomizations(
   item: any,
   addonGroupsById: Map<string, any>
 ): MappedGroup[] | null {
-  const groups = addonGroups(item, addonGroupsById);
+  const scoped = variationAddonContract(item);
+  const groups = scoped.unsupported ? [] : addonGroups({ addon: [
+    ...(Array.isArray(item?.addon) ? item.addon : []),
+    ...scoped.attachments.filter(a => !(Array.isArray(item?.addon) ? item.addon : []).some((existing: any) => String(existing.addon_group_id) === a.addon_group_id)),
+  ] }, addonGroupsById);
   const variation = variationGroup(item);
   if (variation) groups.unshift(variation);
   return groups.length > 0 ? groups : null;

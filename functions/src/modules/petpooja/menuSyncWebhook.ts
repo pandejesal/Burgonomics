@@ -8,6 +8,7 @@ import {
   buildItemCustomizations,
   effectiveItemPrice,
   hasPricedVariation,
+  variationAddonContract,
 } from "./menuMapper";
 import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
@@ -166,7 +167,8 @@ export function captureTaxCatalogue(rawTaxes: unknown): TaxCatalogueCapture {
       parseTaxRate(r.tax_rate) ??
       parseTaxRate(r.tax_percentage) ??
       parseTaxRate(r.percentage) ??
-      parseTaxRate(r.percent);
+      parseTaxRate(r.percent) ??
+      parseTaxRate(r.tax);
     if (rate === null || rate <= 0) {
       capture.unsupported++;
       capture.unsupportedReasons.push(
@@ -542,9 +544,10 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   let itemsAllowingAddons = 0;
   let itemsAllowingVariations = 0;
   let itemsWithVariationsDefined = 0;
-  // Correction from the design review: per-variation add-ons are not supported
-  // by the mapper yet; count them so the gap stays visible.
+  // Keep all scoped add-ons visible; only uniform active-variation contracts
+  // can be lifted. Nonuniform contracts fail closed and have a separate census.
   let itemsWithVariationScopedAddons = 0;
+  let itemsWithUnsupportedVariationScopedAddons = 0;
 
   // TAX CATALOGUE (record-only + provenance). Written onto the branch so the
   // order push reads outlet-proven ids instead of assuming unrelated defaults;
@@ -675,7 +678,9 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // the availability policy, and must never make an unpriced item sellable.
     const flagInStock =
       item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
-    const inStock = resolvePushStock(
+    const scopedAddonContract = variationAddonContract(item);
+    if (scopedAddonContract.unsupported) itemsWithUnsupportedVariationScopedAddons++;
+    const inStock = !scopedAddonContract.unsupported && resolvePushStock(
       item.in_stock,
       effectivePrice,
       config.petpooja.unknownStockPolicy
@@ -1104,6 +1109,7 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       itemsAllowingVariations,
       itemsWithVariationsDefined,
       itemsWithVariationScopedAddons,
+      itemsWithUnsupportedVariationScopedAddons,
       malformedItemCount,
       anomalyCensus,
       // ADDITIVE tax-metadata census (2026-10-26): the captured rows + every
