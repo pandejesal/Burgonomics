@@ -211,7 +211,7 @@ export interface CreateTicketInput {
 export interface ResolveTicketInput {
   ticketId: string;
   resolvedBy: string;
-  resolvedByName: string;
+  resolvedByName?: string;
   action: "full_refund" | "partial_refund" | "discount_coupon" | "loyalty_credit" | "explanation";
   amount?: number;
   couponCode?: string;
@@ -225,7 +225,7 @@ export interface EscalateTicketInput {
   targetTier: "brand_support" | "developer_team";
   reason: string;
   escalatedBy: string;
-  escalatedByName: string;
+  escalatedByName?: string;
   /** Verified caller (req.user). Binds identity + asserts staff in-function. */
   caller?: TicketCaller;
 }
@@ -402,14 +402,15 @@ export async function createTicket(input: CreateTicketInput & { caller?: TicketC
 export async function addTicketMessage(params: {
   ticketId: string;
   senderId: string;
-  senderName: string;
+  senderName?: string;
   senderRole: string;
   text: string;
   caller?: TicketCaller;
 }) {
-  const { ticketId, senderName, text, caller } = params;
+  const { ticketId, text, caller } = params;
   const senderId = caller?.uid || params.senderId;
   const senderRole = caller?.role || params.senderRole;
+  const senderName = params.senderName || (senderRole === "customer" ? "Customer" : "Staff");
   if (!ticketId || !senderId) {
     throw serviceError("TICKET_INVALID_INPUT", "Ticket message: missing ticketId/senderId", 400);
   }
@@ -660,7 +661,10 @@ function assertLoyaltyAmount(amount: number | undefined): number {
  * Resolves a ticket with specific action (full/partial refund, coupon, loyalty credit, or explanation).
  */
 export async function resolveTicket(input: ResolveTicketInput) {
-  const { ticketId, resolvedBy, resolvedByName, action, amount, couponCode, notes } = input;
+  const { ticketId, resolvedBy, action, amount, couponCode, notes } = input;
+  // Optional in the request schema, and undefined would fail the ticket write
+  // after a refund has already left.
+  const resolvedByName = input.resolvedByName || "Staff";
   // Staff-only transition, enforced server-side even if the route miswires.
   assertStaff(input.caller, "resolve tickets");
   const actorId = input.caller?.uid || resolvedBy;
@@ -874,7 +878,8 @@ export async function resolveTicket(input: ResolveTicketInput) {
  * Escalates a ticket to Brand Support or Developer Team.
  */
 export async function escalateTicket(input: EscalateTicketInput) {
-  const { ticketId, targetTier, reason, escalatedBy, escalatedByName } = input;
+  const { ticketId, targetTier, reason, escalatedBy } = input;
+  const escalatedByName = input.escalatedByName || "Staff";
   // Staff-only transition, enforced server-side even if the route miswires.
   assertStaff(input.caller, "escalate tickets");
   const actorId = input.caller?.uid || escalatedBy;
