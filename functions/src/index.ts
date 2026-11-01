@@ -77,7 +77,10 @@ import {
   assertDispatchReadinessIfRequired,
   assertDispatchBookingReadinessIfRequired,
 } from "./modules/dispatch/readiness";
-import { pollActiveShadowfaxOrdersWorker } from "./modules/dispatch/shadowfax.reconcile";
+import {
+  pollActiveShadowfaxOrdersWorker,
+  retryPendingShadowfaxReadySignals,
+} from "./modules/dispatch/shadowfax.reconcile";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
@@ -1862,6 +1865,15 @@ export const pollActiveShadowfaxDeliveries = onSchedule(
     console.log(
       `[Shadowfax Poll Worker] Polled ${result!.polledCount} orders, updated ${result!.updatedCount}, parked ${result!.parkedCount}`
     );
+    // Dispatch-ready retries ride the same tick: the signal is only needed for
+    // orders whose KDS ready bump already committed, so it needs no separate
+    // schedule and cannot hold the kitchen.
+    const ready = await retryPendingShadowfaxReadySignals();
+    if (ready.scanned > 0) {
+      console.log(
+        `[Shadowfax Ready Worker] Resent ${ready.retriedCount} of ${ready.scanned} pending dispatch-ready signals, ${ready.failedCount} failed`
+      );
+    }
   }
 );
 
