@@ -1246,7 +1246,14 @@ export async function handlePetpoojaWebhook(
     return;
   }
 
-  const rawStatus = payload.status || payload.order_status;
+  // First PRESENT status wins. `||` dropped a real `0` (a vendor code, not
+  // absence) and let an empty string shadow a populated `order_status`;
+  // `??` alone would let `""` shadow it instead. Absence - both keys
+  // missing, null, or empty - is `null`, never `undefined`, because an
+  // explicitly-undefined value fails the whole Firestore write below.
+  const pickStatus = (value: any): any =>
+    value !== undefined && value !== null && value !== "" ? value : null;
+  const rawStatus = pickStatus(payload.status) ?? pickStatus(payload.order_status);
   const canonicalStatus = normalizePetpoojaStatus(rawStatus);
   const docTarget = db.collection("orders").doc(resolvedOrderId);
   const orderRef =
@@ -1454,8 +1461,15 @@ export async function handlePetpoojaWebhook(
     }
 
     // 5. Mutation & refund planning on fresh snapshot
+    // A callback that resolved to a real order but carried NO status field (or
+    // only empty-string status keys) must not plant `undefined` here: the Admin
+    // SDK rejects an explicitly-undefined value anywhere in the merged payload,
+    // so the WHOLE write throws, the webhook answers 500, and every vendor
+    // redelivery fails identically - the order never even records
+    // `petpoojaWebhookEventId`. Absence is recorded as `null` (a value that
+    // says "the POS sent no status"), and a falsy-but-real `0` is preserved.
     const updateData: Record<string, any> = {
-      petpoojaKitchenStatus: rawStatus,
+      petpoojaKitchenStatus: rawStatus ?? null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
