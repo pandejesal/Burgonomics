@@ -40,6 +40,12 @@ import {
   providerCanCancelRemotely,
   type PendingDispatchCancel,
 } from "./dispatch.cancelPending";
+import {
+  dropContactMissingError,
+  persistResolvedCustomerPhone,
+  resolveDropContact,
+  type ResolvedDropContact,
+} from "./dropContact";
 import { fareConfirmCheck } from "./providers/shared";
 import { borzoAdapter } from "./providers/borzo.adapter";
 import { shadowfaxAdapter, cancelShadowfaxOrder } from "./providers/shadowfax.adapter";
@@ -637,11 +643,10 @@ async function runQuoteFanOut(
 // ---------------------------------------------------------------------------
 
 function assertOrderDispatchable(order: any): void {
-  if (!order.customerPhone) {
-    throw new Error(
-      "Customer phone number is missing — edit the order to add it, then retry dispatch."
-    );
-  }
+  // P1-F: the customer phone is resolved by `resolveDropContact` (order →
+  // address → VERIFIED Firebase Auth profile) before this runs, and is written
+  // onto the order when the order carried none. A missing phone is therefore a
+  // typed 422 from the resolver, never this generic 500.
   const orderType = order.orderType || order.fulfillment || "delivery";
   const drop = order.deliveryAddress || order.address;
   if (orderType === "delivery" && !(drop?.street || drop?.full || (drop?.lat && drop?.lng))) {
@@ -675,8 +680,10 @@ function assertDispatchNotLocked(order: any): void {
 function buildQuoteContext(
   order: any,
   params: Partial<DispatchQuoteParams> & { staffName?: string; caller?: StaffCaller },
-  pickup: PickupCoordinates
+  pickup: PickupCoordinates,
+  dropContact?: ResolvedDropContact | null
 ): { ctx: DispatchQuoteContext; geoSource: "live_gps" } {
+  const contact = dropContact ?? null;
   return {
     ctx: {
       pickup: { lat: pickup.lat, lng: pickup.lng },
@@ -684,8 +691,10 @@ function buildQuoteContext(
         lat: order.deliveryAddress?.lat ?? order.address?.lat,
         lng: order.deliveryAddress?.lng ?? order.address?.lng,
       },
-      customerName: order.customerName || params.customerName,
-      customerPhone: order.customerPhone || params.customerPhone,
+      // P1-F: the resolved contact wins. `params.*` is only ever a staff-side
+      // hint; the persisted order value and the verified profile are stronger.
+      customerName: contact?.name || order.customerName || params.customerName,
+      customerPhone: contact?.phone || order.customerPhone || params.customerPhone,
       orderId: params.orderId,
       order,
       staffName: params.staffName,
@@ -874,6 +883,17 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   // capture marker — the courier webhooks would then advance/deliver it.
   assertOnlineOrderPaid(order);
   assertDispatchNotLocked(order);
+
+  // P1-F: resolve the drop contact BEFORE any claim or provider call. Every
+  // real customer-app order arrives with an empty address contact and no
+  // `customerPhone`; the verified Auth profile is the authoritative fallback.
+  // A miss is a typed 422 here, not a 500 deep in the walk.
+  const dropContact = await resolveDropContact(order);
+  if (!dropContact) throw dropContactMissingError();
+  // Persist only when the order carried no phone of its own (never overwrite a
+  // value the customer or staff entered). Best-effort, post-resolution.
+  await persistResolvedCustomerPhone(orderDoc.ref, order, dropContact);
+
   assertOrderDispatchable(order);
   // Pickup GPS resolved BEFORE the claim (a bad order never parks a lease):
   // branchCoordinates snapshot → order.store → branches/{branchId}.coordinates.
@@ -888,7 +908,7 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   const correlationToken =
     reuse?.correlationToken ?? mintDispatchCorrelationToken(orderId, currentGen);
 
-  const { ctx, geoSource } = buildQuoteContext(order, params, pickup);
+  const { ctx, geoSource } = buildQuoteContext(order, params, pickup, dropContact);
 
   const gate = checkBranchDeliveryServiceability(
     ctx.pickup.lat,

@@ -4,6 +4,7 @@ import {
   type ProviderId,
 } from "../types";
 import { config } from "../../../config/env";
+import { normalizePhone } from "../dropContact";
 
 /**
  * Shared provider plumbing: HTTP classification (DR3), address assembly from
@@ -173,9 +174,25 @@ export function pickupContact(order: Record<string, any> | undefined): {
 }
 
 export function dropContact(ctx: DispatchQuoteContext): { name?: string; phone?: string } {
+  // P1-F: the router resolves the contact (order → address → verified Auth
+  // profile) and passes it in `ctx`. This fallback reads the same order fields
+  // in the same order so an adapter reached without the router context (a direct
+  // call, a test harness) cannot resurrect the old "only order.customerPhone"
+  // gap that made every real delivery order unbookable. No invented number: a
+  // miss stays undefined and the adapter's own gate refuses the booking.
+  const orderPhone =
+    normalizePhone(ctx.customerPhone) ??
+    normalizePhone(ctx.order?.customerPhone) ??
+    normalizePhone(ctx.order?.deliveryAddress?.contactPhone) ??
+    normalizePhone(ctx.order?.address?.contactPhone);
   return {
-    name: ctx.customerName || ctx.order?.customerName || "Customer",
-    phone: ctx.customerPhone || ctx.order?.customerPhone || undefined,
+    name:
+      ctx.customerName ||
+      ctx.order?.deliveryAddress?.contactName ||
+      ctx.order?.address?.contactName ||
+      ctx.order?.customerName ||
+      "Customer",
+    phone: orderPhone || undefined,
   };
 }
 

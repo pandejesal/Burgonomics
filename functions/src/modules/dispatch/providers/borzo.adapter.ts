@@ -9,6 +9,7 @@ import type {
   ProviderQuoteOk,
 } from "../types";
 import { ProviderDispatchError } from "../types";
+import { normalizePhone } from "../dropContact";
 import {
   QUOTE_TTL_MS,
   classifyHttpStatus,
@@ -62,20 +63,15 @@ function borzoHeaders(): Record<string, string> {
  * last-resort literal was a fabricated phone sent on live requests).
  */
 function borzoPhone(raw: string | undefined): string | null {
-  let digits = (raw || "").replace(/\D/g, "");
-  if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
-  // A 10-digit value that still starts with 0 is an STD/trunk form, not a
-  // national mobile number: prefixing "91" to it invents the same wrong
-  // recipient this function refuses to truncate. Unknown => null.
-  if (digits.length === 10) return digits.startsWith("0") ? null : `91${digits}`;
-  // Exactly 12 digits is the documented `91` + 10-digit national form — and only
-  // that prefix qualifies. A 12-digit value starting with anything else (e.g. a
-  // trunk 0: "098250012345") is sent as-is by neither form; refuse it. Anything
-  // LONGER used to be silently sliced to 12, which turns "+91 098250 12345"
-  // into "910982501234" — a plausible-looking, WRONG recipient handed to a
-  // live courier. A number we cannot normalise unambiguously must block the
-  // booking (null), never be truncated into a different person's line.
-  if (digits.length === 12) return digits.startsWith("91") ? digits : null;
+  // P1-F: ONE normaliser for every path (`dropContact.normalizePhone`) so the
+  // value persisted on the order and the value sent to Borzo cannot drift.
+  // Borzo documents `91` + 10-digit national form, which is exactly what
+  // `phoneFormats.borzo` returns; the truncation hazards documented below stay
+  // refused rather than coerced.
+  const e164 = normalizePhone(raw);
+  if (!e164) return null;
+  const digits = e164.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) return digits;
   return null;
 }
 

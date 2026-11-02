@@ -7,6 +7,7 @@ import type {
   ProviderQuoteOk,
 } from "../types";
 import { ProviderDispatchError } from "../types";
+import { normalizePhone } from "../dropContact";
 import {
   QUOTE_TTL_MS,
   assertProviderOk,
@@ -321,10 +322,20 @@ function orderValueInr(ctx: DispatchQuoteContext): number {
 
 /** Contact numbers are bare 10-digit national format (doc examples). Returns
  * "" when no real number can be derived from either source — never the old
- * invented literal "9876543210" (audit finding 5). */
+ * invented literal "9876543210" (audit finding 5).
+ *
+ * P1-F: normalisation goes through the shared `normalizePhone` so a stored
+ * `+91XXXXXXXXXX` (what the drop-contact resolver persists) becomes the bare
+ * national form the docs require, instead of relying on a blind last-10 slice
+ * that can silently take the wrong digits from a malformed value. */
 function contactDigits(raw: string | undefined, fallback?: string): string {
-  const strip = (v: string | undefined): string => (v || "").replace(/\D/g, "").slice(-10);
-  return strip(raw) || strip(fallback) || "";
+  const national = (v: string | undefined): string => {
+    const e164 = normalizePhone(v);
+    if (!e164) return "";
+    const digits = e164.replace(/\D/g, "");
+    return digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits.slice(-10);
+  };
+  return national(raw) || national(fallback) || "";
 }
 
 /**

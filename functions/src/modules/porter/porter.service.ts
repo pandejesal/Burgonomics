@@ -14,6 +14,11 @@ import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 import { assertOnlineOrderPaid } from "../orders/paymentGate";
 import {
+  dropContactMissingError,
+  persistResolvedCustomerPhone,
+  resolveDropContact,
+} from "../dispatch/dropContact";
+import {
   dropGpsMissingError,
   pickupGpsMissingError,
   resolvePickupCoordinates,
@@ -610,9 +615,15 @@ export async function bookPorterRider(
   // Fail loudly: booking a rider against a fake/missing contact or address
   // produces a "successful" dispatch nobody can complete. Real data or error.
   // Copy is staff-actionable with no raw ids (orderId rides in logs/snapshots).
-  if (!order.customerPhone) {
-    throw new Error("Customer phone number is missing — edit the order to add it, then retry dispatch.");
-  }
+  //
+  // P1-F: the phone is RESOLVED, not merely read. Real customer-app orders have
+  // no `customerPhone` and an empty address contact, so the verified Firebase
+  // Auth profile named by the order's own uid is the authoritative source. A
+  // miss is a typed 422; a value the customer entered is never overwritten.
+  const resolvedContact = await resolveDropContact(order);
+  if (!resolvedContact) throw dropContactMissingError();
+  await persistResolvedCustomerPhone(orderDoc.ref, order, resolvedContact);
+  if (!order.customerPhone) order.customerPhone = resolvedContact.phone;
   const orderType = order.orderType || order.fulfillment || "delivery";
   const drop = order.deliveryAddress || order.address;
   if (orderType === "delivery" && !(drop?.street || drop?.full || (drop?.lat && drop?.lng))) {
@@ -722,13 +733,13 @@ export async function bookPorterRider(
             lat: dropLat,
             lng: dropLng,
             contact_details: {
-              name: order.customerName || "Customer",
-              phone_number: order.customerPhone,
+              name: resolvedContact.name || order.customerName || "Customer",
+              phone_number: resolvedContact.phone,
             },
           },
           lat: dropLat,
           lng: dropLng,
-          contact_number: order.customerPhone,
+          contact_number: resolvedContact.phone,
         },
         vehicle_type: "2_WHEELER",
       };
