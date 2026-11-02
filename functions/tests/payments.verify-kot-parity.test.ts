@@ -205,6 +205,17 @@ function seedConfirmableOrder(orderId: string, branchId = "branch_kot") {
     status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
     routeTransferStatus: "transferred",
   });
+  // P1-F: verification now REQUIRES the durable server intent that binds the
+  // gateway order to this internal order (and supplies the amount authority).
+  control.seed(`payment_intents/intent_${orderId}`, {
+    razorpayOrderId: GATEWAY_ORDER,
+    orderId,
+    amountPaise: ORDER_AMOUNT_PAISE,
+    branchId,
+    customerId: "cust_kot",
+    createdAtMs: Date.now(),
+    expiresAtMs: Date.now() + 60_000,
+  });
 }
 
 const verifyParams = (orderId: string, paymentId: string) => ({

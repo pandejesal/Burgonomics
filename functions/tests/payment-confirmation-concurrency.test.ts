@@ -290,7 +290,9 @@ const transferredOrder = (extra: Record<string, any> = {}) => ({
 
 const validParams = (orderId: string, paymentId: string) => ({
   orderId,
-  razorpayOrderId: "order_rzp_1",
+  // One gateway order per internal order (production shape): the intent below
+  // binds exactly this pair.
+  razorpayOrderId: `rzp_${orderId}`,
   razorpayPaymentId: paymentId,
   razorpaySignature: "mock_signature_valid",
 });
@@ -302,6 +304,34 @@ describe("payment confirmation concurrency (verify path)", () => {
     control.reset();
     prevMock = config.mock.paymentGateway;
     config.mock.paymentGateway = true;
+    // P1-F: a durable server intent is now a PRECONDITION of verification (it
+    // binds the gateway order to the internal order and is the amount
+    // authority). These fixtures predate that requirement, so the
+    // server-written intent for the shared gateway order `order_rzp_1` is
+    // seeded here for every internal order the suite exercises.
+    for (const orderId of [
+      "order_repeat_1",
+      "order_later_1",
+      "order_term_1",
+      "order_first_1",
+      "order_backfill_1",
+      "order_cancel_1",
+      "order_r29_cancelled",
+      "order_r29_refunded",
+      "order_sig_1",
+      "order_owner_1",
+      "order_intruder_1",
+      "order_race_vv",
+      "order_det_1",
+    ]) {
+      control.seed(`payment_intents/intent_${orderId}`, {
+        razorpayOrderId: `rzp_${orderId}`,
+        orderId,
+        amountPaise: 25000,
+        createdAtMs: Date.now(),
+        expiresAtMs: Date.now() + 60_000,
+      });
+    }
   });
   afterEach(() => {
     uninstallClock();

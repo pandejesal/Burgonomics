@@ -292,6 +292,22 @@ const capturedFetch = (paymentId: string, amountPaise = 10000) =>
     requestedId,
   }));
 
+/**
+ * P1-F: a verify now REQUIRES the durable server intent binding this gateway
+ * order to this internal order — it is also the amount authority. The orders
+ * these fixtures confirm are priced at 100 rupees (10000 paise).
+ */
+const seedIntent = (orderId: string, amountPaise = 10000) => {
+  control.seed(`payment_intents/intent_${orderId}`, {
+    razorpayOrderId: GATEWAY_ORDER,
+    orderId,
+    amountPaise,
+    branchId: "branch_c03",
+    customerId: "cust_c03",
+    createdAtMs: Date.now(),
+    expiresAtMs: Date.now() + 60_000,
+  });
+};
 describe("C03 B7 — verify refuses a second distinct captured payment", () => {
   let prevMock: boolean;
   let prevKeyId: string;
@@ -330,6 +346,7 @@ describe("C03 B7 — verify refuses a second distinct captured payment", () => {
 
   it("captured pay_A recorded, captured pay_B verified → 409 + one deterministic park, zero side effects", async () => {
     control.seed("orders/order_c03_a", confirmedBy("pay_A", { id: "order_c03_a" }));
+    seedIntent("order_c03_a");
     control.seed("branches/branch_c03", { razorpayAccountId: "acc_c03abc1" });
     __setPaymentsFetchForTests(capturedFetch("pay_B"));
 
@@ -399,6 +416,7 @@ describe("C03 B7 — verify refuses a second distinct captured payment", () => {
       routeTransferError: "Route transfer failed",
       routeTransferRetryCount: 0,
     });
+    seedIntent("order_c03_dotted");
     __setPaymentsFetchForTests(capturedFetch("pay_B"));
 
     const err: any = await verifyPayment(verifyParams("order_c03_dotted", "pay_B")).then(
@@ -434,6 +452,7 @@ describe("C03 B7 — verify refuses a second distinct captured payment", () => {
       routeTransferRetryCount: 0,
     });
     control.seed("branches/branch_c03", { razorpayAccountId: "acc_c03abc1" });
+    seedIntent("order_c03_race");
     // …then a competing confirm (pay_A) commits BEFORE the pre-split
     // transaction reads: only the FRESH read can see it.
     control.injectAfterOrderRead(() =>
@@ -485,6 +504,7 @@ describe("C03 B7 — verify refuses a second distinct captured payment", () => {
         deliveryOtpHash: "ORIGINAL_HASH",
       })
     );
+    seedIntent("order_c03_same");
     __setPaymentsFetchForTests(capturedFetch("pay_A"));
 
     const res: any = await verifyPayment(verifyParams("order_c03_same", "pay_A"));
@@ -510,6 +530,7 @@ describe("C03 B7 — verify refuses a second distinct captured payment", () => {
       paymentStatus: "pending",
       routeTransferStatus: "transferred",
     });
+    seedIntent("order_c03_first");
     __setPaymentsFetchForTests(capturedFetch("pay_A"));
 
     const res: any = await verifyPayment(verifyParams("order_c03_first", "pay_A"));
@@ -541,6 +562,7 @@ describe("C03 B7 — verify refuses a second distinct captured payment", () => {
       routeTransferError: "Route transfer failed",
       routeTransferRetryCount: 0,
     });
+    seedIntent("order_c03_cancel");
     __setPaymentsFetchForTests(capturedFetch("pay_B"));
 
     const err: any = await verifyPayment(verifyParams("order_c03_cancel", "pay_B")).then(

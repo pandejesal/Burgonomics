@@ -27,6 +27,34 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
   const mockDb: any = {
     collection: (colName: string) => ({
       doc: (docId: string) => docRef(colName, docId),
+      // P1-F: verifyPayment now resolves the durable payment intent by gateway
+      // order id, so the rig needs the same equality query the real SDK has.
+      where: (field: string, _op: string, value: any) => {
+        const filters: Array<[string, any]> = [[field, value]];
+        const q: any = {
+          where: (f: string, _op2: string, v: any) => {
+            filters.push([f, v]);
+            return q;
+          },
+          limit: () => q,
+          get: async () => {
+            const docs = Object.entries(savedDocs)
+              .filter(([p]) => p.startsWith(`${colName}/`))
+              .filter(([, d]) =>
+                filters.every(([f, v]) => {
+                  const nested = f.split(".").reduce((o: any, k) => (o == null ? undefined : o[k]), d);
+                  return nested === v;
+                })
+              )
+              .map(([p, d]) => ({
+                id: p.slice(colName.length + 1),
+                data: () => d,
+              }));
+            return { empty: docs.length === 0, docs };
+          },
+        };
+        return q;
+      },
     }),
     runTransaction: vi.fn(async (fn: any) =>
       fn({
@@ -112,6 +140,19 @@ describe("verifyPayment fail-closed (B2-S1)", () => {
       branchId: "branch_test_1",
       orderType: "delivery",
       pricing: { grandTotal, split: { branchTransferPaise: 9000 } },
+    };
+    seedIntent(id, Math.round(grandTotal * 100));
+  };
+
+  /** P1-F: the durable server intent binding gateway `order_rzp_1` to `id`. */
+  const seedIntent = (id: string, amountPaise = 10000) => {
+    savedDocs[`payment_intents/intent_${id}`] = {
+      razorpayOrderId: "order_rzp_1",
+      orderId: id,
+      amountPaise,
+      branchId: "branch_test_1",
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
     };
   };
 
@@ -233,6 +274,7 @@ describe("verifyPayment fail-closed (B2-S1)", () => {
       routeTransferStatus: "transferring",
       routeTransferClaimedAt: { toMillis: () => Date.now() }, // fresh claim
     };
+    seedIntent("order_busy_1");
     const started = Date.now();
     const err: any = await verifyPayment({
       orderId: "order_busy_1",
@@ -255,7 +297,10 @@ describe("verifyPayment fail-closed (B2-S1)", () => {
     __setPaymentsFetchForTests(async () => {
       throw new Error("gateway fetch must be skipped without stored pricing");
     });
+    // P1-F: an order doc with no totals is now priced from the SERVER intent
+    // (the authority), not skipped — so the intent is the only required input.
     savedDocs["orders/order_legacy_1"] = { branchId: "branch_test_1" };
+    seedIntent("order_legacy_1");
     const res = await verifyPayment({
       orderId: "order_legacy_1",
       razorpayOrderId: "order_rzp_1",
@@ -308,6 +353,16 @@ describe("verifyPayment fail-closed (B2-S1)", () => {
       orderType: "delivery",
       pricing: { grandTotal: 100, split: { branchTransferPaise: 9500, courierFeePaise: 0 } },
     };
+    seedIntent("order_manual_1");
+    // This fixture verifies against its OWN gateway order id.
+    savedDocs["payment_intents/intent_manual"] = {
+      razorpayOrderId: "order_rzp_m1",
+      orderId: "order_manual_1",
+      amountPaise: 10000,
+      branchId: "branch_unlinked_1",
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    };
     // The branch exists but has no linked Route account.
     savedDocs["branches/branch_unlinked_1"] = { razorpayAccountId: "" };
     // F5: fee already met this month so a payout is owed and the unlinked
@@ -345,6 +400,7 @@ describe("verifyPayment fail-closed (B2-S1)", () => {
       // payment.routeTransfer intentionally missing: a missing receipt is a
       // data anomaly, never permission to move money a second time.
     };
+    seedIntent("order_double_1");
     const res = await verifyPayment({
       orderId: "order_double_1",
       razorpayOrderId: "order_rzp_1",

@@ -293,9 +293,26 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
       razorpayPaymentId: `pay_own_${n}`,
       razorpaySignature: "sig_valid",
     });
+    /**
+     * P1-F: verification now REQUIRES the durable server intent that binds this
+     * gateway order to this internal order (it is also the amount authority).
+     * Production writes it in createPaymentOrder; these fixtures must carry the
+     * same real precondition.
+     */
+    const seedIntentFor = (n: string, orderId = "ord_own", amountPaise = 10000) => {
+      savedDocs[`payment_intents/rzp_own_${n}`] = {
+        razorpayOrderId: `rzp_own_${n}`,
+        orderId,
+        customerId: "cust_owner",
+        branchId: "branch_c1",
+        orderType: "delivery",
+        amountPaise,
+      };
+    };
 
     it("owner caller gets the full payload + order summary", async () => {
       seedOrder("ord_own", "cust_owner");
+      seedIntentFor("owner", "ord_own");
       const res = await verifyPayment(body("owner"), { uid: "cust_owner" });
       expect(res.ok).toBe(true);
       expect((res as any).success).toBe(true);
@@ -307,12 +324,14 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
 
     it("a DIFFERENT authenticated customer gets only { ok: true } — no order/OTP/transfer leak", async () => {
       seedOrder("ord_own", "cust_owner");
+      seedIntentFor("attacker", "ord_own");
       const res = await verifyPayment(body("attacker"), { uid: "cust_attacker" });
       expect(res).toEqual({ ok: true });
     });
 
     it("unauthenticated guest gets only { ok: true } for a registered customer's order", async () => {
       seedOrder("ord_own", "cust_owner");
+      seedIntentFor("guest", "ord_own");
       const res = await verifyPayment(body("guest"), null);
       expect(res).toEqual({ ok: true });
     });
@@ -390,6 +409,9 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
     });
 
     it("refuses to verify a ghost order with no server intent (404)", async () => {
+      // P1-F: a payment with no durable intent is no longer a 404 "ghost" but a
+      // hard 409 ORDER_MISMATCH — it must never be confirmed, and the refusal
+      // is the same one a foreign/cheap-price capture gets (no oracle).
       await expect(
         verifyPayment(
           {
@@ -400,7 +422,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
           },
           { uid: "cust_a" }
         )
-      ).rejects.toMatchObject({ statusCode: 404, code: "ORDER_NOT_FOUND" });
+      ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_MISMATCH" });
     });
 
     it("refuses a payment whose intent is bound to a DIFFERENT order (409)", async () => {

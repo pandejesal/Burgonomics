@@ -970,14 +970,35 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // one basket; the TTL scopes it in time. Numeric createdAtMs/expiresAtMs
   // (not serverTimestamp sentinels) so the age check reads without a
   // toMillis trap.
+  //
+  // P1-F: the intent is MANDATORY, so the key is never optional. A caller that
+  // omits it gets a SERVER-GENERATED key derived from the order + cart
+  // fingerprint (not a timestamp): retries of the same checkout still converge
+  // on the same intent, and no payable gateway order can exist without a
+  // durable server binding. (The old key-less path minted exactly the orphan
+  // gateway order the exploit consumed.)
   const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
-  if (params.idempotencyKey && db && typeof db.collection === "function") {
+  const idempotencyKey =
+    typeof params.idempotencyKey === "string" && params.idempotencyKey.trim()
+      ? params.idempotencyKey.trim()
+      : `srv_${crypto
+          .createHash("sha256")
+          .update(
+            JSON.stringify([
+              params.orderId ?? "",
+              cartFingerprint(cartItems, couponCode, loyaltyPointsToRedeem),
+              params.customerId ?? "",
+            ])
+          )
+          .digest("hex")
+          .slice(0, 40)}`;
+  if (db && typeof db.collection === "function") {
     // The binding refusal is decided OUTSIDE the lookup try/catch: a mismatch
     // is a proven 409, not an unavailable-service 503.
     let reusableIntent: any = null;
     let corruptIntent = false;
     try {
-      const prior = await db.collection("payment_intents").doc(params.idempotencyKey).get();
+      const prior = await db.collection("payment_intents").doc(idempotencyKey).get();
       // Require a real stored order id AND sane numeric totals — ghost docs
       // or corrupted amounts (string/NaN) must not short-circuit into a
       // checkout for the wrong total.
@@ -1147,8 +1168,8 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     }
   }
 
-  if (params.idempotencyKey && db && typeof db.collection === "function") {
-    const intentRef = db.collection("payment_intents").doc(params.idempotencyKey);
+  if (db && typeof db.collection === "function") {
+    const intentRef = db.collection("payment_intents").doc(idempotencyKey);
     const nowMs = Date.now();
     const intentDoc = {
       razorpayOrderId,
@@ -1323,28 +1344,48 @@ export async function verifyPayment(
   }
 
   // 2. Payment-intent binding (spec §2): the server-written intent ties the
-  // gateway order to the internal orderId + server-priced amount. Missing or
-  // mismatched intents degrade to the order-doc path below — and a missing
-  // order doc WITHOUT an intent is refused as a ghost (404).
+  // gateway order to the internal orderId + the SERVER-PRICED amount. It is
+  // MANDATORY (P1-F):
+  //
+  // The old code treated a missing intent as "degrade to the order-doc path",
+  // and when the order doc carried no totals either, `expectedPaise` became
+  // null and the live amount check was SKIPPED entirely. An attacker minted a
+  // cheap gateway order with no idempotency key (so no intent), then verified
+  // it against their own expensive order — which has no totals — and had the
+  // expensive order confirmed at the cheap price, pushed to the KOT as paid.
+  //
+  // Now: no durable intent ⇒ no verification. The intent must name BOTH this
+  // internal order and this exact gateway order, and its amount is the
+  // authority for the gateway comparison (the order doc's optional totals can
+  // never widen or narrow it).
   const intent = await loadPaymentIntent(razorpayOrderId);
-  let orderId = params.orderId || "";
-  if (!orderId) {
-    // Legacy shape: no internal id supplied — resolve it through the intent.
-    orderId = typeof intent?.orderId === "string" ? intent.orderId : "";
-    if (!orderId || !isSafeDocId(orderId)) {
-      const ghost: any = new Error(
-        "No payment intent found for this gateway order — refusing to verify a ghost order"
-      );
-      ghost.statusCode = 404;
-      ghost.code = "ORDER_NOT_FOUND";
-      throw ghost;
-    }
-  } else if (
-    intent &&
-    typeof intent.orderId === "string" &&
-    intent.orderId &&
-    intent.orderId !== orderId
+  const intentOrderId = typeof intent?.orderId === "string" ? intent.orderId : "";
+  const intentAmountPaise = Number(intent?.amountPaise);
+  if (
+    !intent ||
+    !isSafeDocId(intentOrderId) ||
+    typeof intent.razorpayOrderId !== "string" ||
+    intent.razorpayOrderId !== razorpayOrderId ||
+    !Number.isFinite(intentAmountPaise) ||
+    intentAmountPaise <= 0
   ) {
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `verifyPayment refused: no durable payment intent binds gateway order ${razorpayOrderId} to an internal order — possible paid-at-cheap-price attempt`,
+      orderId: params.orderId,
+      razorpayPaymentId,
+    }).catch(() => undefined);
+    const unbound: any = new Error(
+      "This payment is not bound to an order on our side — verification refused. Contact support if money left your account."
+    );
+    unbound.statusCode = 409;
+    unbound.code = "ORDER_MISMATCH";
+    throw unbound;
+  }
+
+  const orderId = params.orderId || intentOrderId;
+  if (!orderId || !isSafeDocId(orderId) || intentOrderId !== orderId) {
     // The payment intent is bound to a DIFFERENT internal order — never
     // confirm this one with that payment.
     const bound: any = new Error(
@@ -1354,6 +1395,8 @@ export async function verifyPayment(
     bound.code = "ORDER_MISMATCH";
     throw bound;
   }
+  // The authoritative amount for every gateway comparison below.
+  const authoritativePaise = intentAmountPaise;
 
   // 3. Resolve the order doc. A missing doc is rebuilt ONLY from a matching
   // server-written intent (legacy client verified before creating it);
@@ -1396,24 +1439,19 @@ export async function verifyPayment(
   }
 
   // Live gateway truth check (fail-closed on money mismatch, no auto-capture).
-  // Expected paise = the stored server-priced total when the order doc has
-  // one, else the SERVER-priced intent amount (spec §2: amount must match the
-  // intent). Legacy docs with neither keep the legacy path — the HMAC
-  // signature above still binds payment↔order, and the transfer claim below
-  // still serializes payouts. Mock mode has no gateway truth to fetch, so it
-  // keeps its short-circuit.
-  const storedGrandTotal = Number(
-    (orderData.pricing as any)?.grandTotal ?? (orderData.totals as any)?.grandTotal
-  );
-  const hasStoredTotal =
-    Number.isFinite(storedGrandTotal) && storedGrandTotal > 0;
-  const intentPaiseRaw = Number(intent?.amountPaise);
-  const intentPaise =
-    Number.isFinite(intentPaiseRaw) && intentPaiseRaw > 0 ? intentPaiseRaw : null;
-  const expectedPaise = hasStoredTotal ? Math.round(storedGrandTotal * 100) : intentPaise;
+  // THE AMOUNT AUTHORITY IS THE SERVER INTENT (P1-F). The order doc's optional
+  // `pricing.grandTotal` is a display/reporting copy that a caller-controlled
+  // doc might omit — which is exactly how the exploit skipped this check. The
+  // intent is written by the server at mint time and cannot be absent (the
+  // guard above refuses), so `expectedPaise` is always a real number and the
+  // comparison ALWAYS runs whenever there is a gateway to ask. Mock mode has no
+  // gateway truth at all (and is refused outright in production by
+  // assertLivePaymentsContext), so it keeps its documented short-circuit —
+  // the mandatory-intent binding above is what protects that path.
+  const expectedPaise = authoritativePaise;
   let capturedAmountPaise: number | undefined;
   let gatewayCreatedAtMs: number | undefined;
-  if (!config.mock.paymentGateway && expectedPaise !== null) {
+  if (!config.mock.paymentGateway) {
     const gatewayTruth = await assertLivePaymentMatchesOrder({
       orderRef,
       orderId,
@@ -2241,6 +2279,30 @@ async function assertLivePaymentMatchesOrder(args: {
     await parkDiscrepancy("ORDER_MISMATCH", { gatewayOrderId: payment?.order_id || null });
     const err: any = new Error(
       "This payment belongs to a different order — verification refused. Contact support if money left your account."
+    );
+    err.statusCode = 409;
+    err.code = "ORDER_MISMATCH";
+    throw err;
+  }
+
+  // P1-F: when the gateway payment CARRIES a notes.orderId (every order we mint
+  // does — RZ1 writes it at creation), it must name this same internal order.
+  // A capture created for another internal order can never confirm this one,
+  // however well the amounts line up. A payment with NO notes predates RZ1;
+  // the mandatory intent binding above is then the authority, so it is not
+  // refused for the absence alone.
+  const notedOrderId = payment?.notes?.orderId;
+  if (
+    typeof notedOrderId === "string" &&
+    notedOrderId.length > 0 &&
+    notedOrderId !== args.orderId
+  ) {
+    await parkDiscrepancy("ORDER_NOTE_MISMATCH", {
+      gatewayOrderId: payment?.order_id || null,
+      gatewayNotedOrderId: notedOrderId,
+    });
+    const err: any = new Error(
+      "This payment was created for a different order — verification refused. Contact support if money left your account."
     );
     err.statusCode = 409;
     err.code = "ORDER_MISMATCH";
