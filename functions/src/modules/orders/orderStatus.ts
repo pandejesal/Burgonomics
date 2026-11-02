@@ -107,6 +107,70 @@ export interface BumpOrderStatusParams {
   onlyIfUnpaid?: boolean;
 }
 
+/** True when the order presents a live carrier booking (any provider). */
+function hasLiveCourierBooking(order: any): boolean {
+  const active = ["dispatched", "in_transit", "driver_allocated"].includes(
+    String(order?.deliveryStatus || "")
+  );
+  const bound =
+    !!order?.dispatchProvider &&
+    !!(order?.dispatchOrderId || order?.porterOrderId || order?.borzoOrderId || order?.shadowfaxOrderId);
+  // `dispatchStatus: dispatched` + a bound id is the same claim after a promoted
+  // callback left deliveryStatus on an earlier sidecar value.
+  const settled = order?.dispatchStatus === "dispatched" && !!order?.dispatchOrderId;
+  if (!(active || settled) && !bound) return false;
+  // A released/staff-cancelled booking no longer owns the order.
+  if (order?.dispatchProviderCancel === "manual-required") return false;
+  if (order?.needsRebook === true && !active) return false;
+  return bound || settled;
+}
+
+/** True while an in-house rider owns the order (the /orders/manualDispatch shape). */
+function hasInHouseRider(order: any): boolean {
+  return (
+    order?.dispatchType === "manual_branch_terminal" &&
+    ["dispatched", "in_transit", "driver_allocated"].includes(String(order?.deliveryStatus || ""))
+  );
+}
+
+/**
+ * True when the order is deliberately parked for a staff decision (carrier
+ * cancelled / needs review). Those orders are handled in the delivery queue, so
+ * the KDS must not be blocked by the rider guard — the lie this guard prevents
+ * is "food is on the way", and a parked order is exactly the case where nobody
+ * claims that.
+ */
+function isParkedForDispatchDecision(order: any): boolean {
+  return (
+    order?.needsRebook === true ||
+    order?.deliveryStatus === "needs_review" ||
+    order?.deliveryStatus === "rider_cancelled" ||
+    order?.dispatchStatus === "dispatch_failed" ||
+    order?.dispatchStatus === "manual_pending"
+  );
+}
+
+/**
+ * P1-G: a delivery order may only be told OUT_FOR_DELIVERY when a rider actually
+ * exists. Without this, a KDS tap showed the customer "on the way" with no
+ * courier booked and no in-house rider assigned.
+ *
+ * Checks the FRESH snapshot inside the transaction, so a concurrent dispatch or
+ * in-house assignment that lands between the pre-read and the commit still
+ * satisfies it (and a booking released in that window does not).
+ */
+function assertRiderForOutForDelivery(fresh: any, fulfillment: string, canonical: string): void {
+  if (canonical !== "out_for_delivery") return;
+  if (fulfillment !== "delivery" && fulfillment !== "deliver") return;
+  if (hasLiveCourierBooking(fresh) || hasInHouseRider(fresh)) return;
+  if (isParkedForDispatchDecision(fresh)) return;
+  throw serviceError(
+    "DISPATCH_RIDER_REQUIRED",
+    "No rider is assigned to this delivery yet — book a courier (or assign an in-house rider) before marking it out for delivery. The customer would otherwise be told the food is on the way with nobody coming.",
+    409,
+  );
+}
+
 export async function bumpOrderStatus(params: BumpOrderStatusParams) {
   const { orderId, status, cancellationReason, timelineEvent, caller } = params;
   const staffNameForCancel = () =>
@@ -233,6 +297,8 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     if (canonical !== "pending" && canonical !== "cancelled") {
       assertOnlineOrderPaid(freshOrder);
     }
+    // P1-G: never promise a delivery nobody is making.
+    assertRiderForOutForDelivery(freshOrder, fulfillment, canonical);
     if (params.onlyIfUnpaid) {
       // P1-C layer 1: the doc was re-read INSIDE this transaction, so this is
       // the freshest truth there is. Refuse on any capture, authorization, or
