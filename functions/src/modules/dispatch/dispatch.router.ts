@@ -612,10 +612,33 @@ async function quoteWithTimeout(
  * single provider: each result is ok / not_serviced / transient_failure (DR3),
  * ordered by provider priority for stable UI rendering.
  */
+/**
+ * An eligibility probe that THROWS is an ineligible provider, never a fatal
+ * error. `dispatchBook` has already taken the per-order claim by the time this
+ * runs, so an unguarded throw here rejected the fan-out before any release path
+ * and left the order `dispatch_pending` for the full 10-minute lease: every
+ * staff retry answered "dispatch already in progress" and the only exit was the
+ * stale-claim sweep parking a healthy order for reconciliation.
+ */
+function eligibleAdapters(): ProviderAdapter[] {
+  const eligible: ProviderAdapter[] = [];
+  for (const adapter of ADAPTERS) {
+    try {
+      if (adapter.isEligible() === true) eligible.push(adapter);
+    } catch (err: any) {
+      console.warn(
+        `[Dispatch] ${adapter.provider} eligibility check threw - treating it as ineligible:`,
+        err?.message || err
+      );
+    }
+  }
+  return eligible;
+}
+
 async function runQuoteFanOut(
   ctx: DispatchQuoteContext
 ): Promise<{ outcomes: ProviderQuoteOutcome[]; ranked: ProviderQuoteOk[] }> {
-  const eligible = ADAPTERS.filter((a) => a.isEligible());
+  const eligible = eligibleAdapters();
   // DR5 names Promise.allSettled: quoteWithTimeout cannot reject today, but the
   // fan-out's safety must not hang off that invariant holding forever.
   const settled = await Promise.allSettled(eligible.map((a) => quoteWithTimeout(a, ctx)));
@@ -779,13 +802,7 @@ export async function dispatchQuote(params: DispatchQuoteParams): Promise<any> {
         drop: { lat: params.dropLat, lng: params.dropLng },
         // Empty when no provider was even eligible to be asked; then the
         // absence itself is the reason.
-        eligibleProviders: ADAPTERS.filter((adapter) => {
-          try {
-            return adapter.isEligible() === true;
-          } catch {
-            return false;
-          }
-        }).map((adapter) => adapter.provider),
+        eligibleProviders: eligibleAdapters().map((adapter) => adapter.provider),
         outcomes: outcomes.map((outcome) =>
           outcome.outcome === "ok"
             ? { provider: outcome.provider, outcome: outcome.outcome }
@@ -930,7 +947,7 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   const { outcomes, ranked } = await runQuoteFanOut(ctx);
 
   if (ranked.length === 0) {
-    const eligibleCount = ADAPTERS.filter((a) => a.isEligible()).length;
+    const eligibleCount = eligibleAdapters().length;
     if (eligibleCount === 0) {
       // Nothing configured — a config problem, not an order failure: leave
       // the order clean so staff can retry once keys land.
