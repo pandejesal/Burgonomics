@@ -202,6 +202,414 @@ function capturedPaiseOf(order: any): number | undefined {
 }
 
 /**
+ * How long a `checking`/`fulfillable` recovery may keep FAILING before a human
+ * is told. The scheduled sweep runs every 5 minutes (cron every-five-minutes in
+ * functions/src/index.ts), so 1 hour is about 12 consecutive failed recovery
+ * attempts: time-to-human is about one hour after the FIRST failed attempt. A
+ * lease refusal or a skipped sweep never counts and never starts the clock.
+ */
+export const CAPTURE_STALL_ESCALATE_AFTER_MS = 60 * 60_000;
+
+/**
+ * Records ONE failed recovery attempt for a `checking`/`fulfillable` row, and
+ * tells a human once the stall has lasted CAPTURE_STALL_ESCALATE_AFTER_MS.
+ *
+ * Why a top-level field: `recordGateState` REPLACES the nested
+ * `captureFulfillment` map on every transition, so stall bookkeeping stored
+ * there would be wiped by the next gate write. `captureStall` lives on its own
+ * top-level key and is cleared whenever the order confirms or compensates.
+ *
+ * It NEVER changes the gate state, never refunds, and never marks the row
+ * exhausted: money decisions here belong to a human. Automatic recovery keeps
+ * running afterwards — a later success is the best outcome.
+ *
+ * A lease refusal or a skipped sweep must NOT call this: only a sweep that
+ * actually attempted recovery and failed counts.
+ */
+async function recordCaptureRecoveryFailure(args: {
+  orderId: string;
+  paymentId: string;
+  state: CaptureFulfillmentState;
+  nowMs: number;
+}): Promise<"escalated" | "pending" | "skipped"> {
+  const orderRef = db.collection("orders").doc(args.orderId);
+  const caseRef = gateCaseRef(args.paymentId);
+
+  type Claim =
+    | { kind: "counters_only"; failedAttempts: number }
+    | { kind: "threshold"; failedAttempts: number }
+    | { kind: "skip" }
+    | { kind: "throw"; error: Error };
+
+  let claim: Claim;
+  try {
+    claim = (await (db as any).runTransaction(async (tx: any) => {
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap || !orderSnap.exists) return { kind: "skip" } as const;
+      const fresh = (orderSnap.data() || {}) as any;
+      const record = gateOf(fresh);
+
+      // Revalidate: SAME payment, still a decision lane, still unconfirmed.
+      const inDecisionLane =
+        !!record &&
+        record.paymentId === args.paymentId &&
+        (record.state === "checking" || record.state === "fulfillable");
+      if (!inDecisionLane) return { kind: "skip" } as const;
+      if (isOrderLifecycleConfirmedOrLater(fresh)) return { kind: "skip" } as const;
+
+      const stall = fresh.captureStall;
+      const previousAttempts =
+        stall && typeof stall === "object" ? Math.max(0, Math.floor(Number(stall.failedAttempts) || 0)) : 0;
+      const firstFailureAtMs =
+        stall && typeof stall === "object" && Number(stall.firstFailureAtMs) > 0
+          ? Number(stall.firstFailureAtMs)
+          : args.nowMs;
+      const failedAttempts = previousAttempts + 1;
+      const stallMs = args.nowMs - firstFailureAtMs;
+      const crossed = stallMs >= CAPTURE_STALL_ESCALATE_AFTER_MS;
+
+      const caseSnap = await tx.get(caseRef);
+      const caseData = caseSnap?.exists ? (caseSnap.data() as any) : null;
+      const delivery = deliveryOf(caseData);
+
+      if (!crossed) {
+        tx.set(
+          orderRef,
+          {
+            captureStall: {
+              paymentId: args.paymentId,
+              gateState: record!.state,
+              failedAttempts,
+              firstFailureAtMs,
+              lastFailureAtMs: args.nowMs,
+            },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return { kind: "counters_only", failedAttempts } as const;
+      }
+
+      // Already reported: only keep the counters current (the case and its
+      // alertDelivery own the delivery state and backoff).
+      if (caseData) {
+        if (typeof caseData.orderId === "string" && caseData.orderId !== args.orderId) {
+          return {
+            kind: "throw",
+            error: new Error(
+              `stuck-decision case ${gateCaseDocId(args.paymentId)} belongs to a different order`
+            ),
+          } as const;
+        }
+        tx.set(
+          orderRef,
+          {
+            captureStall: {
+              paymentId: args.paymentId,
+              gateState: record!.state,
+              failedAttempts,
+              firstFailureAtMs,
+              lastFailureAtMs: args.nowMs,
+              escalatedAtMs: Number(delivery.escalatedAtMs) || args.nowMs,
+            },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return { kind: "skip" } as const;
+      }
+
+      // THRESHOLD CROSSED: create the case in the SAME transaction that records
+      // it, so a failed case write aborts the counter write too and the next
+      // sweep re-detects the stall.
+      tx.set(
+        orderRef,
+        {
+          captureStall: {
+            paymentId: args.paymentId,
+            gateState: record!.state,
+            failedAttempts,
+            firstFailureAtMs,
+            lastFailureAtMs: args.nowMs,
+            escalatedAtMs: args.nowMs,
+          },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      tx.set(
+        caseRef,
+        {
+          eventId: `gate_${args.paymentId}`,
+          event: "capture_fulfilment_recovery",
+          razorpayPaymentId: args.paymentId,
+          orderId: args.orderId,
+          claimedOrderId: args.orderId,
+          amount: null,
+          currency: "INR",
+          status: "needs_review",
+          reason: "capture_decision_stuck",
+          gateState: record!.state,
+          attempts: failedAttempts,
+          detail: record!.detail || null,
+          staffAction: "confirm_or_refund_manually",
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          alertDelivery: {
+            state: "sending",
+            attempts: 1,
+            escalatedAtMs: args.nowMs,
+            leaseUntilMs: args.nowMs + CAPTURE_GATE_LEASE_MS,
+            nextAttemptAtMs: args.nowMs + CAPTURE_GATE_LEASE_MS,
+            lastError: null,
+          },
+        },
+        { merge: true }
+      );
+      return { kind: "threshold", failedAttempts } as const;
+    })) as Claim;
+  } catch (err: any) {
+    console.error(
+      `[Capture Recovery] stuck-decision tracking failed for order ${args.orderId} — ` +
+        `left undelivered:`,
+      err?.message || err
+    );
+    return "pending";
+  }
+
+  if (claim.kind === "throw") {
+    console.error(`[Capture Recovery] ${claim.error.message}`);
+    return "pending";
+  }
+  if (claim.kind === "skip") return "skipped";
+  if (claim.kind === "counters_only") {
+    console.error(
+      `[Capture Recovery] recovery for order ${args.orderId} is not completing ` +
+        `(${claim.failedAttempts} failed attempt(s); a human is alerted after ` +
+        `${Math.round(CAPTURE_STALL_ESCALATE_AFTER_MS / 60_000)} min)`
+    );
+    return "skipped";
+  }
+
+  const delivered = await sendStuckDecisionAlert({
+    orderId: args.orderId,
+    paymentId: args.paymentId,
+    state: args.state,
+    failedAttempts: claim.failedAttempts,
+    caseRef,
+  });
+  return delivered ? "escalated" : "pending";
+}
+
+/**
+ * Sends the stuck-decision alert for an EXISTING case and records the outcome
+ * against the same attempt, revalidating the row right before persisting.
+ *
+ * Also used by the plain retry path so a case whose first send failed is retried
+ * with the same lease/backoff/sanitized-error machinery.
+ */
+async function sendStuckDecisionAlert(args: {
+  orderId: string;
+  paymentId: string;
+  state: CaptureFulfillmentState;
+  failedAttempts: number;
+  caseRef: any;
+}): Promise<boolean> {
+  let delivered = false;
+  let failureCode = "";
+  try {
+    await captureErrorSnapshot(
+      {
+        source: "payments",
+        severity: "high",
+        message:
+          `Order ${args.orderId} is STUCK in payment-capture recovery ` +
+          `(gate ${args.state}): the customer has PAID and has received NEITHER a ` +
+          `confirmed order NOR a refund. Automatic recovery is still retrying after ` +
+          `${args.failedAttempts} failed attempt(s). Confirm or refund manually.`,
+        orderId: args.orderId,
+        razorpayPaymentId: args.paymentId,
+      },
+      {
+        requireAlertDelivery: true,
+        snapshotId: `err_capture_stuck_${args.orderId}`,
+      }
+    );
+    delivered = true;
+  } catch (err: any) {
+    const failures = Array.isArray(err?.detail?.failures) ? err.detail.failures : [];
+    const code = typeof err?.code === "string" ? err.code : "ALERT_DELIVERY_FAILED";
+    failureCode = [code, ...failures].filter(Boolean).join("|").slice(0, 200);
+  }
+
+  try {
+    await (db as any).runTransaction(async (tx: any) => {
+      const caseSnap = await tx.get(args.caseRef);
+      if (!caseSnap || !caseSnap.exists) return false;
+      const caseData = (caseSnap.data() || {}) as any;
+      // A staff decision or a newer attempt wins; never rewrite their record.
+      if (caseData.status !== "needs_review") return false;
+      const delivery = deliveryOf(caseData);
+      if (Number(delivery.attempts) > 1 && !delivered) return false;
+      if (delivery.state === "delivered" && !delivered) return false;
+
+      const attempts = Math.max(1, Math.floor(Number(delivery.attempts) || 1));
+      tx.set(
+        args.caseRef,
+        {
+          alertDelivery: delivered
+            ? {
+                ...delivery,
+                state: "delivered",
+                attempts,
+                deliveredAtMs: Date.now(),
+                lastError: null,
+                leaseUntilMs: 0,
+                nextAttemptAtMs: 0,
+              }
+            : {
+                ...delivery,
+                state: "pending",
+                attempts,
+                lastError: failureCode || "ALERT_DELIVERY_FAILED",
+                leaseUntilMs: 0,
+                nextAttemptAtMs: Date.now() + alertRetryDelayMs(attempts),
+              },
+        },
+        { merge: true }
+      );
+      return true;
+    });
+  } catch (err: any) {
+    console.error(
+      `[Capture Recovery] could not record stuck-decision alert delivery for ` +
+        `order ${args.orderId} (${failureCode || "delivered"}):`,
+      err?.message || err
+    );
+  }
+
+  if (!delivered) {
+    console.error(
+      `[Capture Recovery] stuck-decision alert NOT delivered for order ${args.orderId} — ` +
+        `code ${failureCode || "ALERT_DELIVERY_FAILED"}`
+    );
+  }
+  return delivered;
+}
+
+/**
+ * A `checking`/`fulfillable` row that already has an UNDELIVERED case: retry the
+ * send on the same lease/backoff schedule, and skip while the lease or the
+ * backoff is still live.
+ */
+async function retryStuckDecisionAlert(args: {
+  orderId: string;
+  paymentId: string;
+  state: CaptureFulfillmentState;
+  nowMs: number;
+}): Promise<"delivered" | "pending" | "skipped"> {
+  const caseRef = gateCaseRef(args.paymentId);
+  const snap = await caseRef.get().catch(() => null);
+  if (!snap || !snap.exists) return "skipped";
+  const caseData = (snap.data() || {}) as any;
+  if (caseData.status !== "needs_review") return "skipped";
+  const delivery = deliveryOf(caseData);
+  if (delivery.lastError === "gate_recovered") return "skipped";
+
+  const attempts = Math.max(1, Math.floor(Number(delivery.attempts) || 1));
+  // Revalidate that the row is STILL stuck before sending anything.
+  const orderSnap = await db.collection("orders").doc(args.orderId).get();
+  const fresh = orderSnap?.exists ? ((orderSnap.data() || {}) as any) : {};
+  const record = gateOf(fresh);
+  if (
+    !record ||
+    record.paymentId !== args.paymentId ||
+    (record.state !== "checking" && record.state !== "fulfillable")
+  ) {
+    return "skipped";
+  }
+
+  if (delivery.state === "sending" && Number(delivery.leaseUntilMs) > args.nowMs) {
+    return "skipped";
+  }
+  if (Number(delivery.nextAttemptAtMs) > args.nowMs) return "skipped";
+  if (delivery.state === "delivered") return "skipped";
+
+  const delivered = await sendStuckDecisionAlert({
+    orderId: args.orderId,
+    paymentId: args.paymentId,
+    state: args.state,
+    failedAttempts: Number(caseData.attempts) || attempts,
+    caseRef,
+  });
+  return delivered ? "delivered" : "pending";
+}
+
+/**
+ * A stuck-decision order RECOVERED (confirmed, or compensated).
+ *
+ *  - an undelivered alert is marked `superseded`: nobody should be paged for a
+ *    decision that no longer needs making;
+ *  - an ALREADY DELIVERED alert is left in place (staff may already be holding
+ *    the case) but the case is stamped `recovered`, so nobody refunds an order
+ *    that was actually fulfilled. This is the double-handling risk: the alert
+ *    said "neither confirmed nor refunded", and that is now false.
+ */
+async function clearCaptureStallOnRecovery(args: {
+  orderId: string;
+  paymentId: string;
+  outcome: "confirmed" | "compensated";
+}): Promise<void> {
+  const orderRef = db.collection("orders").doc(args.orderId);
+  const caseRef = gateCaseRef(args.paymentId);
+  try {
+    await (db as any).runTransaction(async (tx: any) => {
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap || !orderSnap.exists) return false;
+      const fresh = (orderSnap.data() || {}) as any;
+      if (!fresh.captureStall) return false;
+
+      tx.set(orderRef, { captureStall: null }, { merge: true });
+
+      const caseSnap = await tx.get(caseRef);
+      if (!caseSnap || !caseSnap.exists) return false;
+      const caseData = (caseSnap.data() || {}) as any;
+      // NEVER reset a staff decision or its received timestamp.
+      if (caseData.status !== "needs_review") return false;
+      const delivery = deliveryOf(caseData);
+
+      tx.set(
+        caseRef,
+        {
+          recovered: {
+            atMs: Date.now(),
+            outcome: args.outcome,
+            note:
+              args.outcome === "confirmed"
+                ? "Order was confirmed by automatic recovery — do NOT refund."
+                : "Capture was compensated by automatic recovery — no further refund due.",
+          },
+          alertDelivery:
+            delivery.state === "delivered"
+              ? { ...delivery, recoveredAtMs: Date.now() }
+              : {
+                  ...delivery,
+                  state: "superseded",
+                  lastError: "gate_recovered",
+                },
+        },
+        { merge: true }
+      );
+      return true;
+    });
+  } catch (err: any) {
+    console.warn(
+      `[Capture Recovery] could not clear the stall record for order ${args.orderId}:`,
+      err?.message || err
+    );
+  }
+}
+
+/**
  * Deterministic ops-case doc for an exhausted capture. The outbox lives ON this
  * doc (`alertDelivery`), so there is exactly ONE record per payment and no new
  * collection: the case is the actionable artefact, the delivery map is its
@@ -247,6 +655,10 @@ type DeliveryRecord = {
   leaseUntilMs?: number;
   deliveredAtMs?: number;
   nextAttemptAtMs?: number;
+  /** When this case was first raised for a stuck DECISION (not a refund). */
+  escalatedAtMs?: number;
+  /** Set when automatic recovery later resolved the decision. */
+  recoveredAtMs?: number;
 };
 
 function deliveryOf(caseData: any): DeliveryRecord {
@@ -803,6 +1215,19 @@ export async function recoverStuckCaptureFulfilments(
       }
       stats.candidates += 1;
 
+      // If a stuck-decision case already exists and its alert never landed,
+      // retry it on the same lease/backoff. This runs BEFORE the recovery
+      // attempt so a permanently broken channel is retried even while recovery
+      // keeps failing.
+      const stuckRetry = await retryStuckDecisionAlert({
+        orderId,
+        paymentId,
+        state: gate.state as CaptureFulfillmentState,
+        nowMs,
+      });
+      if (stuckRetry === "delivered") stats.escalated += 1;
+      else if (stuckRetry === "pending") stats.escalationPending += 1;
+
       const orderRef = db.collection("orders").doc(orderId);
       const outcome = await guardCaptureFulfillment({
         orderRef,
@@ -822,11 +1247,24 @@ export async function recoverStuckCaptureFulfilments(
       if (outcome.outcome === "refunded" || outcome.outcome === "already_compensated") {
         stats.refunded += 1;
         stats.completed += 1;
+        await clearCaptureStallOnRecovery({
+          orderId,
+          paymentId,
+          outcome: "compensated",
+        });
         continue;
       }
       if (outcome.outcome === "refund_failed") {
         // Only reachable from the owed branch above; kept defensive so a future
         // call path cannot silently drop a failure.
+        const stall = await recordCaptureRecoveryFailure({
+          orderId,
+          paymentId,
+          state: gate.state as CaptureFulfillmentState,
+          nowMs,
+        });
+        if (stall === "escalated") stats.escalated += 1;
+        else if (stall === "pending") stats.escalationPending += 1;
         stats.retried += 1;
         continue;
       }
@@ -835,7 +1273,8 @@ export async function recoverStuckCaptureFulfilments(
         continue;
       }
       if (outcome.outcome === "pending") {
-        // Another actor took the lease while we looked: leave it alone.
+        // Another actor took the lease while we looked: leave it alone. This is
+        // NOT a recovery failure and must never count toward a stall.
         stats.skipped += 1;
         continue;
       }
@@ -861,9 +1300,25 @@ export async function recoverStuckCaptureFulfilments(
         if (confirmed) {
           stats.confirmed += 1;
           stats.completed += 1;
+          await clearCaptureStallOnRecovery({
+            orderId,
+            paymentId,
+            outcome: "confirmed",
+          });
         } else {
-          // Not confirmable (a compensation landed, or a transient failure):
-          // the next tick retries, and the attempt budget eventually escalates.
+          // A paid customer whose confirmation keeps failing must reach a human.
+          // The stall is counted transactionally and escalated on the SAME
+          // durable outbox once it has lasted an hour; the gate state, the money
+          // and the automatic retries are all left untouched, so a later success
+          // still wins.
+          const stall = await recordCaptureRecoveryFailure({
+            orderId,
+            paymentId,
+            state: gate.state as CaptureFulfillmentState,
+            nowMs,
+          });
+          if (stall === "escalated") stats.escalated += 1;
+          else if (stall === "pending") stats.escalationPending += 1;
           stats.retried += 1;
         }
         continue;
