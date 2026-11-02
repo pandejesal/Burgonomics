@@ -47,7 +47,6 @@ import {
   type ResolvedDropContact,
 } from "./dropContact";
 import {
-  persistResolvedStorePhone,
   pickupPhoneMissingError,
   resolvePickupContact,
   type ResolvedPickupContact,
@@ -907,6 +906,31 @@ export interface DispatchBookParams {
 }
 
 /**
+ * Read-only proof that the order ALREADY owns a live provider booking, so
+ * `/dispatch/book` can replay it instead of booking again.
+ *
+ * Evaluated BEFORE any NEW-booking validation (drop contact, pickup contact,
+ * pickup GPS). Those checks exist to decide whether a NEW booking may be
+ * created; running them first turned a perfectly good replay into a 422
+ * whenever branch metadata had since changed (P2, Sol review of 8cc5a98) —
+ * staff tapping dispatch on an already-dispatched order must get the rider
+ * they already have, not a data-gap error.
+ *
+ * Precedence mirrors `claimDispatch` exactly, so this can never hand back a
+ * "reused" rider that the real claim would have refused: terminal orders,
+ * live in-house assignments and unproven remote cancellations all fall
+ * through to the ordinary path (which throws its own typed error). Nothing is
+ * written and no provider is contacted — this is a pure read of the snapshot.
+ */
+function authenticBookingReuse(order: any): any | null {
+  if (terminalDeliveryStatus(order)) return null;
+  if (pendingCancelBlocking(order)) return null;
+  if (isInHouseAssignmentActive(order)) return null;
+  if (!isActiveDispatch(order)) return null;
+  return storedDispatchSummary(order);
+}
+
+/**
  * POST /dispatch/book (§3): claim → fresh fan-out (DR7) → fare confirm →
  * bounded ranked walk (DR6) → Porter manual lane (DR8) → normalized persist.
  */
@@ -929,6 +953,12 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   assertOnlineOrderPaid(order);
   assertDispatchNotLocked(order);
 
+  // Existing live booking: replay it read-only, before any new-booking
+  // validation or claim. Never a new lease, never a provider call, and the
+  // released/cancelled/terminal states deliberately do NOT qualify.
+  const liveBooking = authenticBookingReuse(order);
+  if (liveBooking) return liveBooking;
+
   // P1-F: resolve the drop contact BEFORE any claim or provider call. Every
   // real customer-app order arrives with an empty address contact and no
   // `customerPhone`; the verified Auth profile is the authoritative fallback.
@@ -944,24 +974,21 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   // branchCoordinates snapshot → order.store → branches/{branchId}.coordinates.
   const pickup = await resolvePickupCoordinates(order);
   if (!pickup) throw pickupGpsMissingError();
-  // Pickup CONTACT resolved the same way and at the same point: the canonical
-  // `branches/{branchId}.phone` first, then the order's own real snapshot. A
-  // missing/invalid store number is a typed 422 HERE — before the claim, so a
-  // fixable data gap never parks a 10-minute `dispatch_pending` lease, and
-  // before any provider call, so it can never surface as a provider 502 (the
-  // live demo failure: "borzo returned an unparseable branch phone").
+  // Pickup CONTACT resolved from the CANONICAL branch record only. A missing
+  // document, unsafe branchId, read failure, or missing/invalid number is a
+  // typed 422 HERE — before the claim, so a fixable data gap never parks a
+  // 10-minute `dispatch_pending` lease, and before any provider call, so it can
+  // never surface as a provider 502 (the live demo failure: "borzo returned an
+  // unparseable branch phone"). `orders.store` is client-writable and is NOT an
+  // authority here.
   const pickupContact = await resolvePickupContact(order);
   if (!pickupContact) throw pickupPhoneMissingError();
 
   // Per-order idempotency gate before any provider call (double-book guard).
+  // The pre-check above already returned for an authentic live booking; this
+  // still covers a booking that landed between that read and the claim.
   const reuse = await claimDispatch(orderDoc, order);
   if (reuse && reuse.reused) return reuse;
-
-  // Make the canonical number durable for legs that re-read the order (the
-  // Porter adapter re-reads orders/{orderId} and gates its own payload on
-  // `store.phone`). AFTER the reuse gate: a pure idempotent replay must not
-  // write, and before any provider call so every leg sees the same contact.
-  await persistResolvedStorePhone(orderDoc.ref, order, pickupContact);
 
   const currentGen = reuse?.generation ?? 1;
   const correlationToken =

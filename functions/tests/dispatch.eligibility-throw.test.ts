@@ -165,6 +165,13 @@ describe("dispatchBook - a throwing eligibility check must not strand the claim"
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];
     providerState.throwOnEligible = false;
+    // Canonical branch record: the pickup contact comes ONLY from
+    // `branches/{branchId}` (client-writable `order.store` is not authority).
+    savedDocs["branches/branch_ahmedabad_1"] = {
+      name: "Burgonomics CG Road",
+      phone: "+91 98250 12345",
+      coordinates: { lat: 23.0131, lng: 72.5085 },
+    };
     savedDocs["orders/ord_elig"] = {
       branchId: "branch_ahmedabad_1",
       branchName: "Burgonomics CG Road",

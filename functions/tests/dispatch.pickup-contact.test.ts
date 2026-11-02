@@ -342,17 +342,102 @@ describe("pickup contact is resolved from the CANONICAL branch before book/claim
     expect(savedDocs["orders/ord_bad_branch_phone"].dispatchStatus).toBeUndefined();
   });
 
-  it("still dispatches an order whose branch document does not exist, from its own real snapshot", async () => {
+  it("REFUSES a valid-looking snapshot when the branch document is missing (client-writable store is not authority)", async () => {
+    // `orders.store` is an allowed key of the customer order-create allowlist
+    // (firestore.rules), so a customer can stamp ANY phone at placement. A
+    // hostile-but-valid snapshot with no canonical branch record must be a
+    // typed 422, never a booking to that number.
     seedDemoOrder("ord_legacy_snapshot", {
       store: { name: "Burgonomics Legacy", phone: "+91 98250 12345" },
     });
     // No branches/demo document at all.
-    borzoWire("BRZ-LEGACY-1");
+    borzoWire("BRZ-NEVER");
 
-    const res: any = await dispatchBook({ orderId: "ord_legacy_snapshot" });
+    const err: any = await dispatchBook({ orderId: "ord_legacy_snapshot" }).catch((e) => e);
 
-    expect(res).toMatchObject({ provider: "borzo", providerOrderId: "BRZ-LEGACY-1" });
-    expect(createOrderBody().points[0].contact_person.phone).toBe("919825012345");
+    expect(err).toMatchObject({ statusCode: 422, code: "DISPATCH_PICKUP_PHONE_MISSING" });
+    expect(fetchCalls).toHaveLength(0);
+    const doc = savedDocs["orders/ord_legacy_snapshot"];
+    expect(doc.dispatchStatus).toBeUndefined();
+    expect(doc.dispatchGeneration).toBeUndefined();
+    expect(
+      Object.keys(savedDocs).filter((k) => k.startsWith("dispatch_correlation_map/"))
+    ).toHaveLength(0);
+  });
+
+  it("REFUSES a hostile valid snapshot when the canonical phone is absent", async () => {
+    seedDemoOrder("ord_hostile_no_canonical", {
+      store: { name: "Burgonomics Demo", phone: "+91 90000 11111" },
+    });
+    seedBranchPhone("demo", undefined); // document exists, no phone
+    borzoWire("BRZ-NEVER");
+
+    const err: any = await dispatchBook({ orderId: "ord_hostile_no_canonical" }).catch((e) => e);
+
+    expect(err).toMatchObject({ statusCode: 422, code: "DISPATCH_PICKUP_PHONE_MISSING" });
+    expect(fetchCalls).toHaveLength(0);
+    expect(savedDocs["orders/ord_hostile_no_canonical"].dispatchStatus).toBeUndefined();
+  });
+
+  it("REFUSES a hostile valid snapshot when the canonical phone is invalid", async () => {
+    seedDemoOrder("ord_hostile_bad_canonical", {
+      store: { name: "Burgonomics Demo", phone: "+91 90000 11111" },
+    });
+    seedBranchPhone("demo", "0000");
+    borzoWire("BRZ-NEVER");
+
+    const err: any = await dispatchBook({ orderId: "ord_hostile_bad_canonical" }).catch((e) => e);
+
+    expect(err).toMatchObject({ statusCode: 422, code: "DISPATCH_PICKUP_PHONE_MISSING" });
+    expect(fetchCalls).toHaveLength(0);
+    expect(savedDocs["orders/ord_hostile_bad_canonical"].dispatchStatus).toBeUndefined();
+  });
+
+  it("REFUSES a hostile valid snapshot when the branch READ throws", async () => {
+    seedDemoOrder("ord_branch_read_throws", {
+      store: { name: "Burgonomics Demo", phone: "+91 90000 11111" },
+    });
+    seedBranchPhone("demo", "+91 98250 12345");
+    borzoWire("BRZ-NEVER");
+    // Simulate a Firestore failure for THIS branch document only.
+    const originalCollection = mockDb.collection;
+    const spy = vi.spyOn(mockDb, "collection").mockImplementation((colName: string) => {
+      if (colName !== "branches") return originalCollection(colName);
+      return {
+        doc: (docId: string) => ({
+          id: docId,
+          set: vi.fn(async () => {}),
+          get: vi.fn(async () => {
+            if (docId === "demo") throw new Error("PERMISSION_DENIED (simulated)");
+            return originalCollection(colName).doc(docId).get();
+          }),
+        }),
+        where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }),
+      };
+    });
+
+    try {
+      const err: any = await dispatchBook({ orderId: "ord_branch_read_throws" }).catch((e) => e);
+      expect(err).toMatchObject({ statusCode: 422, code: "DISPATCH_PICKUP_PHONE_MISSING" });
+      expect(fetchCalls).toHaveLength(0);
+      expect(savedDocs["orders/ord_branch_read_throws"].dispatchStatus).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("REFUSES an unsafe/absent branchId even with a valid snapshot", async () => {
+    seedDemoOrder("ord_unsafe_branch", {
+      branchId: "demo/../evil",
+      store: { name: "Burgonomics Demo", phone: "+91 90000 11111" },
+    });
+    borzoWire("BRZ-NEVER");
+
+    const err: any = await dispatchBook({ orderId: "ord_unsafe_branch" }).catch((e) => e);
+
+    expect(err).toMatchObject({ statusCode: 422, code: "DISPATCH_PICKUP_PHONE_MISSING" });
+    expect(fetchCalls).toHaveLength(0);
+    expect(savedDocs["orders/ord_unsafe_branch"].dispatchStatus).toBeUndefined();
   });
 
   it("rebook resolves the same canonical contact for the failed demo order", async () => {
@@ -373,17 +458,22 @@ describe("pickup contact is resolved from the CANONICAL branch before book/claim
     expect(savedDocs["orders/ord_demo_rebook"].needsRebook).toBe(false);
   });
 
-  it("persists the canonical number onto the order snapshot for legs that re-read it", async () => {
-    seedDemoOrder("ord_persist");
+  it("writes NO store fields for a new booking (no stale-store spread, no merge collision)", async () => {
+    // The only consumer of a persisted store.phone was the retired Porter leg;
+    // writing it also spread the stale snapshot over concurrent corrections.
+    // The canonical number reaches every live adapter through ctx instead, so a
+    // new booking must leave the order's store object byte-identical.
+    seedDemoOrder("ord_no_store_write");
     seedBranchPhone("demo", "+91 98250 12345");
-    borzoWire("BRZ-PERSIST-1");
+    borzoWire("BRZ-NO-WRITE-1");
 
-    await dispatchBook({ orderId: "ord_persist" });
+    await dispatchBook({ orderId: "ord_no_store_write" });
 
-    const doc = savedDocs["orders/ord_persist"];
-    expect(doc.store.phone).toBe("+919825012345");
-    expect(doc.store.name).toBe("Burgonomics Demo");
-    expect(doc.storePhoneSource).toBe("branch_document");
+    const doc = savedDocs["orders/ord_no_store_write"];
+    expect(doc.store).toEqual({ name: "Burgonomics Demo", city: "Ahmedabad", state: "Gujarat" });
+    expect(doc.storePhoneSource).toBeUndefined();
+    // The canonical number still reached the provider on the wire.
+    expect(createOrderBody().points[0].contact_person.phone).toBe("919825012345");
   });
 
   it("an idempotent replay of a live booking is unchanged: no provider call, no write from the resolver", async () => {
@@ -405,6 +495,94 @@ describe("pickup contact is resolved from the CANONICAL branch before book/claim
     // The live booking is not rewritten; the resolver adds nothing to it.
     expect(savedDocs["orders/ord_replay_live"].store.phone).toBeUndefined();
     expect(savedDocs["orders/ord_replay_live"].dispatchGeneration).toBeUndefined();
+  });
+
+  it("P2: an authentic live booking is replayed even when branch metadata is now invalid", async () => {
+    // Regression for Sol's finding: validating the NEW-booking pickup contact
+    // before the reuse check turned a healthy replay into a 422 whenever the
+    // branch phone was later removed/typo'd. Staff tapping dispatch on an
+    // already-dispatched order must get the rider they already have.
+    seedDemoOrder("ord_replay_bad_meta", {
+      dispatchStatus: "dispatched",
+      deliveryStatus: "dispatched",
+      dispatchProvider: "borzo",
+      dispatchOrderId: "BRZ-LIVE-2",
+      borzoOrderId: "BRZ-LIVE-2",
+      riderName: "Borzo Rider Mehul",
+    });
+    seedBranchPhone("demo", "0000"); // canonical metadata is now unusable
+    borzoWire("BRZ-NEVER");
+
+    const res: any = await dispatchBook({ orderId: "ord_replay_bad_meta" });
+
+    expect(res).toMatchObject({
+      provider: "borzo",
+      providerOrderId: "BRZ-LIVE-2",
+      riderName: "Borzo Rider Mehul",
+      reused: true,
+    });
+    // Read-only replay: no lease, no provider request, no rewrite.
+    expect(fetchCalls).toHaveLength(0);
+    const doc = savedDocs["orders/ord_replay_bad_meta"];
+    expect(doc.dispatchStatus).toBe("dispatched");
+    expect(doc.dispatchGeneration).toBeUndefined();
+    expect(doc.dispatchClaimedAt).toBeUndefined();
+  });
+
+  it("P2: reuse is denied for a released/cancelled booking, so the metadata gate still applies", async () => {
+    // needsRebook means the binding is dead; that order must NOT be handed a
+    // rider summary, and must still fail closed on invalid canonical metadata.
+    seedDemoOrder("ord_released_binding", {
+      dispatchStatus: "dispatched",
+      deliveryStatus: "needs_review",
+      dispatchProvider: "borzo",
+      dispatchOrderId: "BRZ-DEAD-1",
+      borzoOrderId: "BRZ-DEAD-1",
+      needsRebook: true,
+      rebookTrigger: "carrier_cancelled",
+    });
+    seedBranchPhone("demo", "0000");
+    borzoWire("BRZ-NEVER");
+
+    const err: any = await dispatchBook({ orderId: "ord_released_binding" }).catch((e) => e);
+
+    expect(err).toMatchObject({ statusCode: 422, code: "DISPATCH_PICKUP_PHONE_MISSING" });
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it("P2: a terminal order is never replayed as an active booking", async () => {
+    seedDemoOrder("ord_terminal_replay", {
+      dispatchStatus: "dispatched",
+      deliveryStatus: "delivered",
+      dispatchProvider: "borzo",
+      dispatchOrderId: "BRZ-DONE-1",
+      borzoOrderId: "BRZ-DONE-1",
+    });
+    seedBranchPhone("demo", "+91 98250 12345");
+    borzoWire("BRZ-NEVER");
+
+    const err: any = await dispatchBook({ orderId: "ord_terminal_replay" }).catch((e) => e);
+
+    expect(err).toMatchObject({ statusCode: 409, code: "DISPATCH_LOCKED" });
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it("P2: an active in-house assignment is never replayed as a provider booking", async () => {
+    seedDemoOrder("ord_inhouse_replay", {
+      dispatchType: "manual_branch_terminal",
+      dispatchStatus: "dispatched",
+      deliveryStatus: "dispatched",
+      dispatchProvider: "borzo",
+      dispatchOrderId: "BRZ-STALE-1",
+      borzoOrderId: "BRZ-STALE-1",
+    });
+    seedBranchPhone("demo", "+91 98250 12345");
+    borzoWire("BRZ-NEVER");
+
+    const err: any = await dispatchBook({ orderId: "ord_inhouse_replay" }).catch((e) => e);
+
+    expect(err).toMatchObject({ statusCode: 409, code: "DISPATCH_EXISTS" });
+    expect(fetchCalls).toHaveLength(0);
   });
 
   it("keeps /dispatch/quote usable without an order (pickup phone simply omitted)", async () => {

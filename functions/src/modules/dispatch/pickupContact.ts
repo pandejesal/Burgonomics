@@ -1,6 +1,5 @@
 import { db } from "../../core/firebase";
 import { isSafeDocId } from "../../core/security";
-import * as admin from "firebase-admin";
 import { normalizePhone, phoneFormats } from "./dropContact";
 
 /**
@@ -18,27 +17,34 @@ import { normalizePhone, phoneFormats } from "./dropContact";
  * needsRebook, generation bumped) and shaped like a provider fault although no
  * create-order ever left the process.
  *
- * Resolution order (first PRESENT value wins, nothing is ever defaulted):
- *   1. `branches/{order.branchId}.phone` — the CANONICAL branch record.
- *   2. `order.store.phone` / legacy `order.branchPhone` — the order's own
- *      snapshot, for pre-branch-document orders.
- * A present-but-invalid canonical number does NOT fall through to the client
- * snapshot: a stale/cached (or tampered) snapshot must never decide where a
- * courier is told to call. The customer's number is NEVER a candidate — the
- * courier would be told to ring a different person to find the store.
+ * AUTHORITY: the canonical `branches/{order.branchId}.phone` ONLY.
+ *
+ * `orders.store` is CLIENT-WRITABLE — it is an allowed key of the customer
+ * order-create allowlist (firestore.rules `orderCreateAllowedKeys`), so any
+ * customer can stamp any `store.phone` at placement. A courier sent a
+ * customer-chosen number would ring a stranger to find the store, which is
+ * exactly the wrong-recipient defect this module exists to prevent. The order
+ * snapshot is therefore NOT an authority for a new booking: an absent branch
+ * document, an unsafe/absent branchId, a branch read failure, and a
+ * missing/invalid canonical number all resolve to null → typed 422 BEFORE the
+ * per-order claim and BEFORE any provider request. A hostile-but-valid
+ * snapshot can never rescue that.
+ *
+ * The customer's own number is NEVER a candidate either. Nothing is invented,
+ * coerced or truncated.
  *
  * The returned value is provider-ready (`91` + 10 digits), because every
  * adapter would otherwise re-normalise and refuse mid-walk.
  */
 
-export type PickupPhoneSource = "branch_document" | "order_snapshot";
+export type PickupPhoneSource = "branch_document";
 
 export interface ResolvedPickupContact {
-  /** Normalised `+91XXXXXXXXXX`, suitable for persisting/display. */
+  /** Normalised `+91XXXXXXXXXX`, suitable for display. */
   phone: string;
   /** `91` + 10-digit national form every provider adapter documents. */
   providerPhone: string;
-  /** Store name from the order snapshot, else the canonical branch record. */
+  /** Canonical branch name (falls back to the order's display name). */
   name: string;
   source: PickupPhoneSource;
 }
@@ -55,63 +61,49 @@ function firstNonEmptyString(...values: unknown[]): string | null {
  * Anything else is "not a usable store number" (null) — never coerced, never
  * truncated into a different line.
  */
-function toContact(
-  raw: string,
-  source: PickupPhoneSource,
-  name: string
-): ResolvedPickupContact | null {
+function toContact(raw: string, name: string): ResolvedPickupContact | null {
   const providerPhone = phoneFormats.borzo(normalizePhone(raw));
   if (!providerPhone) return null;
-  return { phone: `+${providerPhone}`, providerPhone, name, source };
+  return { phone: `+${providerPhone}`, providerPhone, name, source: "branch_document" };
 }
 
 /**
- * Resolves the store pickup contact for an order, or null when nothing usable
- * exists (caller must fail closed with `pickupPhoneMissingError`).
+ * Resolves the store pickup contact for an order from the CANONICAL branch
+ * record, or null when no usable canonical number exists (caller must fail
+ * closed with `pickupPhoneMissingError`).
  */
 export async function resolvePickupContact(
   order: Record<string, any> | null | undefined
 ): Promise<ResolvedPickupContact | null> {
   const o = order || {};
-  const snapshotPhone = firstNonEmptyString(o.store?.phone, o.branchPhone);
-  const orderName =
+  const displayName =
     firstNonEmptyString(o.store?.name, o.branchName) || "Burgonomics Branch";
 
   const branchId = typeof o.branchId === "string" ? o.branchId : "";
-  if (branchId && isSafeDocId(branchId)) {
-    try {
-      const snap = await db.collection("branches").doc(branchId).get();
-      const branch = (snap?.data?.() || {}) as any;
-      const canonicalPhone = firstNonEmptyString(branch.phone);
-      const branchName = firstNonEmptyString(branch.name);
-      if (canonicalPhone) {
-        // Present ⇒ canonical. An invalid value is a typed refusal, not a
-        // licence to fall back to whatever the client cached.
-        return toContact(canonicalPhone, "branch_document", orderName || branchName || "");
-      }
-      // The canonical record exists but carries no number: the order's own
-      // real snapshot is the only remaining real candidate.
-      return snapshotPhone
-        ? toContact(snapshotPhone, "order_snapshot", orderName)
-        : null;
-    } catch (err: any) {
-      // Fail closed on the branch read, but never discard a REAL snapshot the
-      // order already carries — that is not a guess.
-      console.warn(
-        `[Pickup Contact] branch ${branchId} read failed:`,
-        err?.message || err
-      );
-      return snapshotPhone
-        ? toContact(snapshotPhone, "order_snapshot", orderName)
-        : null;
-    }
-  }
+  if (!branchId || !isSafeDocId(branchId)) return null;
 
-  return snapshotPhone ? toContact(snapshotPhone, "order_snapshot", orderName) : null;
+  try {
+    const snap = await db.collection("branches").doc(branchId).get();
+    // A missing document is "no canonical contact", never an invitation to
+    // trust the client-supplied snapshot.
+    if (!snap?.exists) return null;
+    const branch = (snap.data?.() || {}) as any;
+    const canonicalPhone = firstNonEmptyString(branch.phone);
+    if (!canonicalPhone) return null;
+    return toContact(canonicalPhone, firstNonEmptyString(branch.name) || displayName);
+  } catch (err: any) {
+    // Fail closed: an unreadable branch document must not promote a
+    // client-writable snapshot into authority.
+    console.warn(
+      `[Pickup Contact] branch ${branchId} read failed:`,
+      err?.message || err
+    );
+    return null;
+  }
 }
 
 /**
- * Typed, retryable 422 — staff fixes the store record (or assigns an in-house
+ * Typed, retryable 422 — staff fixes the branch record (or assigns an in-house
  * rider). Never a 502 "provider returned an unparseable branch phone": no
  * provider was ever called.
  */
@@ -122,40 +114,4 @@ export function pickupPhoneMissingError(): Error {
   err.statusCode = 422;
   err.code = "DISPATCH_PICKUP_PHONE_MISSING";
   return err;
-}
-
-/**
- * Fills the order's own `store.phone` ONLY when it holds no usable number
- * (never overwrites a real snapshot the customer/staff entered). This is what
- * makes the canonical number durable for the rest of the booking path —
- * notably the Porter leg, which re-reads `orders/{orderId}` and gates its own
- * payload on `store.phone`. Best-effort by design: a failed write must not
- * fail a dispatch whose contact is already resolved in memory.
- */
-export async function persistResolvedStorePhone(
-  docRef: any,
-  order: Record<string, any> | null | undefined,
-  resolved: ResolvedPickupContact | null
-): Promise<void> {
-  if (!resolved || resolved.source !== "branch_document") return;
-  const o = order || {};
-  if (phoneFormats.borzo(normalizePhone(o.store?.phone)) !== null) return;
-  if (phoneFormats.borzo(normalizePhone(o.branchPhone)) !== null) return;
-  const store =
-    o.store && typeof o.store === "object" ? o.store : { name: resolved.name };
-  try {
-    await docRef.set(
-      {
-        store: { ...store, phone: resolved.phone },
-        storePhoneSource: "branch_document",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-  } catch (err: any) {
-    console.warn(
-      "[Dispatch] could not persist the resolved store phone:",
-      err?.message || err
-    );
-  }
 }
