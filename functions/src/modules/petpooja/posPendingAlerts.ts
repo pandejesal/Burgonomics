@@ -23,7 +23,17 @@ import { dispatchFCM } from "../notifications/fcm.service";
 
 export const POS_PENDING_ALERT_MS = 2 * 60 * 1000;
 export const POS_PENDING_ESCALATION_MS = 5 * 60 * 1000;
+/**
+ * P2-L: nothing older than this is worth waking staff for. Every stage below
+ * has already alerted (and escalated) inside this window, so an order past it is
+ * an operator/ledger concern, not a live kitchen one. It is also the scan's STOP
+ * CONDITION: pages are read newest-first, so reaching this horizon ends the scan
+ * instead of walking years of history.
+ */
+export const POS_PENDING_ALERT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const SCAN_LIMIT = 100;
+/** P2-L: bounded pagination — 5 pages of 100 newest-first per stage. */
+const MAX_SCAN_PAGES = 5;
 
 /**
  * Every state a paid order can sit in without a confirmed, traceable KOT.
@@ -83,13 +93,50 @@ function orderLabel(order: any, orderId: string): string {
   return `Order ${shortCode}`;
 }
 
-async function scanStatus(status: AlertStatus): Promise<any[]> {
-  const snap = await db
-    .collection("orders")
-    .where("petpoojaStatus", "==", status)
-    .limit(SCAN_LIMIT)
-    .get();
+/**
+ * P2-L: read a page of one status, NEWEST-FIRST.
+ *
+ * The old query was `where(status).limit(100)` with no ordering, so 100
+ * persistent `accepted_unconfirmed` orders — the SANDBOX's normal shape, it
+ * never returns an orderID — filled every scan forever and a later paid order
+ * with no POS id was never seen. Ordering newest-first means the newest paid
+ * orders are always in the first page; the caller pages deeper (bounded) only
+ * while it is still finding un-alerted work, and stops at the age horizon.
+ *
+ * `where(petpoojaStatus == X) + orderBy(createdAt desc)` is served by the
+ * existing `(petpoojaStatus ASC, createdAt ASC)` composite in
+ * `firestore.indexes.json` (equality prefix + reversed scan).
+ */
+async function scanStatus(
+  status: AlertStatus,
+  cursor?: any
+): Promise<any[]> {
+  let query: any = db.collection("orders").where("petpoojaStatus", "==", status);
+  if (typeof query.orderBy === "function") {
+    query = query.orderBy("createdAt", "desc");
+  }
+  if (cursor && typeof query.startAfter === "function") {
+    query = query.startAfter(cursor);
+  }
+  if (typeof query.limit === "function") query = query.limit(SCAN_LIMIT);
+  const snap = await query.get();
   return snap.docs || [];
+}
+
+/** True when this doc still owes the given stage to its staff. */
+function needsStage(order: any, stage: "2m" | "5m", now: number): boolean {
+  const paidAt = paidAtMs(order);
+  if (!paidAt) return false;
+  const age = now - paidAt;
+  if (age < POS_PENDING_ALERT_MS) return false;
+  // P2-L stop rule: past the horizon the live window is over (both stages have
+  // fired long ago), so an old order must not alert forever.
+  if (age > POS_PENDING_ALERT_MAX_AGE_MS) return false;
+  if (stage === "2m") {
+    if (order.posPendingAlert2mAt) return false;
+    return age < POS_PENDING_ESCALATION_MS;
+  }
+  return !order.posPendingEscalated5mAt;
 }
 
 export async function posPendingAlertsWorker(): Promise<{
@@ -99,14 +146,34 @@ export async function posPendingAlertsWorker(): Promise<{
   let alerts2m = 0;
   let escalations5m = 0;
 
-  // No composite-order scan here: a single-field status query is enough, and
-  // the age filter is applied in code. The retry worker still owns the
-  // oldest-first retry ordering.
+  // P2-L: per status, read NEWEST-FIRST pages and stop as soon as a page has
+  // nothing left to alert. Persistent old orders (accepted_unconfirmed never
+  // gets an id from the sandbox; a parked reconciliation stays forever) used to
+  // fill the single 100-row window and hide every newer paid order. The bound
+  // and the age horizon keep the tick finite.
+  const now = Date.now();
   const candidates = new Map<string, any>();
   for (const status of ALERT_STATUSES) {
     try {
-      for (const doc of await scanStatus(status)) {
-        candidates.set(doc.id, doc);
+      let cursor: any = null;
+      for (let page = 0; page < MAX_SCAN_PAGES; page++) {
+        const docs = await scanStatus(status, cursor);
+        if (docs.length === 0) break;
+        let useful = 0;
+        for (const doc of docs) {
+          candidates.set(doc.id, doc);
+          const data = doc.data ? doc.data() : undefined;
+          if (data && isPaid(data) && !data.petpoojaOrderId && paidAtMs(data)) {
+            const age = now - paidAtMs(data);
+            if (age <= POS_PENDING_ALERT_MAX_AGE_MS) useful++;
+          }
+        }
+        // Newest-first: once a whole page is outside the live window, deeper
+        // pages are older still — stop instead of walking history.
+        if (useful === 0) break;
+        if (docs.length < SCAN_LIMIT) break;
+        cursor = docs[docs.length - 1];
+        if (!cursor || typeof cursor !== "object") break;
       }
     } catch (err: any) {
       logger.warn(
@@ -132,8 +199,8 @@ export async function posPendingAlertsWorker(): Promise<{
 
     const paidAt = paidAtMs(order);
     if (!paidAt) continue;
-    const age = Date.now() - paidAt;
-    if (age < POS_PENDING_ALERT_MS) continue;
+    const age = now - paidAt;
+    if (!needsStage(order, "2m", now) && !needsStage(order, "5m", now)) continue;
 
     const label = orderLabel(order, doc.id);
     const minutes = Math.floor(age / 60_000);
