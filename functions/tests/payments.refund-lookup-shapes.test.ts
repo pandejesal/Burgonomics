@@ -193,6 +193,17 @@ function seedConfirmedOrderLikeOrder() {
     items: [{ id: "l1", productId: "prod_1", name: "Burger", price: 250, quantity: 1 }],
     pricing: { grandTotal: 250 },
   };
+  // P1-F: verification requires the durable server intent that binds this
+  // gateway order to this internal order (and supplies the amount authority).
+  savedDocs[`payment_intents/intent_${ORDER_ID}`] = {
+    razorpayOrderId: RZP_ORDER_ID,
+    orderId: ORDER_ID,
+    amountPaise: 25000,
+    branchId: "branch_refund_1",
+    customerId: "guest",
+    createdAtMs: Date.now(),
+    expiresAtMs: Date.now() + 60_000,
+  };
 }
 
 function seedLegacyLiteralOrder(id: string, paymentId: string) {

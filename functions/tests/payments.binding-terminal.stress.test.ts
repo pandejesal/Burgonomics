@@ -236,12 +236,32 @@ const GATEWAY_ORDER = "order_gw_stress_1";
 const liveSig = (gatewayOrderId: string, paymentId: string) =>
   crypto.createHmac("sha256", LIVE_SECRET).update(`${gatewayOrderId}|${paymentId}`).digest("hex");
 
-const verifyParams = (orderId: string, paymentId: string) => ({
-  orderId,
-  razorpayOrderId: GATEWAY_ORDER,
-  razorpayPaymentId: paymentId,
-  razorpaySignature: liveSig(GATEWAY_ORDER, paymentId),
-});
+/**
+ * P1-F: verification requires the durable server intent that binds the gateway
+ * order to the internal order (it is also the amount authority), so this helper
+ * seeds the same server-written precondition production has.
+ */
+const verifyParams = (orderId: string, paymentId: string) => {
+  control.seed(
+    `payment_intents/intent_${orderId}`,
+    {
+      razorpayOrderId: GATEWAY_ORDER,
+      orderId,
+      amountPaise: 25000,
+      branchId: "branch_stress_1",
+      customerId: "cust_stress_1",
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    },
+    true
+  );
+  return {
+    orderId,
+    razorpayOrderId: GATEWAY_ORDER,
+    razorpayPaymentId: paymentId,
+    razorpaySignature: liveSig(GATEWAY_ORDER, paymentId),
+  };
+};
 
 const capturedFetch = (paymentId: string, amountPaise = 25000) =>
   vi.fn(async (requestedId: string) => ({

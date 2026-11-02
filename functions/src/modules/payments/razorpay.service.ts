@@ -23,6 +23,14 @@ import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } fr
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
 import {
+  reserveRedeemedCoins,
+  releaseReservedCoins,
+  coinReservationId,
+  reservationDoc,
+  consumeReservedCoinsInTx,
+  type CoinReservation,
+} from "./coinReservations";
+import {
   attemptRouteTransfer,
   retryPendingRouteTransfersWorker,
   calculateRouteSplit,
@@ -32,6 +40,8 @@ import {
 
 export { retryPendingRouteTransfersWorker, calculateRouteSplit } from "./routeTransfers";
 export { getOtpHmacSecret };
+// P1-H: reservation-aware Grill-Coins debit, used by the capture paths.
+export { debitRedeemedCoinsIfReserved } from "./coinCapture";
 
 /**
  * Delivery-OTP invariant, SHARED by every channel that can confirm payment
@@ -962,6 +972,12 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // still paying for the same thing.
   const fingerprint = cartFingerprint(cartItems, couponCode, loyaltyPointsToRedeem);
 
+  // P1-H: the balance CHECK above only proves the coins exist right now. The
+  // RESERVATION below (written with the intent) is what makes them unavailable
+  // to a second checkout, so one balance can never back two payable discounts.
+  // A reused intent keeps its existing reservation.
+  const redeemableCoins = loyaltyPointsToRedeem;
+
   // Idempotent retries: same key returns the already-open gateway order
   // instead of minting a second payable order (double-charge risk).
   // Bounded by a 24h TTL: Razorpay orders expire and catalog prices move,
@@ -1134,7 +1150,12 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   let razorpayOrderId: string;
 
   if (config.mock.paymentGateway) {
-    razorpayOrderId = `order_mock_${Date.now()}`;
+    // Unique per mint: a millisecond-only id collided for two checkouts starting
+    // in the same tick, which made them share one gateway order (and therefore
+    // one coin reservation) in sandbox runs.
+    razorpayOrderId = `order_mock_${Date.now().toString(36)}_${crypto
+      .randomBytes(4)
+      .toString("hex")}`;
   } else {
     try {
       const razorpay = getRazorpayClient();
@@ -1191,6 +1212,17 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       expiresAtMs: nowMs + INTENT_TTL_MS,
     };
     try {
+      // P1-H: reserve the redeemed coins BEFORE the intent becomes payable. If
+      // the reservation is refused, no intent row exists either — a stranded
+      // payable intent would be exactly the free-discount hole this closes.
+      if (redeemableCoins > 0 && params.orderId) {
+        await reserveRedeemedCoins({
+          customerId: params.customerId,
+          coins: redeemableCoins,
+          orderId: params.orderId,
+          razorpayOrderId,
+        });
+      }
       // Loop 4 (F2): CLAIM, not blind write. Concurrent same-key checkouts
       // both miss the read above and both POST to Razorpay — the loser's
       // gateway order strands (expires unpaid, never charged). create()
@@ -1205,6 +1237,12 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     } catch (err: any) {
       const alreadyClaimed =
         err?.code === 6 || /already exists|ALREADY_EXISTS/i.test(err?.message || "");
+      // A RESERVATION refusal is a money decision, not a store hiccup: it must
+      // fail the checkout (no payable order for coins the customer does not
+      // have), never degrade into a free discount.
+      if (err?.code === "COINS_INSUFFICIENT" || err?.code === "COINS_RESERVATION_CONFLICT") {
+        throw err;
+      }
       if (!alreadyClaimed) {
         console.warn("[Payments] idempotency store failed (non-blocking):", err?.message || err);
       } else {
@@ -2625,8 +2663,26 @@ async function finishVerifiedPayment(args: {
     try {
       const redemption = await resolveIntentRedemption(razorpayOrderId);
       if (redemption) {
-        const { debitRedeemedCoins } = await import("../customers/customerCoins");
-        await debitRedeemedCoins({ ...redemption, orderId, razorpayOrderId });
+        // P1-H: consume the RESERVATION and debit exactly those coins, in one
+        // transaction. A reservation released while the payment was in flight
+        // debits nothing (the discount can no longer be funded) and is
+        // surfaced instead of silently clamping to the live balance.
+        const { debitRedeemedCoinsIfReserved } = await import("./coinCapture");
+        const debit = await debitRedeemedCoinsIfReserved({
+          customerId: redemption.customerId,
+          orderId,
+          razorpayOrderId,
+          coins: redemption.coins,
+        });
+        if (debit.reason === "reservation_released") {
+          await captureErrorSnapshot({
+            source: "payments",
+            severity: "high",
+            message: `Captured order ${orderId} carried a redeemed discount whose coin reservation was already released — refund/compensate; coins NOT taken`,
+            orderId,
+            razorpayPaymentId,
+          }).catch(() => undefined);
+        }
       }
     } catch (err: any) {
       console.warn(
