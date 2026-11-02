@@ -251,6 +251,16 @@ export const dispatchCancelSchema = z.object({
   staffName: z.string().max(128).optional(),
 });
 
+/**
+ * Staff confirmation that a released booking was cancelled in the provider's
+ * own dashboard (P1-D). The optional note is the staff member's reference.
+ */
+export const dispatchCancelConfirmSchema = z.object({
+  orderId: nonEmptyString,
+  staffName: z.string().max(128).optional(),
+  note: z.string().max(300).optional(),
+});
+
 export const verifyDeliveryOtpSchema = z.object({
   orderId: nonEmptyString,
   otp: z.string().regex(/^\d{4}$/, "OTP must be exactly 4 digits"),

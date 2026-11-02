@@ -5,6 +5,10 @@ import { captureErrorSnapshot } from "../../core/errors";
 import { computeHmacSha256, isSafeDocId, timingSafeEqual } from "../../core/security";
 import { db } from "../../core/firebase";
 import { dispatchFCM } from "../notifications/fcm.service";
+import {
+  confirmPendingCancelFromProvider,
+  pendingCancelMatchesBooking,
+} from "./dispatch.cancelPending";
 
 /**
  * Borzo / Shadowfax webhook intake (DR10).
@@ -1635,6 +1639,33 @@ export async function handleDispatchWebhook(
       err?.message || err
     );
     throw new Error(`Pre-write order read failed: ${err?.message || err}`);
+  }
+
+  // ---- P1-D: provider evidence resolves an unconfirmed local release.
+  // A released booking's cancellation callback is EXACTLY the proof that no
+  // rider is on the road for it. It resolves the block stamped by
+  // dispatchCancel (dispatchPendingCancel) and nothing else: the ownership proof
+  // below still parks the callback HIGH instead of mutating the order's delivery
+  // state, because the branch already released that booking.
+  // Scoped to cancellations only — a DELIVERED from a released booking must
+  // never be read as "the order was cancelled".
+  if (event === "RIDER_CANCELLED") {
+    const pendingRecord = currentOrder.dispatchPendingCancel;
+    if (pendingCancelMatchesBooking(pendingRecord, provider, providerOrderId)) {
+      const confirmed = await confirmPendingCancelFromProvider(
+        orderRef.id,
+        provider,
+        providerOrderId,
+        "provider_webhook"
+      );
+      if (confirmed) {
+        log(
+          `provider cancellation confirmed the local release of ${provider}/${String(
+            providerOrderId || "?"
+          )} on order ${orderRef.id} — replacement dispatch re-opened`
+        );
+      }
+    }
   }
 
   // ---- Pre-mutation ownership proof (stale-map HIGH fix). The map row and

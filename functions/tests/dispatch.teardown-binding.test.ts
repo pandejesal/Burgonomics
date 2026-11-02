@@ -119,7 +119,7 @@ vi.mock("../src/modules/notifications/fcm.service", () => ({
   dispatchFCM: vi.fn(async () => undefined),
 }));
 
-import { dispatchBook, dispatchCancel, dispatchRebook } from "../src/modules/dispatch/dispatch.router";
+import { dispatchBook, dispatchCancel, dispatchRebook, confirmManualDispatchCancel } from "../src/modules/dispatch/dispatch.router";
 import { handleDispatchWebhook } from "../src/modules/dispatch/dispatch.webhooks";
 import { dispatchFCM } from "../src/modules/notifications/fcm.service";
 import { captureErrorSnapshot } from "../src/core/errors";
@@ -374,6 +374,20 @@ describe("late callbacks from a released booking park HIGH with zero mutation (w
     seedMap("BRZ-OLD-1", "ord_rel_live", "borzo");
     await dispatchCancel({ orderId: "ord_rel_live", staffName: "Ops" });
     expect(docOf("ord_rel_live").dispatchProvider).toBeNull();
+
+    // P1-D: the local release alone must NOT free the order — the Borzo rider
+    // may still be live until the dashboard cancel is done and recorded.
+    await expect(
+      dispatchRebook({ orderId: "ord_rel_live", staffName: "Rebook Staff" })
+    ).rejects.toMatchObject({ statusCode: 409, code: "DISPATCH_CANCEL_UNCONFIRMED" });
+    expect(fetchCalls).toHaveLength(0);
+
+    // Staff confirm the dashboard cancellation; only then may a rider be booked.
+    await confirmManualDispatchCancel({
+      orderId: "ord_rel_live",
+      staffName: "Ops",
+      note: "Cancelled BRZ-OLD-1 in the Borzo dashboard",
+    });
 
     // Staff rebook through the guarded endpoint: mock providers book offline.
     const rebook = await dispatchRebook({ orderId: "ord_rel_live", staffName: "Rebook Staff" });

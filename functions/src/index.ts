@@ -68,6 +68,7 @@ import {
   dispatchBook,
   dispatchRebook,
   dispatchCancel,
+  confirmManualDispatchCancel,
   savePorterManualBooking,
   autoRebookDispatchWorker,
   sweepStaleDispatchClaims,
@@ -150,6 +151,7 @@ import {
   dispatchRebookSchema,
   dispatchPorterManualSchema,
   dispatchCancelSchema,
+  dispatchCancelConfirmSchema,
   verifyDeliveryOtpSchema,
   manualDispatchSchema,
   orderBumpSchema,
@@ -298,6 +300,7 @@ app.use(
     "/dispatch/rebook",
     "/dispatch/porter-manual",
     "/dispatch/cancel",
+    "/dispatch/cancel/confirm",
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
@@ -993,6 +996,29 @@ app.post(
       res.status(200).json(result);
     } catch (err: any) {
       sendDispatchError(res, err, "Failed to cancel dispatch");
+    }
+  }
+);
+
+// Staff confirmation of a dashboard cancellation (P1-D). This is the only exit
+// from the DISPATCH_CANCEL_UNCONFIRMED block for providers we cannot cancel
+// ourselves; the who/when is recorded on the order.
+app.post(
+  "/dispatch/cancel/confirm",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(dispatchCancelConfirmSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await confirmManualDispatchCancel({
+        orderId: req.body.orderId,
+        staffName: req.body.staffName || req.user?.email || "Branch Staff",
+        note: req.body.note,
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      sendDispatchError(res, err, "Failed to confirm dispatch cancellation");
     }
   }
 );

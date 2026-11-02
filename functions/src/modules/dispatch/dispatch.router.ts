@@ -30,6 +30,16 @@ import {
   type ProviderQuoteOk,
   type ProviderQuoteOutcome,
 } from "./types";
+import {
+  buildPendingCancelConfirmation,
+  buildPendingCancelWrite,
+  dispatchCancelUnconfirmedError,
+  manualCancelInstruction,
+  pendingCancelBlocking,
+  pendingCancelSummary,
+  providerCanCancelRemotely,
+  type PendingDispatchCancel,
+} from "./dispatch.cancelPending";
 import { fareConfirmCheck } from "./providers/shared";
 import { borzoAdapter } from "./providers/borzo.adapter";
 import { shadowfaxAdapter, cancelShadowfaxOrder } from "./providers/shadowfax.adapter";
@@ -358,6 +368,11 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
       // terminal flip or an in-house assignment landing in between must win.
       const terminal = terminalDeliveryStatus(d);
       if (terminal) return { terminal };
+      // P1-D: a local release whose REMOTE cancellation is unproven still owns
+      // the order. Booking any replacement here is the two-riders-one-order
+      // defect, so this is checked before every other claim decision.
+      const unconfirmedCancel = pendingCancelBlocking(d);
+      if (unconfirmedCancel) return { unconfirmedCancel };
       if (isInHouseAssignmentActive(d)) return { inHouse: true as const };
       if (isActiveDispatch(d)) return { reuse: true, data: d };
       if (isNeedsReconciliation(d)) return { needsReconciliation: true as const };
@@ -403,6 +418,7 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
     });
     if (outcome?.missing) throw orderMissingError(orderDoc.id);
     if (outcome?.terminal) throw terminalError(outcome.terminal);
+    if (outcome?.unconfirmedCancel) throw dispatchCancelUnconfirmedError(outcome.unconfirmedCancel);
     if (outcome?.inHouse) throw inHouseAssignmentError();
     if (outcome?.reuse) return storedDispatchSummary(outcome.data);
     if (outcome?.needsReconciliation) throw dispatchReconciliationRequiredError();
@@ -414,6 +430,8 @@ async function claimDispatch(orderDoc: any, order: any): Promise<any | null> {
   // Fallback for Firestore shims without transactions (tests): same rules.
   const terminal = terminalDeliveryStatus(order);
   if (terminal) throw terminalError(terminal);
+  const unconfirmedCancel = pendingCancelBlocking(order);
+  if (unconfirmedCancel) throw dispatchCancelUnconfirmedError(unconfirmedCancel);
   if (isInHouseAssignmentActive(order)) throw inHouseAssignmentError();
   if (isActiveDispatch(order)) return storedDispatchSummary(order);
   if (isNeedsReconciliation(order)) throw dispatchReconciliationRequiredError();
@@ -1738,6 +1756,11 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
       // pre-read already refused the common case; this re-check closes the
       // same race window for a delivered/cancelled flip landing in-flight).
       assertDispatchNotLocked(d);
+      // P1-D: this lane is the manual fallback for the walk, so it is exactly
+      // the path staff reach for when a carrier cannot be auto-rebooked. An
+      // unconfirmed remote cancellation still owns the order.
+      const unconfirmedCancel = pendingCancelBlocking(d);
+      if (unconfirmedCancel) return { unconfirmedCancel };
       // An in-house rider owns this order: pasting a provider booking over a
       // live manual assignment would present two riders for one delivery.
       if (isInHouseAssignmentActive(d)) return { inHouse: true as const };
@@ -1758,6 +1781,7 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
     });
     if (outcome?.missing) throw orderMissingError();
     if (outcome?.reuse) return storedDispatchSummary(outcome.reuse);
+    if (outcome?.unconfirmedCancel) throw dispatchCancelUnconfirmedError(outcome.unconfirmedCancel);
     if (outcome?.inHouse) throw inHouseAssignmentError();
     if (outcome?.foreignDispatch) throw foreignDispatchError(outcome.foreignDispatch);
     if (outcome?.busy) throw dispatchInProgressError();
@@ -1768,6 +1792,8 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
     // Fallback for Firestore shims without transactions: same rules, one
     // snapshot (the pre-read), no weaker guarantee than before.
     assertDispatchNotLocked(order);
+    const unconfirmedCancel = pendingCancelBlocking(order);
+    if (unconfirmedCancel) throw dispatchCancelUnconfirmedError(unconfirmedCancel);
     if (isInHouseAssignmentActive(order)) throw inHouseAssignmentError();
     const active = isActiveDispatch(order);
     const holder = order.dispatchOrderId || order.porterOrderId;
@@ -1915,31 +1941,60 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     }
   }
 
-  const buildCancelPayload = (d: any, p: ProviderId | null) => ({
-    deliveryStatus: "rider_cancelled",
-    dispatchStatus: "cancelled_by_store",
-    dispatchProviderCancel: p === "shadowfax" ? "confirmed" : "manual-required",
-    ...(p === "shadowfax" ? { dispatchCancelPending: null } : {}),
-    needsRebook: true,
-    // Staff-initiated cancel: the auto-rebook worker must NEVER re-dispatch
-    // this one (only carrier_cancelled / dispatch_failed triggers auto-rebook).
-    rebookTrigger: "staff_cancelled",
-    riderCancellationReason: p === "shadowfax" ? `Booking cancelled by ${staffName || "Branch Staff"}` : `Booking cancelled by ${staffName || "Branch Staff"} — confirm the cancellation in the ${p || "provider"} dashboard`,
-    cancelledBy: staffName || "Branch Staff",
-    cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
-    // LOCAL release only (no documented provider cancel API): retire the
-    // active binding into released history so a late provider callback
-    // parks for reconciliation instead of mutating an order the branch has
-    // already released. The history is what proves the booking was real.
-    ...buildReleasedBindingWrite(d, "staff_cancelled", staffName || "Branch Staff"),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    ...(p === "porter"
+  const buildCancelPayload = (d: any, p: ProviderId | null, nowConfirmed: boolean) => {
+    const releasedProviderOrderId =
+      d?.dispatchOrderId ?? d?.porterOrderId ?? d?.borzoOrderId ?? d?.shadowfaxOrderId ?? null;
+    const pendingCancel: PendingDispatchCancel = nowConfirmed
       ? {
-          porterDispatchStatus: "cancelled_by_store",
-          porterProviderCancel: "manual-required",
+          ...buildPendingCancelWrite({
+            provider: p,
+            providerOrderId: releasedProviderOrderId != null ? String(releasedProviderOrderId) : null,
+            reason: "staff_cancelled",
+            requestedBy: staffName || "Branch Staff",
+          }),
+          state: "confirmed",
+          providerCanCancel: true,
+          confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+          confirmedBy: "provider_cancel",
+          staffActionRequired: null,
         }
-      : {}),
-  });
+      : buildPendingCancelWrite({
+          provider: p,
+          providerOrderId: releasedProviderOrderId != null ? String(releasedProviderOrderId) : null,
+          reason: "staff_cancelled",
+          requestedBy: staffName || "Branch Staff",
+        });
+    return {
+      deliveryStatus: "rider_cancelled",
+      dispatchStatus: "cancelled_by_store",
+      dispatchProviderCancel: p === "shadowfax" ? "confirmed" : "manual-required",
+      ...(p === "shadowfax" ? { dispatchCancelPending: null } : {}),
+      // P1-D: the durable, staff-visible record of an UNPROVEN remote
+      // cancellation. It keeps the order owned here so no replacement rider can
+      // be booked until a provider callback, a successful provider cancel, or a
+      // recorded staff confirmation resolves it.
+      dispatchPendingCancel: pendingCancel,
+      needsRebook: true,
+      // Staff-initiated cancel: the auto-rebook worker must NEVER re-dispatch
+      // this one (only carrier_cancelled / dispatch_failed triggers auto-rebook).
+      rebookTrigger: "staff_cancelled",
+      riderCancellationReason: p === "shadowfax" ? `Booking cancelled by ${staffName || "Branch Staff"}` : `Booking cancelled by ${staffName || "Branch Staff"} — confirm the cancellation in the ${p || "provider"} dashboard`,
+      cancelledBy: staffName || "Branch Staff",
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      // LOCAL release only for providers without a proven cancel API: retire the
+      // active binding into released history so a late provider callback parks
+      // for reconciliation instead of mutating an order the branch has already
+      // released. The history is what proves the booking was real.
+      ...buildReleasedBindingWrite(d, "staff_cancelled", staffName || "Branch Staff"),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(p === "porter"
+        ? {
+            porterDispatchStatus: "cancelled_by_store",
+            porterProviderCancel: "manual-required",
+          }
+        : {}),
+    };
+  };
 
   if (db && typeof (db as any).runTransaction === "function") {
     const outcome: any = await (db as any).runTransaction(async (tx: any) => {
@@ -1962,8 +2017,9 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
       const provider: ProviderId | null =
         (d.dispatchProvider as ProviderId) || (d.porterOrderId ? "porter" : null);
 
-      tx.set(orderDoc.ref, buildCancelPayload(d, provider), { merge: true });
-      return { ok: true as const, provider };
+      const payload = buildCancelPayload(d, provider, remoteShadowfaxId !== null);
+      tx.set(orderDoc.ref, payload, { merge: true });
+      return { ok: true as const, provider, pendingCancel: payload.dispatchPendingCancel };
     });
 
     if (outcome?.missing) throw orderMissingError(orderId);
@@ -1982,15 +2038,21 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     }
     if (!outcome?.ok) throw new Error("dispatchCancel: unrecognised transaction outcome");
 
+    const staffAction = manualCancelInstruction(
+      outcome.provider ?? null,
+      outcome.pendingCancel?.providerOrderId ?? null
+    );
     return {
       success: true,
       orderId,
       provider: outcome.provider,
       providerCancel: outcome.provider === "shadowfax" ? "confirmed" : "manual-required",
+      pendingCancel: pendingCancelSummary(outcome.pendingCancel),
+      ...(outcome.provider === "shadowfax" ? {} : { staffActionRequired: staffAction }),
       message:
         outcome.provider === "shadowfax" ? "Shadowfax confirmed cancellation." : outcome.provider === "porter"
-          ? "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented."
-          : "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented.",
+          ? "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented. No replacement rider will be booked until it is confirmed."
+          : "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented. No replacement rider will be booked until it is confirmed.",
     };
   }
 
@@ -2009,17 +2071,139 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     throw err;
   }
   if (caller) await assertOrderBranchAccess(caller, fresh);
-  await orderDoc.ref.set(buildCancelPayload(fresh, provider), { merge: true });
+  const payload = buildCancelPayload(fresh, provider, remoteShadowfaxId !== null);
+  await orderDoc.ref.set(payload, { merge: true });
 
   return {
     success: true,
     orderId,
     provider,
     providerCancel: provider === "shadowfax" ? "confirmed" : "manual-required",
+    pendingCancel: pendingCancelSummary(payload.dispatchPendingCancel),
+    ...(provider === "shadowfax"
+      ? {}
+      : {
+          staffActionRequired: manualCancelInstruction(
+            provider,
+            payload.dispatchPendingCancel.providerOrderId
+          ),
+        }),
     message:
       provider === "shadowfax" ? "Shadowfax confirmed cancellation." : provider === "porter"
-        ? "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented."
-        : "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented.",
+        ? "Local booking released. Confirm the cancellation in the Porter enterprise dashboard — no provider cancel API is documented. No replacement rider will be booked until it is confirmed."
+        : "Local dispatch released. Confirm the cancellation in the provider dashboard — no provider cancel API is documented. No replacement rider will be booked until it is confirmed.",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Staff confirmation of a dashboard cancellation (P1-D)
+// ---------------------------------------------------------------------------
+
+export interface ConfirmManualDispatchCancelParams {
+  orderId: string;
+  staffName?: string;
+  /** Free-text reference the staff member kept (dashboard cancel id, etc.). */
+  note?: string;
+  caller?: StaffCaller;
+}
+
+/**
+ * POST /dispatch/cancel/confirm: staff state that they cancelled the released
+ * booking in the provider's own dashboard.
+ *
+ * This is the ONLY way to release the P1-D block on a provider we cannot cancel
+ * ourselves (Borzo/Porter). It is deliberately NOT automatic: the block exists
+ * because we do not know whether a rider is still live, and only a human who saw
+ * the dashboard can answer that. The confirmation records WHO and WHEN, plus an
+ * optional note, so the audit trail is complete.
+ *
+ * Idempotent: re-confirming an already-confirmed record returns `reused: true`
+ * without rewriting the who/when (a second tap must not rewrite history).
+ */
+export async function confirmManualDispatchCancel(
+  params: ConfirmManualDispatchCancelParams
+): Promise<any> {
+  const { orderId, staffName, caller } = params;
+  const note = typeof params.note === "string" ? params.note.trim().slice(0, 300) : "";
+  const orderRef = db.collection("orders").doc(orderId);
+
+  const decide = async (d: any) => {
+    if (!d) return { missing: true as const };
+    if (caller) await assertOrderBranchAccess(caller, d);
+    const record = d.dispatchPendingCancel;
+    if (!record || typeof record !== "object") return { noPending: true as const };
+    if (record.state === "confirmed") return { alreadyConfirmed: true as const, record };
+    return { ok: true as const, record: record as PendingDispatchCancel };
+  };
+
+  let outcome: any;
+  if (db && typeof (db as any).runTransaction === "function") {
+    outcome = await (db as any).runTransaction(async (tx: any) => {
+      const snap = await tx.get(orderRef);
+      const decision: any = await decide(snap.exists ? snap.data() : undefined);
+      if (decision.ok) {
+        const confirmed = buildPendingCancelConfirmation(
+          decision.record,
+          "staff_confirmation",
+          staffName || "Branch Staff",
+          note || null
+        );
+        tx.set(
+          orderRef,
+          {
+            dispatchPendingCancel: confirmed,
+            // The order is now safe to replace: the block was the only reason
+            // a rebook was refused, so keep needsRebook intact for the walk.
+            dispatchProviderCancel: "confirmed-by-staff",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return { ...decision, confirmed };
+      }
+      return decision;
+    });
+  } else {
+    const snap = await orderRef.get();
+    const decision: any = await decide(snap.exists ? snap.data() : undefined);
+    if (decision.ok) {
+      const confirmed = buildPendingCancelConfirmation(
+        decision.record,
+        "staff_confirmation",
+        staffName || "Branch Staff",
+        note || null
+      );
+      await orderRef.set(
+        {
+          dispatchPendingCancel: confirmed,
+          dispatchProviderCancel: "confirmed-by-staff",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      outcome = { ...decision, confirmed };
+    } else {
+      outcome = decision;
+    }
+  }
+
+  if (outcome?.missing) throw orderMissingError(orderId);
+  if (outcome?.noPending) {
+    const err: any = new Error(
+      "This order has no unconfirmed courier cancellation to confirm."
+    );
+    err.statusCode = 409;
+    err.code = "DISPATCH_CANCEL_NOT_PENDING";
+    throw err;
+  }
+  const record: PendingDispatchCancel = outcome.confirmed ?? outcome.record;
+  return {
+    success: true,
+    orderId,
+    provider: record?.provider ?? null,
+    providerOrderId: record?.providerOrderId ?? null,
+    pendingCancel: pendingCancelSummary(record),
+    reused: outcome.alreadyConfirmed === true,
   };
 }
 

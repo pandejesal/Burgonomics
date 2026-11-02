@@ -4,6 +4,7 @@ export {
   dispatchBook,
   dispatchRebook,
   dispatchCancel,
+  confirmManualDispatchCancel,
   savePorterManualBooking,
   autoRebookDispatchWorker,
   sweepStaleDispatchClaims,
@@ -14,6 +15,7 @@ export {
   type DispatchQuoteParams,
   type DispatchBookParams,
   type DispatchCancelParams,
+  type ConfirmManualDispatchCancelParams,
   type PorterManualParams,
 } from "./dispatch.router";
 export {
