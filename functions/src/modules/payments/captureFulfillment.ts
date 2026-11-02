@@ -489,7 +489,7 @@ async function runCompensatingRefund(args: {
   /** True when resuming an already-minted refund (needs the lease claim). */
   resume?: boolean;
 }): Promise<{
-  outcome: "refunded" | "refund_failed" | "refund_exhausted";
+  outcome: "refunded" | "refund_failed" | "refund_exhausted" | "pending_sibling";
   refundId?: string;
   reused?: boolean;
   detail?: string;
@@ -509,9 +509,12 @@ async function runCompensatingRefund(args: {
       razorpayPaymentId: args.razorpayPaymentId,
     });
     if (claimed === null) {
+      // A LIVE SIBLING owns this attempt. That is not a failure of ours: report
+      // it as `pending` so no caller counts it against the budget, escalates it,
+      // or overwrites the sibling's eventual `refunded`.
       return {
-        outcome: "refund_failed",
-        detail: "another channel is already resuming this refund",
+        outcome: "pending_sibling",
+        detail: "another channel owns this attempt",
         attempts: args.attempts,
       };
     }
@@ -651,6 +654,11 @@ export async function guardCaptureFulfillment(args: {
     if (resumed.outcome === "refund_exhausted") {
       return { outcome: "refund_exhausted" };
     }
+    if (resumed.outcome === "pending_sibling") {
+      // A live sibling owns the attempt: this caller must not treat it as a
+      // failure, escalate it, or overwrite whatever the sibling writes.
+      return { outcome: "pending" };
+    }
     return { outcome: "refund_failed", detail: resumed.detail || "refund retry failed" };
   }
 
@@ -711,6 +719,9 @@ export async function guardCaptureFulfillment(args: {
   if (result.outcome === "refund_exhausted") {
     return { outcome: "refund_exhausted" };
   }
+  if (result.outcome === "pending_sibling") {
+    return { outcome: "pending" };
+  }
   return { outcome: "refund_failed", detail: result.detail || "refund failed" };
 }
 
@@ -733,7 +744,7 @@ async function resumeCompensatingRefund(args: {
   staleState: CaptureFulfillmentState;
   attempts: number;
 }): Promise<{
-  outcome: "refunded" | "refund_failed" | "refund_exhausted";
+  outcome: "refunded" | "refund_failed" | "refund_exhausted" | "pending_sibling";
   refundId?: string;
   reused?: boolean;
   detail?: string;

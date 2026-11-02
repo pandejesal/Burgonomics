@@ -92,9 +92,22 @@ const { mockDb, docs, writeLog, control, snapshots } = vi.hoisted(() => {
     const filters: Array<{ field: string; value: any }> = [];
     let limitN: number | null = null;
     let offsetN = 0;
+    let afterId: string | null = null;
     const q: any = {
       where: (field: string, _op: string, value: any) => {
         filters.push({ field, value });
+        return q;
+      },
+      // Keyset paging, as Firestore supports it: the only ordering the recovery
+      // sweep uses is the document name.
+      orderBy: (field: any, _direction?: string) => {
+        const name = typeof field === "string" ? field : "__name__";
+        if (name !== "__name__") throw new Error(`Unsupported fake order: ${name}`);
+        return q;
+      },
+      startAfter: (cursor: any) => {
+        const id = typeof cursor === "string" ? cursor : cursor?.id;
+        afterId = String(id ?? "");
         return q;
       },
       // ENFORCED like Firestore: a bounded query must really be bounded, so a
@@ -111,11 +124,13 @@ const { mockDb, docs, writeLog, control, snapshots } = vi.hoisted(() => {
         const all = [...docs.entries()]
           .filter(([p]) => p.startsWith(`${colName}/`))
           .filter(([, d]) => filters.every((f) => getByPath(d, f.field) === f.value))
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
           .map(([p, d]) => {
             const id = p.slice(colName.length + 1);
             return { id, ref: docRef(colName, id), data: () => JSON.parse(JSON.stringify(d)) };
           });
-        const paged = all.slice(offsetN, limitN === null ? undefined : offsetN + limitN);
+        const after = afterId === null ? all : all.filter((d) => d.id > afterId!);
+        const paged = after.slice(offsetN, limitN === null ? undefined : offsetN + limitN);
         return { empty: paged.length === 0, size: paged.length, docs: paged };
       },
       doc: (docId?: string) =>
@@ -171,6 +186,8 @@ vi.mock("firebase-admin", () => {
   };
   const f: any = vi.fn(() => mockDb);
   f.FieldValue = FieldValue;
+  // The recovery sweep pages by document name; the fake understands `__name__`.
+  f.FieldPath = { documentId: () => "__name__" };
   return {
     default: {
       firestore: f,
@@ -322,11 +339,13 @@ beforeEach(() => {
   docs.set("products/p1", { id: "p1", name: "Burger", price: 100, inStock: true });
 
   __setRefundPostForTests(async (paymentId: string, body: any, key: string) => {
+    // Record EVERY attempt at the provider boundary (successes and failures):
+    // the assertions are about real wire calls, not mock outcomes.
+    control.refundPosts.push({ paymentId, body, key });
     if (control.refundFailuresRemaining > 0) {
       control.refundFailuresRemaining -= 1;
       throw new Error("gateway refund exploded (transient)");
     }
-    control.refundPosts.push({ paymentId, body, key });
     return {
       id: `rfnd_rec_${paymentId}`,
       payment_id: paymentId,
@@ -444,14 +463,19 @@ describe("recovery: a transient refund failure is RETRYABLE", () => {
     expect(first.retried).toBe(1);
     expect(first.refunded).toBe(0);
     expect(orderOf("ord_transient")!.captureFulfillment.state).toBe("refund_failed");
-    expect(refundPostCount()).toBe(0);
+    // One ATTEMPT was made at the provider boundary and it did not produce a
+    // refund: the order is not marked refunded and no money was returned.
+    expect(refundPostCount()).toBe(1);
+    expect(orderOf("ord_transient")!.refundedTotalPaise ?? 0).toBe(0);
+    expect(orderOf("ord_transient")!.refundId).toBeUndefined();
 
     // The next tick retries — a failed attempt is NOT terminal. The sweep runs
     // on wall-clock time and the recorded failure already has its (short)
     // backoff applied, so a second tick retries immediately.
     const second = await recoverStuckCaptureFulfilments();
     expect(second.refunded).toBe(1);
-    expect(refundPostCount()).toBe(1);
+    // Two real attempts, ONE successful refund (the retry reuses the same key).
+    expect(refundPostCount()).toBe(2);
     expect(refundLedgerKeys()).toHaveLength(1);
     expect(orderOf("ord_transient")!.captureFulfillment.state).toBe("refunded");
   });
@@ -804,6 +828,10 @@ describe("REVIEW: owed compensation, pagination and the attempt budget", () => {
     }
     // The last six are behind the page and must be reached.
 
+    // Track REAL provider refund attempts per row (the actual wire calls the
+    // recovery job made), never a counter that was seeded to 3 already.
+    const providerAttempts = (id: string) =>
+      control.refundPosts.filter((post: any) => post.paymentId === `pay_owed_${id}`).length;
     const seen = new Set<string>();
     for (let tick = 0; tick < 6; tick += 1) {
       // Every attempt fails: this is a batch of refunds that the gateway keeps
@@ -812,37 +840,33 @@ describe("REVIEW: owed compensation, pagination and the attempt budget", () => {
       const before = refundPostCount();
       await recoverStuckCaptureFulfilments();
       for (let i = 0; i < total; i += 1) {
-        const attempts = orderOf(`ord_owed_${i}`)!.captureFulfillment.attempts;
-        if (attempts > 1) seen.add(`ord_owed_${i}`);
+        if (providerAttempts(String(i)) > 0) seen.add(`ord_owed_${i}`);
       }
       expect(refundPostCount()).toBeGreaterThanOrEqual(before);
     }
 
-    // Even with a permanently failing gateway, the LATER rows were reached:
-    // the first page cannot hide them across ticks.
+    // Even with a permanently failing gateway, the LATER rows were reached and
+    // actually attempted on the provider boundary: the first page cannot hide
+    // them across ticks.
     const laterTouched = [...seen].filter((id) => {
       const index = Number(id.split("_").pop());
       return index >= 50;
     });
     expect(laterTouched.length).toBeGreaterThan(0);
+    expect(
+      laterTouched.some((id) => providerAttempts(String(Number(id.split("_").pop()))) > 0)
+    ).toBe(true);
 
-    // The counter is REAL (not stuck at 1) and the budget eventually escalates.
-    const anyEscalated = [...docs.keys()].some(
-      (k) => k.startsWith("unmatched_payments/ump_gate_")
-    );
-    expect(anyEscalated).toBe(true);
-    const maxAttempt = Math.max(
-      ...Array.from({ length: total }, (_, i) =>
-        Number(orderOf(`ord_owed_${i}`)!.captureFulfillment.attempts)
-      )
-    );
-    expect(maxAttempt).toBeGreaterThan(1);
-
-    // Escalated rows moved OUT of the retry lane into the monitored state.
-    const exhausted = Array.from({ length: total }, (_, i) =>
+    // Escalation is observable through a REAL terminal transition, not a
+    // counter readback.
+    const exhaustedCount = Array.from({ length: total }, (_, i) =>
       orderOf(`ord_owed_${i}`)!.captureFulfillment.state
-    ).filter((s) => s === "refund_exhausted");
-    expect(exhausted.length).toBeGreaterThan(0);
+    ).filter((s) => s === "refund_exhausted").length;
+    expect(exhaustedCount).toBeGreaterThan(0);
+    expect(
+      docs.get("unmatched_payments/ump_gate_pay_owed_0") ??
+        [...docs.keys()].find((k) => k.startsWith("unmatched_payments/ump_gate_"))
+    ).toBeDefined();
   });
 
   it("escalates at the budget and stops retrying that row (no infinite hot loop)", async () => {

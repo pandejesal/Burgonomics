@@ -69,20 +69,38 @@ const { mockDb, docs, control, snapshots } = vi.hoisted(() => {
 
   const collectionMock = (colName: string) => {
     const filters: Array<{ field: string; value: any }> = [];
+    let limitN: number | null = null;
+    let afterId: string | null = null;
     const q: any = {
       where: (field: string, _op: string, value: any) => {
         filters.push({ field, value });
         return q;
       },
-      limit: () => q,
+      // Keyset paging by document name, as the recovery sweep uses it.
+      orderBy: (field: any) => {
+        const name = typeof field === "string" ? field : "__name__";
+        if (name !== "__name__") throw new Error(`Unsupported fake order: ${name}`);
+        return q;
+      },
+      startAfter: (cursor: any) => {
+        afterId = String(typeof cursor === "string" ? cursor : cursor?.id ?? "");
+        return q;
+      },
+      limit: (n: number) => {
+        limitN = typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null;
+        return q;
+      },
       get: async () => {
-        const found = [...docs.entries()]
+        const all = [...docs.entries()]
           .filter(([p]) => p.startsWith(`${colName}/`))
           .filter(([, d]) => filters.every((f) => getByPath(d, f.field) === f.value))
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
           .map(([p, d]) => {
             const id = p.slice(colName.length + 1);
             return { id, ref: docRef(colName, id), data: () => JSON.parse(JSON.stringify(d)) };
           });
+        const after = afterId === null ? all : all.filter((d) => d.id > afterId!);
+        const found = limitN === null ? after : after.slice(0, limitN);
         return { empty: found.length === 0, size: found.length, docs: found };
       },
       doc: (docId?: string) =>
@@ -138,6 +156,7 @@ vi.mock("firebase-admin", () => {
   };
   const f: any = vi.fn(() => mockDb);
   f.FieldValue = FieldValue;
+  f.FieldPath = { documentId: () => "__name__" };
   return {
     default: {
       firestore: f,
