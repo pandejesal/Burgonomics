@@ -153,13 +153,22 @@ async function publishTicketAlert(params: {
 export async function checkTicketInactivityReminders(): Promise<{
   remindedCount: number;
 }> {
-  // Any ticket still open or escalated and not yet resolved/closed.
+  // Any ticket still awaiting resolution: open, escalated, OR in_progress.
+  //
+  // `in_progress` is load-bearing. `addTicketMessage` flips a ticket to
+  // `in_progress` the moment STAFF reply (tickets.service.ts), so the previous
+  // ["open","escalated"] pair silently removed every human-touched ticket from
+  // this scan: no reminder, no escalation, and no path back in, even far past
+  // the tier SLA. A staff reply is activity, not a resolution - the
+  // `lastActivityAt` clock below already re-bases, so a reply legitimately
+  // delays the next hop instead of cancelling the whole ladder.
+  //
   // Ordered oldest-first: beyond the 100-doc cap the most overdue tickets
   // escalate first (an unordered limit could starve old tickets forever).
   // Requires the (status, createdAt) composite in firestore.indexes.json.
   const snapshot = await db
     .collection("support_tickets")
-    .where("status", "in", ["open", "escalated"])
+    .where("status", "in", ["open", "escalated", "in_progress"])
     .orderBy("createdAt", "asc")
     .limit(100)
     .get();
