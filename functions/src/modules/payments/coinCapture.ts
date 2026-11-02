@@ -6,7 +6,6 @@ import {
   reservationDoc,
   consumeReservedCoinsInTx,
   releaseAccountEntryInTx,
-  accountRef,
   type CoinReservation,
 } from "./coinReservations";
 
@@ -26,6 +25,10 @@ import {
  *    payment was in flight, and taking them now would punish the customer for
  *    a race the system caused. The caller compensates with the automatic
  *    refund path (P1-C) when a discount can no longer be funded.
+ *
+ * UNREACHABLE AT LAUNCH (D31-D33): checkout refuses any redemption, no
+ * reservation is created, and nothing on the payment lane calls this. Kept
+ * beside the reservation module for a future, explicitly enabled launch.
  */
 export async function debitRedeemedCoinsIfReserved(input: {
   customerId: string;
@@ -69,14 +72,10 @@ export async function debitRedeemedCoinsIfReserved(input: {
       // Released, or never completed: nothing to take.
       return { decision: "released" as const, coins: 0 };
     }
-    const account = accountRef(reservation.customerId);
-    const accountSnap = await tx.get(account as any);
     consumeReservedCoinsInTx(tx, reservation);
-    releaseAccountEntryInTx(
-      tx,
-      reservation,
-      accountSnap.exists ? accountSnap.data() : {}
-    );
+    // The account entry is removed with a field delete, so no account read is
+    // needed here any more.
+    releaseAccountEntryInTx(tx, reservation);
     return { decision: "consume" as const, coins: reservation.coins };
   });
 

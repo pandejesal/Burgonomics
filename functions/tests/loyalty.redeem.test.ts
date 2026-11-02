@@ -1,9 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Loop 62/120 rig: same in-memory Firestore pattern as
-// razorpay.service.test.ts — the pricing engine used to trust any
-// client-supplied loyaltyPointsToRedeem (guests included) with no balance
-// check and no debit. resolveRedeemableCoins must fail closed.
+/**
+ * Grill-Coins redemption is a NON-LAUNCH feature (D31-D33 / OPEN-EARN-1).
+ *
+ * The customer app ships no loyalty balance or redemption UI and pins
+ * `loyaltyPointsToRedeem` to 0, so a non-zero redemption can only come from a
+ * stale client, a replayed body or a direct caller. The server refuses it with
+ * one typed 409 — before any gateway order is minted, before any reservation
+ * exists and before pricing can apply a coin discount — instead of maintaining
+ * a live reservation/debit path nobody can legitimately reach.
+ *
+ * The earn path and staff coin adjustments are untouched by this gate; they are
+ * covered by customerCoins tests.
+ */
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
   const docRef = (colName: string, docId: string) => ({
@@ -52,46 +61,82 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { resolveRedeemableCoins } from "../src/modules/payments/razorpay.service";
+import {
+  resolveRedeemableCoins,
+  verifyRedeemableCoinBalance,
+} from "../src/modules/payments/razorpay.service";
+import { config } from "../src/config/env";
 
-describe("Loop 62: loyalty redemption is server-checked", () => {
+describe("launch gate: Grill-Coins redemption is refused server-side", () => {
+  const prevEnabled = config.loyalty.redemptionEnabled;
+
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    config.loyalty.redemptionEnabled = false;
+  });
+  afterEach(() => {
+    config.loyalty.redemptionEnabled = prevEnabled;
   });
 
-  it("returns the requested amount when the balance covers it", async () => {
+  it("refuses ANY non-zero redemption with the typed 409, before pricing", () => {
     savedDocs["customers/cust_rich"] = { loyaltyPoints: 500 };
-    await expect(resolveRedeemableCoins("cust_rich", 200)).resolves.toBe(200);
+    let thrown: any = null;
+    try {
+      resolveRedeemableCoins("cust_rich", 200);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown?.statusCode).toBe(409);
+    expect(thrown?.code).toBe("COIN_REDEMPTION_DISABLED");
+    // No balance read happened: the gate is ahead of every datastore access.
+    expect(mockDb.collection("customers").doc("cust_rich").get).not.toHaveBeenCalled();
   });
 
-  it("fails closed with 400 when requesting more than the balance", async () => {
+  it("refuses guests and unknown customers with the SAME typed refusal", () => {
+    for (const [customerId, requested] of [
+      ["guest", 100],
+      ["cust_ghost", 10],
+    ] as const) {
+      let thrown: any = null;
+      try {
+        resolveRedeemableCoins(customerId, requested);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown?.statusCode).toBe(409);
+      expect(thrown?.code).toBe("COIN_REDEMPTION_DISABLED");
+    }
+  });
+
+  it("the launch value (0 / absent) passes through unchanged — normal checkout", () => {
+    expect(resolveRedeemableCoins("cust_ghost", 0)).toBe(0);
+    expect(resolveRedeemableCoins("guest", undefined)).toBe(0);
+    expect(resolveRedeemableCoins("cust_rich", null)).toBe(0);
+    expect(resolveRedeemableCoins("cust_rich", Number.NaN)).toBe(0);
+  });
+
+  it("an explicitly enabled feature keeps the server-side balance check", async () => {
+    config.loyalty.redemptionEnabled = true;
+    savedDocs["customers/cust_rich"] = { loyaltyPoints: 500 };
+    expect(resolveRedeemableCoins("cust_rich", 200)).toBe(200);
+    await expect(verifyRedeemableCoinBalance("cust_rich", 200)).resolves.toBeUndefined();
+
     savedDocs["customers/cust_poor"] = { loyaltyPoints: 50 };
-    const err: any = await resolveRedeemableCoins("cust_poor", 600).then(
+    const err: any = await verifyRedeemableCoinBalance("cust_poor", 600).then(
       () => null,
       (e) => e
     );
     expect(err?.statusCode).toBe(400);
+    expect(err?.code).toBe("COINS_INSUFFICIENT");
     expect(String(err?.message)).toContain("50 Grill Coins");
   });
 
-  it("fails closed for guests with any redemption request", async () => {
-    const err: any = await resolveRedeemableCoins("guest", 100).then(
+  it("an enabled feature still refuses a guest (no balance to spend)", async () => {
+    config.loyalty.redemptionEnabled = true;
+    const err: any = await verifyRedeemableCoinBalance("guest", 100).then(
       () => null,
       (e) => e
     );
     expect(err?.statusCode).toBe(400);
-  });
-
-  it("fails closed for unknown customers (no doc, no balance)", async () => {
-    const err: any = await resolveRedeemableCoins("cust_ghost", 10).then(
-      () => null,
-      (e) => e
-    );
-    expect(err?.statusCode).toBe(400);
-  });
-
-  it("passes zero/empty requests through without a balance lookup", async () => {
-    await expect(resolveRedeemableCoins("cust_ghost", 0)).resolves.toBe(0);
-    await expect(resolveRedeemableCoins("guest", undefined)).resolves.toBe(0);
   });
 });

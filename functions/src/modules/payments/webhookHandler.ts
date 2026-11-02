@@ -5,7 +5,7 @@ import { config, assertLivePaymentsContext } from "../../config/env";
 import { verifyRazorpayWebhookSignature, isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { markOrderReconciliation, claimCapturedPaymentInTx } from "./reconciliation";
-import { guardCaptureFulfillment } from "./captureFulfillment";
+import { guardCaptureFulfillment, captureGateAllowsConfirm } from "./captureFulfillment";
 import { applyRefundToMonthlyFee } from "./monthlyFee";
 import { pushOrderToPetpooja } from "../petpooja";
 import { dispatchCustomerAccountNotification } from "../tickets/supportNotifications";
@@ -106,6 +106,30 @@ export function webhookConfirmSettlementFields(freshOrder: any): Record<string, 
   const existing = freshOrder?.routeTransferStatus;
   if (typeof existing === "string" && existing) return {};
   return { routeTransferStatus: "pending_retry", routeTransferRetryCount: 0 };
+}
+
+/**
+ * Releases a delivery claim so a RETRYABLE refusal can actually be retried.
+ *
+ * The event-id claim is the replay defence: a claim left as "inflight" would be
+ * treated as a crash and 500'd for 10 minutes, and a claim marked "done" would
+ * be 200-acked forever. Deleting the just-created claim lets Razorpay's
+ * redelivery be processed as a genuinely new attempt. Best effort — the lease
+ * ages out anyway (CLAIM_TTL_MS), and this never throws into the response.
+ */
+async function releaseEventClaimForRetry(
+  eventId: string,
+  auditDocRef: any,
+  reason: string
+): Promise<void> {
+  try {
+    await auditDocRef.delete();
+  } catch (err: any) {
+    console.warn(
+      `[Razorpay Webhook] claim release for retry failed for ${eventId} (${reason}):`,
+      err?.message || err
+    );
+  }
 }
 
 /**
@@ -587,36 +611,54 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           orderData,
           capturedAmountPaise: typeof capturedPaise === "number" ? capturedPaise : undefined,
         });
+        if (captureFulfillment.outcome === "pending") {
+          // A sibling channel owns the decision and its lease is live. Do NOT
+          // confirm (that is the food-plus-refund race). Return a RETRYABLE
+          // non-2xx so Razorpay redelivers once the owner has finished; the
+          // event claim is released so the redelivery is processed, not acked.
+          await releaseEventClaimForRetry(eventId, auditDocRef, "capture_fulfillment_pending");
+          res.status(503).json({ error: "Fulfilment decision in progress — retry shortly" });
+          return;
+        }
         if (
           captureFulfillment.outcome === "refunded" ||
           captureFulfillment.outcome === "already_compensated"
         ) {
           // Money is back with the customer; the capture must not be confirmed
           // and must not be rung at the kitchen. 200: Razorpay must not retry
-          // money that has already been returned.
-          if (captureFulfillment.outcome === "refunded") {
-            await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
-              {
-                eventId,
-                event,
-                razorpayPaymentId: String(razorpayPaymentId || paymentEntity?.id || "unknown"),
-                amount: typeof capturedPaise === "number" ? capturedPaise / 100 : null,
-                currency: paymentEntity?.currency || "INR",
-                claimedOrderId: orderId,
-                receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-                status: "auto_refunded",
-                reason: "capture_item_unavailable_refunded",
-                refundId: captureFulfillment.refundId,
-              },
-              { merge: true }
-            );
-          }
+          // money that has already been returned. BOTH arms park the decision,
+          // so a suppressed delivery is never a silent 200 with no record.
+          await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
+            {
+              eventId,
+              event,
+              razorpayPaymentId: String(razorpayPaymentId || paymentEntity?.id || "unknown"),
+              amount: typeof capturedPaise === "number" ? capturedPaise / 100 : null,
+              currency: paymentEntity?.currency || "INR",
+              claimedOrderId: orderId,
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+              status:
+                captureFulfillment.outcome === "refunded"
+                  ? "auto_refunded"
+                  : "suppressed_capture_gate",
+              reason:
+                captureFulfillment.outcome === "refunded"
+                  ? "capture_item_unavailable_refunded"
+                  : "suppressed_capture_gate",
+              ...(captureFulfillment.outcome === "refunded"
+                ? { refundId: captureFulfillment.refundId }
+                : {}),
+            },
+            { merge: true }
+          );
           res.status(200).json({ status: "captured_unfulfillable" });
           return;
         }
         if (captureFulfillment.outcome === "refund_failed") {
-          // Captured money nobody can fulfil and the automatic refund failed:
-          // park for ops, still 200 (the money is real), never confirm/KOT.
+          // Captured money nobody can fulfil and the automatic refund failed.
+          // This is NOT a settled outcome: park it visibly for ops AND ask the
+          // provider to redeliver, so a transient refund failure retries itself
+          // instead of leaving a paid customer with neither food nor money.
           await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
             {
               eventId,
@@ -632,82 +674,13 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             },
             { merge: true }
           );
-          res.status(200).json({ status: "captured_unfulfillable" });
+          await releaseEventClaimForRetry(eventId, auditDocRef, "refund_failed");
+          res.status(500).json({ error: "Automatic refund failed — retry requested" });
           return;
         }
-        // P1-H funding gate on the WEBHOOK channel (item 8): this path confirms
-        // and rings the kitchen for payers who closed the app, so it must prove
-        // the Grill-Coins behind any redeemed discount are still fundable —
-        // consuming the reservation (and re-acquiring it when it was handed
-        // back while the payment was in flight). The debit is idempotent on the
-        // deterministic ledger id, so a verify that already debited converges.
-        {
-          const rzpOrderId =
-            (typeof paymentEntity?.order_id === "string" && paymentEntity.order_id) ||
-            (event === "order.paid" && typeof paymentEntity?.id === "string"
-              ? paymentEntity.id
-              : "");
-          if (rzpOrderId) {
-            try {
-              const { ensureRedeemedCoinsFunded } = await import("./coinCapture");
-              const funding = await ensureRedeemedCoinsFunded({
-                razorpayOrderId: rzpOrderId,
-                orderId,
-              });
-              if (funding.outcome === "unfunded") {
-                await captureErrorSnapshot({
-                  source: "payments",
-                  severity: "high",
-                  message: `Webhook capture for order ${orderId} carries a redeemed discount whose coin funding is gone (${funding.coins} coins) — refund/compensate; coins NOT taken, order NOT confirmed`,
-                  orderId,
-                  razorpayPaymentId: razorpayPaymentId || undefined,
-                }).catch(() => undefined);
-                await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
-                  {
-                    eventId,
-                    event,
-                    razorpayPaymentId: String(razorpayPaymentId || paymentEntity?.id || "unknown"),
-                    amount: typeof capturedPaise === "number" ? capturedPaise / 100 : null,
-                    currency: paymentEntity?.currency || "INR",
-                    claimedOrderId: orderId,
-                    receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    status: "needs_review",
-                    reason: "capture_unfunded_discount",
-                    coins: funding.coins,
-                  },
-                  { merge: true }
-                );
-                res.status(200).json({ status: "captured_unfunded_discount" });
-                return;
-              }
-            } catch (err: any) {
-              // A funding LOOKUP failure must not confirm a discount we could
-              // not prove: park for ops, 200 (money is real), no confirm/KOT.
-              await captureErrorSnapshot({
-                source: "payments",
-                severity: "high",
-                message: `Webhook coin-funding check threw for order ${orderId} — capture parked, not confirmed: ${err?.message || err}`,
-                orderId,
-                razorpayPaymentId: razorpayPaymentId || undefined,
-                errorStack: err?.stack,
-              }).catch(() => undefined);
-              await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
-                {
-                  eventId,
-                  event,
-                  razorpayPaymentId: String(razorpayPaymentId || paymentEntity?.id || "unknown"),
-                  claimedOrderId: orderId,
-                  receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-                  status: "needs_review",
-                  reason: "capture_coin_funding_unknown",
-                },
-                { merge: true }
-              );
-              res.status(200).json({ status: "captured_coin_funding_unknown" });
-              return;
-            }
-          }
-        }
+        // No Grill-Coins gate exists on this channel any more: redemption is
+        // refused at intent creation (D31-D33), so a webhook-confirmed order can
+        // never carry a coin discount to fund.
 
         // Atomic confirmation guard (R06): read the current order inside a
         // transaction before (re)writing CONFIRMED. A late/repeated delivery
@@ -810,6 +783,21 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             WH_CONFIRMED_LATER.has(normalized) ||
             fresh?.status?.terminal === true ||
             fresh?.terminal === true;
+
+          // COMPENSATION LOCK, enforced in the transaction that writes
+          // CONFIRMED (mirror of the verify path). Checked BEFORE the
+          // later-state guard because a compensated capture stamps payment
+          // truth (so the order reads "paid") while its status is still PLACED.
+          if (!captureGateAllowsConfirm(fresh, String(razorpayPaymentId || ""))) {
+            suppressedReason = "suppressed_capture_gate";
+            return {
+              written: false,
+              reason: suppressedReason,
+              recordedPaymentId,
+              fresh,
+              gateState: fresh?.captureFulfillment?.state ?? null,
+            };
+          }
 
           // Preserve a later/terminal status and an already-captured foreign
           // payment instead of regressing the order under a racing confirmation.
@@ -984,11 +972,20 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           // automatic-refund path, idempotently; the order stays CANCELLED.
           // Any other suppressed capture (foreign/staff-cancelled/terminal) is
           // parked only — those are conversations this automation cannot see.
-          const suppressedStatus = String(orderData?.status?.code ?? "").toUpperCase();
+          //
+          // The eligibility test reads the TRANSACTION-FRESH snapshot. The
+          // pre-transaction `orderData` is stale by design here: the sweep can
+          // cancel between that read and this confirmation (that is exactly the
+          // race being handled), so deciding on it silently missed the
+          // cancellation and acked with neither confirmation nor refund.
+          const suppressedStatus = String(freshOrder?.status?.code ?? "").toUpperCase();
+          const freshCancellation =
+            typeof freshOrder?.cancellationReason === "string"
+              ? freshOrder.cancellationReason
+              : "";
           const expiryCapture =
-            suppressedReason === "suppressed_later_state" &&
             suppressedStatus === "CANCELLED" &&
-            orderData?.cancellationReason === "payment_not_completed" &&
+            freshCancellation === "payment_not_completed" &&
             !!razorpayPaymentId;
           if (expiryCapture) {
             const { refundLateCaptureForExpiredOrder } = await import("./lateCaptureRefund");

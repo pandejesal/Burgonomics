@@ -1,34 +1,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /**
- * P1-G + P1-H — Grill Coins must be RESERVED when an intent is created, not
- * merely checked.
+ * Grill-Coins reservations are UNREACHABLE at launch (D31-D33).
  *
- * Defects:
- *  P1-G: omitting `idempotencyKey` used to skip the intent write entirely, so a
- *        redemption discount applied but nothing recorded it — the coins were
- *        never debited and stayed reusable forever.
- *  P1-H: several discounted intents could be minted against ONE balance. Each
- *        was payable; at capture the debit clamped to whatever was left, so
- *        every discount stood while the balance drained to zero.
+ * The launch customer app pins `loyaltyPointsToRedeem` to 0, and the server
+ * refuses any non-zero redemption with a typed 409 before a gateway order is
+ * minted. So `createPaymentOrder` can no longer reserve coins, and the whole
+ * class of "one balance backs several payable discounts" defects is retired by
+ * construction rather than by more reservation bookkeeping.
  *
- * Required: reserve transactionally at intent creation (so the same coins
- * cannot back two payable orders), release on expiry/cancel, consume on
- * capture. The customer must never receive a discount they did not pay for.
+ * This suite pins that retirement through the REAL entry point: a discounted
+ * checkout is REFUSED, no reservation is ever written, and the balance is not
+ * locked. The reservation module itself is kept (not half-wired) for a future,
+ * explicitly enabled launch; its own arithmetic is exercised only when the flag
+ * is on, and the merge-delete fix is covered where the module is used.
  */
 const { mockDb, docs, control } = vi.hoisted(() => {
-  process.env.OTP_HMAC_SECRET = "test_otp_p1h";
+  process.env.OTP_HMAC_SECRET = "test_otp_coins_disabled";
 
   const docs = new Map<string, any>();
   const control = { mintCounter: 0 };
 
   const applyWrite = (path: string, data: any, merge?: boolean) => {
     const existing = docs.get(path);
-    const next =
+    docs.set(
+      path,
       merge && existing && typeof existing === "object" && typeof data === "object"
         ? { ...existing, ...data }
-        : { ...data };
-    docs.set(path, next);
+        : { ...data }
+    );
   };
 
   const docRef = (col: string, id: string) => {
@@ -82,7 +82,6 @@ const { mockDb, docs, control } = vi.hoisted(() => {
       return q;
     },
     runTransaction: vi.fn(async (fn: any) => {
-      // Real optimistic-concurrency retry domain: re-run on conflict.
       for (let attempt = 0; attempt < 8; attempt++) {
         const reads = new Map<string, string>();
         const writes: Array<{ path: string; data: any; merge: boolean }> = [];
@@ -92,9 +91,7 @@ const { mockDb, docs, control } = vi.hoisted(() => {
             return {
               exists: docs.has(ref.path),
               data: () =>
-                docs.has(ref.path)
-                  ? JSON.parse(JSON.stringify(docs.get(ref.path)))
-                  : undefined,
+                docs.has(ref.path) ? JSON.parse(JSON.stringify(docs.get(ref.path))) : undefined,
               ref,
             };
           },
@@ -157,7 +154,7 @@ vi.mock("../src/modules/payments/razorpayClient", () => ({
     },
     payments: { fetch: vi.fn(async () => ({ status: "captured", amount: 0 })) },
   }),
-  getRazorpayKeyId: () => "rzp_test_p1h",
+  getRazorpayKeyId: () => "rzp_test_coins_disabled",
 }));
 
 vi.mock("../src/core/errors", async (importOriginal) => {
@@ -165,12 +162,7 @@ vi.mock("../src/core/errors", async (importOriginal) => {
   return { ...actual, captureErrorSnapshot: vi.fn(async () => "snap_1") };
 });
 
-import { createPaymentOrder, debitRedeemedCoinsIfReserved } from "../src/modules/payments/razorpay.service";
-import {
-  reserveRedeemedCoins,
-  releaseReservedCoins,
-  availableCoinBalance,
-} from "../src/modules/payments/coinReservations";
+import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
 
 const ITEMS = [
@@ -196,7 +188,6 @@ const seedOrder = (orderId: string) => {
     userId: "cust_1",
     branchId: "branch_a",
     orderType: "takeaway",
-    // PAY-13: the money is computed from the ORDER DOCUMENT's cart.
     items: ITEMS,
     payment: { method: "online", status: "pending" },
     paymentStatus: "pending",
@@ -204,7 +195,7 @@ const seedOrder = (orderId: string) => {
   });
 };
 
-const createFor = (orderId: string, coins: number, key?: string) => {
+const createFor = (orderId: string, coins: number) => {
   seedOrder(orderId);
   return createPaymentOrder({
     orderId,
@@ -213,154 +204,67 @@ const createFor = (orderId: string, coins: number, key?: string) => {
     orderType: "takeaway",
     customerId: "cust_1",
     loyaltyPointsToRedeem: coins,
-    ...(key ? { idempotencyKey: key } : {}),
+    idempotencyKey: `chk_${orderId}`,
   } as any);
 };
 
-describe("P1-H — a discount must be RESERVED, not merely checked", () => {
+describe("launch: a discounted checkout is refused, no coins are held", () => {
   const prevMock = config.mock.paymentGateway;
+  const prevEnabled = config.loyalty.redemptionEnabled;
   beforeEach(() => {
     docs.clear();
     control.mintCounter = 0;
     config.mock.paymentGateway = true;
+    config.loyalty.redemptionEnabled = false;
   });
   afterEach(() => {
     config.mock.paymentGateway = prevMock;
+    config.loyalty.redemptionEnabled = prevEnabled;
   });
 
-  it("refuses a SECOND discounted order that would spend coins already reserved", async () => {
+  it("createPaymentOrder refuses ANY redemption with COIN_REDEMPTION_DISABLED", async () => {
     seedWorld(100);
-
-    // First checkout reserves 80 of the customer's 100 coins.
-    const first: any = await createFor("ord_a", 80);
-    expect(first.razorpayOrderId).toBeTruthy();
-    expect(docs.get("customers/cust_1").loyaltyPoints).toBe(100);
-    expect(await availableCoinBalance("cust_1")).toBe(20);
-
-    // Second checkout asks for 80 — only 20 are uncommitted.
-    const err: any = await createFor("ord_b", 80).then(
+    const err: any = await createFor("ord_a", 20).then(
       (r) => ({ unexpectedSuccess: r }),
       (e) => e
     );
     expect(err.unexpectedSuccess).toBeUndefined();
-    expect(err.code).toBe("COINS_INSUFFICIENT");
-    expect(err.statusCode).toBe(400);
-    // The second checkout never becomes PAYABLE: no intent is accepted for it
-    // (the gateway order it minted is stranded unpaid, never handed out).
-    expect(docs.has("payment_intents/chk_ord_b")).toBe(false);
-    expect(
-      [...docs.keys()].filter(
-        (k) => k.startsWith("payment_intents/") && docs.get(k)?.orderId === "ord_b"
-      )
-    ).toEqual([]);
+    expect(err.statusCode).toBe(409);
+    expect(err.code).toBe("COIN_REDEMPTION_DISABLED");
   });
 
-  it("interleaved: two concurrent checkouts cannot both reserve the same coins", async () => {
+  it("no gateway order, no intent and no reservation is created by a refused redemption", async () => {
     seedWorld(100);
-    seedOrder("ord_a");
-    seedOrder("ord_b");
+    await createFor("ord_b", 80).catch(() => undefined);
 
-    const mk = (orderId: string, coins: number) =>
-      createPaymentOrder({
-        orderId,
-        items: ITEMS as any,
-        branchId: "branch_a",
-        orderType: "takeaway",
-        customerId: "cust_1",
-        loyaltyPointsToRedeem: coins,
-        idempotencyKey: `chk_${orderId}`,
-      } as any).then(
-        (r) => ({ ok: true as const, r }),
-        (e) => ({ ok: false as const, e })
-      );
-
-    const [a, b] = await Promise.all([mk("ord_a", 80), mk("ord_b", 80)]);
-    const wins = [a, b].filter((x) => x.ok);
-    const losses = [a, b].filter((x) => !x.ok);
-
-    expect(wins).toHaveLength(1);
-    expect(losses).toHaveLength(1);
-    expect((losses[0] as any).e.code).toBe("COINS_INSUFFICIENT");
-    // Exactly ONE discounted payable order exists; the loser's gateway order
-    // is stranded and its intent was never accepted.
-    expect(
-      [...docs.keys()].filter(
-        (k) => k.startsWith("payment_intents/") && docs.get(k)?.pricing?.loyaltyDiscount === 80
-      )
-    ).toHaveLength(1);
-    expect(await availableCoinBalance("cust_1")).toBe(20);
-  });
-
-  it("consumes the reservation on capture, so the balance actually drops", async () => {
-    seedWorld(100);
-    const created: any = await createFor("ord_c", 80);
-
-    const debit = await debitRedeemedCoinsIfReserved({
-      customerId: "cust_1",
-      orderId: "ord_c",
-      razorpayOrderId: created.razorpayOrderId,
-    });
-
-    expect(debit.debited).toBe(80);
-    expect(docs.get("customers/cust_1").loyaltyPoints).toBe(20);
-    expect(await availableCoinBalance("cust_1")).toBe(20);
-    expect(docs.get("coin_transactions/coin_redemption_" + created.razorpayOrderId)).toBeDefined();
-  });
-
-  it("releases the reservation on expiry/cancel, returning the coins to availability", async () => {
-    seedWorld(100);
-    const created: any = await createFor("ord_d", 80);
-    expect(await availableCoinBalance("cust_1")).toBe(20);
-
-    await releaseReservedCoins({ razorpayOrderId: created.razorpayOrderId, reason: "expired" });
-
-    // Never debited, and fully available again.
+    expect(control.mintCounter).toBe(0);
+    expect([...docs.keys()].filter((k) => k.startsWith("payment_intents/"))).toEqual([]);
+    expect([...docs.keys()].filter((k) => k.startsWith("coin_reservations/"))).toEqual([]);
+    expect([...docs.keys()].filter((k) => k.startsWith("coin_reservation_accounts/"))).toEqual([]);
+    // The balance is untouched and nothing is locked.
     expect(docs.get("customers/cust_1").loyaltyPoints).toBe(100);
-    expect(await availableCoinBalance("cust_1")).toBe(100);
+    // The order was not priced either.
+    expect(docs.get("orders/ord_b").pricing).toBeUndefined();
   });
 
-  it("release is idempotent and never returns coins twice", async () => {
+  it("the launch checkout (0 coins) is completely unaffected and prices the full amount", async () => {
     seedWorld(100);
-    const created: any = await createFor("ord_e", 80);
-
-    await releaseReservedCoins({ razorpayOrderId: created.razorpayOrderId, reason: "expired" });
-    await releaseReservedCoins({ razorpayOrderId: created.razorpayOrderId, reason: "expired" });
-
-    expect(await availableCoinBalance("cust_1")).toBe(100);
-  });
-
-  it("a captured order after release is refunded, not silently debited (P1-C link)", async () => {
-    seedWorld(100);
-    const created: any = await createFor("ord_f", 80);
-    await releaseReservedCoins({ razorpayOrderId: created.razorpayOrderId, reason: "expired" });
-
-    const debit = await debitRedeemedCoinsIfReserved({
-      customerId: "cust_1",
-      orderId: "ord_f",
-      razorpayOrderId: created.razorpayOrderId,
-    });
-
-    // The coins were already handed back; consuming them now would punish the
-    // customer for a race the system caused.
-    expect(debit.debited).toBe(0);
-    expect(debit.reason).toBe("reservation_released");
+    const res: any = await createFor("ord_c", 0);
+    expect(res.razorpayOrderId).toBeTruthy();
+    expect(res.pricing.loyaltyDiscount).toBe(0);
+    // 500 food + 15 default packaging (no branch packagingFee configured).
+    expect(res.amountPaise).toBe(51500);
+    // Still no coin state anywhere on the payment path.
+    expect([...docs.keys()].filter((k) => k.startsWith("coin_reservations/"))).toEqual([]);
     expect(docs.get("customers/cust_1").loyaltyPoints).toBe(100);
   });
 
-  it("P1-G: omitting idempotencyKey still persists the redemption (no free discount)", async () => {
+  it("a retry of the SAME zero-coin checkout reuses the intent (normal customers)", async () => {
     seedWorld(100);
-    const created: any = await createFor("ord_g", 40);
-
-    // An intent exists for the minted gateway order and records the redemption
-    // (the key is server-generated, not absent).
-    const intents = [...docs.keys()].filter((k) => k.startsWith("payment_intents/"));
-    expect(intents).toHaveLength(1);
-    const stored = docs.get(intents[0]);
-    expect(stored.razorpayOrderId).toBe(created.razorpayOrderId);
-    expect(stored.orderId).toBe("ord_g");
-    expect(stored.pricing.loyaltyDiscount).toBe(40);
-
-    // And the reservation is real: the coins cannot back another order.
-    expect(await availableCoinBalance("cust_1")).toBe(60);
+    const first: any = await createFor("ord_d", 0);
+    const second: any = await createFor("ord_d", 0);
+    expect(second.reused).toBe(true);
+    expect(second.razorpayOrderId).toBe(first.razorpayOrderId);
+    expect([...docs.keys()].filter((k) => k.startsWith("payment_intents/"))).toHaveLength(1);
   });
 });

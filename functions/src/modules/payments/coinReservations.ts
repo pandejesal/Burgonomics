@@ -33,6 +33,12 @@ export const COIN_RESERVATIONS = "coin_reservations";
  * transaction cannot SUM a query, so the running reserved total lives on one
  * document that every reservation reads and writes: two concurrent checkouts
  * therefore CONFLICT instead of both seeing "20 free" and both taking it.
+ *
+ * UNREACHABLE AT LAUNCH. Redemption is refused at intent creation (D31-D33), so
+ * no reservation is ever created. This module is kept deliberately (not
+ * half-wired): it is fully transactional, and `createPaymentOrder` simply never
+ * calls it. Re-enabling `config.loyalty.redemptionEnabled` is the one switch
+ * that would put it back on the payment path.
  */
 export const COIN_RESERVATION_ACCOUNTS = "coin_reservation_accounts";
 
@@ -85,6 +91,15 @@ function liveReservedFromAccount(account: any, nowMs: number): number {
   return total;
 }
 
+/** How a merge-set drops a nested key; omitting it would preserve the stale entry. */
+function deleteField(): any {
+  const fieldValue: any = (admin as any)?.firestore?.FieldValue;
+  if (fieldValue && typeof fieldValue.delete === "function") return fieldValue.delete();
+  // Shims without FieldValue cannot express a field delete; fall back to the
+  // sentinel-shaped value so a test double can recognise it.
+  return { __fieldDelete: true };
+}
+
 function isLiveReservation(reservation: CoinReservation, nowMs: number): boolean {
   if (reservation.status !== "reserved") return false;
   const expires = Number(reservation.expiresAtMs);
@@ -113,8 +128,7 @@ export async function availableCoinBalance(
   return Math.max(0, balance - reserved);
 }
 
-async function reservedCoinTotal(customerId: string, nowMs: number): Promise<number> {
-  try {
+async function reservedCoinTotal(customerId: string, nowMs: number): Promise<number> {  try {
     const snap = await db
       .collection(COIN_RESERVATIONS)
       .where("customerId", "==", customerId)
@@ -284,15 +298,11 @@ export async function releaseReservedCoins(params: {
     const account = accountRef(reservation.customerId);
     const accountSnap = await tx.get(account as any);
     const accountData = accountSnap.exists ? accountSnap.data() : {};
-    const entries: Record<string, any> =
-      accountData?.reservations &&
-      typeof accountData.reservations === "object" &&
-      !Array.isArray(accountData.reservations)
-        ? { ...accountData.reservations }
-        : {};
-    // Removing the entry is what actually returns the availability.
-    delete entries[coinReservationId(razorpayOrderId)];
-
+    // Removing the entry is what actually returns the availability. A plain
+    // `delete` on a copied object then a MERGE write does NOT remove the key:
+    // Firestore merges nested maps, so the omitted key survives and the coins
+    // stay reserved forever. `FieldValue.delete()` is the only way a merge-set
+    // can drop a nested field.
     tx.set(
       ref as any,
       {
@@ -304,9 +314,15 @@ export async function releaseReservedCoins(params: {
     );
     tx.set(
       account as any,
-      { customerId: reservation.customerId, reservations: entries },
+      {
+        customerId: reservation.customerId,
+        reservations: {
+          [coinReservationId(razorpayOrderId)]: deleteField(),
+        },
+      },
       { merge: true }
     );
+    void accountData;
     return { released: true, coins: reservation.coins };
   });
 }
@@ -336,24 +352,22 @@ export function consumeReservedCoinsInTx(
 }
 
 /**
- * Drops a consumed reservation from the customer's aggregate. Caller supplies
- * the account snapshot it already read so this stays inside one transaction.
+ * Drops a consumed reservation from the customer's aggregate inside the
+ * caller's transaction. A merge-set cannot delete a nested key by omission
+ * (Firestore merges maps), so the field is removed with `deleteField()`.
  */
 export function releaseAccountEntryInTx(
   tx: any,
-  reservation: CoinReservation,
-  accountData: any
+  reservation: CoinReservation
 ): void {
-  const entries: Record<string, any> =
-    accountData?.reservations &&
-    typeof accountData.reservations === "object" &&
-    !Array.isArray(accountData.reservations)
-      ? { ...accountData.reservations }
-      : {};
-  delete entries[coinReservationId(reservation.razorpayOrderId)];
   tx.set(
     accountRef(reservation.customerId) as any,
-    { customerId: reservation.customerId, reservations: entries },
+    {
+      customerId: reservation.customerId,
+      reservations: {
+        [coinReservationId(reservation.razorpayOrderId)]: deleteField(),
+      },
+    },
     { merge: true }
   );
 }

@@ -1,15 +1,17 @@
 /**
- * P1-H lifetime contract (one place, so the two clocks can never drift).
+ * Grill-Coins lifetime contract (one place, so two clocks can never drift).
  *
- * A Razorpay order stays payable for its whole TTL. Grill-Coins are RESERVED
- * while that order is payable, so the reservation must live *at least* as long
- * as the intent it funds. The old 40-minute reservation against a 24-hour
- * intent let the funding expire while the discount stayed payable: the customer
- * re-used those coins elsewhere, then paid the old discounted intent and
- * verification only logged the missing debit and fulfilled anyway.
+ * Redemption is DISABLED for launch (D31-D33 / OPEN-EARN-1): the customer app
+ * pins `loyaltyPointsToRedeem` to 0 and checkout refuses a non-zero request with
+ * `COIN_REDEMPTION_DISABLED`. No intent therefore carries a coin discount, so no
+ * reservation is created and there is no funding window to align.
  *
- * The reservation now outlives the intent by an hour of slack: there is no
- * moment at which a payable intent has no live coin funding behind it.
+ * The numbers below are retained because the reservation module is also retained
+ * (deliberately unreachable, see `coinReservations.ts`) for a future, explicitly
+ * enabled launch. If that launch happens, the invariant holds: a payable intent
+ * must never outlive the coin funding behind it, so a reservation lives at least
+ * as long as the intent it funds — the old 40-minute reservation against a
+ * 24-hour intent let funding expire while the discount stayed payable.
  */
 
 /** How long a server-written payment intent stays reusable/payable. */
@@ -22,17 +24,20 @@ export const COIN_RESERVATION_SLACK_MS = 60 * 60 * 1000;
 export const COIN_RESERVATION_TTL_MS = PAYMENT_INTENT_TTL_MS + COIN_RESERVATION_SLACK_MS;
 
 /**
- * The app's real Grill-Coins value: 1 coin = ₹1 of discount (pricing engine
- * caps the redemption at 20% of the food subtotal). Reserve/debit math always
- * goes through this, so a future revaluation changes both sides together.
+ * The app's real Grill-Coins value: 1 coin = ₹1 of discount (the pricing engine
+ * caps a redemption at 20% of the food subtotal). Every future reserve/debit
+ * calculation must go through this, never the pre-capping request count.
  */
 export const GRILL_COIN_VALUE_RUPEES = 1;
 
 /**
- * Coins backing a rupee discount. The pricing engine reports `loyaltyDiscount`
- * in rupees, which IS the authority for how many coins a capture may take —
- * never the pre-pricing request count (a request for 100 coins against a
- * ₹100 cart is capped to ₹20 of discount, so exactly 20 coins may be debited).
+ * Coins backing a rupee discount. `pricing.loyaltyDiscount` is the authority for
+ * how many coins a capture may take (ask 100 on a ₹100 cart and the engine caps
+ * the discount at ₹20, so exactly 20 coins — not 100 — may be debited).
+ *
+ * Uncalled today: redemption is refused before pricing can apply a discount.
+ * Kept beside the value constant so re-enabling cannot reintroduce the
+ * request-count bug.
  */
 export function coinsForDiscountRupees(discountRupees: number): number {
   const rupees = Number(discountRupees);

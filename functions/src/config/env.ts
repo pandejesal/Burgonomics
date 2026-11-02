@@ -41,6 +41,17 @@ export const config = {
     region:
       process.env.FUNCTION_REGION || process.env.FIREBASE_REGION || "asia-south1",
   },
+  /**
+   * Grill-Coins redemption is a NON-LAUNCH feature (D31-D33 / OPEN-EARN-1): the
+   * customer app pins `loyaltyPointsToRedeem` to 0 and shows no balance. The
+   * server therefore refuses any redemption with a typed 409 rather than
+   * maintaining a live reservation/debit path nobody can legitimately reach.
+   * Opt-in only with the exact string "true"; anything else — including an unset
+   * or misspelled value — keeps redemption DISABLED (fail closed).
+   */
+  loyalty: {
+    redemptionEnabled: process.env.GRILL_COINS_REDEMPTION_ENABLED === "true",
+  },
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID || "",
     keySecret: process.env.RAZORPAY_KEY_SECRET || "",

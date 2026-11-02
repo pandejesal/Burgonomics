@@ -31,6 +31,18 @@ const { mockDb, docs, writeLog, control, snapshots } = vi.hoisted(() => {
     afterGatewayLookup: null as null | ((orderId: string) => void | Promise<void>),
     failIntentWrite: null as null | "throw" | "swallow-before-write",
     failProductRead: false,
+    /**
+     * Simulates a read that fails AFTER a successful write (an isolated read
+     * fault). Persistence must then be treated as unproven, never as "gone".
+     */
+    failReadBackOnce: false,
+    /** Number of product/intent reads left before the injected read fault. */
+    failReadBackAfter: 0,
+    /** Fails EVERY intent read after the first successful one. */
+    failAllIntentReadsAfterFirst: false,
+    intentReadCount: 0,
+    /** Runs when the availability gate reads a product (a real interleave point). */
+    onProductRead: null as null | (() => void | Promise<void>),
   };
 
   const versionOf = (p: string) => docs.get(p)?.version ?? -1;
@@ -97,11 +109,36 @@ const { mockDb, docs, writeLog, control, snapshots } = vi.hoisted(() => {
     return {
       id,
       path,
-      get: async () => ({
-        exists: dataOf(path) !== undefined,
-        data: () => (dataOf(path) === undefined ? undefined : JSON.parse(JSON.stringify(dataOf(path)))),
-        ref: docRef(col, id),
-      }),
+      get: async () => {
+        // Only a read that WOULD see a stored intent is failed — i.e. the
+        // post-write read-back, not the up-front idempotency lookup.
+        if (col === "payment_intents") {
+          control.intentReadCount += 1;
+          // The up-front idempotency lookup is read #1. Every read after it
+          // (the write's read-back and the reconcile read) fails, which is the
+          // ambiguity under test: the binding cannot be proved either way.
+          if (control.failAllIntentReadsAfterFirst && control.intentReadCount > 1) {
+            throw new Error("firestore read unavailable");
+          }
+        }
+        if (col === "payment_intents" && docs.has(path)) {
+          if (control.failReadBackOnce) {
+            control.failReadBackOnce = false;
+            throw new Error("firestore read unavailable");
+          }
+          if (control.failReadBackAfter > 0) {
+            control.failReadBackAfter -= 1;
+            if (control.failReadBackAfter === 0) {
+              throw new Error("firestore read unavailable");
+            }
+          }
+        }
+        return {
+          exists: dataOf(path) !== undefined,
+          data: () => (dataOf(path) === undefined ? undefined : JSON.parse(JSON.stringify(dataOf(path)))),
+          ref: docRef(col, id),
+        };
+      },
       set: async (data: any, opts?: any) => {
         if (col === "payment_intents" && control.failIntentWrite === "throw") {
           throw new Error("firestore write unavailable");
@@ -134,6 +171,17 @@ const { mockDb, docs, writeLog, control, snapshots } = vi.hoisted(() => {
     if (col === "products" && control.failProductRead) {
       ref.get = async () => {
         throw new Error("catalogue read outage");
+      };
+    }
+    if (col === "products") {
+      const inner = ref.get;
+      ref.get = async () => {
+        if (control.onProductRead) {
+          const hook = control.onProductRead;
+          control.onProductRead = null;
+          await hook();
+        }
+        return inner();
       };
     }
     delete ref.create;
@@ -513,7 +561,7 @@ describe("ITEM 1 — intent reuse re-checks availability without re-pricing", ()
 // order, and ambiguous persistence must be reconciled.
 // ---------------------------------------------------------------------------
 describe("ITEM 2 — a payable gateway order is never exposed without its intent", () => {
-  it("intent write throws: checkout fails closed, the mint is reconciled, coins are not stuck", async () => {
+  it("intent write throws: checkout fails closed, the mint is reconciled, no coin state exists", async () => {
     control.seed("customers/cust_ms", { id: "cust_ms", loyaltyPoints: 100 });
     seedOrder("ord_f2");
 
@@ -524,7 +572,6 @@ describe("ITEM 2 — a payable gateway order is never exposed without its intent
       branchId: BRANCH,
       orderType: "takeaway",
       customerId: "cust_ms",
-      loyaltyPointsToRedeem: 20,
       idempotencyKey: "chk_f2",
     } as any).then(
       (r) => ({ unexpectedSuccess: r }),
@@ -541,8 +588,9 @@ describe("ITEM 2 — a payable gateway order is never exposed without its intent
       reason: "intent_store_failed",
       status: "needs_review",
     });
-    // The coin reservation was released (not locked forever).
-    expect(docs.get("coin_reservations/coinres_order_mint_1")?.data?.status).toBe("released");
+    // Redemption is withdrawn, so no reservation can exist — and none is stuck.
+    expect([...docs.keys()].filter((k) => k.startsWith("coin_reservations/"))).toEqual([]);
+    expect(docOf("customers/cust_ms").loyaltyPoints).toBe(100);
   });
 
   it("a SILENT no-op persistence (ambiguous answer) also fails closed", async () => {
@@ -842,111 +890,92 @@ describe("ITEM 5 — a webhook-only capture of an 86'd cart is refunded, never c
   });
 });
 
-// ---------------------------------------------------------------------------
-// ITEM 6 — reserve and debit exactly the EFFECTIVE discount, in coins.
-// ---------------------------------------------------------------------------
-describe("ITEM 6 — reservation stores and capture debits the effective discount only", () => {
-  it("balance 100, ₹100 food, request 100 coins -> ₹20 discount and exactly 20 coins reserved/debited", async () => {
+// ===========================================================================
+// DECISION — redemption is refused server-side (D31-D33). The coin path is out
+// of the payment lane entirely, which retires the reservation findings.
+// ===========================================================================
+describe("DECISION — a non-zero redemption is refused before any payable order", () => {
+  it("typed 409 COIN_REDEMPTION_DISABLED, no mint, no intent, no reservation, no discount", async () => {
     control.seed("customers/cust_ms", { id: "cust_ms", loyaltyPoints: 100 });
-    seedOrder("ord_coins");
+    seedOrder("ord_dec");
 
-    const created: any = await (async () => {
-      const res: any = await createPaymentOrder({
-        orderId: "ord_coins",
-        items: ITEMS as any,
-        branchId: BRANCH,
-        orderType: "takeaway",
-        customerId: "cust_ms",
-        loyaltyPointsToRedeem: 100,
-        idempotencyKey: "chk_coins",
-      } as any);
-      return res;
-    })();
-
-    expect(created.pricing.loyaltyDiscount).toBe(20);
-    expect(created.amountPaise).toBe(8000);
-
-    // The RESERVATION is the effective discount (20 coin = ₹20), not the ask.
-    expect(docs.get("coin_reservations/coinres_chk_intentplaceholder")).toBeUndefined();
-    const reservationPath = [...docs.keys()].find(
-      (k) => k.startsWith("coin_reservations/") && docs.get(k)?.data?.status === "reserved"
+    const err: any = await createPaymentOrder({
+      orderId: "ord_dec",
+      items: ITEMS as any,
+      branchId: BRANCH,
+      orderType: "takeaway",
+      customerId: "cust_ms",
+      loyaltyPointsToRedeem: 20,
+      idempotencyKey: "chk_dec",
+    } as any).then(
+      (r) => ({ unexpectedSuccess: r }),
+      (e) => e
     );
-    expect(reservationPath).toBeTruthy();
-    expect(docs.get(reservationPath!)!.data.coins).toBe(20);
 
-    // Availability: 100 - 20 reserved = 80 usable.
-    expect(
-      docs.get("coin_reservation_accounts/cust_ms")?.data?.reservations[
-        reservationPath!.split("/")[1]
-      ].coins
-    ).toBe(20);
+    expect(err.unexpectedSuccess).toBeUndefined();
+    expect(err.statusCode).toBe(409);
+    expect(err.code).toBe("COIN_REDEMPTION_DISABLED");
+    expect(control.mintCounter).toBe(0);
+    expect([...docs.keys()].filter((k) => k.startsWith("payment_intents/"))).toEqual([]);
+    expect([...docs.keys()].filter((k) => k.startsWith("coin_reservations/"))).toEqual([]);
+    expect([...docs.keys()].filter((k) => k.startsWith("coin_reservation_accounts/"))).toEqual([]);
+    expect(orderOf("ord_dec").pricing).toBeUndefined();
+    expect(docOf("customers/cust_ms").loyaltyPoints).toBe(100);
+  });
 
-    // Capture through verify: exactly 20 coins leave the balance.
-    seedIntent("intent_coins", {
-      razorpayOrderId: created.razorpayOrderId,
-      orderId: "ord_coins",
-      amountPaise: 8000,
-      pricing: { grandTotal: 80, loyaltyDiscount: 20, split: { branchTransferPaise: 8000 } },
-    });
-    // The minted intent must be the one verify reads.
-    control.seed(
-      "payment_intents/chk_coins",
-      (() => {
-        const existing = docs.get("payment_intents/chk_coins")?.data as any;
-        const intent = docs.get("payment_intents/intent_coins")!.data as any;
-        return { ...existing, ...intent };
-      })()
-    );
-    __setPaymentsFetchForTests(async () => ({
-      id: "pay_coins",
-      order_id: created.razorpayOrderId,
-      amount: 8000,
-      currency: "INR",
-      status: "captured",
-      notes: { orderId: "ord_coins" },
-    }));
+  it("the launch value (0) still prices, mints and reuses normally", async () => {
+    control.seed("customers/cust_ms", { id: "cust_ms", loyaltyPoints: 100 });
+    seedOrder("ord_dec_ok");
+    const first: any = await createPaymentOrder({
+      orderId: "ord_dec_ok",
+      items: ITEMS as any,
+      branchId: BRANCH,
+      orderType: "takeaway",
+      customerId: "cust_ms",
+      loyaltyPointsToRedeem: 0,
+      idempotencyKey: "chk_dec_ok",
+    } as any);
+    expect(first.pricing.loyaltyDiscount).toBe(0);
+    expect([...docs.keys()].filter((k) => k.startsWith("coin_reservations/"))).toEqual([]);
 
-    const res: any = await verifyPayment(
-      {
-        orderId: "ord_coins",
-        razorpayOrderId: created.razorpayOrderId,
-        razorpayPaymentId: "pay_coins",
-        razorpaySignature: signVerify(created.razorpayOrderId, "pay_coins"),
-      },
-      { uid: "cust_ms" }
-    );
-    expect(res.ok).toBe(true);
-    expect(docs.get("customers/cust_ms")!.data.loyaltyPoints).toBe(80);
-    expect(
-      docs.get(`coin_transactions/coin_redemption_${created.razorpayOrderId}`)!.data.delta
-    ).toBe(-20);
+    const retry: any = await createPaymentOrder({
+      orderId: "ord_dec_ok",
+      items: ITEMS as any,
+      branchId: BRANCH,
+      orderType: "takeaway",
+      customerId: "cust_ms",
+      idempotencyKey: "chk_dec_ok",
+    } as any);
+    expect(retry.reused).toBe(true);
+    expect(retry.razorpayOrderId).toBe(first.razorpayOrderId);
   });
 });
 
-// ---------------------------------------------------------------------------
-// ITEM 7 — a payable intent never outlives its coin funding: on capture
-// without funding the coins are RE-ACQUIRED, or the capture is compensated.
-// ---------------------------------------------------------------------------
-describe("ITEM 7 — funding released mid-payment is re-acquired, or the capture is refunded", () => {
-  const seedDiscounted = (orderId: string, gatewayOrderId: string, paymentId: string) => {
-    control.seed("customers/cust_ms", { id: "cust_ms", loyaltyPoints: 100 });
+// ===========================================================================
+// ITEM 1 — the capture gate is a LOCK. A racing sibling must not confirm while
+// the owner is deciding, and a dead owner must not wedge it.
+// ===========================================================================
+describe("ITEM 1 — a pending fulfilment decision blocks confirmation, with lease takeover", () => {
+  const seedGateOrder = (
+    orderId: string,
+    gatewayOrderId: string,
+    paymentId: string,
+    gate?: any
+  ) => {
     seedOrder(orderId, {
-      pricing: { grandTotal: 80, split: { branchTransferPaise: 8000 } },
+      pricing: { grandTotal: 100, split: { branchTransferPaise: 10000 } },
     });
-    control.seed(`payment_intents/intent_${orderId}`, {
+    seedIntent(`intent_${orderId}`, {
       razorpayOrderId: gatewayOrderId,
       orderId,
-      amountPaise: 8000,
-      branchId: BRANCH,
-      customerId: "cust_ms",
-      pricing: { grandTotal: 80, loyaltyDiscount: 20, split: { branchTransferPaise: 8000 } },
-      createdAtMs: Date.now(),
-      expiresAtMs: Date.now() + 60_000,
+      amountPaise: 10000,
+      pricing: { grandTotal: 100, loyaltyDiscount: 0, split: { branchTransferPaise: 10000 } },
     });
+    if (gate) control.seed(`orders/${orderId}`, { captureFulfillment: gate }, true);
     __setPaymentsFetchForTests(async () => ({
       id: paymentId,
       order_id: gatewayOrderId,
-      amount: 8000,
+      amount: 10000,
       currency: "INR",
       status: "captured",
       notes: { orderId },
@@ -965,146 +994,442 @@ describe("ITEM 7 — funding released mid-payment is re-acquired, or the capture
       { uid: "cust_ms" }
     );
 
-  it("coins were handed back while paying; the customer still holds them -> RE-ACQUIRED and debited, order fulfilled", async () => {
-    const seed = seedDiscounted("ord_reacq", "rzp_reacq", "pay_reacq");
-    // Released reservation (expired/cancelled attempt) — the funding is gone
-    // from the reservation but the balance is intact.
-    control.seed("coin_reservations/coinres_rzp_reacq", {
-      customerId: "cust_ms",
-      coins: 20,
-      orderId: "ord_reacq",
-      razorpayOrderId: "rzp_reacq",
-      status: "released",
-      reservedAtMs: Date.now() - 60 * 60_000,
-      expiresAtMs: Date.now() - 30 * 60_000,
-      releasedAtMs: Date.now() - 30 * 60_000,
+  it("interleaved: verify owns a LIVE decision, the webhook arrives -> NOT confirmed, retryable non-2xx", async () => {
+    const s = seedGateOrder("ord_lock", "rzp_lock", "pay_lock", {
+      state: "checking",
+      paymentId: "pay_lock",
+      atMs: Date.now() - 5_000,
     });
 
-    const res: any = await verify(seed);
-    expect(res.ok).toBe(true);
-    expect(orderOf("ord_reacq").paymentStatus).toBe("completed");
+    const payload = capturedPayload(s.orderId, s.gatewayOrderId, s.paymentId, 10000);
+    const call = mockReqRes(payload, signWebhook(JSON.stringify(payload)));
+    await handleRazorpayWebhook(call.req, call.res);
+
+    expect(call.out().statusCode).toBe(503);
+    const order = orderOf(s.orderId);
+    expect(order.paymentStatus).not.toBe("completed");
+    expect(order.petpoojaOrderId).toBeUndefined();
     expect(anyRefundPost()).toBe(0);
-    // The customer paid the discount in coins after all.
-    expect(docs.get("customers/cust_ms")!.data.loyaltyPoints).toBe(80);
-    expect(docs.get("coin_transactions/coin_redemption_rzp_reacq")!.data.delta).toBe(-20);
+    // The delivery claim is released so Razorpay's redelivery is processed.
+    expect(docOf("payment_audits/aud_evt_pay_lock")).toBeUndefined();
   });
 
-  it("coins were spent elsewhere; the funding cannot be re-acquired -> capture COMPENSATED, never fulfilled", async () => {
-    const seed = seedDiscounted("ord_unfunded", "rzp_unfunded", "pay_unfunded");
-    control.seed("customers/cust_ms", { id: "cust_ms", loyaltyPoints: 0 });
-    control.seed("coin_reservations/coinres_rzp_unfunded", {
-      customerId: "cust_ms",
-      coins: 20,
-      orderId: "ord_unfunded",
-      razorpayOrderId: "rzp_unfunded",
-      status: "released",
-      reservedAtMs: Date.now() - 60 * 60_000,
-      expiresAtMs: Date.now() - 30 * 60_000,
-      releasedAtMs: Date.now() - 30 * 60_000,
+  it("the same lock refuses the VERIFY channel too (202, not a confirmation)", async () => {
+    const s = seedGateOrder("ord_lock_v", "rzp_lock_v", "pay_lock_v", {
+      state: "checking",
+      paymentId: "pay_lock_v",
+      atMs: Date.now() - 5_000,
     });
 
-    const err: any = await verify(seed).then(
+    const err: any = await verify(s).then(
       (r) => ({ unexpectedSuccess: r }),
       (e) => e
     );
-    expect(err.code).toBe("ORDER_ITEM_UNAVAILABLE_REFUNDED");
-    expect(anyRefundPost()).toBe(1);
-    expect(orderOf("ord_unfunded").paymentStatus).not.toBe("completed");
-    // Nothing was taken from a zero balance.
-    expect(docs.get("customers/cust_ms")!.data.loyaltyPoints).toBe(0);
+    expect(err.unexpectedSuccess).toBeUndefined();
+    expect(err.statusCode).toBe(202);
+    expect(err.code).toBe("CAPTURE_FULFILLMENT_PENDING");
+    expect(orderOf(s.orderId).paymentStatus).not.toBe("completed");
+    expect(orderOf(s.orderId).petpoojaOrderId).toBeUndefined();
+    expect(anyRefundPost()).toBe(0);
   });
 
-  it("the reservation lifetime outlives the intent lifetime (no payable order without funding)", async () => {
-    const { COIN_RESERVATION_TTL_MS, PAYMENT_INTENT_TTL_MS } = await import(
-      "../src/modules/payments/lifetimes"
-    );
-    expect(COIN_RESERVATION_TTL_MS).toBeGreaterThan(PAYMENT_INTENT_TTL_MS);
-    // And the live constant the reservation writer uses is that same value.
-    const { COIN_RESERVATION_TTL_MS: live } = await import(
-      "../src/modules/payments/coinReservations"
-    );
-    expect(live).toBe(COIN_RESERVATION_TTL_MS);
+  it("a CRASHED owner (stale lease) is taken over: the capture still completes", async () => {
+    const s = seedGateOrder("ord_stale", "rzp_stale", "pay_stale", {
+      state: "checking",
+      paymentId: "pay_stale",
+      atMs: Date.now() - 60 * 60_000,
+    });
+
+    const res: any = await verify(s);
+    expect(res.ok).toBe(true);
+    expect(orderOf(s.orderId).paymentStatus).toBe("completed");
+    expect(orderOf(s.orderId).captureFulfillment).toMatchObject({
+      state: "fulfillable",
+      paymentId: "pay_stale",
+    });
+  });
+
+  it("interleaved: the owner decided to REFUND, then the sibling webhook arrives -> never confirmed, never rung", async () => {
+    const s = seedGateOrder("ord_lock_ref", "rzp_lock_ref", "pay_lock_ref", {
+      state: "refunded",
+      paymentId: "pay_lock_ref",
+      atMs: Date.now() - 1_000,
+    });
+
+    const payload = capturedPayload(s.orderId, s.gatewayOrderId, s.paymentId, 10000);
+    const call = mockReqRes(payload, signWebhook(JSON.stringify(payload)));
+    await handleRazorpayWebhook(call.req, call.res);
+
+    expect(call.out().statusCode).toBe(200);
+    expect(orderOf(s.orderId).paymentStatus).not.toBe("completed");
+    expect(orderOf(s.orderId).petpoojaOrderId).toBeUndefined();
+    // No second refund for an already-compensated capture.
+    expect(anyRefundPost()).toBe(0);
+  });
+
+  it("a refund_failed state refuses confirmation AND asks the provider to retry", async () => {
+    const s = seedGateOrder("ord_lock_rf", "rzp_lock_rf", "pay_lock_rf", {
+      state: "refund_failed",
+      paymentId: "pay_lock_rf",
+      atMs: Date.now() - 1_000,
+    });
+
+    const payload = capturedPayload(s.orderId, s.gatewayOrderId, s.paymentId, 10000);
+    const call = mockReqRes(payload, signWebhook(JSON.stringify(payload)));
+    await handleRazorpayWebhook(call.req, call.res);
+
+    expect(call.out().statusCode).toBe(500);
+    expect(orderOf(s.orderId).paymentStatus).not.toBe("completed");
+    expect(orderOf(s.orderId).petpoojaOrderId).toBeUndefined();
   });
 });
 
-// ---------------------------------------------------------------------------
-// ITEM 8 — coin capture runs on the WEBHOOK path.
-// ---------------------------------------------------------------------------
-describe("ITEM 8 — the webhook capture consumes the coin reservation", () => {
-  it("webhook-only capture debits exactly the funded coins and releases the hold", async () => {
-    control.seed("customers/cust_ms", { id: "cust_ms", loyaltyPoints: 100 });
-    seedOrder("ord_whcoins", {
-      pricing: { grandTotal: 80, split: { branchTransferPaise: 8000 } },
+// ===========================================================================
+// ITEM 2 — compensation outranks confirmation on BOTH channels, including a
+// later `order.paid` that would otherwise see the stamp as "paid".
+// ===========================================================================
+describe("ITEM 2 — a compensated capture can never be confirmed by a later event", () => {
+  it("interleaved: refund recorded, then order.paid arrives -> no confirmation, no KOT", async () => {
+    seedOrder("ord_comp", {
+      pricing: { grandTotal: 100, split: { branchTransferPaise: 10000 } },
     });
-    seedIntent("intent_ord_whcoins", {
-      razorpayOrderId: "rzp_whcoins",
-      orderId: "ord_whcoins",
-      amountPaise: 8000,
-      pricing: { grandTotal: 80, loyaltyDiscount: 20, split: { branchTransferPaise: 8000 } },
+    seedIntent("intent_ord_comp", {
+      razorpayOrderId: "rzp_comp",
+      orderId: "ord_comp",
+      amountPaise: 10000,
+      pricing: { grandTotal: 100, loyaltyDiscount: 0, split: { branchTransferPaise: 10000 } },
     });
-    control.seed("coin_reservations/coinres_rzp_whcoins", {
-      customerId: "cust_ms",
-      coins: 20,
-      orderId: "ord_whcoins",
-      razorpayOrderId: "rzp_whcoins",
-      status: "reserved",
-      reservedAtMs: Date.now(),
-      expiresAtMs: Date.now() + 60 * 60_000,
-    });
-    control.seed("coin_reservation_accounts/cust_ms", {
-      customerId: "cust_ms",
-      reservations: {
-        coinres_rzp_whcoins: { coins: 20, expiresAtMs: Date.now() + 60 * 60_000 },
+    control.seed(
+      "orders/ord_comp",
+      {
+        captureFulfillment: { state: "refunded", paymentId: "pay_comp", atMs: Date.now() - 1_000 },
+        unfulfillableCapture: {
+          reason: "item_unavailable",
+          razorpayPaymentId: "pay_comp",
+          detectedAt: Date.now() - 1_000,
+        },
+        payment: { status: "completed", razorpayPaymentId: "pay_comp", capturedAmountPaise: 10000 },
+        "payment.status": "completed",
+        "payment.razorpayPaymentId": "pay_comp",
+        refundStatus: "refunded",
+        refundedTotalPaise: 10000,
       },
-    });
+      true
+    );
 
-    const payload = capturedPayload("ord_whcoins", "rzp_whcoins", "pay_whcoins", 8000);
+    const payload = {
+      id: "evt_order_paid_comp",
+      event: "order.paid",
+      created_at: Math.floor(Date.now() / 1000),
+      payload: {
+        order: {
+          entity: {
+            id: "rzp_comp",
+            amount: 10000,
+            currency: "INR",
+            notes: { orderId: "ord_comp", branchId: BRANCH },
+            payments: [{ id: "pay_comp" }],
+          },
+        },
+      },
+    };
     const call = mockReqRes(payload, signWebhook(JSON.stringify(payload)));
     await handleRazorpayWebhook(call.req, call.res);
 
     expect(call.out().statusCode).toBe(200);
-    expect(orderOf("ord_whcoins").paymentStatus).toBe("completed");
-    expect(docs.get("customers/cust_ms")!.data.loyaltyPoints).toBe(80);
-    expect(docs.get("coin_transactions/coin_redemption_rzp_whcoins")!.data.delta).toBe(-20);
-    // The hold is gone: nothing is locked forever.
-    expect(docs.get("coin_reservations/coinres_rzp_whcoins")!.data.status).toBe("consumed");
-    expect(
-      docs.get("coin_reservation_accounts/cust_ms")!.data.reservations?.coinres_rzp_whcoins
-    ).toBeUndefined();
+    const order = orderOf("ord_comp");
+    expect(order.status).toMatchObject({ code: "PLACED" });
+    expect(order.petpoojaOrderId).toBeUndefined();
+    expect(order.deliveryOtpHash).toBeUndefined();
+    expect(docOf("unmatched_payments/ump_evt_order_paid_comp")).toMatchObject({
+      reason: "suppressed_capture_gate",
+    });
   });
 
-  it("webhook capture whose discount funding is gone is parked, not confirmed", async () => {
-    control.seed("customers/cust_ms", { id: "cust_ms", loyaltyPoints: 0 });
-    seedOrder("ord_whunfunded", {
-      pricing: { grandTotal: 80, split: { branchTransferPaise: 8000 } },
+  it("the verify channel also refuses to confirm a compensated capture", async () => {
+    seedOrder("ord_comp_v", {
+      pricing: { grandTotal: 100, split: { branchTransferPaise: 10000 } },
     });
-    seedIntent("intent_ord_whunfunded", {
-      razorpayOrderId: "rzp_whunfunded",
-      orderId: "ord_whunfunded",
-      amountPaise: 8000,
-      pricing: { grandTotal: 80, loyaltyDiscount: 20, split: { branchTransferPaise: 8000 } },
+    seedIntent("intent_ord_comp_v", {
+      razorpayOrderId: "rzp_comp_v",
+      orderId: "ord_comp_v",
+      amountPaise: 10000,
+      pricing: { grandTotal: 100, loyaltyDiscount: 0, split: { branchTransferPaise: 10000 } },
     });
-    control.seed("coin_reservations/coinres_rzp_whunfunded", {
-      customerId: "cust_ms",
-      coins: 20,
-      orderId: "ord_whunfunded",
-      razorpayOrderId: "rzp_whunfunded",
-      status: "released",
-      reservedAtMs: Date.now() - 60 * 60_000,
-      expiresAtMs: Date.now() - 30 * 60_000,
-    });
+    control.seed(
+      "orders/ord_comp_v",
+      {
+        captureFulfillment: { state: "refunded", paymentId: "pay_comp_v", atMs: Date.now() - 1_000 },
+        refundStatus: "refunded",
+        refundedTotalPaise: 10000,
+      },
+      true
+    );
+    __setPaymentsFetchForTests(async () => ({
+      id: "pay_comp_v",
+      order_id: "rzp_comp_v",
+      amount: 10000,
+      currency: "INR",
+      status: "captured",
+      notes: { orderId: "ord_comp_v" },
+    }));
 
-    const payload = capturedPayload("ord_whunfunded", "rzp_whunfunded", "pay_whunfunded", 8000);
+    const err: any = await verifyPayment(
+      {
+        orderId: "ord_comp_v",
+        razorpayOrderId: "rzp_comp_v",
+        razorpayPaymentId: "pay_comp_v",
+        razorpaySignature: signVerify("rzp_comp_v", "pay_comp_v"),
+      },
+      { uid: "cust_ms" }
+    ).then(
+      (r) => ({ unexpectedSuccess: r }),
+      (e) => e
+    );
+
+    expect(err.unexpectedSuccess).toBeUndefined();
+    expect(err.code).toBe("ORDER_ITEM_UNAVAILABLE_REFUNDED");
+    expect(orderOf("ord_comp_v").paymentStatus).not.toBe("completed");
+    expect(anyRefundPost()).toBe(0);
+  });
+});
+
+// ===========================================================================
+// ITEM 3 — the expiry refund decision must use the TRANSACTION-fresh snapshot,
+// and the verification marker must be written by the capture channels and read
+// by the expiry job.
+// ===========================================================================
+describe("ITEM 3 — the expiry race uses fresh data and the live verification marker", () => {
+  it("interleaved: capture read PLACED, sweep cancels, confirmation suppressed -> the capture is still refunded", async () => {
+    seedOrder("ord_race", {
+      pricing: { grandTotal: 100 },
+      createdAt: new Date(Date.now() - 35 * 60_000).toISOString(),
+      placedAt: new Date(Date.now() - 35 * 60_000).toISOString(),
+    });
+    seedIntent("intent_ord_race", {
+      razorpayOrderId: "rzp_race",
+      orderId: "ord_race",
+      amountPaise: 10000,
+      expiresAtMs: Date.now() + 60_000,
+      createdAtMs: Date.now() - 35 * 60_000,
+    });
+    control.gatewayPayments["rzp_race"] = { items: [] };
+
+    // The capture has ALREADY read the order as PLACED (its gate decision is
+    // in flight, reading the catalogue). The sweep now cancels it — the exact
+    // stale-read window. The confirmation transaction must see the fresh
+    // cancellation and refund the capture instead of acking with neither.
+    control.onProductRead = async () => {
+      const stats = await expireAbandonedUnpaidOrders();
+      expect(stats.cancelled).toBe(1);
+    };
+
+    const payload = capturedPayload("ord_race", "rzp_race", "pay_race", 10000);
     const call = mockReqRes(payload, signWebhook(JSON.stringify(payload)));
     await handleRazorpayWebhook(call.req, call.res);
-
     expect(call.out().statusCode).toBe(200);
-    expect(orderOf("ord_whunfunded").paymentStatus).not.toBe("completed");
-    expect(orderOf("ord_whunfunded").petpoojaOrderId).toBeUndefined();
-    expect(docOf("unmatched_payments/ump_evt_pay_whunfunded")).toMatchObject({
-      reason: "capture_unfunded_discount",
+
+    // The capture landed on the cancelled order: refunded, never confirmed.
+    expect(anyRefundPost()).toBe(1);
+    expect(control.refundPosts[0].paymentId).toBe("pay_race");
+    const order = orderOf("ord_race");
+    expect(order.status).toMatchObject({ code: "CANCELLED" });
+    expect(order.petpoojaOrderId).toBeUndefined();
+  });
+
+  it("the verify channel WRITES the marker the expiry job READS (interleaved)", async () => {
+    seedOrder("ord_marker", {
+      pricing: { grandTotal: 100 },
+      createdAt: new Date(Date.now() - 35 * 60_000).toISOString(),
+      placedAt: new Date(Date.now() - 35 * 60_000).toISOString(),
+    });
+    seedIntent("intent_ord_marker", {
+      razorpayOrderId: "rzp_marker",
+      orderId: "ord_marker",
+      amountPaise: 10000,
+      expiresAtMs: Date.now() + 60_000,
+      createdAtMs: Date.now() - 35 * 60_000,
+    });
+    control.gatewayPayments["rzp_marker"] = { items: [] };
+
+    control.afterGatewayLookup = async (orderId: string) => {
+      if (orderId !== "ord_marker") return;
+      // A capture is IN FLIGHT here. The verify channel's own writer is
+      // exercised below; this marker is the state it leaves while running.
+      control.seed(
+        "orders/ord_marker",
+        {
+          paymentAttempt: {
+            status: "verifying",
+            startedAt: Date.now(),
+            razorpayOrderId: "rzp_marker",
+            razorpayPaymentId: "pay_marker",
+          },
+        },
+        true
+      );
+    };
+
+    const stats = await expireAbandonedUnpaidOrders();
+    expect(stats.cancelled).toBe(0);
+    expect(orderOf("ord_marker").status).toMatchObject({ code: "PLACED" });
+    expect(orderOf("ord_marker").cancellationReason).toBeUndefined();
+  });
+
+  it("the verify channel itself writes the marker (production caller), and clears it on refusal", async () => {
+    seedOrder("ord_marker_write", {
+      pricing: { grandTotal: 100, split: { branchTransferPaise: 10000 } },
+    });
+    seedIntent("intent_ord_marker_write", {
+      razorpayOrderId: "rzp_marker_write",
+      orderId: "ord_marker_write",
+      amountPaise: 10000,
+      pricing: { grandTotal: 100, loyaltyDiscount: 0, split: { branchTransferPaise: 10000 } },
+    });
+    __setPaymentsFetchForTests(async () => {
+      throw new Error("payment status unavailable");
+    });
+
+    // Observe the order while verify is in flight (the fetch seam runs after
+    // the marker write), then let verify fail closed.
+    let seenDuringVerify: any = null;
+    const { __setPaymentsFetchForTests: setFetch } = await import(
+      "../src/modules/payments/razorpay.service"
+    );
+    setFetch(async () => {
+      seenDuringVerify = orderOf("ord_marker_write")?.paymentAttempt ?? null;
+      throw new Error("payment status unavailable");
+    });
+
+    await verifyPayment(
+      {
+        orderId: "ord_marker_write",
+        razorpayOrderId: "rzp_marker_write",
+        razorpayPaymentId: "pay_marker_write",
+        razorpaySignature: signVerify("rzp_marker_write", "pay_marker_write"),
+      },
+      { uid: "cust_ms" }
+    ).catch(() => undefined);
+
+    expect(seenDuringVerify).toMatchObject({
+      status: "verifying",
+      razorpayPaymentId: "pay_marker_write",
+    });
+    // The refusal happened before the releaser: the marker ages out by TTL.
+    expect(orderOf("ord_marker_write").paymentStatus).not.toBe("completed");
+  });
+
+  it("a stale marker (crashed attempt) does not block expiry forever", async () => {
+    seedOrder("ord_marker_stale", {
+      pricing: { grandTotal: 100 },
+      createdAt: new Date(Date.now() - 35 * 60_000).toISOString(),
+      placedAt: new Date(Date.now() - 35 * 60_000).toISOString(),
+      paymentAttempt: { status: "verifying", startedAt: Date.now() - 20 * 60_000 },
+    });
+    seedIntent("intent_ord_marker_stale", {
+      razorpayOrderId: "rzp_marker_stale",
+      orderId: "ord_marker_stale",
+      amountPaise: 10000,
+      expiresAtMs: Date.now() + 60_000,
+      createdAtMs: Date.now() - 35 * 60_000,
+    });
+    control.gatewayPayments["rzp_marker_stale"] = { items: [] };
+
+    const stats = await expireAbandonedUnpaidOrders();
+    expect(stats.cancelled).toBe(1);
+    expect(orderOf("ord_marker_stale").status).toMatchObject({ code: "CANCELLED" });
+  });
+});
+
+// ===========================================================================
+// ITEM 6 — ambiguous persistence is reconciled before anything is released.
+// ===========================================================================
+describe("ITEM 6 — an unproven persistence failure releases nothing", () => {
+  it("intent write throws and the read-back proves absence -> refuse, record, no payable order", async () => {
+    seedOrder("ord_f6a");
+    control.failIntentWrite = "throw";
+    const err: any = await createPaymentOrder({
+      orderId: "ord_f6a",
+      items: ITEMS as any,
+      branchId: BRANCH,
+      orderType: "takeaway",
+      customerId: "cust_ms",
+      idempotencyKey: "chk_f6a",
+    } as any).then(
+      (r) => ({ unexpectedSuccess: r }),
+      (e) => e
+    );
+    expect(err.unexpectedSuccess).toBeUndefined();
+    expect(err.statusCode).toBe(503);
+    expect(docs.get("payment_intents/chk_f6a")).toBeUndefined();
+    expect(docOf("payment_intent_reconciliation/order_mint_1")).toMatchObject({
+      reason: "intent_store_failed",
       status: "needs_review",
     });
-    expect(docs.get("customers/cust_ms")!.data.loyaltyPoints).toBe(0);
+  });
+
+  it("the write fails but the binding IS durable -> the intent is reused, not recorded as unbacked", async () => {
+    seedOrder("ord_f6b");
+    // The intent already exists and is live with the EXACT cart fingerprint the
+    // retry produces (e.g. an earlier attempt wrote it and this retry's write
+    // then failed). Persistence must be recognised, not discarded.
+    const { cartFingerprintForOrder } = await import(
+      "../src/modules/payments/razorpay.service"
+    );
+    const fingerprint = cartFingerprintForOrder(ITEMS as any, undefined, 0);
+    const existing = seedIntent("chk_f6b", {
+      razorpayOrderId: "order_mint_1",
+      orderId: "ord_f6b",
+      amountPaise: 10000,
+      cartFingerprint: fingerprint,
+    });
+    control.failIntentWrite = "throw";
+
+    const res: any = await createPaymentOrder({
+      orderId: "ord_f6b",
+      items: ITEMS as any,
+      branchId: BRANCH,
+      orderType: "takeaway",
+      customerId: "cust_ms",
+      idempotencyKey: "chk_f6b",
+    } as any).then(
+      (r) => ({ ok: r }),
+      (e) => ({ err: e })
+    );
+
+    // Persistence is on record: the durable intent is what the caller converges
+    // on, and nothing claims the mint was unbacked.
+    expect(docs.get("payment_intents/chk_f6b")!.data.razorpayOrderId).toBe(
+      existing.razorpayOrderId
+    );
+    expect(res.ok?.razorpayOrderId).toBe(existing.razorpayOrderId);
+    expect(docOf(`payment_intent_reconciliation/${existing.razorpayOrderId}`)).toBeUndefined();
+  });
+
+  it("an UNREADABLE read-back is recorded as persistence_unknown, never as absent", async () => {
+    seedOrder("ord_f6c");
+    control.failIntentWrite = "throw";
+    // The up-front lookup answers "absent"; every later intent read fails, so
+    // the reconcile cannot distinguish "gone" from "unreadable".
+    control.failAllIntentReadsAfterFirst = true;
+    control.intentReadCount = 0;
+
+    const err: any = await createPaymentOrder({
+      orderId: "ord_f6c",
+      items: ITEMS as any,
+      branchId: BRANCH,
+      orderType: "takeaway",
+      customerId: "cust_ms",
+      idempotencyKey: "chk_f6c",
+    } as any).then(
+      (r) => ({ unexpectedSuccess: r }),
+      (e) => e
+    );
+
+    expect(err.unexpectedSuccess).toBeUndefined();
+    expect(err.statusCode).toBe(503);
+    expect(docOf("payment_intent_reconciliation/order_mint_1")).toMatchObject({
+      status: "persistence_unknown",
+    });
   });
 });
