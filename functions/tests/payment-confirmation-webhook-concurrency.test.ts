@@ -720,6 +720,20 @@ describe("payment confirmation concurrency (webhook path)", () => {
       routeTransferStatus: "transferred",
       petpoojaOrderId: "pp_existing_kot",
     });
+    // P1-F: verification requires the durable server intent that binds the
+    // gateway order to this internal order (it is also the amount authority).
+    // This is exactly the document `createPaymentOrder` writes in production;
+    // without it the payload below is indistinguishable from the exploit's
+    // cheap-order-A/expensive-order-B swap.
+    control.seed("payment_intents/intent_order_rzp_1", {
+      razorpayOrderId: "order_rzp_1",
+      orderId: "order_race_1",
+      amountPaise: 25000,
+      branchId: "branch_surat_01",
+      customerId: "cust_race",
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    });
 
     const call = mockReqRes(capturedPayload("evt_race_x_1"));
     const [, verified]: any[] = await Promise.all([

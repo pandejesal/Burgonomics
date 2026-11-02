@@ -84,6 +84,39 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
     collection: (colName: string) => ({
       doc: (docId: string) => docRef(colName, docId),
       where: (field: string, op: string, val: any) => {
+        // `payment_intents` is a REAL collection in this flow: createPaymentOrder
+        // writes the durable intent and verifyPayment must read it back. A
+        // canned fixture here would hide the very document P1-F requires, so
+        // this one collection is queried against the store like the real SDK.
+        if (colName === "payment_intents") {
+          const filters: Array<[string, any]> = [[field, val]];
+          const realQuery: any = {
+            where: (f2: string, o2: string, v2: any) => {
+              filters.push([f2, v2]);
+              return realQuery;
+            },
+            limit: () => realQuery,
+            get: async () => {
+              const found = Object.entries(savedDocs)
+                .filter(([p]) => p.startsWith("payment_intents/"))
+                .filter(([, d]) =>
+                  filters.every(([f, v]) => {
+                    const nested = f
+                      .split(".")
+                      .reduce((o: any, k) => (o == null ? undefined : o[k]), d);
+                    return nested === v;
+                  })
+                )
+                .map(([p, d]) => ({
+                  id: p.slice("payment_intents/".length),
+                  ref: docRef("payment_intents", p.slice("payment_intents/".length)),
+                  data: () => d,
+                }));
+              return { empty: found.length === 0, docs: found };
+            },
+          };
+          return realQuery;
+        }
         const query = {
           where: (f2: string, o2: string, v2: any) => query,
           limit: (n: number) => ({
@@ -502,18 +535,71 @@ describe("End-to-End Platform Integration Flow", () => {
     savedDocs["orders/order_already_split"] = {
       id: "order_already_split",
       branchId: "branch_ahmedabad_cg_road",
+      customerId: "cust_split",
+      orderType: "takeaway",
+      // The catalog the pricing engine resolves (products are served by the
+      // doc-ref fixture), so this order can be priced for real.
+      items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+      status: "pending_payment",
+      // Already paid out: this is what the test exists to protect. The split is
+      // genuinely payable (positive branchTransferPaise + a linked account
+      // below), so an order that lost its "already transferred" short-circuit
+      // would really POST a SECOND payout here.
       routeTransferStatus: "transferred",
       payment: { routeTransfer: { id: "trf_old" } },
-      pricing: { split: { branchTransferPaise: 5000 } },
+      "payment.routeTransfer": { id: "trf_old" },
+      pricing: { split: { branchTransferPaise: 16000, totalAmountPaise: 19900 } },
     };
+    // A linked payout account: without it the split-first ordering would only
+    // FLAG the order; with it the mock gateway accepts and the duplicate payout
+    // would really land — the double-pay this test forbids.
+    savedDocs["branches/branch_ahmedabad_cg_road"] = {
+      id: "branch_ahmedabad_cg_road",
+      name: "Burgonomics CG Road",
+      razorpayAccountId: "acc_branch_ahmedabad_1",
+      active: true,
+      branchCoordinates: { lat: 23.0131, lng: 72.5085 },
+    };
+    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId("branch_ahmedabad_cg_road", istMonthKey())}`] = {
+      branchId: "branch_ahmedabad_cg_road",
+      monthKey: istMonthKey(),
+      feePaise: 250000,
+      feeCollectedPaise: 250000,
+      razorpayOrders: 2,
+      razorpayEarnedPaise: 250000,
+      razorpayRefundedPaise: 0,
+    };
+
+    // P1-F: mint the durable intent through the REAL production call, exactly as
+    // checkout does — verification now refuses a payment with no server intent.
+    const rzpOrder = await createPaymentOrder({
+      orderId: "order_already_split",
+      items: savedDocs["orders/order_already_split"].items,
+      branchId: "branch_ahmedabad_cg_road",
+      orderType: "takeaway",
+      customerId: "cust_split",
+      idempotencyKey: "chk_already_split_001",
+    });
+    expect(rzpOrder.razorpayOrderId).toBeDefined();
+
     const res = await verifyPayment({
       orderId: "order_already_split",
-      razorpayOrderId: "order_mock_x",
+      razorpayOrderId: rzpOrder.razorpayOrderId,
       razorpayPaymentId: "pay_mock_x",
       razorpaySignature: "mock_signature_valid",
     });
+
     expect(res.success).toBe(true);
+    // The stored payout receipt is returned as-is: no second POST, no re-split.
     expect((res as any).transfer).toMatchObject({ id: "trf_old" });
+    const order = savedDocs["orders/order_already_split"];
+    expect(order.routeTransferStatus).toBe("transferred");
+    // THE no-double-payout assertions: the receipt is untouched and no new
+    // transfer was claimed, booked or recorded.
+    expect(order["payment.routeTransfer"]).toMatchObject({ id: "trf_old" });
+    expect(order.routeTransferClaimedAt).toBeUndefined();
+    expect(order.routeTransferError).toBeUndefined();
+    expect(order.routeTransferTerminalRefusal).toBeUndefined();
   });
 
   it("drains pending_retry route transfers without throwing (mock-safe worker)", async () => {
