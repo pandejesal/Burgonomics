@@ -51,6 +51,27 @@ export interface LateCaptureRefundInput {
   source: string;
 }
 
+/**
+ * P1-I — a capture we can no longer FULFIL (the kitchen 86'd an item, or the
+ * branch closed between intent and capture). Same money rule as an expired
+ * order's late capture: the customer is refunded in full through the SAME
+ * `autoRefund` accounting, idempotently, and no KOT is ever rung.
+ *
+ * This is deliberately a thin entry into the one refund path below — not a
+ * second mechanism.
+ */
+export interface UnfulfillableCaptureRefundInput extends LateCaptureRefundInput {
+  reason:
+    | "item_unavailable"
+    | "branch_closed"
+    | "capture_after_expiry";
+  detail?: string;
+}
+
+export type UnfulfillableCaptureOutcome =
+  | { refunded: true; refundId: string; reused: boolean }
+  | { refunded: false; detail: string };
+
 /** Deterministic, gateway-safe refund request id (8-128 chars [A-Za-z0-9_-]). */
 export function lateCaptureRefundRequestId(orderId: string, razorpayPaymentId: string): string {
   const clean = (value: string) => String(value || "").replace(/[^A-Za-z0-9_-]/g, "");
@@ -208,5 +229,104 @@ async function parkLateCapture(
       `[LateCapture] park failed for ${input.razorpayPaymentId}:`,
       err?.message || err
     );
+  }
+}
+
+/**
+ * P1-I — refund a capture we can no longer FULFIL (item 86'd / branch closed
+ * between intent and capture). The capture path calls this BEFORE confirming,
+ * so the KOT is never rung for food that cannot be cooked.
+ *
+ * Money behaves exactly like a late capture: full refund through `autoRefund`
+ * (same ledger, fee release and audit trail), idempotent on the durable
+ * `refundRequestId`, and the order is left terminal — never resurrected into a
+ * confirmed, KOT-pushed state.
+ */
+export async function refundUnfulfillableCapture(
+  input: UnfulfillableCaptureRefundInput
+): Promise<UnfulfillableCaptureOutcome> {
+  const orderId = typeof input.orderId === "string" ? input.orderId.trim() : "";
+  const razorpayPaymentId =
+    typeof input.razorpayPaymentId === "string" ? input.razorpayPaymentId.trim() : "";
+  if (!orderId || !razorpayPaymentId) {
+    return { refunded: false, detail: "missing order or payment id" };
+  }
+  const orderRef = db.collection("orders").doc(orderId);
+  const snap = await orderRef.get();
+  if (!snap.exists) {
+    await parkLateCapture(input, `unfulfillable_${input.reason}_order_not_found`);
+    return { refunded: false, detail: "order_not_found" };
+  }
+  const order = (snap.data() || {}) as Record<string, any>;
+  const capturedPaise =
+    Number(input.capturedAmountPaise) ||
+    Number(order?.payment?.capturedAmountPaise) ||
+    Number(order?.["payment.capturedAmountPaise"]) ||
+    0;
+
+  // Record what we know BEFORE refunding, exactly like the late-capture path:
+  // `autoRefund` refuses without a captured payment id on the order.
+  try {
+    await orderRef.set(
+      {
+        payment: {
+          ...(order.payment && typeof order.payment === "object" && !Array.isArray(order.payment)
+            ? order.payment
+            : {}),
+          razorpayPaymentId,
+          status: "completed",
+          ...(capturedPaise > 0 ? { capturedAmountPaise: capturedPaise } : {}),
+        },
+        "payment.razorpayPaymentId": razorpayPaymentId,
+        "payment.status": "completed",
+        ...(capturedPaise > 0 ? { "payment.capturedAmountPaise": capturedPaise } : {}),
+        unfulfillableCapture: {
+          reason: input.reason,
+          detail: input.detail || null,
+          razorpayPaymentId,
+          detectedAt: Date.now(),
+        },
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    await parkLateCapture(input, `unfulfillable_${input.reason}_stamp_failed`, err?.message);
+    return { refunded: false, detail: err?.message || String(err) };
+  }
+
+  try {
+    const result: any = await autoRefund({
+      orderId,
+      razorpayPaymentId,
+      reason: `Automatic refund — order could not be fulfilled (${input.reason})`,
+      // Same deterministic identity shape as the expiry path, but scoped to the
+      // fulfilment failure so the two lanes can never collide on one payment.
+      refundRequestId: `unful_${String(orderId).replace(/[^A-Za-z0-9_-]/g, "")}_${String(
+        razorpayPaymentId
+      ).replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 120),
+    });
+    const refundId = typeof result?.id === "string" ? result.id : "";
+    const reused = result?.reused === true;
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "medium",
+      message: reused
+        ? `Unfulfillable capture ${razorpayPaymentId} on order ${orderId} — refund ${refundId} already issued (replayed)`
+        : `Unfulfillable capture ${razorpayPaymentId} on order ${orderId} (${input.reason}) — automatically refunded in full (refund ${refundId}); no KOT`,
+      orderId,
+      razorpayPaymentId,
+    }).catch(() => undefined);
+    return { refunded: true, refundId, reused };
+  } catch (err: any) {
+    await parkLateCapture(input, `unfulfillable_${input.reason}_refund_failed`, err?.message);
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Automatic refund FAILED for unfulfillable capture ${razorpayPaymentId} on order ${orderId} (${input.reason}) — manual refund required`,
+      orderId,
+      razorpayPaymentId,
+      errorStack: err?.stack,
+    }).catch(() => undefined);
+    return { refunded: false, detail: err?.message || String(err) };
   }
 }

@@ -517,6 +517,109 @@ function paymentIntentCartMismatchError(): Error {
 }
 
 /**
+ * P1-I — the capture-side availability gate.
+ *
+ * Runs immediately before confirmation (and therefore before the OTP mint, the
+ * Route split, the coin debit and the KOT push). If the order can no longer be
+ * fulfilled, the capture is refunded in FULL through the shared automatic
+ * refund path and a typed 409 is raised so the customer is never told they were
+ * confirmed for food that cannot be cooked.
+ *
+ * It is deliberately narrow: it only fires for a PROVEN unfulfillable line
+ * (product `inStock !== true`, or a deleted product) in a live gateway capture.
+ * A catalog read failure is left to the existing fail-closed payment logic —
+ * an outage must never trigger a refund.
+ */
+async function refundIfNoLongerFulfillable(args: {
+  orderId: string;
+  razorpayPaymentId: string;
+  razorpayOrderId: string;
+  orderData: Record<string, any>;
+  capturedAmountPaise: number;
+}): Promise<void> {
+  const items = Array.isArray(args.orderData?.items) ? args.orderData.items : [];
+  if (items.length === 0) return;
+
+  const unavailable: string[] = [];
+  let readFailed = false;
+  for (const item of items) {
+    const productId = String((item as any)?.productId ?? (item as any)?.id ?? "").trim();
+    if (!productId) continue;
+    try {
+      const snap = await db.collection("products").doc(productId).get();
+      // ONLY an explicit, recorded 86 is proof of unfulfillability. A missing
+      // product doc is not: it may be a legacy/estimated order whose catalog
+      // was never mirrored here, and treating absence as "86'd" would refund
+      // perfectly good orders. The pricing engine already fail-closes the
+      // intent path; this gate only catches the deliberate inStock=false flip.
+      if (snap.exists && (snap.data() as any)?.inStock === false) unavailable.push(productId);
+    } catch (err: any) {
+      readFailed = true;
+      console.warn(
+        `[Payments] availability recheck failed for ${productId} on order ${args.orderId}:`,
+        err?.message || err
+      );
+    }
+  }
+  if (readFailed || unavailable.length === 0) return;
+
+  const { refundUnfulfillableCapture } = await import("./lateCaptureRefund");
+  const outcome = await refundUnfulfillableCapture({
+    orderId: args.orderId,
+    razorpayPaymentId: args.razorpayPaymentId,
+    razorpayOrderId: args.razorpayOrderId,
+    capturedAmountPaise: args.capturedAmountPaise,
+    reason: "item_unavailable",
+    detail: unavailable.join(","),
+    source: "verify_capture_unfulfillable",
+  });
+
+  const err: any = new Error(
+    outcome.refunded
+      ? "An item in your order is no longer available, so your payment has been refunded in full. Nothing was charged."
+      : "An item in your order is no longer available and the automatic refund needs attention. Contact support — do not pay again."
+  );
+  err.statusCode = 409;
+  err.code = outcome.refunded ? "ORDER_ITEM_UNAVAILABLE_REFUNDED" : "ORDER_ITEM_UNAVAILABLE";
+  throw err;
+}
+
+/**
+ * P1-I — is the cart still sellable RIGHT NOW?
+ *
+ * Razorpay orders stay payable for their whole TTL, and a reused idempotency
+ * intent hands that live order straight back. Re-running the pricing engine
+ * (which refuses `inStock !== true` per line, and refuses a closed branch) IS
+ * the availability recheck: it reads the catalog fresh and raises the same
+ * typed `ITEM_UNAVAILABLE` refusal the first attempt would have.
+ */
+async function assertCartStillSellable(args: {
+  items: any[];
+  branchId: string;
+  orderType: string;
+  orderId?: string;
+}): Promise<void> {
+  try {
+    await calculateOrderPricing({
+      items: args.items,
+      branchId: args.branchId,
+      orderType: args.orderType as any,
+    });
+  } catch (err: any) {
+    if (err?.code === "ITEM_UNAVAILABLE") {
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "medium",
+        message: `Payable intent refused on reuse: the cart is no longer sellable (${err.message})`,
+        orderId: args.orderId,
+        branchId: args.branchId,
+      }).catch(() => undefined);
+    }
+    throw err;
+  }
+}
+
+/**
  * Loads the SERVER-WRITTEN payment intent for a Razorpay order id. This is
  * the authoritative binding rzp order -> internal orderId -> server-priced
  * amount (PAYMENTS_CONTRACT_SPEC §2). Returns null when nothing trustworthy
@@ -1069,6 +1172,19 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       if (reusableIntent.cartFingerprint !== fingerprint) {
         throw paymentIntentCartMismatchError();
       }
+      // P1-I: a reused intent was priced when the cart was SELLABLE. Between
+      // then and now the kitchen may have 86'd an item (or closed), and
+      // Razorpay's order stays payable for its whole TTL — the customer would
+      // pay for food nobody can cook and the capture would ring the KOT. So
+      // availability is re-read on EVERY reuse, before any payment can happen.
+      // This reuses the SAME catalog check the fresh path runs (and the same
+      // typed refusal), not a second mechanism.
+      await assertCartStillSellable({
+        items: cartItems,
+        branchId,
+        orderType,
+        orderId: params.orderId,
+      });
       return reusedIntentResponse(reusableIntent);
     }
     if (corruptIntent) {
@@ -1660,6 +1776,23 @@ export async function verifyPayment(
 
   // 5+6. Confirm state + audit (shared by the normal and race-loser paths),
   // then gate the response on ownership (spec §2).
+  //
+  // P1-I: BEFORE confirming, prove the cart is still sellable. A capture can
+  // land minutes after the intent (order TTL 24h), and the kitchen may have
+  // 86'd an item or the branch closed in that window. Confirming would ring the
+  // KOT for food nobody can cook, so an unfulfillable capture is COMPENSATED
+  // through the same automatic-refund accounting a manual refund uses, and the
+  // order is never confirmed.
+  if (capturedAmountPaise !== undefined) {
+    await refundIfNoLongerFulfillable({
+      orderId,
+      razorpayPaymentId,
+      razorpayOrderId,
+      orderData,
+      capturedAmountPaise,
+    });
+  }
+
   const finished = await finishVerifiedPayment({
     orderRef,
     orderData,
