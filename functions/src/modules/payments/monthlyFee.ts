@@ -280,22 +280,58 @@ export async function ensureMonthlyFeeHold(
   });
 }
 
-/** Ledger arithmetic for a refund (F7) — always FieldValue.increment. */
+/**
+ * Ledger arithmetic for a refund (F7 / P1-N) — always FieldValue.increment.
+ *
+ * BASIS RULE: `razorpayRefundedPaise` must be measured the way `razorpayEarnedPaise`
+ * is — the BRANCH'S FOOD SHARE only, excluding the courier fee. The customer is
+ * refunded the whole capture (food + courier), but the courier fee was never in
+ * `earned`, so netting it out of the ledger would short the branch's statement
+ * by exactly that fee (live case: earned 31000, refunded wrongly 20500, net read
+ * 10500 instead of 10500 + 4500 courier = 15000).
+ *
+ * Proportional and bounded:
+ *  - every captured rupee maps to its food share at the hold's own ratio
+ *    (branchFood / capture), so a partial refund ledgers its food portion;
+ *  - the cumulative ledgered figure is capped at the food share actually held
+ *    (`earnedPaise`), so an over-refund can never over-credit or go negative;
+ *  - deltas are differences from what is already recorded, which makes replays
+ *    and webhook convergence idempotent.
+ */
 export function monthlyFeeRefundDeltas(
   hold: MonthlyFeeHold,
   nextRefundedTotalPaise: number
-): { deltaRelease: number; deltaRefund: number; target: number } {
+): { deltaRelease: number; deltaRefund: number; target: number; foodRefundTarget: number } {
   const refunded = Math.max(0, Math.round(Number(nextRefundedTotalPaise) || 0));
   const released = Math.max(0, Number(hold?.releasedPaise) || 0);
   const ledgered = Math.max(0, Number(hold?.refundLedgeredPaise) || 0);
   const branchShare = Math.max(0, Number(hold?.branchTransferPaise) || 0);
   const courier = Math.max(0, Number(hold?.courierFeePaise) || 0);
   const holdPaise = Math.max(0, Number(hold?.holdPaise) || 0);
+  // Food the branch actually earned on this order (the basis of `earned`).
+  const foodShare = Math.max(0, Number(hold?.earnedPaise) || 0);
+  const capturedBasis = foodShare + courier;
 
+  // Release (the held fee) keeps its existing rule: only when the refund has
+  // passed everything the branch was actually paid.
   const target = Math.min(holdPaise, Math.max(0, refunded - branchShare - courier));
   const deltaRelease = Math.max(0, target - released);
-  const deltaRefund = Math.max(0, refunded - ledgered);
-  return { deltaRelease, deltaRefund, target };
+
+  // Ledger basis: the branch's food share, pro rata by captured amount, capped
+  // at the food share actually earned. A courier-only order (foodShare 0)
+  // therefore ledgers nothing, and a full refund of a 15000-food / 4500-courier
+  // order ledgers exactly 15000.
+  let foodRefundTarget: number;
+  if (foodShare <= 0) {
+    foodRefundTarget = 0;
+  } else if (capturedBasis <= 0) {
+    // No courier recorded: the whole capture is food.
+    foodRefundTarget = Math.min(foodShare, refunded);
+  } else {
+    foodRefundTarget = Math.min(foodShare, Math.round((refunded * foodShare) / capturedBasis));
+  }
+  const deltaRefund = Math.max(0, foodRefundTarget - ledgered);
+  return { deltaRelease, deltaRefund, target, foodRefundTarget };
 }
 
 /**

@@ -195,20 +195,26 @@ describe("F7 refunds and the monthly fee", () => {
     ).toBe(100000);
   });
 
-  it("15: a partial refund inside branch share + courier releases nothing but counts the refund", async () => {
+  it("15: a partial refund inside branch share + courier releases nothing but counts the FOOD share of the refund", async () => {
     seedOrder("ord_partial_small");
     const deltas = monthlyFeeRefundDeltas(
       { ...HOLD, releasedPaise: 0, refundLedgeredPaise: 0 },
       300000 // exactly branch share + courier (320000) is not reached
     );
     expect(deltas.deltaRelease).toBe(0);
-    expect(deltas.deltaRefund).toBe(300000);
+    // P1-N: the ledger's refunded figure is the BRANCH'S FOOD SHARE of the
+    // refund, not the whole capture — the courier fee was never in `earned`,
+    // so counting it here shorted the branch's statement by that fee.
+    // 300000 * 400000 / (400000 + 4500) = 296663 (rounded).
+    expect(deltas.deltaRefund).toBe(296663);
+    expect(deltas.deltaRefund).toBeLessThan(300000);
+    expect(deltas.deltaRefund).toBeLessThanOrEqual(HOLD.earnedPaise);
 
     await refund("ord_partial_small", 300000);
     const ledger =
       savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, "2026-10")}`];
     expect(ledger.feeCollectedPaise).toBe(80000);
-    expect(ledger.razorpayRefundedPaise).toBe(300000);
+    expect(ledger.razorpayRefundedPaise).toBe(296663);
   });
 
   it("16: a partial refund beyond branch share + courier releases only the excess", async () => {
