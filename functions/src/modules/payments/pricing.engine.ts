@@ -302,6 +302,95 @@ export function applyCatalogBasePrice(
 }
 
 /**
+ * Availability-only catalogue probe: is every line in this cart sellable RIGHT
+ * NOW?
+ *
+ * `calculateOrderPricing` is the authoritative price+eligibility gate, but it
+ * also needs the full pricing inputs (a delivery needs its persisted courier
+ * quote). Re-pricing a reusable intent to *check availability* therefore
+ * refused every ordinary delivery retry with DELIVERY_FEE_REQUIRED — a
+ * customer-facing outage caused by a safety check. This probe re-reads the
+ * SAME catalogue documents (`products/{id}`) with the SAME fail-closed rule
+ * the engine applies (only an explicit `inStock === true` is sellable) and
+ * raises the SAME typed `ITEM_UNAVAILABLE` refusal, without touching money.
+ *
+ * A catalogue read FAILURE is an outage, not unavailability: it is refused with
+ * a retryable 503 so a Firestore blip can never cancel a customer's checkout.
+ */
+export async function assertCatalogLinesSellable(items: any[]): Promise<void> {
+  const lines = Array.isArray(items) ? items : [];
+  const wanted = [
+    ...new Set(
+      lines
+        .map((item) => String((item as any)?.productId ?? (item as any)?.id ?? "").trim())
+        .filter((id) => id.length > 0)
+    ),
+  ];
+  if (wanted.length === 0 || !db || typeof db.collection !== "function") return;
+
+  const availability = new Map<string, unknown>();
+  try {
+    if (typeof (db as any).getAll === "function") {
+      try {
+        const snaps = await (db as any).getAll(
+          ...wanted.map((id) => db.collection("products").doc(id))
+        );
+        for (const snap of snaps) {
+          if (snap?.exists) availability.set(snap.id, (snap.data() as any)?.inStock);
+        }
+      } catch {
+        availability.clear();
+        for (const id of wanted) {
+          const snap = await db.collection("products").doc(id).get();
+          if (snap?.exists) availability.set(id, (snap.data() as any)?.inStock);
+        }
+      }
+    } else {
+      for (const id of wanted) {
+        const snap = await db.collection("products").doc(id).get();
+        if (snap?.exists) availability.set(id, (snap.data() as any)?.inStock);
+      }
+    }
+  } catch (err: any) {
+    const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
+      captureErrorSnapshot: async () => {},
+    }));
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Availability recheck failed for a payable intent (${wanted.length} lines) — refused, retryable`,
+      errorStack: err?.stack,
+    }).catch(() => undefined);
+    const outage: any = new Error(
+      "Menu availability could not be verified — please retry checkout."
+    );
+    outage.statusCode = 503;
+    outage.code = "MENU_AVAILABILITY_UNAVAILABLE";
+    throw outage;
+  }
+
+  for (const id of wanted) {
+    // A product doc we have no price eligibility proof for is NOT silently
+    // sellable: the engine refuses that case too (ITEM_PRICE_UNVERIFIED). Here
+    // only a recorded 86 (explicit `inStock: false`) is proven unavailability;
+    // a genuinely missing doc keeps the engine's own typed refusal on the fresh
+    // path and is not converted into a false "86'd" here.
+    if (availability.get(id) === false) {
+      const item = lines.find(
+        (line) =>
+          String((line as any)?.productId ?? (line as any)?.id ?? "").trim() === id
+      );
+      const unavailable: any = new Error(
+        `${String((item as any)?.name || "An item")} is no longer available — please review your cart.`
+      );
+      unavailable.statusCode = 409;
+      unavailable.code = "ITEM_UNAVAILABLE";
+      throw unavailable;
+    }
+  }
+}
+
+/**
  * Authoritative Server-Side Pricing Engine (Check 15 & Check 57)
  * Validates product prices against Firestore catalog, calculates 5% GST, packaging, delivery,
  * coupon rules, loyalty caps (max 20%), and Razorpay Route royalty split.

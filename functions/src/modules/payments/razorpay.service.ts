@@ -17,7 +17,10 @@ import {
   isMoneyClaimFresh,
 } from "./reconciliation";
 import { assertOrderBranchAccess } from "../../core/middleware";
-import { calculateOrderPricing, CalculateOrderPricingInput } from "./pricing.engine";
+import { calculateOrderPricing, assertCatalogLinesSellable, CalculateOrderPricingInput } from "./pricing.engine";
+import { guardCaptureFulfillment } from "./captureFulfillment";
+import { ensureRedeemedCoinsFunded } from "./coinCapture";
+import { coinsForDiscountRupees, PAYMENT_INTENT_TTL_MS } from "./lifetimes";
 import { resolveBranchId } from "./branchResolver";
 import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } from "./monthlyFee";
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
@@ -621,81 +624,112 @@ async function recordUncertainRefund(args: {
 }
 
 /**
- * P1-I — the capture-side availability gate.
+ * P1-I — reconcile an ambiguous mint.
  *
- * Runs immediately before confirmation (and therefore before the OTP mint, the
- * Route split, the coin debit and the KOT push). If the order can no longer be
- * fulfilled, the capture is refunded in FULL through the shared automatic
- * refund path and a typed 409 is raised so the customer is never told they were
- * confirmed for food that cannot be cooked.
- *
- * It is deliberately narrow: it only fires for a PROVEN unfulfillable line
- * (product `inStock !== true`, or a deleted product) in a live gateway capture.
- * A catalog read failure is left to the existing fail-closed payment logic —
- * an outage must never trigger a refund.
+ * The gateway order is created FIRST (Razorpay offers no cancel), so any
+ * storage failure afterwards leaves a payable order this server cannot bind.
+ * Fail closed here: release the coin funding that backed the mint, write ONE
+ * durable reconciliation record for ops, page, and rethrow a retryable 503 so
+ * the client retries the SAME idempotency key (which then reaches a persisted
+ * intent or is superseded normally). Exposing the order instead is what let a
+ * customer pay for an intent that mandatory-intent verification then refused.
  */
-async function refundIfNoLongerFulfillable(args: {
-  orderId: string;
-  razorpayPaymentId: string;
+async function releaseUnbackedMintArtifacts(args: {
   razorpayOrderId: string;
-  orderData: Record<string, any>;
-  capturedAmountPaise: number;
+  reservationHeld: boolean;
+  orderId?: string;
+  reason: string;
+  error: any;
 }): Promise<void> {
-  const items = Array.isArray(args.orderData?.items) ? args.orderData.items : [];
-  if (items.length === 0) return;
-
-  const unavailable: string[] = [];
-  let readFailed = false;
-  for (const item of items) {
-    const productId = String((item as any)?.productId ?? (item as any)?.id ?? "").trim();
-    if (!productId) continue;
-    try {
-      const snap = await db.collection("products").doc(productId).get();
-      // ONLY an explicit, recorded 86 is proof of unfulfillability. A missing
-      // product doc is not: it may be a legacy/estimated order whose catalog
-      // was never mirrored here, and treating absence as "86'd" would refund
-      // perfectly good orders. The pricing engine already fail-closes the
-      // intent path; this gate only catches the deliberate inStock=false flip.
-      if (snap.exists && (snap.data() as any)?.inStock === false) unavailable.push(productId);
-    } catch (err: any) {
-      readFailed = true;
-      console.warn(
-        `[Payments] availability recheck failed for ${productId} on order ${args.orderId}:`,
-        err?.message || err
-      );
-    }
+  if (args.reservationHeld) {
+    await releaseCoinReservationQuietly({
+      razorpayOrderId: args.razorpayOrderId,
+      reason: args.reason,
+    });
   }
-  if (readFailed || unavailable.length === 0) return;
-
-  const { refundUnfulfillableCapture } = await import("./lateCaptureRefund");
-  const outcome = await refundUnfulfillableCapture({
+  try {
+    await db.collection("payment_intent_reconciliation").doc(slug(args.razorpayOrderId)).set(
+      {
+        razorpayOrderId: args.razorpayOrderId,
+        orderId: args.orderId || null,
+        reason: args.reason,
+        status: "needs_review",
+        detail: String(args.error?.message || args.error || "").slice(0, 500),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (writeErr: any) {
+    console.warn(
+      "[Payments] unbacked-mint reconciliation write failed:",
+      writeErr?.message || writeErr
+    );
+  }
+  await captureErrorSnapshot({
+    source: "payments",
+    severity: "high",
+    message: `Payable gateway order ${args.razorpayOrderId} could not be bound to a durable payment intent (${args.reason}) — order NOT exposed, coin funding released`,
     orderId: args.orderId,
-    razorpayPaymentId: args.razorpayPaymentId,
-    razorpayOrderId: args.razorpayOrderId,
-    capturedAmountPaise: args.capturedAmountPaise,
-    reason: "item_unavailable",
-    detail: unavailable.join(","),
-    source: "verify_capture_unfulfillable",
-  });
+    errorStack: args.error?.stack,
+  }).catch(() => undefined);
+}
 
-  const err: any = new Error(
-    outcome.refunded
-      ? "An item in your order is no longer available, so your payment has been refunded in full. Nothing was charged."
-      : "An item in your order is no longer available and the automatic refund needs attention. Contact support — do not pay again."
+async function releaseUnbackedMint(args: {
+  razorpayOrderId: string;
+  reservationHeld: boolean;
+  orderId?: string;
+  reason: string;
+  error: any;
+}): Promise<never> {
+  await releaseUnbackedMintArtifacts(args);
+  const refused: any = new Error(
+    "Payment service is temporarily unavailable — please retry checkout (you will not be charged twice)."
   );
-  err.statusCode = 409;
-  err.code = outcome.refunded ? "ORDER_ITEM_UNAVAILABLE_REFUNDED" : "ORDER_ITEM_UNAVAILABLE";
-  throw err;
+  refused.statusCode = 503;
+  refused.code = "PAYMENT_INTENT_UNAVAILABLE";
+  refused.retryAfterMs = 2000;
+  throw refused;
+}
+
+/** Best-effort reservation release: a failure here must never mask the refusal. */
+async function releaseCoinReservationQuietly(args: {
+  razorpayOrderId: string;
+  reason: string;
+}): Promise<void> {
+  try {
+    await releaseReservedCoins({
+      razorpayOrderId: args.razorpayOrderId,
+      reason: args.reason,
+    });
+  } catch (err: any) {
+    console.warn(
+      `[Payments] coin reservation release failed for ${args.razorpayOrderId} (ages out by TTL):`,
+      err?.message || err
+    );
+  }
 }
 
 /**
- * P1-I — is the cart still sellable RIGHT NOW?
+ * P1-I — the capture-side availability gate lives in `captureFulfillment.ts`
+ * so the client verify channel and the `payment.captured` webhook run the SAME
+ * first-capture decision. See `guardCaptureFulfillment`.
+ */
+
+/**
+ * Loads the SERVER-WRITTEN payment intent for a Razorpay order id. This is
  *
  * Razorpay orders stay payable for their whole TTL, and a reused idempotency
- * intent hands that live order straight back. Re-running the pricing engine
- * (which refuses `inStock !== true` per line, and refuses a closed branch) IS
- * the availability recheck: it reads the catalog fresh and raises the same
- * typed `ITEM_UNAVAILABLE` refusal the first attempt would have.
+ * intent hands that live order straight back. The recheck must therefore read
+ * the catalogue fresh and raise the SAME typed `ITEM_UNAVAILABLE` refusal the
+ * first attempt would have.
+ *
+ * It deliberately does NOT re-run `calculateOrderPricing`: that needs the full
+ * money inputs, and a delivery intent can only be priced with a persisted
+ * courier quote. Re-pricing here refused EVERY ordinary delivery retry (a
+ * dropped connection, a refresh mid-payment) with DELIVERY_FEE_REQUIRED even
+ * though nothing was unavailable. The catalogue probe checks exactly the thing
+ * this gate exists for — can the kitchen still cook these lines — without
+ * re-deciding the amount the customer is already paying.
  */
 async function assertCartStillSellable(args: {
   items: any[];
@@ -704,11 +738,7 @@ async function assertCartStillSellable(args: {
   orderId?: string;
 }): Promise<void> {
   try {
-    await calculateOrderPricing({
-      items: args.items,
-      branchId: args.branchId,
-      orderType: args.orderType as any,
-    });
+    await assertCatalogLinesSellable(args.items);
   } catch (err: any) {
     if (err?.code === "ITEM_UNAVAILABLE") {
       await captureErrorSnapshot({
@@ -1183,7 +1213,13 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // RESERVATION below (written with the intent) is what makes them unavailable
   // to a second checkout, so one balance can never back two payable discounts.
   // A reused intent keeps its existing reservation.
-  const redeemableCoins = loyaltyPointsToRedeem;
+  //
+  // The reservation amount is decided AFTER pricing, from the effective
+  // `pricing.loyaltyDiscount` (1 coin = ₹1, capped at 20% of the food
+  // subtotal) — see `coinsForDiscountRupees`. Reserving the REQUESTED count
+  // locked coins the customer never spent (ask 100 on a ₹100 cart, get a ₹20
+  // discount, and 100 were held), which is how a balance of 100 ended up with
+  // 100 debited for a ₹20 discount.
 
   // Idempotent retries: same key returns the already-open gateway order
   // instead of minting a second payable order (double-charge risk).
@@ -1200,7 +1236,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // on the same intent, and no payable gateway order can exist without a
   // durable server binding. (The old key-less path minted exactly the orphan
   // gateway order the exploit consumed.)
-  const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
+  const INTENT_TTL_MS = PAYMENT_INTENT_TTL_MS;
   const idempotencyKey =
     typeof params.idempotencyKey === "string" && params.idempotencyKey.trim()
       ? params.idempotencyKey.trim()
@@ -1331,6 +1367,12 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     loyaltyPointsToRedeem,
   });
 
+  // P1-H: the coins a capture may take are the EFFECTIVE discount, in coins
+  // (1 coin = ₹1). The engine caps the redemption at 20% of food, so a request
+  // for 100 coins on a ₹100 cart becomes a ₹20 discount and exactly 20 coins
+  // are reserved — never the 100 that was asked for.
+  const redeemableCoins = coinsForDiscountRupees(pricing.loyaltyDiscount);
+
   // Paise math stays in integers end to end: grandTotal is rupees (ruled to
   // whole paise by the engine), amountPaise is the exact gateway amount.
   // Both gates (finite/positive + whole paise) run BEFORE any gateway call.
@@ -1431,10 +1473,11 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       createdAtMs: nowMs,
       expiresAtMs: nowMs + INTENT_TTL_MS,
     };
+    // P1-H: reserve the redeemed coins BEFORE the intent becomes payable. The
+    // coins reserved are EXACTLY the effective pricing discount (see
+    // `coinsForDiscountRupees` below), never the pre-capping request count.
+    let reservationHeld = false;
     try {
-      // P1-H: reserve the redeemed coins BEFORE the intent becomes payable. If
-      // the reservation is refused, no intent row exists either — a stranded
-      // payable intent would be exactly the free-discount hole this closes.
       if (redeemableCoins > 0 && params.orderId) {
         await reserveRedeemedCoins({
           customerId: params.customerId,
@@ -1442,6 +1485,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           orderId: params.orderId,
           razorpayOrderId,
         });
+        reservationHeld = true;
       }
       // Loop 4 (F2): CLAIM, not blind write. Concurrent same-key checkouts
       // both miss the read above and both POST to Razorpay — the loser's
@@ -1454,6 +1498,23 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       } else {
         await intentRef.set(intentDoc, { merge: true });
       }
+      // P1-I proof-of-persistence: a write that reports success is not proof
+      // the binding exists (a datastore shim, a partial failure, a routed
+      // write to the wrong project). Read OUR key back and require the exact
+      // gateway order id we just minted. Anything less is an ambiguous
+      // persistence outcome and MUST fail closed — the customer would otherwise
+      // pay a gateway order that mandatory-intent verification then refuses.
+      if (intentRef && typeof intentRef.get === "function") {
+        const persisted = await intentRef.get();
+        const stored = (persisted?.exists ? persisted.data() : null) as any;
+        if (!stored || stored.razorpayOrderId !== razorpayOrderId) {
+          const unbound: any = new Error(
+            "payment intent was not durably stored for the minted gateway order"
+          );
+          unbound.code = "PAYMENT_INTENT_NOT_PERSISTED";
+          throw unbound;
+        }
+      }
     } catch (err: any) {
       const alreadyClaimed =
         err?.code === 6 || /already exists|ALREADY_EXISTS/i.test(err?.message || "");
@@ -1464,7 +1525,17 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         throw err;
       }
       if (!alreadyClaimed) {
-        console.warn("[Payments] idempotency store failed (non-blocking):", err?.message || err);
+        // FAIL CLOSED (P1-I): the gateway order is ALREADY minted, so an
+        // unpersisted intent leaves money payable that this server cannot
+        // bind or verify — the customer pays and mandatory-intent
+        // verification then refuses their capture. Never hand it out.
+        await releaseUnbackedMint({
+          razorpayOrderId,
+          reservationHeld,
+          orderId: params.orderId,
+          reason: "intent_store_failed",
+          error: err,
+        });
       } else {
         // Lost the claim race — converge on the winner, but NEVER on a winner
         // bound to a different internal order: that is a pre-payment 409, not
@@ -1479,14 +1550,41 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         if (resolution.kind === "reuse") {
           // PAY-13: the winner must also be for the SAME doc-derived cart.
           if (resolution.intent.cartFingerprint !== fingerprint) {
-            throw paymentIntentCartMismatchError();
+            // Our mint is unbacked AND its reservation must not linger: the
+            // winner's own intent owns whatever coins this checkout holds.
+            await releaseUnbackedMint({
+              razorpayOrderId,
+              reservationHeld,
+              orderId: params.orderId,
+              reason: "intent_claim_mismatch",
+              error: paymentIntentCartMismatchError(),
+            });
+          }
+          // The winner already holds its OWN reservation for the same coins;
+          // release ours so the balance is not double-committed.
+          if (reservationHeld) {
+            await releaseCoinReservationQuietly({
+              razorpayOrderId,
+              reason: "superseded_by_winning_intent",
+            });
           }
           return reusedIntentResponse(resolution.intent);
         }
         if (resolution.kind === "superseded") {
+          // Our intent doc REPLACED the expired winner, so it is persisted
+          // (and our reservation backs it): this order is legitimately payable.
           return newOrderResponse({ razorpayOrderId, amountPaise, receipt, pricing });
         }
-        if (resolution.kind === "mismatch") throw paymentIntentOrderMismatchError();
+        if (resolution.kind === "mismatch") {
+          await releaseUnbackedMintArtifacts({
+            razorpayOrderId,
+            reservationHeld,
+            orderId: params.orderId,
+            reason: "intent_claim_other_order",
+            error: paymentIntentOrderMismatchError(),
+          });
+          throw paymentIntentOrderMismatchError();
+        }
 
         console.warn("[Payments] idempotency claim lost with unreadable winner — refusing fresh order (retry same key)");
         const { captureErrorSnapshot } = await import("../../core/errors");
@@ -1497,6 +1595,15 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         });
         const refused: any = new Error("Payment service is temporarily unavailable — please retry checkout (you will not be charged twice).");
         refused.statusCode = 503;
+        refused.code = "PAYMENT_INTENT_UNAVAILABLE";
+        refused.retryAfterMs = 2000;
+        await releaseUnbackedMintArtifacts({
+          razorpayOrderId,
+          reservationHeld,
+          orderId: params.orderId,
+          reason: "intent_claim_unreadable",
+          error: refused,
+        });
         throw refused;
       }
     }
@@ -1749,6 +1856,27 @@ export async function verifyPayment(
   const statusBeforeSplit = preSplitTruth.statusCode;
   const TERMINAL_CANCEL_REFUND = statusBeforeSplit === "CANCELLED" || statusBeforeSplit === "REFUNDED";
   if (TERMINAL_CANCEL_REFUND) {
+    // P1-C layer 2 — the expiry race's tail. Razorpay cannot close an order, so
+    // a capture can still land after the expiry sweep cancelled it. Parking it
+    // alone left the customer charged for an order nobody will cook. The late
+    // capture is refunded in FULL through the shared automatic-refund path
+    // (idempotent on `latecap_<order>_<payment>`); the order stays CANCELLED and
+    // is never resurrected.
+    //
+    // Scope is the expiry cancellation only: a staff/customer cancel (or a
+    // dispute resolution) is a conversation this automation cannot see, and
+    // `refundLateCaptureForExpiredOrder` refuses those by reason.
+    if (statusBeforeSplit === "CANCELLED") {
+      const { refundLateCaptureForExpiredOrder } = await import("./lateCaptureRefund");
+      await refundLateCaptureForExpiredOrder({
+        orderId,
+        razorpayPaymentId,
+        razorpayOrderId,
+        capturedAmountPaise:
+          typeof capturedAmountPaise === "number" ? capturedAmountPaise : null,
+        source: "verify_capture_after_expiry",
+      });
+    }
     await captureErrorSnapshot({
       source: "payments",
       severity: "high",
@@ -1883,18 +2011,80 @@ export async function verifyPayment(
   //
   // P1-I: BEFORE confirming, prove the cart is still sellable. A capture can
   // land minutes after the intent (order TTL 24h), and the kitchen may have
-  // 86'd an item or the branch closed in that window. Confirming would ring the
-  // KOT for food nobody can cook, so an unfulfillable capture is COMPENSATED
-  // through the same automatic-refund accounting a manual refund uses, and the
-  // order is never confirmed.
-  if (capturedAmountPaise !== undefined) {
-    await refundIfNoLongerFulfillable({
-      orderId,
-      razorpayPaymentId,
-      razorpayOrderId,
-      orderData,
-      capturedAmountPaise,
-    });
+  // 86'd an item in that window. Confirming would ring the KOT for food nobody
+  // can cook, so an unfulfillable capture is COMPENSATED through the same
+  // automatic-refund accounting a manual refund uses, and the order is never
+  // confirmed.
+  //
+  // COMPENSATION IS FIRST-CAPTURE ONLY (transactionally decided inside
+  // `guardCaptureFulfillment`). An order already paid and in the kitchen that
+  // is re-verified — the normal "refresh mid-payment" retry — must be
+  // side-effect free: the old unconditional gate refunded food that was
+  // already being made because an item was 86'd after the sale.
+  const fulfillment = await guardCaptureFulfillment({
+    orderRef,
+    orderId,
+    razorpayPaymentId,
+    razorpayOrderId,
+    orderData,
+    capturedAmountPaise,
+  });
+  if (fulfillment.outcome === "already_compensated") {
+    const compensatedErr: any = new Error(
+      "This payment was already refunded because an item became unavailable — nothing more was charged. Contact support if you need help."
+    );
+    compensatedErr.statusCode = 409;
+    compensatedErr.code = "ORDER_ITEM_UNAVAILABLE_REFUNDED";
+    throw compensatedErr;
+  }
+  if (fulfillment.outcome === "refunded") {
+    const refundedErr: any = new Error(
+      "An item in your order is no longer available, so your payment has been refunded in full. Nothing was charged."
+    );
+    refundedErr.statusCode = 409;
+    refundedErr.code = "ORDER_ITEM_UNAVAILABLE_REFUNDED";
+    throw refundedErr;
+  }
+  if (fulfillment.outcome === "refund_failed") {
+    const failedErr: any = new Error(
+      "An item in your order is no longer available and the automatic refund needs attention. Contact support — do not pay again."
+    );
+    failedErr.statusCode = 409;
+    failedErr.code = "ORDER_ITEM_UNAVAILABLE";
+    throw failedErr;
+  }
+
+  // P1-H funding gate: a payable intent may outlive its own coin reservation
+  // (released on a cancelled attempt / crashed checkout). Fulfilling anyway
+  // would hand out a discount the customer never paid for, so the funding is
+  // proven (re-acquired when it was handed back) BEFORE confirmation; when the
+  // coins are genuinely gone the capture is compensated with a full refund and
+  // never confirmed. Only the first capture of an unconfirmed order runs this —
+  // a replay of a paid order is side-effect free.
+  let redemptionFunded = false;
+  if (fulfillment.outcome === "fulfillable") {
+    const funding = await ensureRedeemedCoinsFunded({ razorpayOrderId, orderId });
+    if (funding.outcome === "unfunded") {
+      const { refundUnfulfillableCapture } = await import("./lateCaptureRefund");
+      const compensation = await refundUnfulfillableCapture({
+        orderId,
+        razorpayPaymentId,
+        razorpayOrderId,
+        capturedAmountPaise,
+        reason: "item_unavailable",
+        detail: "coin_funding_unavailable",
+        source: "verify_capture_unfunded_discount",
+      });
+      const unfundedErr: any = new Error(
+        compensation.refunded
+          ? "The Grill Coins behind this discount are no longer available, so your payment has been refunded in full. Nothing was charged."
+          : "The Grill Coins behind this discount are no longer available and the automatic refund needs attention. Contact support — do not pay again."
+      );
+      unfundedErr.statusCode = 409;
+      unfundedErr.code = compensation.refunded ? "ORDER_ITEM_UNAVAILABLE_REFUNDED" : "ORDER_ITEM_UNAVAILABLE";
+      throw unfundedErr;
+    }
+    redemptionFunded = funding.outcome === "funded";
   }
 
   const finished = await finishVerifiedPayment({
@@ -1906,6 +2096,10 @@ export async function verifyPayment(
     transferResult,
     capturedAmountPaise,
     gatewayCreatedAtMs,
+    // Only suppress the post-confirm debit when THIS call actually proved the
+    // funding. A replay leaves the field false so the idempotent debit still
+    // runs (and a genuinely missing debit is still surfaced once).
+    redemptionAlreadyFunded: redemptionFunded,
   });
 
   if (finished.conflict) {
@@ -2649,8 +2843,14 @@ async function finishVerifiedPayment(args: {
   capturedAmountPaise?: number;
   /** F2: the gateway payment's own time (ms), so the fee month cannot move. */
   gatewayCreatedAtMs?: number;
+  /**
+   * The caller has ALREADY proven (and debited) the redeemed coin funding for
+   * this capture, so the post-confirm debit here must not run a second time.
+   * Set by `verifyPayment` after `ensureRedeemedCoinsFunded`.
+   */
+  redemptionAlreadyFunded?: boolean;
 }) {
-  const { orderRef, orderData, orderId, razorpayOrderId, razorpayPaymentId, transferResult, capturedAmountPaise, gatewayCreatedAtMs } = args;
+  const { orderRef, orderData, orderId, razorpayOrderId, razorpayPaymentId, transferResult, capturedAmountPaise, gatewayCreatedAtMs, redemptionAlreadyFunded } = args;
 
   // R06 corrective pass: real transactions only. Tests implement the
   // required `db.runTransaction` interface instead of a non-atomic shim.
@@ -2897,6 +3097,12 @@ async function finishVerifiedPayment(args: {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
+    // The funding was already proven (and debited) by the caller's
+    // `ensureRedeemedCoinsFunded` gate before this confirm. Re-running the
+    // debit here is harmless (deterministic ledger + consumed reservation) but
+    // pointless, and a released reservation must not be logged as a failure
+    // for a capture that was funded through re-acquisition.
+    if (!redemptionAlreadyFunded) {
     try {
       const redemption = await resolveIntentRedemption(razorpayOrderId);
       if (redemption) {
@@ -2934,6 +3140,7 @@ async function finishVerifiedPayment(args: {
         razorpayPaymentId,
         errorStack: err?.stack,
       });
+    }
     }
   }
 

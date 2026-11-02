@@ -1,5 +1,6 @@
 import { db } from "../../core/firebase";
 import * as admin from "firebase-admin";
+import { COIN_RESERVATION_TTL_MS } from "./lifetimes";
 
 /**
  * P1-H — Grill-Coins RESERVATIONS.
@@ -36,7 +37,7 @@ export const COIN_RESERVATIONS = "coin_reservations";
 export const COIN_RESERVATION_ACCOUNTS = "coin_reservation_accounts";
 
 /** A reservation older than this is treated as abandoned (crashed checkout). */
-export const COIN_RESERVATION_TTL_MS = 40 * 60_000;
+export { COIN_RESERVATION_TTL_MS };
 
 export interface CoinReservation {
   customerId: string;
