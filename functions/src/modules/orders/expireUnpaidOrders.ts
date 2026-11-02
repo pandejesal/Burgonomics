@@ -12,16 +12,35 @@ import { isAbandonedUnpaidOnlineOrder } from "./paymentGate";
  * `paymentChannel`. Nothing else expires it, and the partner KDS lists it.
  *
  * Every 10 minutes this worker cancels such orders older than 30 minutes —
- * but only after asking the gateway for that Razorpay order's payments. Any
- * authorized/captured payment skips the order (high-severity snapshot); an
- * unreachable gateway skips it too. The cancel runs through the normal
- * `bumpOrderStatus` path with `onlyIfUnpaid`, whose transaction re-reads the
- * order, so a capture landing in the same moment wins and the cancel loses.
+ * but only after asking the gateway for EVERY Razorpay order bound to it. Any
+ * authorized/captured payment skips the order (high-severity snapshot); any
+ * bound gateway order whose lookup FAILED skips it too (P1-B: an unchecked
+ * gateway order is an unknown, not an unpaid, and the old code cancelled on a
+ * partial answer). The cancel runs through the normal `bumpOrderStatus` path
+ * with `onlyIfUnpaid`, whose transaction re-reads the order, so a capture
+ * landing in the same moment wins and the cancel loses.
  * No customer message is sent.
  */
 export const UNPAID_EXPIRY_AGE_MS = 30 * 60_000;
 export const UNPAID_EXPIRY_SCAN_LIMIT = 100;
 export const UNPAID_EXPIRY_MAX_CANCELS = 50;
+
+/**
+ * Test-only seam: runs after the gateway has answered for one order and BEFORE
+ * the cancel transaction commits. It exists so the P1-C race can be written as
+ * an INTERLEAVED sequence (a verify starting or a capture landing in exactly
+ * that window) instead of as a mock that merely asserts the guard's shape.
+ * Production never sets it.
+ */
+let afterGatewayLookupForTests:
+  | null
+  | ((orderId: string) => void | Promise<void>) = null;
+
+export function __setAfterGatewayLookupForTests(
+  fn: typeof afterGatewayLookupForTests
+): void {
+  afterGatewayLookupForTests = fn;
+}
 
 export interface UnpaidExpiryStats {
   scanned: number;
@@ -144,19 +163,25 @@ export async function expireAbandonedUnpaidOrders(
 
       const razorpay = getRazorpayClient();
       let authorizedOrCaptured = false;
-      let gatewayAnswered = false;
+      // P1-B: EVERY gateway order bound to this internal order must be CHECKED
+      // before a cancel is allowed. The old loop set `gatewayAnswered` after
+      // the first successful lookup and merely `break`-ed on a failure, so a
+      // later bound gateway order that timed out left the flag true and the
+      // order was cancelled — although that unchecked order could be holding a
+      // captured payment. One unknown now cancels nothing.
+      let gatewayUnknownReason: string | null = null;
       for (const razorpayOrderId of gatewayOrderIds) {
         let payments: any[];
         try {
           payments = await fetchOrderPayments(razorpay, razorpayOrderId);
         } catch (err: any) {
+          gatewayUnknownReason = `${razorpayOrderId}: ${err?.message || String(err)}`;
           console.warn(
-            `[Unpaid Expiry] gateway unavailable for order ${orderId} — skipped this tick:`,
+            `[Unpaid Expiry] gateway unavailable for order ${orderId} (${razorpayOrderId}) — skipped this tick:`,
             err?.message || String(err)
           );
           break;
         }
-        gatewayAnswered = true;
         if (
           payments.some(
             (payment) => payment?.status === "authorized" || payment?.status === "captured"
@@ -167,8 +192,17 @@ export async function expireAbandonedUnpaidOrders(
         }
       }
 
-      if (!gatewayAnswered) {
+      if (gatewayUnknownReason) {
+        // Unknown, never evidence of "unpaid": leave the order alone for the
+        // next tick and record WHY, so a repeatedly failing gateway shows up
+        // instead of silently ageing orders towards cancellation.
         stats.skippedUnknown += 1;
+        await captureErrorSnapshot({
+          source: "system",
+          severity: "medium",
+          message: `Abandoned unpaid order ${orderId} not cancelled: a bound gateway order could not be checked (${gatewayUnknownReason}) — retried next tick`,
+          orderId,
+        }).catch(() => undefined);
         continue;
       }
       if (authorizedOrCaptured) {
@@ -183,6 +217,8 @@ export async function expireAbandonedUnpaidOrders(
       }
       if (stats.cancelled >= UNPAID_EXPIRY_MAX_CANCELS) continue;
 
+      if (afterGatewayLookupForTests) await afterGatewayLookupForTests(orderId);
+
       await bumpOrderStatus({
         orderId,
         status: "cancelled",
@@ -194,10 +230,23 @@ export async function expireAbandonedUnpaidOrders(
       });
       stats.cancelled += 1;
     } catch (err: any) {
-      // A capture landing in the same moment (or any other refusal) must not
+        // A capture landing in the same moment (or any other refusal) must not
       // poison the rest of the batch.
       if (err?.code === "ORDER_NOT_PAID") {
         stats.skippedUnknown += 1;
+        // P1-C layer 1 refusal: the fresh doc showed money moving. Say why, so
+        // a sweep that keeps losing this race is visible instead of looking
+        // like a no-op.
+        console.warn(
+          `[Unpaid Expiry] order ${orderId} was NOT cancelled — payment activity appeared inside the cancel transaction:`,
+          err?.message || err
+        );
+        await captureErrorSnapshot({
+          source: "system",
+          severity: "medium",
+          message: `Abandoned unpaid order ${orderId} was not cancelled: payment activity appeared before the cancel committed (${err?.message || "no reason given"})`,
+          orderId,
+        }).catch(() => undefined);
         continue;
       }
       stats.failed += 1;
