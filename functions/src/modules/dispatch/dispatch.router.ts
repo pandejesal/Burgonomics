@@ -46,6 +46,12 @@ import {
   resolveDropContact,
   type ResolvedDropContact,
 } from "./dropContact";
+import {
+  persistResolvedStorePhone,
+  pickupPhoneMissingError,
+  resolvePickupContact,
+  type ResolvedPickupContact,
+} from "./pickupContact";
 import { fareConfirmCheck } from "./providers/shared";
 import { borzoAdapter } from "./providers/borzo.adapter";
 import { shadowfaxAdapter, cancelShadowfaxOrder } from "./providers/shadowfax.adapter";
@@ -704,9 +710,31 @@ function buildQuoteContext(
   order: any,
   params: Partial<DispatchQuoteParams> & { staffName?: string; caller?: StaffCaller },
   pickup: PickupCoordinates,
-  dropContact?: ResolvedDropContact | null
+  dropContact?: ResolvedDropContact | null,
+  pickupContact?: ResolvedPickupContact | null
 ): { ctx: DispatchQuoteContext; geoSource: "live_gps" } {
   const contact = dropContact ?? null;
+  const pickupPhone = pickupContact?.phone;
+  // The adapters read the pickup contact off `ctx.order` (`providers/shared.
+  // pickupContact`). The canonical branch number is layered OVER the order
+  // snapshot so a stale/cached client `store.phone` can never win, and so
+  // adapters that re-derive the contact mid-walk (Shadowfax/Borzo) send the
+  // SAME real number this dispatch was validated against.
+  const ctxOrder =
+    pickupPhone || pickupContact?.name
+      ? {
+          ...order,
+          store: {
+            ...(order?.store && typeof order.store === "object" ? order.store : {}),
+            ...(pickupPhone ? { phone: pickupPhone } : {}),
+            name:
+              order?.store?.name ||
+              pickupContact?.name ||
+              order?.branchName ||
+              "Burgonomics Branch",
+          },
+        }
+      : order;
   return {
     ctx: {
       pickup: { lat: pickup.lat, lng: pickup.lng },
@@ -719,7 +747,7 @@ function buildQuoteContext(
       customerName: contact?.name || order.customerName || params.customerName,
       customerPhone: contact?.phone || order.customerPhone || params.customerPhone,
       orderId: params.orderId,
-      order,
+      order: ctxOrder,
       staffName: params.staffName,
       caller: params.caller,
     },
@@ -916,16 +944,36 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   // branchCoordinates snapshot → order.store → branches/{branchId}.coordinates.
   const pickup = await resolvePickupCoordinates(order);
   if (!pickup) throw pickupGpsMissingError();
+  // Pickup CONTACT resolved the same way and at the same point: the canonical
+  // `branches/{branchId}.phone` first, then the order's own real snapshot. A
+  // missing/invalid store number is a typed 422 HERE — before the claim, so a
+  // fixable data gap never parks a 10-minute `dispatch_pending` lease, and
+  // before any provider call, so it can never surface as a provider 502 (the
+  // live demo failure: "borzo returned an unparseable branch phone").
+  const pickupContact = await resolvePickupContact(order);
+  if (!pickupContact) throw pickupPhoneMissingError();
 
   // Per-order idempotency gate before any provider call (double-book guard).
   const reuse = await claimDispatch(orderDoc, order);
   if (reuse && reuse.reused) return reuse;
 
+  // Make the canonical number durable for legs that re-read the order (the
+  // Porter adapter re-reads orders/{orderId} and gates its own payload on
+  // `store.phone`). AFTER the reuse gate: a pure idempotent replay must not
+  // write, and before any provider call so every leg sees the same contact.
+  await persistResolvedStorePhone(orderDoc.ref, order, pickupContact);
+
   const currentGen = reuse?.generation ?? 1;
   const correlationToken =
     reuse?.correlationToken ?? mintDispatchCorrelationToken(orderId, currentGen);
 
-  const { ctx, geoSource } = buildQuoteContext(order, params, pickup, dropContact);
+  const { ctx, geoSource } = buildQuoteContext(
+    order,
+    params,
+    pickup,
+    dropContact,
+    pickupContact
+  );
 
   const gate = checkBranchDeliveryServiceability(
     ctx.pickup.lat,

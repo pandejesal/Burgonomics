@@ -16,6 +16,10 @@ const { mockDb, savedDocs, defaultOrder } = vi.hoisted(() => {
   const defaultOrder = () => ({
     branchId: "branch_ahmedabad_1",
     branchName: "Burgonomics CG Road",
+    // Real orders carry the branch's own number as `store.phone` (a required
+    // field of the client's OrderStoreSnapshot). Dispatch resolves the pickup
+    // CONTACT pre-claim, so an order fixture without it is not a real order.
+    store: { name: "Burgonomics CG Road", phone: "+91 98250 12345" },
     branchCoordinates: { lat: 23.0131, lng: 72.5085 },
     deliveryAddress: {
       full: "102, Shivalik Highstreet, Vastrapur",
