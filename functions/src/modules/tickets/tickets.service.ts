@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import { db } from "../../core/firebase";
 import { captureErrorSnapshot, serviceError } from "../../core/errors";
+import { resolveOrderBranchId } from "../../core/middleware";
 import { autoRefund } from "../payments/razorpay.service";
 import { creditTicketLoyaltyCoins } from "../customers/customerCoins";
 import { ticketTierRank } from "./ticketReminder.scheduler";
@@ -96,6 +97,109 @@ export function assertTicketBranchAccess(
       403
     );
   }
+}
+
+/**
+ * P1-A — the ORDER a ticket names is a MONEY TARGET, not a label.
+ *
+ * Before this, `createTicket` stamped whatever `orderId` the caller sent and
+ * `resolveTicket` refunded it: a customer could name a stranger's order, a
+ * branch staffer could resolve it, and `autoRefund` — called with no caller —
+ * returned someone else's money. Ownership must be proven at BOTH ends:
+ *
+ *  - CREATION: the order must exist, sit on the ticket's branch, and (for a
+ *    customer caller) belong to the verified caller. Staff-raised tickets
+ *    (partner `RaiseTicketModal`) send no orderId at all, so they are
+ *    unaffected; a staffer attaching an order must still be on that branch.
+ *  - RESOLUTION: the linked order is re-checked against the TRANSACTION-FRESH
+ *    ticket's customer and branch before any money moves, and the verified
+ *    staff caller is handed to `autoRefund` so its own branch guard runs.
+ *
+ * Both refusals are typed and OPAQUE. A foreign order, a non-existent order and
+ * a branch mismatch share ONE code/message/status at creation, so the endpoint
+ * is not an existence oracle for order ids.
+ */
+export const TICKET_ORDER_REFUSAL_MESSAGE =
+  "That order cannot be attached to this ticket. Check the order and outlet, or raise the ticket without an order.";
+
+function ticketOrderRefusal(): Error & { code: string; statusCode: number } {
+  return serviceError("TICKET_ORDER_NOT_YOURS", TICKET_ORDER_REFUSAL_MESSAGE, 403);
+}
+
+/** Order owner as stored by both writers (`customerId`, legacy `userId`). */
+function orderCustomerId(order: Record<string, any>): string | null {
+  const candidate =
+    typeof order?.customerId === "string" && order.customerId
+      ? order.customerId
+      : typeof order?.userId === "string" && order.userId
+        ? order.userId
+        : null;
+  return candidate;
+}
+
+/**
+ * Creation-time proof. Runs BEFORE the ticket write so a refused ticket leaves
+ * no document (and no orderId a later resolver could act on).
+ */
+async function assertCreateOrderBinding(params: {
+  orderId: string;
+  branchId: string;
+  customerId: string;
+  caller: TicketCaller;
+}): Promise<void> {
+  const { orderId, branchId, customerId, caller } = params;
+  const snap = await db.collection("orders").doc(orderId).get();
+  // Missing order and foreign order answer IDENTICALLY (no existence oracle).
+  if (!snap.exists) throw ticketOrderRefusal();
+  const order = (snap.data() || {}) as Record<string, any>;
+
+  const orderBranch = await resolveOrderBranchId(order);
+  if (!orderBranch || orderBranch !== branchId) throw ticketOrderRefusal();
+
+  const role = caller?.role;
+  if (role && STAFF_ROLES.has(role)) return; // staff: branch proof above is the boundary
+  // Customer caller: the order must be THEIRS. `customerId` is already bound
+  // to caller.uid by the caller (see createTicket), so this is the identity
+  // the ticket is raised under.
+  const owner = orderCustomerId(order);
+  if (!owner || owner !== customerId) throw ticketOrderRefusal();
+}
+
+/**
+ * Resolution-time re-proof, against the transaction-fresh ticket. Refuses only
+ * on a PROVABLE mismatch (both sides carry a value and they disagree): legacy
+ * orders/docs that never carried an owner or branch stay resolvable, which is
+ * the pre-existing behaviour for them.
+ */
+async function assertTicketOrderStillMatches(
+  ticket: Record<string, any>
+): Promise<{ order: Record<string, any>; orderBranchId: string | null } | null> {
+  const orderId = typeof ticket.orderId === "string" ? ticket.orderId : "";
+  if (!orderId) return null;
+  const snap = await db.collection("orders").doc(orderId).get();
+  if (!snap.exists) {
+    throw serviceError(
+      "TICKET_NOT_FOUND",
+      `Cannot refund: linked order ${orderId} not found.`,
+      404
+    );
+  }
+  const order = (snap.data() || {}) as Record<string, any>;
+  const ticketCustomer = typeof ticket.customerId === "string" ? ticket.customerId : "";
+  const owner = orderCustomerId(order);
+  const orderBranchId = await resolveOrderBranchId(order);
+  const ticketBranch = typeof ticket.branchId === "string" ? ticket.branchId : "";
+
+  const customerMismatch = !!ticketCustomer && !!owner && ticketCustomer !== owner;
+  const branchMismatch = !!ticketBranch && !!orderBranchId && ticketBranch !== orderBranchId;
+  if (customerMismatch || branchMismatch) {
+    throw serviceError(
+      "TICKET_ORDER_MISMATCH",
+      `Refund refused: the linked order ${orderId} does not belong to this ticket's customer/branch — verify ownership manually before any money moves.`,
+      409
+    );
+  }
+  return { order, orderBranchId };
 }
 
 // Spam/abuse backstops (M14 follow-up; rules bind customerId==uid, routes
@@ -334,6 +438,19 @@ export async function createTicket(input: CreateTicketInput & { caller?: TicketC
     throw serviceError("TICKET_INVALID_INPUT", "Ticket create: subject/description length invalid", 400);
   }
 
+  // P1-A: an attached order is a refund target. Prove ownership BEFORE the
+  // spam guard and the write, so a refused ticket leaves no document behind
+  // (and no orderId a later resolver could act on).
+  const orderId = typeof input.orderId === "string" ? input.orderId.trim() : "";
+  if (orderId) {
+    await assertCreateOrderBinding({
+      orderId,
+      branchId: input.branchId,
+      customerId,
+      caller: input.caller,
+    });
+  }
+
   await assertTicketSpamGuards(customerId);
 
   const ticketId = `tkt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -367,7 +484,8 @@ export async function createTicket(input: CreateTicketInput & { caller?: TicketC
     customerId,
     customerName: input.customerName,
     customerPhone: input.customerPhone || "",
-    orderId: input.orderId || null,
+    // P1-A: the VALIDATED id (or null) — never the raw client string.
+    orderId: orderId || null,
     branchId: input.branchId,
     category: input.category,
     priority,
@@ -747,6 +865,12 @@ export async function resolveTicket(input: ResolveTicketInput) {
       );
     }
     const order = orderSnap.data()!;
+    // P1-A: re-prove ownership against the TRANSACTION-FRESH ticket before a
+    // single rupee moves. Creation-time binding is not enough on its own:
+    // legacy tickets (and any ticket written before this guard shipped) may
+    // still point at a foreign order, and the resolution lease changed the
+    // snapshot underneath the pre-read.
+    await assertTicketOrderStillMatches(liveTicket);
     // NOTE: second-charge protection lives in autoRefund itself. Its identity is
     // the durable refund request id derived below (ticket + action): a retry of
     // THIS ticket replays the stored receipt, while a different ticket is a
@@ -778,13 +902,20 @@ export async function resolveTicket(input: ResolveTicketInput) {
     // land on the resolution record below). A retry after a failed gateway call
     // with edited notes must replay the SAME request instead of a 409 conflict.
     const refundReason = `Ticket ${liveTicket.ticketNumber || ticketId} resolution: ${action}`;
-    refundResult = await autoRefund({
-      orderId: liveTicket.orderId,
-      razorpayPaymentId,
-      amountRupees: action === "partial_refund" ? amount : undefined,
-      reason: refundReason,
-      refundRequestId: deterministicRequestId,
-    });
+    refundResult = await autoRefund(
+      {
+        orderId: liveTicket.orderId,
+        razorpayPaymentId,
+        amountRupees: action === "partial_refund" ? amount : undefined,
+        reason: refundReason,
+        refundRequestId: deterministicRequestId,
+      },
+      // P1-A: hand the VERIFIED staff caller through so autoRefund's own
+      // branch guard (`assertOrderBranchAccess`) runs. Passing nothing here
+      // was the second half of the exploit: a caller-less refund skipped the
+      // only remaining ownership check downstream of the ticket.
+      input.caller
+    );
   }
 
   // 2. If loyalty credit, update customer profile. Amount is bounded like

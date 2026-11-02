@@ -92,8 +92,11 @@ describe("resolveTicket (real money paths)", () => {
       ticketNumber: "TICK-2026-0001",
       orderId: "order_paid_1",
       customerId: "cust_1",
+      branchId: "branch_a",
     };
     savedDocs["orders/order_paid_1"] = {
+      customerId: "cust_1",
+      branchId: "branch_a",
       payment: { razorpayPaymentId: "pay_live_1" },
     };
 
@@ -217,8 +220,11 @@ describe("resolveTicket (real money paths)", () => {
       ticketNumber: "TICK-2026-0005",
       orderId: "order_paid_2",
       customerId: "cust_2",
+      branchId: "branch_a",
     };
     savedDocs["orders/order_paid_2"] = {
+      customerId: "cust_2",
+      branchId: "branch_a",
       payment: { razorpayPaymentId: "pay_live_2" },
     };
     const first = await resolveTicket({ ...BASE, ticketId: "tk_double", action: "full_refund" });
@@ -241,13 +247,17 @@ describe("resolveTicket (real money paths)", () => {
       ticketNumber: "TICK-2026-0006",
       orderId: "order_rfnd_1",
       customerId: "cust_3",
+      branchId: "branch_a",
     };
     savedDocs["support_tickets/tk_rfnd_b"] = {
       ticketNumber: "TICK-2026-0007",
       orderId: "order_rfnd_1",
       customerId: "cust_3",
+      branchId: "branch_a",
     };
     savedDocs["orders/order_rfnd_1"] = {
+      customerId: "cust_3",
+      branchId: "branch_a",
       payment: { razorpayPaymentId: "pay_live_3", capturedAmountPaise: 50000 },
     };
     const first = await resolveTicket({
@@ -289,8 +299,11 @@ describe("resolveTicket (real money paths)", () => {
       ticketNumber: "TICK-2026-0008",
       orderId: "order_rfnd_2",
       customerId: "cust_3",
+      branchId: "branch_a",
     };
     savedDocs["orders/order_rfnd_2"] = {
+      customerId: "cust_3",
+      branchId: "branch_a",
       payment: { razorpayPaymentId: "pay_live_4" },
       refundStatus: "refunded",
       refundAmount: 50,
@@ -626,8 +639,13 @@ describe("ticket writes when the client sends no display name", () => {
       ticketNumber: "TICK-2026-9100",
       orderId: "order_noname",
       customerId: "cust_1",
+      branchId: "branch_a",
     };
-    savedDocs["orders/order_noname"] = { payment: { razorpayPaymentId: "pay_noname" } };
+    savedDocs["orders/order_noname"] = {
+      customerId: "cust_1",
+      branchId: "branch_a",
+      payment: { razorpayPaymentId: "pay_noname" },
+    };
 
     await resolveTicket({
       ticketId: "tk_noname",
