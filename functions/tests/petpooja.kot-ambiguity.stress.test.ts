@@ -212,7 +212,15 @@ vi.mock("firebase-admin", () => {
 
 import { retryPendingPetpoojaOrdersWorker } from "../src/modules/petpooja/petpooja.scheduler";
 import { pushOrderToPetpooja } from "../src/modules/petpooja/orderPush";
+import { PETPOOJA_MAX_RETRY_ATTEMPTS } from "../src/modules/petpooja/retryBackoff";
 import { config } from "../src/config/env";
+
+/**
+ * One past the retry limit = retries exhausted. Kept relative to the shared
+ * constant so a future schedule change cannot silently stop exercising the
+ * dead-letter pass (the old fixtures pinned the literal 4).
+ */
+const EXHAUSTED_RETRY_COUNT = PETPOOJA_MAX_RETRY_ATTEMPTS + 1;
 
 const seedPending = (id: string, retryCount = 0, createdAt = 1700000000000 - 60000) => {
   savedDocs["branches/branch_ahmedabad_1"] = {
@@ -296,7 +304,7 @@ describe("KOT push transport-ambiguity + dead-letter race (stress sweep)", () =>
   });
 
   it("K2 RED: dead-letter never overwrites an order that was pushed after the scan", async () => {
-    seedPending("ord_k2", 4); // retries exhausted at the scan
+    seedPending("ord_k2", EXHAUSTED_RETRY_COUNT); // retries exhausted at the scan
     control.deadLetterRacePath = "orders/ord_k2";
 
     const tick = await retryPendingPetpoojaOrdersWorker();
@@ -315,7 +323,7 @@ describe("KOT push transport-ambiguity + dead-letter race (stress sweep)", () =>
     // flip had happened).
     delete (mockDb as any).runTransaction;
     mockDb.runTransaction = undefined;
-    seedPending("ord_kf", 4); // exhausted at the scan, no tx protection
+    seedPending("ord_kf", EXHAUSTED_RETRY_COUNT); // exhausted at the scan, no tx protection
 
     // fcmClient short-circuits in the vitest env BEFORE any transport send;
     // exercise the real messaging seam here (the hook this test exists for).
@@ -340,7 +348,7 @@ describe("KOT push transport-ambiguity + dead-letter race (stress sweep)", () =>
       );
       expect(snapshots).toHaveLength(1);
       expect(messagingSendSpy).toHaveBeenCalledTimes(1);
-      expect(doc.petpoojaRetryCount).toBe(4); // no budget burn on dead-letter
+      expect(doc.petpoojaRetryCount).toBe(EXHAUSTED_RETRY_COUNT); // no budget burn on dead-letter
     } finally {
       // Restore the default harness for sibling tests.
       if (prevVitest !== undefined) process.env.VITEST = prevVitest;
@@ -374,7 +382,7 @@ describe("KOT push transport-ambiguity + dead-letter race (stress sweep)", () =>
   });
 
   it("F11 race: dead-letter transaction never overwrites a fresh ambiguous park and never alerts", async () => {
-    seedPending("ord_ambiguous_race", 4);
+    seedPending("ord_ambiguous_race", EXHAUSTED_RETRY_COUNT);
     control.deadLetterAmbiguousRacePath = "orders/ord_ambiguous_race";
 
     const tick = await retryPendingPetpoojaOrdersWorker();

@@ -4,6 +4,11 @@ import * as logger from "firebase-functions/logger";
 import { syncPetpoojaMenu } from "./menuSyncWebhook";
 import { pushOrderToPetpooja, wasPushDeferredBusy } from "./orderPush";
 import { dispatchFCM } from "../notifications/fcm.service";
+import {
+  PETPOOJA_MAX_RETRY_ATTEMPTS,
+  isPetpoojaRetryDue,
+  petpoojaRetryScheduledAtMs,
+} from "./retryBackoff";
 
 /**
  * Hourly Cron job to sync menus from Petpooja for all active branches in parallel chunks.
@@ -83,6 +88,12 @@ export async function syncAllBranchesPetpoojaMenu(): Promise<{
 
 /**
  * Worker to retry failed Petpooja KOT order pushes with exponential backoff.
+ *
+ * The 5-minute schedule is only the POLL cadence: an order is re-POSTed only
+ * once its persisted `petpoojaNextRetryAtMs` has arrived, so successive
+ * attempts are 5m / 10m / 20m / 40m apart (see `retryBackoff.ts`). Rows that
+ * are not due yet are skipped before any claim transaction, so they hold no
+ * lease and cost no provider call.
  */
 export async function retryPendingPetpoojaOrdersWorker(): Promise<{
   retriedCount: number;
@@ -260,22 +271,95 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
     logger.warn("[Petpooja Retry Worker] stale processing scan failed:", procScanErr?.message || procScanErr);
   }
 
-  // 2. Scan pending_retry orders
-  // Single scan (single-field where, no composite needed): split retryable
-  // vs exhausted in memory instead of scanning the collection twice.
-  // Oldest-first with a 100-doc window: the old unordered limit(40) could
-  // starve retryable orders sitting behind exhausted ones forever.
+  // 2. Scan pending_retry orders.
+  //
+  // BACKOFF: an order carries `petpoojaNextRetryAtMs` (see retryBackoff.ts) and
+  // is only attempted once that time has arrived. The 5-minute schedule below
+  // is the POLL cadence, not the retry cadence.
+  //
+  // The not-yet-due rows must not consume the window: an oldest-first
+  // limit(100) would fill up with rows waiting out their backoff during an
+  // outage (they are the OLDEST by definition) and a due order behind them was
+  // never even read. So the scan PAGES oldest-first, in memory, and stops only
+  // when it has a full set of workable candidates or has exhausted a bounded
+  // number of pages. Each tick makes progress: a due row is either pushed
+  // (leaves the lane) or rescheduled into the future, so the next tick's first
+  // page has moved on. Legacy rows (no timestamp) are due immediately and are
+  // the oldest rows by construction — they are always inside the first pages.
+  //
   // Requires the (petpoojaStatus, createdAt) composite in
   // firestore.indexes.json.
-  const pendingOrdersSnap = await db
-    .collection("orders")
-    .where("petpoojaStatus", "==", "pending_retry")
-    .orderBy("createdAt", "asc")
-    .limit(100)
-    .get();
+  const SCAN_PAGE_SIZE = 100;
+  /**
+   * Due rows claimed (and pushed) per tick — the old `limit(100)` cap, so a
+   * tick can never fan out more provider POSTs than before. The scan may read
+   * further pages to FIND them; it pushes no more than this.
+   */
+  const PETPOOJA_SCAN_CLAIM_LIMIT = 100;
+  /** Bounded pagination: at most 5 pages (500 rows) of reads per tick. */
+  const MAX_SCAN_PAGES = 5;
+  /**
+   * Dead-lettering costs a transaction + a branch alert per row, so it is
+   * capped at what the old single-window scan could produce (100). Rows over
+   * the cap stay in the retry lane and are drained by the next tick — each
+   * one that IS processed leaves the lane, so progress is guaranteed.
+   */
+  const DEAD_LETTER_BATCH_LIMIT = 100;
+
+  const retryableDocs: any[] = [];
+  const exhaustedDocs: any[] = [];
+
+  try {
+    let cursor: any = null;
+    for (let page = 0; page < MAX_SCAN_PAGES; page++) {
+      let query: any = db
+        .collection("orders")
+        .where("petpoojaStatus", "==", "pending_retry")
+        .orderBy("createdAt", "asc")
+        .limit(SCAN_PAGE_SIZE);
+      if (cursor && typeof query.startAfter === "function") {
+        query = query.startAfter(cursor);
+      }
+      const snap = await query.get();
+      const docs = snap.docs || [];
+      if (docs.length === 0) break;
+
+      const now = Date.now();
+      for (const doc of docs) {
+        const data = doc.data() || {};
+        const retryCount = Number(data.petpoojaRetryCount || 0);
+        if (retryCount > PETPOOJA_MAX_RETRY_ATTEMPTS) {
+          // Spent budget: dead-lettered regardless of its timestamp — that
+          // pass never POSTs, it only flips the row and alerts the branch.
+          if (exhaustedDocs.length < DEAD_LETTER_BATCH_LIMIT) {
+            exhaustedDocs.push(doc);
+          }
+          continue;
+        }
+        // Not due yet: skipped here, BEFORE any claim, so it holds no lease
+        // and costs no provider call.
+        if (!isPetpoojaRetryDue(data, now)) continue;
+        if (retryableDocs.length < PETPOOJA_SCAN_CLAIM_LIMIT) {
+          retryableDocs.push(doc);
+        }
+      }
+
+      // Enough due work for this tick, or this was the last page.
+      if (retryableDocs.length >= PETPOOJA_SCAN_CLAIM_LIMIT) break;
+      if (docs.length < SCAN_PAGE_SIZE) break;
+      cursor = docs[docs.length - 1];
+      if (!cursor || typeof cursor !== "object") break;
+    }
+  } catch (scanErr: any) {
+    logger.warn(
+      "[Petpooja Retry Worker] pending_retry scan failed, skipping tick:",
+      scanErr?.message || scanErr
+    );
+    return { retriedCount, failedCount };
+  }
 
   // Skip empty ticks: nothing pending → no claim transaction, no writes.
-  if ((pendingOrdersSnap.docs || []).length === 0) {
+  if (retryableDocs.length === 0 && exhaustedDocs.length === 0) {
     return { retriedCount, failedCount };
   }
 
@@ -284,12 +368,7 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
   // to `processing` inside one transaction; stale claims (>10 min, crashed
   // worker) are take-over-able. pushOrderToPetpooja releases the claim by
   // writing synced/pending_retry itself.
-  const pendingDocs = pendingOrdersSnap.docs.filter(
-    (doc: any) => Number(doc.data()?.petpoojaRetryCount || 0) <= 3
-  );
-  const exhaustedDocs = pendingOrdersSnap.docs.filter(
-    (doc: any) => Number(doc.data()?.petpoojaRetryCount || 0) > 3
-  );
+  const pendingDocs = retryableDocs;
   const claimedDocs: any[] = [];
   if (pendingDocs.length > 0 && db && typeof (db as any).runTransaction === "function") {
     try {
@@ -424,6 +503,13 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
                       petpoojaStatus: "pending_retry",
                       petpoojaSyncStatus: "pending_retry",
                       petpoojaClaimedAt: null,
+                      // A thrown attempt is still a spent attempt: schedule
+                      // the next one on the same backoff curve, or the row
+                      // would be reclaimed on the very next 5-minute tick
+                      // while the POS is still failing.
+                      petpoojaNextRetryAtMs: petpoojaRetryScheduledAtMs(
+                        Number(data.petpoojaRetryCount) || 0
+                      ),
                       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                     },
                     { merge: true }
@@ -440,9 +526,10 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
   }
   }
 
-  // Dead-letter: retries exhausted (>3) would otherwise sit as pending_retry
-  // forever, invisible. Flip them to failed with an audit snapshot. Folded
-  // into the same scan above — no second collection pass.
+  // Dead-letter: an order whose `petpoojaRetryCount` exceeded
+  // PETPOOJA_MAX_RETRY_ATTEMPTS would otherwise sit as pending_retry forever,
+  // invisible. Flip it to failed with an audit snapshot. Folded into the same
+  // scan above — no second collection pass.
   if (exhaustedDocs.length > 0) {
     try {
       const { captureErrorSnapshot } = await import("../../core/errors");
