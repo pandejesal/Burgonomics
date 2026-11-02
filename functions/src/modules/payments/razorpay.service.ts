@@ -517,6 +517,110 @@ function paymentIntentCartMismatchError(): Error {
 }
 
 /**
+ * P1-M — persist what IS known about a refund whose gateway response carried no
+ * usable id, WITHOUT touching any proven-refund accounting.
+ *
+ * Deliberately merge-only and undefined-free:
+ *  - the refund CLAIM is left in place (no second POST can start),
+ *  - `refundUncertain` records the attempt for ops + the retry,
+ *  - `refundStatus` / `refundId` / `refundedTotalPaise` / the ledger / the fee
+ *    release are NOT written, because none of them is proven,
+ *  - the request record is marked `reconciliation_required` rather than
+ *    `completed`, so a same-key retry refuses instead of re-POSTing.
+ */
+async function recordUncertainRefund(args: {
+  orderRef: any;
+  orderId: string;
+  razorpayPaymentId: string;
+  refundRequestId?: string;
+  gatewayKey: string;
+  attemptedPaise: number | null;
+  reason?: string;
+  responseStatus: string | null;
+  responseAmount: number | null;
+  reqRef: any;
+}): Promise<void> {
+  const at = Date.now();
+  try {
+    await args.orderRef.set(
+      {
+        refundUncertain: {
+          attempted: true,
+          razorpayPaymentId: args.razorpayPaymentId,
+          requestId: args.refundRequestId ?? null,
+          gatewayKey: args.gatewayKey,
+          amountPaise:
+            typeof args.attemptedPaise === "number" && Number.isFinite(args.attemptedPaise)
+              ? args.attemptedPaise
+              : null,
+          responseStatus: args.responseStatus,
+          responseAmountPaise: args.responseAmount,
+          reason: args.reason ?? null,
+          detectedAt: at,
+        },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.warn(
+      `[Payments] uncertain-refund marker write failed for order ${args.orderId}:`,
+      err?.message || err
+    );
+  }
+
+  if (args.reqRef && args.refundRequestId) {
+    try {
+      await args.reqRef.set(
+        {
+          status: "reconciliation_required",
+          uncertaintyReason: "gateway_response_missing_refund_id",
+          gatewayKey: args.gatewayKey,
+          detectedAt: at,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (err: any) {
+      console.warn(
+        `[Payments] uncertain refund-request write failed for ${args.refundRequestId}:`,
+        err?.message || err
+      );
+    }
+  }
+
+  // Park where ops already look for unapplied money.
+  try {
+    await db
+      .collection("unmatched_payments")
+      .doc(`ump_refund_uncertain_${args.razorpayPaymentId}_${args.refundRequestId || args.gatewayKey}`)
+      .set(
+        {
+          event: "refund_uncertain",
+          razorpayPaymentId: args.razorpayPaymentId,
+          orderId: args.orderId,
+          refundRequestId: args.refundRequestId ?? null,
+          gatewayKey: args.gatewayKey,
+          amountPaise:
+            typeof args.attemptedPaise === "number" && Number.isFinite(args.attemptedPaise)
+              ? args.attemptedPaise
+              : null,
+          responseStatus: args.responseStatus,
+          reason: "refund_response_missing_id",
+          status: "needs_review",
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+  } catch (err: any) {
+    console.warn(
+      `[Payments] uncertain-refund park write failed for ${args.orderId}:`,
+      err?.message || err
+    );
+  }
+}
+
+/**
  * P1-I — the capture-side availability gate.
  *
  * Runs immediately before confirmation (and therefore before the OTP mint, the
@@ -3559,6 +3663,53 @@ export async function autoRefund(
       throw failed;
     }
   }
+
+  // P1-M — UNCERTAIN OUTCOME. A 2xx response with no usable refund id means
+  // the money has left but we cannot prove WHICH refund it became. Writing that
+  // through (the old behaviour) put `undefined` into the order doc, the ledger,
+  // the request record and the audit row, so real Firestore rejected the whole
+  // transaction: the accounting rolled back while the refund stood, the order
+  // looked refundable again, and a later refund could pay out twice.
+  //
+  // Instead: keep the claim (so no second POST can start), record what is
+  // KNOWN on the order, park it for ops, and require reconciliation. Nothing is
+  // rolled back — the claim and the `refundUncertain` marker are the recovery
+  // handle, and the SAME idempotency key makes a retry safe (Razorpay replays
+  // the original refund rather than creating another one).
+  const responseRefundId =
+    typeof refundResult?.id === "string" && refundResult.id.trim() ? refundResult.id.trim() : "";
+  if (!responseRefundId) {
+    const attemptedPaise =
+      typeof refundPayload.amount === "number" ? Number(refundPayload.amount) : capturedPaise;
+    await recordUncertainRefund({
+      orderRef,
+      orderId,
+      razorpayPaymentId,
+      refundRequestId,
+      gatewayKey,
+      attemptedPaise,
+      reason,
+      responseStatus: typeof refundResult?.status === "string" ? refundResult.status : null,
+      responseAmount:
+        typeof refundResult?.amount === "number" ? Number(refundResult.amount) : null,
+      reqRef,
+    });
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Refund for payment ${razorpayPaymentId} (order ${orderId}) returned 2xx with NO refund id — money may have moved; parked for reconciliation, claim retained, no rollback of accounting`,
+      orderId,
+      razorpayPaymentId,
+    }).catch(() => undefined);
+    const uncertain: any = new Error(
+      "The refund was sent but the gateway did not confirm an id — it is parked for reconciliation. Do not retry blindly; the same request will replay rather than refund again."
+    );
+    uncertain.statusCode = 409;
+    uncertain.code = "REFUND_RECONCILIATION_REQUIRED";
+    throw uncertain;
+  }
+  // Everything downstream writes this PROVEN id.
+  refundResult = { ...refundResult, id: responseRefundId };
 
   // Update order record. refundedTotalPaise accumulates monotonically so
   // sequential partials and webhook replays converge instead of overwriting
