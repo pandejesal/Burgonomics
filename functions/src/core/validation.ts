@@ -153,6 +153,13 @@ export const pushOrderSchema = z.object({
 export const resolveKotAmbiguitySchema = z.object({
   orderId: nonEmptyString,
   resolution: z.enum(["printed", "retry"]),
+  /**
+   * OPTIONAL client decision token. The UI may generate one per staff decision
+   * and resend the SAME value when it retries the same press; the server then
+   * never sends a second KOT for it. Omitting it is fully supported — the
+   * server already binds each decision to the acceptance generation.
+   */
+  idempotencyToken: z.string().trim().min(1).max(100).optional(),
 });
 
 export const syncMenuSchema = z.object({

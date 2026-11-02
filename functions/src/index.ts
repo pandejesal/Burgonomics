@@ -749,7 +749,11 @@ app.post(
       const result = await resolvePetpoojaKotAmbiguity(
         req.body.orderId,
         req.body.resolution,
-        req.user as any
+        req.user as any,
+        // Optional: a client decision token simply adds another seam against
+        // replaying the SAME staff press (the server already dedupes on the
+        // acceptance generation).
+        req.body.idempotencyToken ? { idempotencyToken: req.body.idempotencyToken } : undefined
       );
       res.status(200).json(result);
     } catch (err: any) {

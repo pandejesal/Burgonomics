@@ -1221,6 +1221,22 @@ export async function pushKotForCashOrderOnAccept(
  * same transaction that records the staff statement, then sends exactly one
  * fresh push.
  *
+ * ACCEPTANCE GENERATION (final review). The POS can answer a retried push with
+ * ANOTHER id-less acceptance — normal in the sandbox, possible in production.
+ * That left `accepted_unconfirmed` visible again, so a client whose response was
+ * lost retried the identical decision and printed a second ticket. A decision is
+ * therefore bound to the acceptance it consumed:
+ *   - every recorded POS acceptance bumps `petpoojaAcceptanceGeneration`;
+ *   - a retry records `petpoojaResolvedGeneration` (the acceptance it consumed,
+ *     or the NEW acceptance its own push produced) and `petpoojaResolution`;
+ *   - a repeat of the same decision while that acceptance is still the current
+ *     one is a no-op (`reused: true`) and sends NOTHING, whoever asks;
+ *   - an optional client `idempotencyToken` is stored and also dedupes a repeat
+ *     of that exact client decision (it can never UN-cover a covered
+ *     acceptance);
+ *   - a genuinely new failure (no acceptance left, the push never landed) is a
+ *     new decision and stays resolvable.
+ *
  * The caller is branch-scoped: a Branch-A staff member cannot resolve Branch-B's
  * ticket.
  */
@@ -1231,6 +1247,28 @@ const resolveRetryInFlight = new Set<string>();
 /** How long a durable resolve-retry claim blocks another instance. */
 const RESOLVE_RETRY_CLAIM_TTL_MS = 2 * 60 * 1000;
 
+/** The acceptance counter on the order, as a number (absent ⇒ 0). */
+function acceptanceGenerationOf(order: any): number {
+  const raw = Number(order?.petpoojaAcceptanceGeneration);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+/** The generation the last staff decision covered; -1 when none is recorded. */
+function resolvedGenerationOf(order: any): number {
+  const raw = Number(order?.petpoojaResolvedGeneration);
+  return Number.isFinite(raw) ? raw : -1;
+}
+
+/** True while the order presents a POS acceptance (with or without an id). */
+function hasPosAcceptance(order: any): boolean {
+  return (
+    !!order?.petpoojaOrderId ||
+    order?.petpoojaAcceptedNoId === true ||
+    order?.petpoojaStatus === "accepted_unconfirmed" ||
+    order?.petpoojaSyncStatus === "accepted_unconfirmed"
+  );
+}
+
 export interface ResolveKotResult {
   resolved: "printed" | "retry";
   orderId: string;
@@ -1238,12 +1276,17 @@ export interface ResolveKotResult {
   pushed?: boolean;
   /** True when another press/instance already handled this resolution. */
   reused?: boolean;
+  /** The acceptance generation this decision is bound to (client-readable). */
+  acceptanceGeneration?: number;
+  /** Echo of the client's optional decision token, when one was supplied. */
+  idempotencyToken?: string;
 }
 
 export async function resolvePetpoojaKotAmbiguity(
   orderId: string,
   resolution: "printed" | "retry",
-  caller: StaffCaller
+  caller: StaffCaller,
+  options?: { idempotencyToken?: string }
 ): Promise<ResolveKotResult> {
   if (resolution !== "printed" && resolution !== "retry") {
     throw new Error("Unsupported reconciliation outcome — use 'printed' or 'retry'");
@@ -1252,6 +1295,11 @@ export async function resolvePetpoojaKotAmbiguity(
   if (!orderDoc.exists) throw new Error(`Order ${orderId} does not exist`);
   const order = orderDoc.data() || {};
   const branchId = await assertOrderBranchAccess(caller, order as Record<string, any>);
+
+  const idempotencyToken =
+    typeof options?.idempotencyToken === "string" && options.idempotencyToken.trim()
+      ? options.idempotencyToken.trim().slice(0, 100)
+      : null;
 
   /** States a human may resolve. `accepted_unconfirmed` is the id-less ack. */
   const resolvable = (d: any): boolean =>
@@ -1269,8 +1317,32 @@ export async function resolvePetpoojaKotAmbiguity(
   // pair wins the race. Scoped to `retry`: a `printed` statement is a different
   // truth and must never be answered by a retry that is merely in flight.
   if (resolution === "retry" && resolveRetryInFlight.has(orderId)) {
-    return { resolved: resolution, orderId, pushed: false, reused: true };
+    return {
+      resolved: resolution,
+      orderId,
+      pushed: false,
+      reused: true,
+      acceptanceGeneration: acceptanceGenerationOf(order),
+    };
   }
+
+  /**
+   * True when this exact acceptance was already covered by a `retry` decision,
+   * so sending again would print the food twice. This is the cross-process half
+   * of the double-tap guard: it survives the in-flight lease, a dropped
+   * response, and a client that retries blindly.
+   */
+  const retryAlreadyCovered = (d: any): boolean => {
+    if (!hasPosAcceptance(d)) return false;
+    if (d?.petpoojaResolution !== "retry") return false;
+    // An explicit client token identifies ONE decision: replaying it is the same
+    // decision, even if a later (uncovered) acceptance generation exists. A
+    // DIFFERENT token is a new decision, but it can NEVER un-cover an acceptance
+    // an earlier decision already covered — otherwise re-sending with a fresh
+    // token would reprint the food. Coverage is decided by the generation.
+    if (idempotencyToken && d?.petpoojaResolveToken === idempotencyToken) return true;
+    return resolvedGenerationOf(d) >= acceptanceGenerationOf(d) && resolvedGenerationOf(d) >= 0;
+  };
 
   if (!resolvable(order as any)) {
     // Idempotent replay: the SAME resolution already recorded on this order is
@@ -1279,7 +1351,14 @@ export async function resolvePetpoojaKotAmbiguity(
     // before the registered-id conflict so a landed retry replays as a no-op.
     const recorded = (order as any).petpoojaResolution;
     if (recorded === resolution) {
-      return { resolved: resolution, orderId, pushed: false, reused: true };
+      return {
+        resolved: resolution,
+        orderId,
+        pushed: false,
+        reused: true,
+        acceptanceGeneration: acceptanceGenerationOf(order),
+        ...(idempotencyToken ? { idempotencyToken } : {}),
+      };
     }
     // A registered ticket is never re-sent: the POS already holds it. Only a
     // RETRY conflicts with that — `printed` on a settled order is simply not
@@ -1302,6 +1381,20 @@ export async function resolvePetpoojaKotAmbiguity(
     throw new Error(
       `Order ${orderId} carries a POS order id (${(order as any).petpoojaOrderId}) — the ticket is already registered; confirm it as printed instead of retrying`
     );
+  }
+
+  // The POS accepted this exact ticket and a previous retry decision already
+  // covered that acceptance: sending again prints the food twice. This is the
+  // dropped-response replay the final review found.
+  if (resolution === "retry" && retryAlreadyCovered(order as any)) {
+    return {
+      resolved: "retry",
+      orderId,
+      pushed: false,
+      reused: true,
+      acceptanceGeneration: acceptanceGenerationOf(order),
+      ...(idempotencyToken ? { idempotencyToken } : {}),
+    };
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -1338,7 +1431,12 @@ export async function resolvePetpoojaKotAmbiguity(
       },
       { merge: true }
     );
-    return { resolved: "printed", orderId };
+    return {
+      resolved: "printed",
+      orderId,
+      acceptanceGeneration: acceptanceGenerationOf(order),
+      ...(idempotencyToken ? { idempotencyToken } : {}),
+    };
   }
 
   // --- retry ---------------------------------------------------------------
@@ -1351,25 +1449,53 @@ export async function resolvePetpoojaKotAmbiguity(
     // Ambiguous POST with no acceptance marker: the retry worker owns the one
     // deliberate attempt (its pending_retry lease is the single-push lock).
     // The count is NOT reset: the dead-letter bound still applies.
+    //
+    // Nothing was accepted, so there is no acceptance generation to cover: the
+    // decision is recorded against the CURRENT generation but `hasPosAcceptance`
+    // stays false, which is exactly what makes a genuinely new failure
+    // resolvable again (the next decision is allowed to send).
     await orderDoc.ref.set(
       {
         ...evidence,
         petpoojaStatus: "pending_retry",
         petpoojaSyncStatus: "pending_retry",
         kotSyncFailed: false,
+        // Nothing is accepted yet, so the baseline generation is 0 (defined,
+        // never `undefined`, so a read-back always compares numbers).
+        petpoojaAcceptanceGeneration: acceptanceGenerationOf(order),
+        petpoojaResolvedGeneration: acceptanceGenerationOf(order),
+        // The push this decision authorises has NOT been recorded yet (the
+        // worker performs it). The first acceptance written afterwards belongs
+        // to this decision and is covered by it.
+        petpoojaRetryCoversNextAcceptance: true,
+        ...(idempotencyToken ? { petpoojaResolveToken: idempotencyToken } : {}),
         petpoojaPushClaimedAt: null,
         petpoojaClaimedAt: null,
       },
       { merge: true }
     );
-    return { resolved: "retry", orderId };
+    return {
+      resolved: "retry",
+      orderId,
+      // The deliberate push is handed to the single-push worker lane, so this
+      // call itself sent nothing.
+      pushed: false,
+      acceptanceGeneration: acceptanceGenerationOf(order),
+      ...(idempotencyToken ? { idempotencyToken } : {}),
+    };
   }
 
   // Same-instance guard: a double tap must not stack two POSTs. The durable
   // claim below is the cross-instance half of the same guarantee.
   const inFlightAlready = resolveRetryInFlight.has(orderId);
   if (inFlightAlready) {
-    return { resolved: "retry", orderId, pushed: false, reused: true };
+    return {
+      resolved: "retry",
+      orderId,
+      pushed: false,
+      reused: true,
+      acceptanceGeneration: acceptanceGenerationOf(order),
+    };
   }
   resolveRetryInFlight.add(orderId);
 
@@ -1387,6 +1513,9 @@ export async function resolvePetpoojaKotAmbiguity(
             if (d.petpoojaOrderId) return { alreadyRegistered: true as const };
             if (!resolvable(d)) return { notParked: true as const };
             if (d.petpoojaAcceptedNoId !== true) return { resolvedElsewhere: true as const };
+            // Re-check INSIDE the transaction: a concurrent identical decision
+            // may have covered this acceptance between the pre-read and here.
+            if (retryAlreadyCovered(d)) return { alreadyCovered: true as const };
             const claimedAt = Number(d.petpoojaResolveRetryAt);
             if (
               Number.isFinite(claimedAt) &&
@@ -1407,6 +1536,18 @@ export async function resolvePetpoojaKotAmbiguity(
                 petpoojaAcceptedNoId: false,
                 petpoojaAcceptedNoIdAt: null,
                 petpoojaAcceptedNoIdAck: null,
+                // Bind the decision to the acceptance it consumed. When this
+                // push produces a NEW id-less acceptance, the marker is moved
+                // forward to that generation (see the post-push write). The
+                // baseline is written explicitly so a read-back always compares
+                // numbers, never `undefined`.
+                petpoojaAcceptanceGeneration: acceptanceGenerationOf(d),
+                petpoojaResolvedGeneration: acceptanceGenerationOf(d),
+                // Same as the worker lane: this decision authorises ONE push, so
+                // an acceptance produced by it is covered by it even if the
+                // post-push read-back never lands.
+                petpoojaRetryCoversNextAcceptance: true,
+                ...(idempotencyToken ? { petpoojaResolveToken: idempotencyToken } : {}),
                 // The explicit statement, attributed and timestamped.
                 petpoojaKotNotPrintedConfirmedBy: resolvedBy,
                 petpoojaKotNotPrintedConfirmedAt: now,
@@ -1440,8 +1581,15 @@ export async function resolvePetpoojaKotAmbiguity(
       err.code = "TRANSACTION_UNAVAILABLE";
       throw err;
     }
-    if (outcome?.busy || outcome?.resolvedElsewhere) {
-      return { resolved: "retry", orderId, pushed: false, reused: true };
+    if (outcome?.busy || outcome?.resolvedElsewhere || outcome?.alreadyCovered) {
+      return {
+        resolved: "retry",
+        orderId,
+        pushed: false,
+        reused: true,
+        acceptanceGeneration: acceptanceGenerationOf(order),
+        ...(idempotencyToken ? { idempotencyToken } : {}),
+      };
     }
 
     // Exactly one fresh push. pushOrderToPetpooja re-claims, re-reads and
@@ -1455,6 +1603,33 @@ export async function resolvePetpoojaKotAmbiguity(
       return false;
     });
 
+    // A fresh ID-LESS acceptance is a NEW generation (the generation bump is
+    // written by pushOrderToPetpooja on every recorded acceptance). Move this
+    // decision's marker onto it: the decision sent THIS ticket, so a replay of
+    // the same decision must never do it again — even though the order reads
+    // `accepted_unconfirmed` once more. Read-back only; nothing is written when
+    // the push did not produce a new acceptance (a genuinely new failure).
+    let covered = resolvedGenerationOf(order);
+    try {
+      const fresh = await orderDoc.ref.get();
+      const after = (fresh.exists ? fresh.data() : undefined) as any;
+      const committed = resolvedGenerationOf(after);
+      if (committed > covered) covered = committed;
+      const currentAccepted = acceptanceGenerationOf(after);
+      if (pushed && currentAccepted > covered) {
+        covered = currentAccepted;
+        await orderDoc.ref.set({ petpoojaResolvedGeneration: covered }, { merge: true });
+      }
+    } catch (err: any) {
+      // Best-effort: the decision marker from the claim transaction still
+      // covers the acceptance it consumed, so the duplicate-KOT guarantee does
+      // not depend on this read-back.
+      console.warn(
+        `[Petpooja KOT Resolve] could not record the post-push acceptance generation for ${orderId}:`,
+        err?.message || err
+      );
+    }
+
     // Release our durable claim so a LATER deliberate retry is still possible
     // when the push did not land (pending_retry keeps the worker's own lease).
     try {
@@ -1463,10 +1638,61 @@ export async function resolvePetpoojaKotAmbiguity(
       // Best-effort: the claim ages out via RESOLVE_RETRY_CLAIM_TTL_MS.
     }
 
-    return { resolved: "retry", orderId, pushed };
+    return {
+      resolved: "retry",
+      orderId,
+      pushed,
+      reused: !pushed,
+      acceptanceGeneration: covered,
+      ...(idempotencyToken ? { idempotencyToken } : {}),
+    };
   } finally {
     resolveRetryInFlight.delete(orderId);
   }
+}
+
+/** New payload for `petpoojaAcceptanceGeneration` (read-then-increment). */
+function nextAcceptanceGeneration(order: any): number {
+  return acceptanceGenerationOf(order) + 1;
+}
+
+/**
+ * A staff `retry` decision authorises exactly ONE push, and that push may be
+ * performed by the 5-minute worker rather than inline (the ambiguous-POST lane).
+ * `petpoojaRetryCoversNextAcceptance` marks a decision whose push has not been
+ * recorded yet; the first acceptance written afterwards BELONGS to that
+ * decision, so it must be covered by it. Without this, the worker's own id-less
+ * acceptance looked like a brand-new resolvable state and the next identical
+ * client retry printed a second ticket.
+ *
+ * Returns the extra fields to merge into the acceptance write (empty when no
+ * decision is waiting).
+ */
+function acceptanceCoverPatch(order: any, generation: number): Record<string, any> {
+  if (order?.petpoojaRetryCoversNextAcceptance !== true) return {};
+  return {
+    petpoojaResolvedGeneration: generation,
+    petpoojaRetryCoversNextAcceptance: false,
+  };
+}
+
+/**
+ * Every recorded POS acceptance is a NEW acceptance generation. A staff retry
+ * decision is bound to the generation it consumed (see
+ * `resolvePetpoojaKotAmbiguity`), so the counter must move on every accepted
+ * ticket — with an id, without an id, and via the guarded post-ack park.
+ *
+ * These fields are merged into the SAME write that records the acceptance, so
+ * the generation and the cover decision can never disagree (a failed bookkeeping
+ * pre-write used to be able to leave the counter behind the acceptance).
+ */
+function acceptanceGenerationFields(order: any): Record<string, any> {
+  const generation = nextAcceptanceGeneration(order);
+  return {
+    petpoojaAcceptanceGeneration: generation,
+    petpoojaAcceptanceAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...acceptanceCoverPatch(order, generation),
+  };
 }
 
 export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller): Promise<boolean> {
@@ -1856,6 +2082,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
           petpoojaOrderId,
           petpoojaStatus: "synced",
           petpoojaSyncStatus: "synced",
+          ...acceptanceGenerationFields(order),
           // KOT Truth: A relay response is network acceptance by the POS server,
           // NOT physical-printer proof. Do NOT manufacture kotPrinted or kotPrintedAt.
           // kotPushedAt records the successful relay timestamp; genuine historical
@@ -1874,6 +2101,7 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         {
           petpoojaAcceptedNoId: true,
           petpoojaAcceptedNoIdAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...acceptanceGenerationFields(order),
           // Kept verbatim so an operator can see the vendor really did omit
           // the id rather than trusting our summary of it.
           petpoojaAcceptedNoIdAck: JSON.stringify(result).slice(0, 500),
@@ -1965,6 +2193,10 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       // claim transaction) until an operator has verified the physical ticket.
       petpoojaAmbiguousProcessing: true,
       petpoojaAcceptedUnrecorded: true,
+      // F3 also recorded a POS acceptance, so it is a new acceptance generation
+      // like any other AND it was produced by the push this call just made — a
+      // decision waiting for its push therefore covers it.
+      ...acceptanceGenerationFields(order),
       ...(posAcceptedOrderId
         ? { petpoojaOrderId: posAcceptedOrderId }
         : {
