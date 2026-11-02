@@ -53,7 +53,10 @@ export interface CaptureRecoveryStats {
   refunded: number;
   confirmed: number;
   retried: number;
+  /** Alerts ACKNOWLEDGED by a transport this tick. */
   escalated: number;
+  /** Exhausted rows whose ops case exists but the alert could not be delivered. */
+  escalationPending: number;
   skipped: number;
   failed: number;
 }
@@ -199,97 +202,196 @@ function capturedPaiseOf(order: any): number | undefined {
 }
 
 /**
- * Escalation is ONE deterministic doc per order (merge), so a repeatedly
- * sweeping job cannot spam staff with the same case, and a resolved case is
- * evident from its age. A HIGH snapshot pages through the existing alert
- * channels at the same time.
+ * Deterministic ops-case doc for an exhausted capture. The outbox lives ON this
+ * doc (`alertDelivery`), so there is exactly ONE record per payment and no new
+ * collection: the case is the actionable artefact, the delivery map is its
+ * attempt record.
  */
-async function escalateStuckCapture(args: {
+function gateCaseDocId(paymentId: string): string {
+  return `ump_gate_${paymentId}`;
+}
+
+function gateCaseRef(paymentId: string): any {
+  return db.collection("unmatched_payments").doc(gateCaseDocId(paymentId));
+}
+
+/** Alert body for an exhausted refund. Names the ORDER, never the case doc. */
+function exhaustedAlertText(args: {
   orderId: string;
-  paymentId: string;
-  state: string;
   attempts: number;
   detail?: string;
-}): Promise<void> {
-  const reason =
-    args.state === "refund_failed"
-      ? "refund_retries_exhausted"
-      : args.state === "checking"
-        ? "capture_decision_stuck"
-        : "capture_recovery_exhausted";
-  try {
-    await db
-      .collection("unmatched_payments")
-      .doc(`ump_gate_${args.paymentId}`)
-      .set(
-        {
-          eventId: `gate_${args.paymentId}`,
-          event: "capture_fulfilment_recovery",
-          razorpayPaymentId: args.paymentId,
-          orderId: args.orderId,
-          claimedOrderId: args.orderId,
-          amount: null,
-          currency: "INR",
-          status: "needs_review",
-          reason,
-          gateState: args.state,
-          attempts: args.attempts,
-          detail: args.detail || null,
-          staffAction: "refund_manually_or_repair_gate",
-          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-  } catch (err: any) {
-    console.warn(
-      `[Capture Recovery] escalation park write failed for order ${args.orderId}:`,
-      err?.message || err
-    );
-  }
-  await captureErrorSnapshot({
-    source: "payments",
-    severity: "high",
-    message:
-      `Capture fulfilment recovery STOPPED for order ${args.orderId} (payment ${args.paymentId}): ` +
-      `gate is ${args.state} after ${args.attempts} attempt(s) — manual intervention required ` +
-      `(see unmatched_payments/ump_gate_${args.paymentId})`,
-    orderId: args.orderId,
-    razorpayPaymentId: args.paymentId,
-  }).catch(() => undefined);
+}): string {
+  return (
+    `Capture fulfilment recovery STOPPED for order ${args.orderId}: the automatic refund ` +
+    `budget is spent after ${args.attempts} attempt(s) and money may still be owed. ` +
+    `Manual refund or gate repair required` +
+    (args.detail ? ` (item detail: ${args.detail})` : "")
+  );
 }
 
 /**
- * Escalates a refund whose retry budget is spent, and MOVES the row into the
- * separately-monitored `refund_exhausted` state so it stops occupying the retry
- * pages. The refund identity (payment id, detail, attempts) is preserved, so the
- * claim is never lost and a human can still act on it.
+ * Backoff for a failed alert delivery: 10m, 20m, 40m … capped at 6h. Retries
+ * continue indefinitely at the cap — a broken channel stays VISIBLY
+ * undelivered instead of giving up silently.
+ */
+export function alertRetryDelayMs(attempts: number): number {
+  const exponent = Math.max(0, Math.floor(attempts) - 1);
+  const SIX_HOURS = 6 * 60 * 60 * 1000;
+  return Math.min(CAPTURE_RECOVERY_AFTER_MS * Math.pow(2, exponent), SIX_HOURS);
+}
+
+type DeliveryRecord = {
+  state?: "pending" | "sending" | "delivered" | "superseded";
+  attempts?: number;
+  lastError?: string;
+  leaseUntilMs?: number;
+  deliveredAtMs?: number;
+  nextAttemptAtMs?: number;
+};
+
+function deliveryOf(caseData: any): DeliveryRecord {
+  const raw = caseData?.alertDelivery;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return raw as DeliveryRecord;
+}
+
+/**
+ * Creates/repairs the ops CASE for an exhausted refund, then delivers its alert.
+ * ONE entry point for every exhausted path — the sweep's lane branch, the
+ * guard's outcome, and a failure that reached the budget — including rows the
+ * real capture guard already moved to `refund_exhausted` (which used to get no
+ * case and no alert at all).
  *
- * OWNERSHIP FIRST, ALERT SECOND. The transition is claimed in ONE transaction
- * that revalidates the payment id, the gate state, the attempt count and the
- * absence of a live lease. Only a worker that genuinely owns an exhausted,
- * re-validated failure proceeds. This matters because the alert is AWAITED: a
- * live sibling can finish the refund while we wait, and the old code then did a
- * blind `set` that clobbered `refunded` back to `refund_exhausted` (and raised a
- * false "manual refund required" alert for money that had just been returned).
- *
- * Returns true only when THIS caller owned the transition.
+ * Returns "delivered" | "pending" | "skipped".
  */
 async function escalateExhaustedRefund(args: {
   orderId: string;
   paymentId: string;
   attempts: number;
   detail?: string;
-}): Promise<boolean> {
-  const claimed = await claimExhaustion(args);
-  if (!claimed) return false;
+  nowMs?: number;
+}): Promise<"delivered" | "pending" | "skipped"> {
+  const nowMs = typeof args.nowMs === "number" ? args.nowMs : Date.now();
+  const orderRef = db.collection("orders").doc(args.orderId);
+  const caseRef = gateCaseRef(args.paymentId);
 
-  // Record the transition (outbox-style park + audit) BEFORE any alert, so the
-  // ownership proof is durable and the alert can never outlive the truth.
+  // ── CLAIM (one transaction: revalidate the order AND the case) ───────────
+  let claim:
+    | { kind: "send"; attempts: number }
+    | { kind: "skip"; }
+    | { kind: "throw"; error: Error };
   try {
-    await db
-      .collection("unmatched_payments")
-      .doc(`ump_gate_${args.paymentId}`)
-      .set(
+    claim = await (db as any).runTransaction(async (tx: any) => {
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap || !orderSnap.exists) return { kind: "skip" } as const;
+      const fresh = (orderSnap.data() || {}) as any;
+      const record = gateOf(fresh);
+
+      // Revalidate the SAME exhausted capture. A gate that moved on (refunded,
+      // repaired, or a different payment) owes no escalation.
+      //
+      // Two legitimate shapes reach here:
+      //  - a row the capture GUARD already moved to `refund_exhausted`, and
+      //  - a row still owed at/over budget in this sweep (`refund_failed` /
+      //    stale `refund_pending`), which is transitioned HERE so the state and
+      //    the ops case commit together (a failed case write aborts both, and
+      //    the next sweep reclaims it).
+      const samePayment = !!record && record.paymentId === args.paymentId;
+      const alreadyExhausted = samePayment && record!.state === "refund_exhausted";
+      const owedAtBudget =
+        samePayment &&
+        (record!.state === "refund_failed" || record!.state === "refund_pending") &&
+        record!.attempts >= CAPTURE_GATE_MAX_ATTEMPTS;
+
+      // A LIVE lease on a `refund_pending` row means a sibling may be mid-refund
+      // RIGHT NOW (e.g. attempt 5 awaiting the provider). Exhausting it here
+      // would race that refund and could clobber a `refunded` result, so it is
+      // never ours. A `refund_failed` row has NOTHING in flight — its lease only
+      // records when the failure happened — so it must not be blocked.
+      if (owedAtBudget && record && record.state === "refund_pending") {
+        const age = nowMs - record.atMs;
+        if (Number.isFinite(record.atMs) && record.atMs > 0 && age < CAPTURE_GATE_LEASE_MS) {
+          return { kind: "skip" } as const;
+        }
+      }
+
+      const stillExhausted = alreadyExhausted || owedAtBudget;
+      const caseSnap = await tx.get(caseRef);
+      const caseData = caseSnap?.exists ? (caseSnap.data() as any) : null;
+      const delivery = deliveryOf(caseData);
+
+      if (!stillExhausted || !record) {
+        // Gate moved on: retire any pending delivery, send nothing.
+        if (caseData && delivery.state !== "delivered") {
+          tx.set(
+            caseRef,
+            {
+              alertDelivery: {
+                ...delivery,
+                state: "superseded",
+                lastError: "gate_moved_on",
+              },
+            },
+            { merge: true }
+          );
+        }
+        return { kind: "skip" } as const;
+      }
+
+      if (caseData) {
+        if (typeof caseData.orderId === "string" && caseData.orderId !== args.orderId) {
+          return {
+            kind: "throw",
+            error: new Error(
+              `escalation case ${gateCaseDocId(args.paymentId)} belongs to a different order`
+            ),
+          } as const;
+        }
+        if (caseData.status !== "needs_review") {
+          // Staff settled it: never alert again, never reset their status.
+          return { kind: "skip" } as const;
+        }
+        if (delivery.state === "delivered") return { kind: "skip" } as const;
+        // A sibling is mid-send under a live lease.
+        if (
+          delivery.state === "sending" &&
+          Number(delivery.leaseUntilMs) > nowMs
+        ) {
+          return { kind: "skip" } as const;
+        }
+        if (Number(delivery.nextAttemptAtMs) > nowMs) return { kind: "skip" } as const;
+      }
+
+      const attempts = Math.max(
+        Math.floor(Number(delivery.attempts) || 0) + 1,
+        1
+      );
+      // A still-owed row is transitioned to `refund_exhausted` in THIS same
+      // transaction as its ops case: if the case write fails below the whole
+      // transaction aborts, so the row stays owed and the next sweep reclaims
+      // it. That is what makes a transient case-write failure recoverable
+      // instead of permanently losing the escalation.
+      if (owedAtBudget) {
+        tx.set(
+          orderRef,
+          {
+            captureFulfillment: {
+              state: "refund_exhausted",
+              paymentId: args.paymentId,
+              atMs: nowMs,
+              attempts: record!.attempts,
+              ...(record!.detail || args.detail
+                ? { detail: record!.detail || args.detail }
+                : {}),
+            },
+            captureFulfillmentState: "refund_exhausted",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+      tx.set(
+        caseRef,
         {
           eventId: `gate_${args.paymentId}`,
           event: "capture_fulfilment_recovery",
@@ -304,97 +406,133 @@ async function escalateExhaustedRefund(args: {
           attempts: args.attempts,
           detail: args.detail || null,
           staffAction: "refund_manually_or_repair_gate",
-          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-  } catch (err: any) {
-    console.warn(
-      `[Capture Recovery] escalation park write failed for order ${args.orderId}:`,
-      err?.message || err
-    );
-  }
-
-  await captureErrorSnapshot({
-    source: "payments",
-    severity: "high",
-    message:
-      `Capture fulfilment recovery STOPPED for order ${args.orderId} (payment ${args.paymentId}): ` +
-      `refund budget spent after ${args.attempts} attempt(s) — manual intervention required ` +
-      `(see unmatched_payments/ump_gate_${args.paymentId})`,
-    orderId: args.orderId,
-    razorpayPaymentId: args.paymentId,
-  }).catch(() => undefined);
-  return true;
-}
-
-/**
- * The exhaustion CAS. Revalidates EVERYTHING that makes this worker the owner
- * of the exhausted transition, inside the same transaction that writes it:
- *
- *  - the order's gate must still name THIS payment;
- *  - the gate must still be an OWED state (`refund_failed`/`refund_pending`),
- *    never `refunded` and never an already-`refund_exhausted` record;
- *  - no live lease may exist (a sibling may be mid-refund right now);
- *  - the persisted attempt count must still be at/over the budget.
- *
- * Any mismatch means someone else already settled it: return false and emit
- * nothing.
- */
-async function claimExhaustion(args: {
-  orderId: string;
-  paymentId: string;
-  attempts: number;
-  detail?: string;
-}): Promise<boolean> {
-  if (!db || typeof (db as any).runTransaction !== "function") return false;
-  try {
-    return !!(await (db as any).runTransaction(async (tx: any) => {
-      const ref = db.collection("orders").doc(args.orderId);
-      const snap = await tx.get(ref);
-      if (!snap || !snap.exists) return false;
-      const fresh = (snap.data() || {}) as any;
-      const record = gateOf(fresh);
-      if (!record) return false;
-      if (record.paymentId !== args.paymentId) return false;
-      if (record.state !== "refund_failed" && record.state !== "refund_pending") {
-        return false;
-      }
-      if (record.attempts < CAPTURE_GATE_MAX_ATTEMPTS) return false;
-
-      const age = Date.now() - record.atMs;
-      const leaseLive =
-        Number.isFinite(record.atMs) && record.atMs > 0 && age < CAPTURE_GATE_LEASE_MS;
-      // A live lease belongs to an in-flight refund attempt: never steal it.
-      if (leaseLive && record.state === "refund_pending") return false;
-
-      tx.set(
-        ref,
-        {
-          captureFulfillment: {
-            state: "refund_exhausted",
-            paymentId: args.paymentId,
-            atMs: Date.now(),
-            attempts: record.attempts,
-            ...(record.detail || args.detail
-              ? { detail: record.detail || args.detail }
-              : {}),
+          ...(caseData && caseData.receivedAt ? {} : {
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }),
+          alertDelivery: {
+            state: "sending",
+            attempts,
+            leaseUntilMs: nowMs + CAPTURE_GATE_LEASE_MS,
+            nextAttemptAtMs: nowMs + CAPTURE_GATE_LEASE_MS,
+            lastError: null,
           },
-          captureFulfillmentState: "refund_exhausted",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
-      return true;
-    }));
+      return { kind: "send", attempts } as const;
+    });
   } catch (err: any) {
-    console.warn(
-      `[Capture Recovery] exhaustion claim failed for order ${args.orderId} — leaving it owed:`,
+    console.error(
+      `[Capture Recovery] escalation claim failed for order ${args.orderId} — left undelivered:`,
       err?.message || err
     );
-    return false;
+    return "pending";
   }
+
+  if (claim.kind === "throw") {
+    console.error(`[Capture Recovery] ${claim.error.message}`);
+    return "pending";
+  }
+  if (claim.kind === "skip") return "skipped";
+
+  // ── SEND (outside the transaction; at-least-once) ────────────────────────
+  // Delivery is at-least-once by design: if this process dies AFTER the
+  // transport acknowledged but BEFORE the result write, the lease expires and a
+  // later sweep sends the alert again. A duplicate page is acceptable; a
+  // silently lost exhausted refund is not.
+  let delivered = false;
+  let failureCode = "";
+  try {
+    await captureErrorSnapshot(
+      {
+        source: "payments",
+        severity: "high",
+        message: exhaustedAlertText(args),
+        orderId: args.orderId,
+        razorpayPaymentId: args.paymentId,
+      },
+      {
+        requireAlertDelivery: true,
+        // One deterministic snapshot per order: a retry overwrites rather than
+        // spamming the collection with a new row per attempt.
+        snapshotId: `err_capture_exhausted_${args.orderId}`,
+      }
+    );
+    delivered = true;
+  } catch (err: any) {
+    delivered = false;
+    const failures = Array.isArray(err?.detail?.failures) ? err.detail.failures : [];
+    const code = typeof err?.code === "string" ? err.code : "ALERT_DELIVERY_FAILED";
+    failureCode = [code, ...failures].filter(Boolean).join("|").slice(0, 200);
+  }
+
+  // ── RECORD the outcome against the SAME attempt ──────────────────────────
+  try {
+    await (db as any).runTransaction(async (tx: any) => {
+      const caseSnap = await tx.get(caseRef);
+      if (!caseSnap || !caseSnap.exists) return false;
+      const caseData = (caseSnap.data() || {}) as any;
+      const delivery = deliveryOf(caseData);
+      // A newer attempt took over, or staff settled the case meanwhile: do not
+      // rewrite their record with this stale outcome.
+      if (Number(delivery.attempts) > claim.attempts) return false;
+      if (caseData.status !== "needs_review") return false;
+      if (delivery.state === "delivered" && !delivered) return false;
+
+      if (delivered) {
+        tx.set(
+          caseRef,
+          {
+            alertDelivery: {
+              ...delivery,
+              state: "delivered",
+              attempts: claim.attempts,
+              deliveredAtMs: Date.now(),
+              lastError: null,
+              leaseUntilMs: 0,
+              nextAttemptAtMs: 0,
+            },
+          },
+          { merge: true }
+        );
+      } else {
+        tx.set(
+          caseRef,
+          {
+            alertDelivery: {
+              ...delivery,
+              state: "pending",
+              attempts: claim.attempts,
+              lastError: failureCode || "ALERT_DELIVERY_FAILED",
+              leaseUntilMs: 0,
+              nextAttemptAtMs: Date.now() + alertRetryDelayMs(claim.attempts),
+            },
+          },
+          { merge: true }
+        );
+      }
+      return true;
+    });
+  } catch (err: any) {
+    // The claim lease stays live; once it expires (or the backoff passes) the
+    // next sweep retries. Never silent: log with the sanitized code only.
+    console.error(
+      `[Capture Recovery] could not record alert delivery for order ${args.orderId} ` +
+        `(${failureCode || "delivered"}):`,
+      err?.message || err
+    );
+  }
+
+  if (!delivered) {
+    console.error(
+      `[Capture Recovery] escalation alert NOT delivered for order ${args.orderId} — ` +
+        `code ${failureCode || "ALERT_DELIVERY_FAILED"}`
+    );
+    return "pending";
+  }
+  return "delivered";
 }
+
 
 /**
  * Moves an already-confirmed order OUT of the scan lane.
@@ -437,14 +575,17 @@ async function retireConfirmedMarker(
  *  - the OWED lanes (`refund_failed`, `refund_pending`, `refund_exhausted`) are
  *    read FIRST and each page is CURSORed, so a row-51 owed refund is reached on
  *    the next tick even when the first page is entirely stuck rows;
- *  - `refund_exhausted` rows are ESCALATED (staff-visible) and then moved out of
- *    the retry lane entirely, so they cannot occupy the retry pages forever;
+ *  - `refund_exhausted` rows get ONE durable ops case plus a delivered alert;
+ *    they stay in that state (never re-confirmed, never retried financially),
+ *    and their alert is retried with capped backoff until a channel
+ *    acknowledges;
  *  - `fulfillable` confirmation candidates come LAST with their own budget,
  *    because a healthy backlog must never starve an owed refund.
  *
- * The cursor is `captureRecoveryCursor` on the scheduler-lock document: it is a
- * plain bounded-query offset record, not a source of truth, and a lost cursor
- * only ever means "scan from the start" (never a skipped order).
+ * The cursor is a per-lane LAST-DOCUMENT-ID (a string) on the scheduler-lock
+ * document, used with `orderBy(documentId()).startAfter(id)`. It is not a source
+ * of truth: a lost or legacy value only ever means "start from the beginning",
+ * which can duplicate work (harmless, idempotent) but never skips an order.
  */
 export async function recoverStuckCaptureFulfilments(
   nowMs: number = Date.now()
@@ -457,6 +598,7 @@ export async function recoverStuckCaptureFulfilments(
     confirmed: 0,
     retried: 0,
     escalated: 0,
+    escalationPending: 0,
     skipped: 0,
     failed: 0,
   };
@@ -560,15 +702,17 @@ export async function recoverStuckCaptureFulfilments(
         stats.candidates += 1;
 
         if (gate.state === "refund_exhausted" || gate.attempts >= CAPTURE_GATE_MAX_ATTEMPTS) {
-          // Budget spent: the CAS revalidates ownership before anything is
-          // written or alerted. A live sibling that already settled it wins.
-          const owned = await escalateExhaustedRefund({
+          // Budget spent (including rows the REAL capture guard already moved to
+          // `refund_exhausted`): create/repair the ops case and prove delivery.
+          const result = await escalateExhaustedRefund({
             orderId,
             paymentId,
             attempts: Math.max(gate.attempts, CAPTURE_GATE_MAX_ATTEMPTS),
             detail: gate.detail,
+            nowMs,
           });
-          if (owned) stats.escalated += 1;
+          if (result === "delivered") stats.escalated += 1;
+          else if (result === "pending") stats.escalationPending += 1;
           else stats.skipped += 1;
           continue;
         }
@@ -595,13 +739,15 @@ export async function recoverStuckCaptureFulfilments(
           continue;
         }
         if (outcome.outcome === "refund_exhausted") {
-          const owned = await escalateExhaustedRefund({
+          const result = await escalateExhaustedRefund({
             orderId,
             paymentId,
             attempts: CAPTURE_GATE_MAX_ATTEMPTS,
             detail: gate.detail,
+            nowMs,
           });
-          if (owned) stats.escalated += 1;
+          if (result === "delivered") stats.escalated += 1;
+          else if (result === "pending") stats.escalationPending += 1;
           else stats.skipped += 1;
           continue;
         }
@@ -617,13 +763,15 @@ export async function recoverStuckCaptureFulfilments(
           const recorded = after?.exists ? gateOf(after.data() as any) : null;
           const used = Math.max(recorded?.attempts ?? 0, gate.attempts);
           if (used >= CAPTURE_GATE_MAX_ATTEMPTS) {
-            const owned = await escalateExhaustedRefund({
+            const result = await escalateExhaustedRefund({
               orderId,
               paymentId,
               attempts: used,
               detail: outcome.detail,
+              nowMs,
             });
-            if (owned) stats.escalated += 1;
+            if (result === "delivered") stats.escalated += 1;
+            else if (result === "pending") stats.escalationPending += 1;
             else stats.skipped += 1;
           } else {
             stats.retried += 1;

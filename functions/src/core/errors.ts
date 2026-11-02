@@ -34,6 +34,36 @@ function maskIdentifier(val?: string): string {
  */
 const FORBIDDEN_CONTEXT_KEYS = /phone|address|token|secret|otp|password|card|cvv|rawbody/i;
 
+export interface AlertDeliveryReport {
+  /** Channels configured for this process (0 means nothing could ever send). */
+  channelsConfigured: number;
+  /** Channels whose transport ACKNOWLEDGED (res.ok only). */
+  channelsAcknowledged: number;
+  /**
+   * Sanitized failure codes only — e.g. `slack_http_503`, `slack_transport`,
+   * `discord_http_500`. Never a URL, body, or provider response text.
+   */
+  failures: string[];
+}
+
+export interface CaptureErrorSnapshotOptions {
+  /**
+   * Opt-in delivery proof. When true, the promise REJECTS with a typed error
+   * unless at least one alert transport acknowledged the send. Default false
+   * keeps every existing caller's behaviour (resolve, even on transport
+   * failure).
+   */
+  requireAlertDelivery?: boolean;
+  /** Deterministic snapshot id, so a retry overwrites one row instead of spamming. */
+  snapshotId?: string;
+}
+
+/** Typed rejection from `captureErrorSnapshot(..., { requireAlertDelivery: true })`. */
+export interface AlertDeliveryError extends Error {
+  code: "ALERT_NO_CHANNEL" | "ALERT_DELIVERY_FAILED";
+  detail: AlertDeliveryReport;
+}
+
 /**
  * Captures an error snapshot into Firestore dev_error_snapshots collection
  * and triggers developer alert channels (Slack/Discord) for P0/high severity errors.
@@ -41,11 +71,19 @@ const FORBIDDEN_CONTEXT_KEYS = /phone|address|token|secret|otp|password|card|cvv
  * PII boundary: customerId and payment/porter/POS ids are masked before
  * persistence (DPDP Act 2023) — orderId/branchId stay raw so ops can still
  * find the order. Forbidden context keys are dropped, not stored.
+ *
+ * DELIVERY PROOF: by default this resolves with the snapshot id whatever the
+ * transport did (the historical contract — a resolved id is NOT proof of
+ * delivery). Callers that must know use `requireAlertDelivery`.
  */
 export async function captureErrorSnapshot(
-  snapshot: Omit<DevErrorSnapshot, "createdAt">
+  snapshot: Omit<DevErrorSnapshot, "createdAt">,
+  opts?: CaptureErrorSnapshotOptions
 ): Promise<string> {
-  const snapshotId = `err_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const snapshotId =
+    typeof opts?.snapshotId === "string" && opts.snapshotId.trim()
+      ? opts.snapshotId.trim()
+      : `err_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const scrubbedContext: Record<string, any> | undefined = snapshot.context
     ? Object.fromEntries(
         Object.entries(snapshot.context).filter(([k]) => !FORBIDDEN_CONTEXT_KEYS.test(k))
@@ -56,7 +94,10 @@ export async function captureErrorSnapshot(
   // with any pasted Indian mobile numbers and email addresses (DPDP:
   // free-text fields routinely carry contact PII into snapshots).
   const scrubbedMessage = snapshot.message
-    .replace(/\b(pay_[A-Za-z0-9]+)\b/g, (_m, id) => maskIdentifier(id))
+    // A payment id may be embedded in a longer token (`ump_gate_pay_abc`), where
+    // `\b` does NOT fire after the underscore — that was leaking raw ids into
+    // alert text. Anchor on the id shape itself instead.
+    .replace(/(pay_[A-Za-z0-9]+)/g, (_m, id) => maskIdentifier(id))
     .replace(/\b(\+91[\s-]?)?[6-9]\d{9}\b/g, (m) =>
       m.length <= 4 ? "****" : `${m.slice(0, 2)}****${m.slice(-2)}`
     )
@@ -105,8 +146,43 @@ export async function captureErrorSnapshot(
 
   // If high or P0, dispatch webhook notification with sanitized PII.
   // NOTE: alert on fullSnapshot (masked), never the raw caller snapshot.
+  let report: AlertDeliveryReport = {
+    channelsConfigured: 0,
+    channelsAcknowledged: 0,
+    failures: [],
+  };
   if (snapshot.severity === "high" || snapshot.severity === "p0_critical") {
-    await dispatchDeveloperAlert(snapshotId, fullSnapshot);
+    report = await dispatchDeveloperAlert(snapshotId, fullSnapshot);
+  }
+
+  if (opts?.requireAlertDelivery) {
+    // Proving delivery is only meaningful for an alerting severity; a `medium`
+    // snapshot has no alert lane to acknowledge, so requiring one would always
+    // fail. Report that honestly rather than pretending it was sent.
+    if (snapshot.severity !== "high" && snapshot.severity !== "p0_critical") {
+      const wrongSeverity: AlertDeliveryError = Object.assign(
+        new Error("Alert delivery was required for a non-alerting severity"),
+        { code: "ALERT_NO_CHANNEL" as const, detail: report }
+      );
+      throw wrongSeverity;
+    }
+    if (report.channelsAcknowledged === 0) {
+      const typed: AlertDeliveryError = Object.assign(
+        new Error(
+          report.channelsConfigured === 0
+            ? "No developer-alert channel is configured — nowhere to deliver"
+            : `No developer-alert transport acknowledged the send (${report.failures.join(",")})`
+        ),
+        {
+          code:
+            report.channelsConfigured === 0
+              ? ("ALERT_NO_CHANNEL" as const)
+              : ("ALERT_DELIVERY_FAILED" as const),
+          detail: report,
+        }
+      );
+      throw typed;
+    }
   }
 
   return snapshotId;
@@ -167,11 +243,17 @@ export function toUserSafeMessage(err: any): string {
 
 /**
  * Dispatches P0 developer alerts to Slack and/or Discord webhooks with PII redaction.
+ *
+ * Returns a DELIVERY REPORT rather than swallowing everything: only a transport
+ * that answered `res.ok` counts as acknowledged. Failure codes are sanitized to
+ * a stable shape (`slack_http_503`, `slack_transport`) so they can be persisted
+ * on a retry record — a webhook URL, request body, or provider text must never
+ * leak into storage or logs.
  */
 async function dispatchDeveloperAlert(
   snapshotId: string,
   snapshot: Omit<DevErrorSnapshot, "createdAt">
-): Promise<void> {
+): Promise<AlertDeliveryReport> {
   const alertText =
     `🚨 *[BURGONOMICS P0 ALERT]*: ${snapshot.message}\n` +
     `• *Source*: \`${snapshot.source}\`\n` +
@@ -183,33 +265,61 @@ async function dispatchDeveloperAlert(
     // defensively in case this function is ever called directly.
     (snapshot.customerId ? `• *Customer*: \`${maskIdentifier(snapshot.customerId)}\`\n` : "");
 
-  // Slack Webhook
-  if (config.alerts.slackWebhookUrl) {
+  const report: AlertDeliveryReport = {
+    channelsConfigured: 0,
+    channelsAcknowledged: 0,
+    failures: [],
+  };
+
+  /** Attempt one channel; only `res.ok` is an acknowledgement. */
+  const send = async (
+    channel: "slack" | "discord",
+    url: string,
+    body: Record<string, any>
+  ): Promise<void> => {
+    report.channelsConfigured += 1;
     try {
-      await fetch(config.alerts.slackWebhookUrl, {
+      const res: any = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: alertText }),
+        body: JSON.stringify(body),
         // P2: captureErrorSnapshot awaits this on inline request paths — a
         // hung Slack webhook must not hold the caller until platform timeout.
         signal: AbortSignal.timeout(10_000),
       });
-    } catch (err) {
-      console.warn("[Errors] Failed to send Slack alert:", err);
+      if (res && typeof res.ok === "boolean" && res.ok) {
+        report.channelsAcknowledged += 1;
+        return;
+      }
+      // A non-2xx (or a transport shim that never sets `ok`) is NOT delivery.
+      const status =
+        res && typeof res.status === "number" && Number.isFinite(res.status)
+          ? Math.floor(res.status)
+          : null;
+      report.failures.push(`${channel}_http_${status === null ? "unknown" : status}`);
+    } catch {
+      // Never persist provider text or the URL: a stable, sanitized code only.
+      report.failures.push(`${channel}_transport`);
     }
+  };
+
+  // Slack Webhook
+  if (config.alerts.slackWebhookUrl) {
+    await send("slack", config.alerts.slackWebhookUrl, { text: alertText });
   }
 
   // Discord Webhook
   if (config.alerts.discordWebhookUrl) {
-    try {
-      await fetch(config.alerts.discordWebhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: alertText }),
-        signal: AbortSignal.timeout(10_000),
-      });
-    } catch (err) {
-      console.warn("[Errors] Failed to send Discord alert:", err);
-    }
+    await send("discord", config.alerts.discordWebhookUrl, { content: alertText });
   }
+
+  if (report.channelsConfigured === 0) {
+    console.warn(
+      "[Errors] No developer-alert channel configured (SLACK_DEV_WEBHOOK_URL / DISCORD_DEV_WEBHOOK_URL)"
+    );
+  } else if (report.channelsAcknowledged === 0) {
+    console.warn("[Errors] No developer-alert transport acknowledged:", report.failures.join(","));
+  }
+
+  return report;
 }

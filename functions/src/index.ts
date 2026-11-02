@@ -2154,7 +2154,8 @@ export const recoverStuckCaptureFulfilmentsJob = onSchedule(
     console.log(
       `[Capture Recovery] scanned ${result!.scanned}, candidates ${result!.candidates}, ` +
         `refunded ${result!.refunded}, confirmed ${result!.confirmed}, ` +
-        `retried ${result!.retried}, escalated ${result!.escalated}, failed ${result!.failed}`
+        `retried ${result!.retried}, escalated ${result!.escalated}, ` +
+        `escalationPending ${result!.escalationPending}, failed ${result!.failed}`
     );
   }
 );

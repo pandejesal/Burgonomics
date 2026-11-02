@@ -440,3 +440,159 @@ describe("independent recovery pagination / exhaustion CAS regressions", () => {
       w.data.captureFulfillment?.state === "refund_exhausted"), "never overwrite with refund_exhausted").toHaveLength(0);
   });
 });
+
+
+/** Use the REAL error helper: it resolves an id even when its webhook fails.
+ * A rejected captureErrorSnapshot mock would not reproduce that contract.
+ * All outbound fetches are intercepted; the .invalid URL is never requested.
+ */
+async function installRealAlertBoundary(failFirstSend = false) {
+  const actual = await vi.importActual<typeof import("../src/core/errors")>("../src/core/errors");
+  const mocked = await import("../src/core/errors");
+  const capture = vi.mocked(mocked.captureErrorSnapshot);
+  const previousCapture = capture.getMockImplementation()!;
+  const oldSlack = config.alerts.slackWebhookUrl;
+  const oldDiscord = config.alerts.discordWebhookUrl;
+  const delivered: Array<{ url: string; text: string }> = [];
+  let failuresRemaining = failFirstSend ? 1 : 0;
+  capture.mockImplementation(actual.captureErrorSnapshot);
+  config.alerts.slackWebhookUrl = "https://recovery-alerts.invalid/webhook";
+  config.alerts.discordWebhookUrl = "";
+  vi.stubGlobal("fetch", vi.fn(async (url: any, options: any) => {
+    const text = JSON.parse(options.body).text as string;
+    if (failuresRemaining > 0) {
+      failuresRemaining--;
+      throw new Error("one transient developer-alert transport failure");
+    }
+    // Count ONLY acknowledged transport successes, not attempted calls or the
+    // snapshot id which the real error helper returns even after an outage.
+    delivered.push({ url: String(url), text });
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  }));
+  return {
+    delivered,
+    restore: () => {
+      capture.mockImplementation(previousCapture);
+      config.alerts.slackWebhookUrl = oldSlack;
+      config.alerts.discordWebhookUrl = oldDiscord;
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
+/** One Firestore case-write outage, before commit. Cover both standalone set
+ * and atomic transaction set so the test remains valid for an outbox fix.
+ */
+function failOneEscalationCaseWrite(paymentId: string) {
+  let failuresRemaining = 1;
+  const target = `unmatched_payments/ump_gate_${paymentId}`;
+  const fail = (path: string) => {
+    if (path === target && failuresRemaining > 0) {
+      failuresRemaining--;
+      throw new Error("one transient escalation case-write failure");
+    }
+  };
+  const collection = mockDb.collection.bind(mockDb);
+  const transaction = mockDb.runTransaction.bind(mockDb);
+  const collectionSpy = vi.spyOn(mockDb, "collection").mockImplementation((name: any) => {
+    const query = collection(name);
+    const doc = query.doc.bind(query);
+    query.doc = (id?: string) => {
+      const ref = doc(id);
+      const set = ref.set.bind(ref);
+      ref.set = async (...args: any[]) => { fail(ref.path); return set(...args); };
+      return ref;
+    };
+    return query;
+  });
+  const transactionSpy = vi.spyOn(mockDb, "runTransaction").mockImplementation((fn: any) =>
+    transaction((tx: any) => fn({
+      ...tx,
+      set: (ref: any, ...args: any[]) => { fail(ref.path); return tx.set(ref, ...args); },
+    }))
+  );
+  return {
+    restore: () => { transactionSpy.mockRestore(); collectionSpy.mockRestore(); },
+  };
+}
+
+async function threeRecoverySweeps() {
+  // Age a webhook-created exhausted marker past the recovery quiet window.
+  vi.advanceTimersByTime(CAPTURE_RECOVERY_AFTER_MS + 1);
+  for (let tick = 0; tick < 3; tick++) {
+    await recoverStuckCaptureFulfilments();
+    vi.advanceTimersByTime(CAPTURE_RECOVERY_AFTER_MS + 1);
+  }
+}
+
+function assertEscalationDelivered(id: string, delivered: Array<{ text: string }>) {
+  const paymentId = `pay_${id}`;
+  expect.soft(docs.get(`unmatched_payments/ump_gate_${paymentId}`),
+    "a durable actionable ops case must survive/recover delivery failures").toMatchObject({
+      orderId: id,
+      razorpayPaymentId: paymentId,
+      gateState: "refund_exhausted",
+      status: "needs_review",
+      staffAction: "refund_manually_or_repair_gate",
+    });
+  expect.soft(delivered.filter(send => send.text.includes(id)),
+    "an actual successful developer-alert transport delivery is required").not.toHaveLength(0);
+  expect.soft(orderOf(id).captureFulfillment).toMatchObject({
+    state: "refund_exhausted", paymentId,
+  });
+  expect.soft(orderOf(id).captureFulfillmentState).toBe("refund_exhausted");
+  expect.soft(control.refundPosts, "escalation must never issue another financial refund").toHaveLength(0);
+  expect.soft(writeLog.filter(w => w.path === `orders/${id}` &&
+    w.data.captureFulfillment?.paymentId && w.data.captureFulfillment.paymentId !== paymentId),
+    "no transition may claim a different captured payment").toHaveLength(0);
+  expect.soft(writeLog.filter(w => w.path === `orders/${id}` &&
+    w.data.captureFulfillment?.state === "refunded"),
+    "escalation must not invent a completed financial refund").toHaveLength(0);
+}
+
+describe("independent durable exhaustion escalation regressions", () => {
+  it("parks and alerts an already-exhausted marker written by the real capture guard", async () => {
+    const id = "guard_exhaustion_without_job";
+    seedOwed(id, CAPTURE_GATE_MAX_ATTEMPTS);
+    const alerts = await installRealAlertBoundary();
+    try {
+      const outcome = await guardCaptureFulfillment({
+        orderRef: mockDb.collection("orders").doc(id), orderId: id,
+        razorpayPaymentId: `pay_${id}`, razorpayOrderId: `rzp_${id}`,
+        orderData: orderOf(id), capturedAmountPaise: 10000,
+      });
+      expect(outcome.outcome).toBe("refund_exhausted");
+      expect(orderOf(id).captureFulfillment.state).toBe("refund_exhausted");
+      await threeRecoverySweeps();
+      assertEscalationDelivered(id, alerts.delivered);
+    } finally {
+      alerts.restore();
+    }
+  });
+
+  it("retries one failed ops-case write after exhaustion instead of permanently losing the case", async () => {
+    const id = "retry_exhaustion_case_delivery";
+    seedOwed(id, CAPTURE_GATE_MAX_ATTEMPTS);
+    const alerts = await installRealAlertBoundary();
+    const outage = failOneEscalationCaseWrite(`pay_${id}`);
+    try {
+      await threeRecoverySweeps();
+      assertEscalationDelivered(id, alerts.delivered);
+    } finally {
+      outage.restore();
+      alerts.restore();
+    }
+  });
+
+  it("retries one failed developer-alert send even though the real snapshot helper resolves an id", async () => {
+    const id = "retry_exhaustion_alert_delivery";
+    seedOwed(id, CAPTURE_GATE_MAX_ATTEMPTS);
+    const alerts = await installRealAlertBoundary(true);
+    try {
+      await threeRecoverySweeps();
+      assertEscalationDelivered(id, alerts.delivered);
+    } finally {
+      alerts.restore();
+    }
+  });
+});
