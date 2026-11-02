@@ -9,6 +9,7 @@ import {
 import {
   assertOnlineOrderPaid,
   isAbandonedUnpaidOnlineOrder,
+  isUnsafeToExpire,
 } from "./paymentGate";
 
 /**
@@ -95,6 +96,8 @@ export interface BumpOrderStatusParams {
   cancellationReason?: string;
   timelineEvent?: { title: string; actor?: string; description?: string };
   caller?: StaffCaller;
+  /** Staff name for the cancellation audit trail (provider cancel record). */
+  staffName?: string;
   /**
    * Expiry-worker guard: inside the cancel transaction, refuse unless the order
    * is STILL the abandoned unpaid online order that was screened. A capture
@@ -106,7 +109,11 @@ export interface BumpOrderStatusParams {
 
 export async function bumpOrderStatus(params: BumpOrderStatusParams) {
   const { orderId, status, cancellationReason, timelineEvent, caller } = params;
-  const canonical = ALIAS_TO_CANONICAL[status] ?? status;
+  const staffNameForCancel = () =>
+    (typeof params.staffName === "string" && params.staffName.trim()) ||
+    (typeof caller?.email === "string" && caller.email) ||
+    (typeof caller?.uid === "string" && caller.uid) ||
+    "Branch Staff";  const canonical = ALIAS_TO_CANONICAL[status] ?? status;
   const meta = PARTNER_TO_DELIVERY[canonical];
   if (!meta) {
     throw serviceError("ORDER_STATUS_UNKNOWN", `Unknown order status: ${status}`, 400);
@@ -225,12 +232,25 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     if (canonical !== "pending" && canonical !== "cancelled") {
       assertOnlineOrderPaid(freshOrder);
     }
-    if (params.onlyIfUnpaid && !isAbandonedUnpaidOnlineOrder(freshOrder)) {
-      throw serviceError(
-        "ORDER_NOT_PAID",
-        `Order ${orderId} is no longer an abandoned unpaid order; refusing to cancel it`,
-        409,
-      );
+    if (params.onlyIfUnpaid) {
+      // P1-C layer 1: the doc was re-read INSIDE this transaction, so this is
+      // the freshest truth there is. Refuse on any capture, authorization, or
+      // live verify marker — not merely on the old "still looks abandoned"
+      // shape — so a payment that started after the gateway check wins.
+      if (isUnsafeToExpire(freshOrder)) {
+        throw serviceError(
+          "ORDER_NOT_PAID",
+          `Order ${orderId} has payment activity in flight or recorded; refusing to cancel it`,
+          409,
+        );
+      }
+      if (!isAbandonedUnpaidOnlineOrder(freshOrder)) {
+        throw serviceError(
+          "ORDER_NOT_PAID",
+          `Order ${orderId} is no longer an abandoned unpaid order; refusing to cancel it`,
+          409,
+        );
+      }
     }
     tx.update(orderRef, payload);
   });
@@ -261,6 +281,50 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
   // autoRefund) restores. A restore failure must never fail the cancel, and
   // the deterministic restore ledger makes cancel-after-refund idempotent.
   if (canonical === "cancelled") {
+    // P1-E: the order is terminal now, so the delivery queue's cancel route
+    // will refuse it forever. The RIDER is cancelled here instead, durably:
+    // the intent is recorded on the order before the call, a provider fault
+    // leaves it retryable on the 5-minute tick, and a provider we cannot call
+    // (Borzo/Porter) raises a staff-visible dashboard alert rather than a
+    // rider silently continuing to a cancelled order.
+    // Strictly post-commit and never rethrown: the kitchen cancel and the coin
+    // restore below must succeed even when the provider is down.
+    try {
+      const fresh = await orderRef.get();
+      const live = fresh.exists ? ((fresh.data() || {}) as any) : {};
+      const { recordAndAttemptProviderCancel } = await import("../dispatch/shadowfax.reconcile");
+      const provider = (live.dispatchProvider || null) as
+        | "borzo"
+        | "shadowfax"
+        | "porter"
+        | null;
+      const providerOrderId =
+        live.dispatchOrderId ??
+        live.shadowfaxOrderId ??
+        live.borzoOrderId ??
+        live.porterOrderId ??
+        null;
+      // Only a LIVE binding is worth a remote cancel; a delivered booking is a
+      // real fulfilment and must never be cancelled from a late order flip.
+      const liveBooking = provider && providerOrderId && live.deliveryStatus !== "delivered";
+      if (liveBooking) {
+        await recordAndAttemptProviderCancel({
+          orderId,
+          provider,
+          providerOrderId: String(providerOrderId),
+          reason: "order_cancelled",
+          requestedBy: staffNameForCancel(),
+        });
+      }
+    } catch (err: any) {
+      // recordAndAttemptProviderCancel does not throw; a failed import/read is
+      // still never allowed to surface as a kitchen error.
+      console.warn(
+        `[OrderStatus] provider cancellation skipped for cancelled order ${orderId}:`,
+        err?.message || err
+      );
+    }
+
     try {
       const { restoreRedeemedCoins } = await import("../customers/customerCoins");
       await restoreRedeemedCoins({ orderId });
