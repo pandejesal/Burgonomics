@@ -7,6 +7,19 @@ import path from "path";
 // it (and the firestore subpath) to the same files every other test already
 // resolves. No behavior change for existing suites — identical module code.
 export default defineConfig({
+  test: {
+    // Emulator-backed suites are excluded from the default run because they
+    // require a live emulator that `npm test` does not start (the deploy script
+    // requires `npm test` to pass on a bare machine). They are NOT deleted or
+    // weakened: `npm run test:storage-rules` wraps vitest in
+    // `firebase emulators:exec`, which exports STORAGE_EMULATOR_HOST — and that
+    // is what re-enables the file here. No extra dependency, no env plumbing.
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      ...(process.env.STORAGE_EMULATOR_HOST ? [] : ["tests/storage.rules.test.ts"]),
+    ],
+  },
   resolve: {
     alias: [
       {
