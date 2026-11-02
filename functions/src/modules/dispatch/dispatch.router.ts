@@ -178,6 +178,22 @@ function terminalDeliveryStatus(d: any): string | null {
   return null;
 }
 
+/**
+ * True when the order was CANCELLED, whichever side of the document says so.
+ *
+ * The kitchen cancel path (`bumpOrderStatus`) writes the canonical
+ * `status: { code: "CANCELLED", kind: "cancelled", terminal: true }` and leaves
+ * `deliveryStatus` at its dispatch value, so `terminalDeliveryStatus` reports it
+ * as the generic "completed". Distinguishing the two matters for the P1-E
+ * cleanup lane: a cancelled order may still have a rider to call off, a
+ * delivered one may not.
+ */
+function isCancelledOrder(d: any): boolean {
+  if (d?.deliveryStatus === "cancelled") return true;
+  const code = typeof d?.status?.code === "string" ? d.status.code.toUpperCase() : "";
+  return code === "CANCELLED" || d?.status?.kind === "cancelled";
+}
+
 function inHouseAssignmentError(): Error {
   const err: any = new Error(
     "This order is already assigned to an in-house rider — cancel that assignment before booking a carrier."
@@ -1872,9 +1888,16 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
   const order = orderDoc.data()!;
   if (caller) await assertOrderBranchAccess(caller, order);
 
-  // Fast pre-check: terminal statuses must refuse upfront (finding F3)
+  // Fast pre-check: terminal statuses must refuse upfront (finding F3) — EXCEPT
+  // the P1-E cleanup lane. An order cancelled by the kitchen is already
+  // `terminal`, so refusing here made it impossible to ever cancel the rider
+  // that is still driving to it. A CANCELLED order whose booking is still live
+  // (and still recorded as needing a remote cancel) is cleanup, not dispatch:
+  // the order itself stays cancelled and none of its status fields are touched.
+  // DELIVERED stays locked — that is a real fulfilment, not a cleanup.
   const preTerminal = terminalDeliveryStatus(order);
-  if (preTerminal) throw terminalError(preTerminal);
+  const cleanupOnly = !!preTerminal && isCancelledOrder(order) && isActiveDispatch(order);
+  if (preTerminal && !cleanupOnly) throw terminalError(preTerminal);
 
   if (!isActiveDispatch(order)) {
     const err: any = new Error("No active dispatch to cancel for this order.");
@@ -1896,7 +1919,7 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     await (db as any).runTransaction(async (tx: any) => {
       const snapshot = await tx.get(orderDoc.ref);
       const fresh = snapshot.exists ? snapshot.data() : null;
-      if (!fresh || fresh.dispatchProvider !== "shadowfax" || String(fresh.dispatchOrderId || fresh.shadowfaxOrderId || "") !== remoteShadowfaxId || !isActiveDispatch(fresh) || terminalDeliveryStatus(fresh)) {
+      if (!fresh || fresh.dispatchProvider !== "shadowfax" || String(fresh.dispatchOrderId || fresh.shadowfaxOrderId || "") !== remoteShadowfaxId || !isActiveDispatch(fresh) || (terminalDeliveryStatus(fresh) && !(cleanupOnly && isCancelledOrder(fresh)))) {
         const err: any = new Error("Dispatch binding changed before Shadowfax cancellation");
         err.statusCode = 409;
         err.code = "DISPATCH_BINDING_CHANGED";
@@ -1941,7 +1964,7 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
     }
   }
 
-  const buildCancelPayload = (d: any, p: ProviderId | null, nowConfirmed: boolean) => {
+  const buildCancelPayload = (d: any, p: ProviderId | null, nowConfirmed: boolean, cleanupOnly: boolean) => {
     const releasedProviderOrderId =
       d?.dispatchOrderId ?? d?.porterOrderId ?? d?.borzoOrderId ?? d?.shadowfaxOrderId ?? null;
     const pendingCancel: PendingDispatchCancel = nowConfirmed
@@ -1964,6 +1987,19 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
           reason: "staff_cancelled",
           requestedBy: staffName || "Branch Staff",
         });
+    if (cleanupOnly) {
+      // P1-E cleanup lane: the order is ALREADY cancelled, so the only truth
+      // this call may write is the outcome of the remote rider cancellation.
+      // Rewriting deliveryStatus/dispatchStatus/needsRebook here would reopen a
+      // closed order and re-arm the rebook worker.
+      return {
+        dispatchPendingCancel: pendingCancel,
+        dispatchProviderCancel: nowConfirmed ? "confirmed" : "manual-required",
+        dispatchCancelAlert: null,
+        ...(nowConfirmed ? { dispatchCancelPending: null } : {}),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+    }
     return {
       deliveryStatus: "rider_cancelled",
       dispatchStatus: "cancelled_by_store",
@@ -2003,9 +2039,13 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
       if (!d) return { missing: true as const };
       if (caller) await assertOrderBranchAccess(caller, d);
 
-      // Re-checked on fresh snapshot: concurrent DELIVERED must lock cancel
+      // Re-checked on fresh snapshot: concurrent DELIVERED must lock cancel —
+      // except the cleanup lane, where the order is already cancelled and only
+      // its live booking is being released.
       const terminal = terminalDeliveryStatus(d);
-      if (terminal) return { terminal };
+      if (terminal && !(cleanupOnly && isCancelledOrder(d) && isActiveDispatch(d))) {
+        return { terminal };
+      }
 
       if (!isActiveDispatch(d)) return { notActive: true as const };
 
@@ -2017,7 +2057,7 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
       const provider: ProviderId | null =
         (d.dispatchProvider as ProviderId) || (d.porterOrderId ? "porter" : null);
 
-      const payload = buildCancelPayload(d, provider, remoteShadowfaxId !== null);
+      const payload = buildCancelPayload(d, provider, remoteShadowfaxId !== null, cleanupOnly);
       tx.set(orderDoc.ref, payload, { merge: true });
       return { ok: true as const, provider, pendingCancel: payload.dispatchPendingCancel };
     });
@@ -2062,16 +2102,18 @@ export async function dispatchCancel(params: DispatchCancelParams): Promise<any>
 
   const latest = await orderDoc.ref.get();
   const fresh = latest.exists ? latest.data() : null;
+  const freshTerminal = terminalDeliveryStatus(fresh);
   if (!fresh || (fresh.dispatchProvider || null) !== (order.dispatchProvider || null) ||
       String(fresh.dispatchOrderId || fresh.porterOrderId || "") !== String(order.dispatchOrderId || order.porterOrderId || "") ||
-      !isActiveDispatch(fresh) || terminalDeliveryStatus(fresh)) {
+      !isActiveDispatch(fresh) ||
+      (freshTerminal && !(cleanupOnly && isCancelledOrder(fresh)))) {
     const err: any = new Error("Dispatch binding changed before cancellation");
     err.statusCode = 409;
     err.code = "DISPATCH_BINDING_CHANGED";
     throw err;
   }
   if (caller) await assertOrderBranchAccess(caller, fresh);
-  const payload = buildCancelPayload(fresh, provider, remoteShadowfaxId !== null);
+  const payload = buildCancelPayload(fresh, provider, remoteShadowfaxId !== null, cleanupOnly);
   await orderDoc.ref.set(payload, { merge: true });
 
   return {

@@ -296,6 +296,8 @@ export const orderBumpSchema = z.object({
    * no longer overwrite a newer status written by another staff member.
    */
   expectedStatus: z.string().trim().max(64).optional(),
+  /** Staff name for the cancellation audit trail (P1-E rider cleanup). */
+  staffName: z.string().trim().max(128).optional(),
   timelineEvent: z
     .object({
       title: z.string().trim().min(1).max(120),

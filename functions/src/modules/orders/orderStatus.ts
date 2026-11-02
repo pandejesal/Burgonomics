@@ -113,7 +113,8 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     (typeof params.staffName === "string" && params.staffName.trim()) ||
     (typeof caller?.email === "string" && caller.email) ||
     (typeof caller?.uid === "string" && caller.uid) ||
-    "Branch Staff";  const canonical = ALIAS_TO_CANONICAL[status] ?? status;
+    "Branch Staff";
+  const canonical = ALIAS_TO_CANONICAL[status] ?? status;
   const meta = PARTNER_TO_DELIVERY[canonical];
   if (!meta) {
     throw serviceError("ORDER_STATUS_UNKNOWN", `Unknown order status: ${status}`, 400);

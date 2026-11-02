@@ -80,6 +80,7 @@ import {
 } from "./modules/dispatch/readiness";
 import {
   pollActiveShadowfaxOrdersWorker,
+  retryPendingShadowfaxCancels,
   retryPendingShadowfaxReadySignals,
 } from "./modules/dispatch/shadowfax.reconcile";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
@@ -1065,7 +1066,13 @@ app.post(
   validateBody(orderBumpSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const result = await bumpOrderStatus({ ...req.body, caller: req.user });
+      const result = await bumpOrderStatus({
+        ...req.body,
+        // Attribution for the rider cancellation an order cancel may owe (P1-E):
+        // the order document must name the staff member who closed it.
+        staffName: req.body.staffName || req.user?.email || undefined,
+        caller: req.user,
+      });
       res.status(200).json(result);
     } catch (err: any) {
       // Scoped mapping (bumpRouteErrors): documented 400/403/404/409 refusals
@@ -1909,6 +1916,8 @@ export const pollActivePorterDeliveries = onSchedule(
 // otherwise permanent: the order sits on the Shadowfax binding with a frozen
 // customer tracker. Shadowfax orders only; advancing states only; never books,
 // rebooks or cancels (a pull-observed cancellation is parked for a human).
+// The same tick finishes a rider cancellation owed by a cancelled order
+// (P1-E): intent is durable on the order, retried here, dead-lettered loudly.
 export const pollActiveShadowfaxDeliveries = onSchedule(
   {
     region: REGION,
@@ -1938,6 +1947,15 @@ export const pollActiveShadowfaxDeliveries = onSchedule(
     if (ready.scanned > 0) {
       console.log(
         `[Shadowfax Ready Worker] Resent ${ready.retriedCount} of ${ready.scanned} pending dispatch-ready signals, ${ready.failedCount} failed`
+      );
+    }
+    // P1-E cancels ride the same tick: an order cancelled by the kitchen while
+    // the provider call failed leaves a rider driving to a closed order, and
+    // this is the only retry path that does not need a human to notice.
+    const cancels = await retryPendingShadowfaxCancels();
+    if (cancels.scanned > 0) {
+      console.log(
+        `[Shadowfax Cancel Worker] Retried ${cancels.retriedCount} of ${cancels.scanned} pending rider cancellations, ${cancels.deadLetteredCount} dead-lettered`
       );
     }
   }

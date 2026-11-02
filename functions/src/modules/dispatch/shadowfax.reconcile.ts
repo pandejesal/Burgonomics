@@ -5,7 +5,15 @@ import { db } from "../../core/firebase";
 import {
   getShadowfaxOrderStatus,
   markShadowfaxDispatchReady,
+  cancelShadowfaxOrder,
 } from "./providers/shadowfax.adapter";
+import {
+  buildPendingCancelConfirmation,
+  buildPendingCancelWrite,
+  manualCancelInstruction,
+  providerCanCancelRemotely,
+  type PendingDispatchCancel,
+} from "./dispatch.cancelPending";
 
 /**
  * Shadowfax status-poll reconciliation (Hyperlocal Marketplace).
@@ -593,6 +601,259 @@ export async function retryPendingShadowfaxReadySignals(): Promise<ShadowfaxRead
     const outcome = await signalShadowfaxDispatchReady(doc.id, order);
     if (outcome.sent) result.retriedCount++;
     else if (outcome.reason === "provider_error") result.failedCount++;
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Durable cancellation of a live remote booking (order cancelled by staff)
+// ---------------------------------------------------------------------------
+//
+// P1-E. When the KITCHEN cancels an order (`bumpOrderStatus` "cancelled") that
+// still has a live paid rider, the order becomes terminal — and the existing
+// `dispatchCancel` route refuses terminal orders, so the rider kept driving to a
+// cancelled order. The cancel must therefore happen as part of the order cancel,
+// and it must survive a provider fault without failing the kitchen or refund.
+//
+// The mechanism is the SAME one the dispatch-ready signal uses, and the same
+// 5-minute tick drives it: record the intent durably on the order, attempt it
+// inline, and let `retryPendingShadowfaxCancels` finish the job. A failure is
+// never silent: `dispatchCancelAlert` is written for staff, and the record
+// dead-letters after SHADOWFAX_MAX_CANCEL_ATTEMPTS with a HIGH error snapshot.
+//
+// No blind retry of an ambiguous booking: only the documented `PUT .../cancel/`
+// for the EXACT provider order id recorded at the stop, never a new booking, and
+// a confirmation stops all further attempts.
+
+/** Consecutive failed cancel attempts before the record dead-letters. */
+export const SHADOWFAX_MAX_CANCEL_ATTEMPTS = 6;
+
+export interface PendingCancelAttemptResult {
+  state: "confirmed" | "pending" | "dead_lettered" | "not_attempted";
+  attempts: number;
+  lastError: string | null;
+}
+
+/**
+ * Records the cancel intent and makes ONE bounded attempt.
+ *
+ * `provider`: whichever provider holds the booking. Only Shadowfax can actually
+ * be cancelled from here; Borzo/Porter raise a staff alert and stop, because a
+ * blind call to an unconfirmed endpoint is fake traffic and a made-up success.
+ *
+ * The write is a plain per-field merge (never `undefined`), so the test shims and
+ * Firestore converge on the same document.
+ */
+export async function recordAndAttemptProviderCancel(params: {
+  orderId: string;
+  provider: "borzo" | "shadowfax" | "porter" | null;
+  providerOrderId: string | null;
+  reason: "staff_cancelled" | "order_cancelled";
+  requestedBy: string;
+}): Promise<PendingCancelAttemptResult> {
+  const { orderId, provider, reason, requestedBy } = params;
+  const providerOrderId =
+    params.providerOrderId != null && String(params.providerOrderId).trim()
+      ? String(params.providerOrderId).trim()
+      : null;
+
+  const orderRef = db.collection("orders").doc(orderId);
+  const base = buildPendingCancelWrite({
+    provider,
+    providerOrderId,
+    reason,
+    requestedBy,
+  });
+
+  // No provider / no booking: nothing remote to cancel, so nothing is recorded.
+  if (!provider || !providerOrderId) {
+    return { state: "not_attempted", attempts: 0, lastError: null };
+  }
+
+  if (!providerCanCancelRemotely(provider)) {
+    // Borzo/Porter: no cancel API in our adapter. The record is the alert.
+    await orderRef.set(
+      {
+        dispatchPendingCancel: base,
+        dispatchCancelAlert: {
+          code: "DISPATCH_CANCEL_MANUAL_REQUIRED",
+          provider,
+          providerOrderId,
+          reason,
+          requestedBy,
+          message: manualCancelInstruction(provider, providerOrderId),
+          raisedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { state: "pending", attempts: 0, lastError: null };
+  }
+
+  // Ambiguous provider id: fail closed, no wire call, still visible to staff.
+  if (!/^\d+$/.test(providerOrderId)) {
+    const message = `Shadowfax cancellation needs the numeric booking id — got ${JSON.stringify(
+      providerOrderId
+    ).slice(0, 60)}. Cancel it in the Shadowfax dashboard and confirm.`;
+    await orderRef.set(
+      {
+        dispatchPendingCancel: { ...base, state: "dead_lettered", staffActionRequired: message },
+        dispatchCancelAlert: {
+          code: "DISPATCH_CANCEL_DEAD_LETTERED",
+          provider,
+          providerOrderId,
+          reason,
+          requestedBy,
+          message,
+          raisedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { state: "dead_lettered", attempts: 0, lastError: message };
+  }
+
+  // Write the intent BEFORE the call so a crash mid-call still leaves the trail.
+  await orderRef.set(
+    { dispatchPendingCancel: { ...base, state: "pending" } },
+    { merge: true }
+  );
+  return await attemptPendingProviderCancel(orderId, providerOrderId, base);
+}
+
+/**
+ * One attempt against the provider for a record already on the order.
+ * Never throws to its caller: the kitchen/refund flow must not depend on it.
+ */
+async function attemptPendingProviderCancel(
+  orderId: string,
+  providerOrderId: string,
+  base: PendingDispatchCancel
+): Promise<PendingCancelAttemptResult> {
+  const orderRef = db.collection("orders").doc(orderId);
+  const attempts = (typeof base.attempts === "number" ? base.attempts : 0) + 1;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  try {
+    await cancelShadowfaxOrder(providerOrderId, "Cancelled by restaurant");
+    const confirmed = buildPendingCancelConfirmation(
+      { ...base, attempts, state: "pending" },
+      "provider_cancel",
+      null
+    );
+    await orderRef.set(
+      {
+        dispatchPendingCancel: confirmed,
+        dispatchCancelAlert: null,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    return { state: "confirmed", attempts, lastError: null };
+  } catch (err: any) {
+    const message = String(err?.message || err).slice(0, 300);
+    const deadLettered = attempts >= SHADOWFAX_MAX_CANCEL_ATTEMPTS;
+    const staffActionRequired = deadLettered
+      ? `${manualCancelInstruction("shadowfax", providerOrderId)} Automatic retries have stopped.`
+      : null;
+    try {
+      await orderRef.set(
+        {
+          dispatchPendingCancel: {
+            ...base,
+            state: deadLettered ? "dead_lettered" : "pending",
+            attempts,
+            lastAttemptAt: now,
+            lastError: message,
+            staffActionRequired,
+          },
+          dispatchCancelAlert: {
+            code: deadLettered ? "DISPATCH_CANCEL_DEAD_LETTERED" : "DISPATCH_CANCEL_PENDING",
+            provider: "shadowfax",
+            providerOrderId,
+            reason: base.reason,
+            requestedBy: base.requestedBy,
+            message: deadLettered
+              ? `A rider may still be driving to order ${orderId.slice(0, 8)}: the Shadowfax cancellation failed ${attempts} times (${message}). Cancel it in the Shadowfax dashboard now.`
+              : `A rider may still be driving to order ${orderId.slice(0, 8)}: the Shadowfax cancellation failed (${message}). It is retried every 5 minutes.`,
+            raisedAt: now,
+          },
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    } catch (writeErr: any) {
+      console.error(
+        `[Shadowfax Cancel] could not record the failed cancellation for order ${orderId}:`,
+        writeErr?.message || writeErr
+      );
+    }
+    if (deadLettered) {
+      try {
+        const { captureErrorSnapshot } = await import("../../core/errors");
+        await captureErrorSnapshot({
+          source: "dispatch",
+          severity: "high",
+          message: `Shadowfax cancellation dead-lettered for order ${orderId} after ${attempts} attempts — a rider may still be en route; cancel it in the dashboard`,
+          orderId,
+          context: { provider: "shadowfax", providerOrderId },
+        });
+      } catch {
+        // Alert best-effort: the order document already carries the flag.
+      }
+    }
+    return { state: deadLettered ? "dead_lettered" : "pending", attempts, lastError: message };
+  }
+}
+
+export interface ShadowfaxCancelRetryResult {
+  scanned: number;
+  retriedCount: number;
+  deadLetteredCount: number;
+}
+
+/**
+ * Resends cancellation for order-cancel records that never landed.
+ *
+ * Only `reason: "order_cancelled"` records are retried here: a `staff_cancelled`
+ * record is the P1-D "did you cancel it in the dashboard?" question, and only a
+ * human can answer that. Dead-lettered records are excluded (they stop consuming
+ * the window) but keep blocking a replacement dispatch — an un-cancelled rider
+ * still owns the order.
+ */
+export async function retryPendingShadowfaxCancels(): Promise<ShadowfaxCancelRetryResult> {
+  const result: ShadowfaxCancelRetryResult = { scanned: 0, retriedCount: 0, deadLetteredCount: 0 };
+  if (!(config.shadowfax.apiKey || "").trim()) return result;
+
+  let snap: any;
+  try {
+    snap = await db
+      .collection("orders")
+      .where("dispatchPendingCancel.state", "==", "pending")
+      .limit(SHADOWFAX_POLL_QUERY_LIMIT)
+      .get();
+  } catch (err: any) {
+    console.error("[Shadowfax Cancel] query failed:", err?.message || err);
+    return result;
+  }
+
+  for (const doc of snap?.docs || []) {
+    const order = doc.data ? doc.data() : undefined;
+    const record = order?.dispatchPendingCancel as PendingDispatchCancel | undefined;
+    if (!record || record.state !== "pending") continue;
+    // A staff release is a question only a human can answer (P1-D); this worker
+    // only finishes cancellations that came from an ORDER cancel.
+    if (record.reason !== "order_cancelled") continue;
+    if (record.provider !== "shadowfax" || !record.providerOrderId) continue;
+    result.scanned++;
+    const outcome = await attemptPendingProviderCancel(
+      doc.id,
+      String(record.providerOrderId),
+      record
+    );
+    if (outcome.state === "confirmed") result.retriedCount++;
+    else if (outcome.state === "dead_lettered") result.deadLetteredCount++;
   }
   return result;
 }
