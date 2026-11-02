@@ -61,7 +61,7 @@ Sandbox tokens are **only valid for sandbox use** — production uses different 
 | `preorder_time` | `HH:MM:SS` | ✅ |
 | `advanced_order` | `"Y"` or `"N"` | ✅ |
 | `order_type` | `H` = Home Delivery, `P` = Parcel, `D` = Dine-in | ✅ |
-| `total` | Total due to the restaurant = item final price − order discount + GST (if restaurant-liable) + packing charges. **Only the amount due to the restaurant** | ✅ |
+| `total` | Total collected for this order = item final price − order discount + food GST (only when the menu is ex-GST) + packing charges + delivery charges + GST on those charges. **Petpooja ruling 2026-11-02 (§23)** | ✅ |
 | `tax_total` | Total tax on order | ✅ |
 | `created_on` | `yyyy-mm-dd H:i:s` | ✅ |
 | `dc_tax_percentage` | Tax % applied on **delivery charges** | ✅ |
@@ -172,7 +172,9 @@ Petpooja contacts (from guide): malvi.vaghela@petpooja.com, rohan.sakhrani@petpo
 - [ ] `dc_tax_percentage` + `pc_tax_percentage` always sent (marked required).
 - [ ] `advanced_order`, `preorder_date`, `preorder_time`, `created_on` populated.
 - [ ] Discounts sent as `discount_type` + `discount_total` only — **no `discount` object**.
-- [ ] Each `order_items[]` entry carries `item_tax` (CGST/SGST) + `tax_inclusive` + `tax_percentage`.
+- Each `order_items[]` entry carries `tax_inclusive`; `item_tax` (CGST/SGST) is
+  required only when `tax_inclusive` is `false` — Petpooja's 2026-11-02 ruling
+  (§23.3) requires it OMITTED for tax-inclusive items.
 - [ ] `tax_details[]` with `restaurant_liable_amt`.
 - [ ] `order_type` mapped correctly from fulfillment mode: delivery=`H`, takeaway/parcel=`P`, dine-in=`D`.
 - [ ] `payment_type` mapped from payment method: online→`ONLINE`, COD→`COD`.
@@ -1359,6 +1361,12 @@ audited byte-for-byte or that corrected orders have already been resubmitted.
 
 ## 21. Full primary-document reading and corrected interpretation — 2026-10-28
 
+> **SUPERSEDED IN PART by §23 (Petpooja's binding 2026-11-02 ruling).** Where
+> this section says a third-party courier fee must not be in `total`, or that
+> `collect_cash` is restricted to merchant self-delivery, §23 overrides it: the
+> vendor requires the delivery charge inside `total` and, on a COD order,
+> `collect_cash` exactly equal to `total`.
+
 Read both vendor PDFs completely (Save Order: 9 pages; Sandbox: 6 pages), both
 local Petpooja references, and the live public V2.1.0 documentation. The public
 page's embedded schema was statically decoded to include the collapsed child
@@ -1509,3 +1517,105 @@ requests, receipts, detail evidence and results are retained in
 `stages/05_orders/output/petpooja-vendor-review-20261028/` as
 `sandbox-resubmission-payloads-redacted.json`, `sandbox-resubmission-results.json`
 and `sandbox-menu-mappings-verified.json`. No deployment, merge or email send.
+
+---
+
+## 23. Petpooja's binding ruling on our sandbox orders — 2026-11-02
+
+The integration team reviewed orders `pp_test_takeaway-with-modifiers`,
+`pp_test_bulk-party-order` and `pp_test_delivery-gst-fee`. Their verdict is
+binding and SUPERSEDES the internal 2026-10-31 "R4b restaurant due" decision for
+`total` and for the item/charge tax shape.
+
+### 23.1 Delivery charge inside `total` and `collect_cash` (VERBATIM RULING)
+
+> "There is a delivery charge in the order object which is not included in the
+> total and collect_cash key (in a COD order this key must match total)."
+
+Implemented in `orderPush.ts` / `financials.ts`:
+
+- `total` = item final amounts − order discount + item GST (ONLY when the menu
+  is ex-GST) + `packing_charges` + `delivery_charges` + any GST charged on
+  packing/delivery.
+- COD: `collect_cash` is EXACTLY `total`, in the same 2dp string form.
+  Prepaid (`ONLINE`) keeps `collect_cash: "0.00"`.
+- A takeaway/dine-in order is delivered by nobody, so no delivery charge is
+  reported at all (a stale stored fee was the vendor's literal complaint).
+
+### 23.2 `enable_delivery` for third-party courier orders (VERBATIM RULING)
+
+> "Pass enable_delivery as 0 in this case so that the restaurant won't be able
+> to mark/update the delivery statuses."
+
+- Third-party courier (Borzo / Shadowfax / Porter): `enable_delivery: 0`.
+- The restaurant's own rider (`dispatchType: manual_branch_terminal`):
+  `enable_delivery: 1` — this is the documented restaurant-rider case (§5 above:
+  "`0` = third-party rider, `1` = restaurant rider") and is unchanged.
+- Takeaway/dine-in: `enable_delivery: 0`, unchanged.
+- Charge GST on delivery/packing: our pricing engine charges none today
+  (`dc_tax_percentage` / `pc_tax_percentage` are `"0"`, amounts `"0.00"`), so
+  `tax_total` carries no charge GST. If that configuration ever changes, the
+  ruling requires that GST in `tax_total` AND `total`.
+
+### 23.3 Tax-inclusive items (VERBATIM RULING)
+
+> "If your menu has backward taxes enabled (tax inclusive pricing) then
+> tax_inclusive key in the save_order should be true for those items where
+> backward taxes are enabled. In that scenario, item_tax should not be
+> calculated and avoided in the orderitem object for such items. Same with TAX
+> object at the bottom."
+
+> "The Tax object at the bottom should only include the FOOD GST."
+
+Shape chosen and shipped:
+
+- `tax_inclusive: true` on the item.
+- `item_tax` is ABSENT — the key is omitted entirely, not an empty array. The
+  vendor attachment schema lists `item_tax` per line, but the ruling makes it
+  inapplicable for inclusive items, so emitting `[]` would assert a tax split
+  that does not exist.
+- Bottom block: the required `Tax` member is still emitted, with `details: []`.
+  The schema requires the `details` array to be present; an empty array is the
+  only shape that keeps the key valid while asserting NO food GST. An exclusive
+  order keeps one row per outlet tax id.
+- `tax_total` therefore carries only GST genuinely ADDED: food GST for an
+  exclusive menu, plus any delivery/packing GST. For our inclusive menu with
+  untaxed charges that is `"0.00"`.
+- Internal rule retained: menu prices are GST-INCLUSIVE and GST is never added on
+  top of food.
+
+### 23.4 The exclusive path is unchanged (the two approved orders)
+
+`pp_test_takeaway-with-modifiers` and `pp_test_bulk-party-order` were approved as
+CORRECT and must not regress. They run on the sandbox DEMO menu, which is
+`tax_inclusive: false` (§22: `gst_type: services`, `tax_inclusive: false`, tax
+IDs 3928/3929 at 2.5% each). That path still sends:
+
+- `tax_inclusive: false` per line, with `item_tax` rows;
+- the bottom `Tax` block with FOOD GST rows only;
+- food GST ADDED on top of the line prices;
+- `tax_total` = food GST (+ any charge GST).
+
+The choice is per order, from real sources in this order of authority: the
+caller's explicit `options.taxInclusive`, then the per-item capture from menu
+sync (`products/{id}.petpoojaTaxInclusive`, decoded strictly from Push Menu's
+`tax_inclusive`), then `order.pricing.taxInclusive`, then the internal inclusive
+default. An all-inclusive order therefore carries no item tax, and a
+mixed/exclusive one keeps exactly the tax rows it emitted — never a double-add.
+
+### 23.5 Internal money records are unaffected
+
+Only the POS payload changed. Customer pricing, `grandTotal`, the monthly fee,
+statements and our own money records are untouched; nothing internal consumes
+the POS `total`.
+
+### 23.6 Packing charge scope (vendor instruction)
+
+> "Packing charge order-wise or item-wise is decided by merchant portal
+> configuration; to be confirmed with their support after integration."
+
+Our current order-level `packing_charges` approach is kept as instructed.
+
+### 23.7 Stock value
+
+Internal reference only; not used by this contract.

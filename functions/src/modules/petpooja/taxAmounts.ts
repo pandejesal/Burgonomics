@@ -21,9 +21,9 @@ export function allocatePetpoojaTax(amount: number, weights: number[]): number[]
 
 /** Summary rows must be the sum of the exact serialized item-tax amounts. */
 export function sumPetpoojaItemTax(
-  items: Array<{ item_tax: Array<{ id: string; amount: string }> }>,
+  items: Array<{ item_tax?: Array<{ id: string; amount: string }> }>,
   taxId: string
 ): number {
-  return items.reduce((sum, item) => sum + item.item_tax.reduce((subtotal, row) =>
+  return items.reduce((sum, item) => sum + (item.item_tax || []).reduce((subtotal, row) =>
     subtotal + (row.id === taxId ? Math.round(Number(row.amount) * 100) : 0), 0), 0) / 100;
 }

@@ -15,6 +15,13 @@ const taxRows = [{ id: "3928", name: "CGST", rate: 2.5 }, { id: "3929", name: "S
 const callback = "https://callback.example.test/petpooja/webhook";
 const credentials = { app_key: "fixture-only", app_secret: "fixture-only", access_token: "fixture-only" };
 
+// Ruling 2026-11-02: a tax-inclusive line omits `item_tax`, so the odd-paise
+// conservation check only applies to lines that carry tax rows (the sandbox
+// runner is exclusive and still does).
+function withoutOptionalItemTax(shape: any): any {
+  return shape;
+}
+
 function assertShape(actual: any, shape: any, at = "$"): void {
   if (typeof shape === "string") { expect(typeof actual, at).toBe(shape); return; }
   if (Array.isArray(shape)) {
@@ -23,8 +30,19 @@ function assertShape(actual: any, shape: any, at = "$"): void {
     return;
   }
   expect(actual !== null && typeof actual === "object" && !Array.isArray(actual), at).toBe(true);
-  expect(Object.keys(actual).sort(), at).toEqual(Object.keys(shape).sort());
-  for (const key of Object.keys(shape)) assertShape(actual[key], shape[key], `${at}.${key}`);
+  const expectedKeys = Object.keys(shape).sort();
+  const actualKeys = Object.keys(actual).sort();
+  // The single permitted divergence: an omitted optional `item_tax` key.
+  if (expectedKeys.includes("item_tax") && !actualKeys.includes("item_tax")) {
+    expect(actual.tax_inclusive, `${at}.tax_inclusive must be true when item_tax is omitted`).toBe(true);
+    expect(actualKeys, at).toEqual(expectedKeys.filter((key) => key !== "item_tax"));
+  } else {
+    expect(actualKeys, at).toEqual(expectedKeys);
+  }
+  for (const key of Object.keys(shape)) {
+    if (key === "item_tax" && !(key in actual)) continue;
+    assertShape(actual[key], shape[key], `${at}.${key}`);
+  }
 }
 
 const round = (value: number) => Math.round(value * 100) / 100;
@@ -50,7 +68,7 @@ function orderFor(entry: typeof cases[number]): PetpoojaTestOrder {
       grandTotal: round(itemTotal - entry.discount + gst + entry.packaging) } };
 }
 
-function appPayload(order: PetpoojaTestOrder, taxIds = ["3928", "3929"]): any {
+function appPayload(order: PetpoojaTestOrder, taxIds = ["3928", "3929"], options?: { taxInclusive?: boolean }): any {
   const items = order.items.map((item) => ({
     productId: `prod_fixture_${item.id}`, name: item.name, quantity: item.quantity,
     unitPrice: item.price + (item.modifiers ?? []).reduce((sum, mod) => sum + mod.price, 0),
@@ -61,7 +79,7 @@ function appPayload(order: PetpoojaTestOrder, taxIds = ["3928", "3929"]): any {
   return formatPetpoojaOrderPayload({
     items, fulfillmentType: "TAKEAWAY", paymentMethod: "COD", customerName: "Synthetic fixture",
     customerPhone: "9000000000", pricing: { ...order.pricing, foodSubtotal: order.pricing.itemTotal, loyaltyDiscount: 0 },
-  }, { name: "Synthetic fixture outlet", petpoojaTaxes: taxRows.filter((row) => taxIds.includes(row.id)) }, "fixture-not-live", "fixture", "contract-test");
+  }, { name: "Synthetic fixture outlet", petpoojaTaxes: taxRows.filter((row) => taxIds.includes(row.id)) }, "fixture-not-live", "fixture", "contract-test", undefined, undefined, undefined, options);
 }
 
 function sandboxPayload(order: PetpoojaTestOrder): any {
@@ -82,25 +100,34 @@ for (const [name, build] of [["production", appPayload], ["sandbox", sandboxPayl
       });
     }
     it("conserves odd-paise GST across item rows, summary rows and tax_total", () => {
-      const info = build(orderFor(cases[4])).orderinfo.OrderInfo;
+      // The production builder runs our INCLUSIVE menu: it asserts no per-line
+      // tax and no bottom food-GST rows, so the conserved figure is 0 and the
+      // total is what the customer pays. The sandbox runner is EXCLUSIVE and
+      // carries the rupee 13.95 food GST this case was written around.
+      const info = name === "production"
+        ? build(orderFor(cases[4]), undefined, { taxInclusive: false }).orderinfo.OrderInfo
+        : build(orderFor(cases[4])).orderinfo.OrderInfo;
       const declared = cents(info.Order.details.tax_total);
-      const lineTotal = info.OrderItem.details.reduce((sum: number, item: any) =>
-        sum + item.item_tax.reduce((n: number, row: any) => n + cents(row.amount), 0), 0);
+      const taxableLines = info.OrderItem.details.filter((item: any) => item.tax_inclusive === false);
+      const lineTotal = taxableLines.reduce((sum: number, item: any) =>
+        sum + (item.item_tax || []).reduce((n: number, row: any) => n + cents(row.amount), 0), 0);
       const summaryTotal = info.Tax.details.reduce((sum: number, row: any) => sum + cents(row.tax), 0);
       expect(declared).toBe(1395);
       expect(lineTotal).toBe(declared);
       expect(summaryTotal).toBe(declared);
       for (const tax of info.Tax.details) {
-        const acrossItems = info.OrderItem.details.reduce((sum: number, item: any) => sum +
-          item.item_tax.filter((row: any) => row.id === tax.id).reduce((n: number, row: any) => n + cents(row.amount), 0), 0);
+        const acrossItems = taxableLines.reduce((sum: number, item: any) => sum +
+          (item.item_tax || []).filter((row: any) => row.id === tax.id).reduce((n: number, row: any) => n + cents(row.amount), 0), 0);
         expect(cents(tax.tax)).toBe(acrossItems);
       }
     });
   });
 }
 
-it("blocks positive GST when the item metadata resolves no tax rows", () => {
-  expect(() => appPayload(orderFor(cases[0]), [])).toThrow(/positive order GST has no matched tax rows/);
+it("blocks positive GST when the item metadata resolves no tax rows (exclusive menu)", () => {
+  // Only an EXCLUSIVE line asserts item_tax, so only it needs the rows.
+  expect(() => appPayload(orderFor(cases[0]), [], { taxInclusive: false }))
+    .toThrow(/positive order GST has no matched tax rows/);
 });
 
 it("detects the legacy envelope and string add-on group regressions", () => {

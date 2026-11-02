@@ -190,8 +190,11 @@ describe("app-order builder (orderPush.formatPetpoojaOrderPayload) — vendor sa
     // Config-derived callback (the same URL the status webhook lives on).
     expect(order_.callback_url).toMatch(/\/petpooja\/webhook$/);
     expect(order_.payment_type).toBe("COD");
-    expect(order_.collect_cash).toBe("300.00"); // COD equals restaurant due, not courier fee.
-    expect(order_.total).toBe("300.00"); // Inclusive food 280 + packing; courier excluded, GST not re-added.
+    // Ruling 2026-11-02: COD collects exactly total, and total includes the
+    // courier fee (inclusive food 280 + 20 packing + 50 courier = 350).
+    expect(order_.collect_cash).toBe("350.00");
+    expect(order_.collect_cash).toBe(order_.total);
+    expect(order_.total).toBe("350.00");
     expect(order_.enable_delivery).toBe(0);
     expect(order_.dc_tax_percentage).toBe("0");
     expect(order_.pc_tax_percentage).toBe("0");
@@ -206,11 +209,10 @@ describe("app-order builder (orderPush.formatPetpoojaOrderPayload) — vendor sa
     expect(line.price).toBe("140.00");
     expect(line.final_price).toBe("140.00");
     expect(line.quantity).toBe("2");
-    // R4: our menu prices are GST-INCLUSIVE — the POS must be told so.
+    // R4 + ruling 2026-11-02: our menu prices are GST-INCLUSIVE, so the POS is
+    // told so and the line carries NO item_tax key at all.
     expect(line.tax_inclusive).toBe(true);
-    // The fixture outlet declares CGST 2.5 + SGST 2.5 (vendor sample values).
-    expect(line.item_tax).toHaveLength(2);
-    expect(line.item_tax[0].tax_percentage).toBe("2.5");
+    expect(line).not.toHaveProperty("item_tax");
 
     // The shipped body JSON must not contain ANY legacy spelling.
     const noCredsBody = JSON.stringify(payload);

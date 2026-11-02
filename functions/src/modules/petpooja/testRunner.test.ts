@@ -132,7 +132,9 @@ describe("runPetpoojaTestScenario (MT-01 sandbox relay)", () => {
       expect(lines[index].gst_liability).toBe("restaurant");
     }
     const details = payload.orderinfo.OrderInfo.Order.details;
-    expect(Number(details.total)).toBe(order.pricing.grandTotal - order.pricing.deliveryFee);
+    // Ruling 2026-11-02: total is the collected amount, so the courier fee is
+    // inside it (exclusive food + GST + packing + delivery = grandTotal).
+    expect(Number(details.total)).toBe(order.pricing.grandTotal);
     expect(details.collect_cash).toBe(details.total);
     expect(details.enable_delivery).toBe(0);
     expect(Number(details.tax_total)).toBe(order.pricing.gst);
@@ -420,7 +422,7 @@ describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-2
     }
   });
 
-  it("carries the callback and COD cash equal to restaurant-only total", () => {
+  it("carries the callback and COD cash equal to the collected total", () => {
     const payload = formatPetpoojaV21Payload(
       vendorShapeOrder(),
       "test_rest_id",
@@ -438,9 +440,9 @@ describe("formatPetpoojaV21Payload — vendor-locked structure (sample 2026-10-2
     expect(order.orderID).toBe("bgx_fixture_2");
     expect(order.callback_url).toBe("https://callback.example.test/petpooja/webhook");
     expect(order.payment_type).toBe("COD");
-    // Exclude courier cost, but COD cash still equals the restaurant due.
-    expect(order.collect_cash).toBe("335.00");
-    expect(order.total).toBe("335.00");
+    // Ruling 2026-11-02: total includes the courier fee; COD cash equals it.
+    expect(order.collect_cash).toBe("385.00");
+    expect(order.total).toBe("385.00");
     expect(order.tax_total).toBe("15.00");
     expect(order).not.toHaveProperty("tax");
     // enable_delivery is a NUMBER (0 = third-party riders, always correct here;

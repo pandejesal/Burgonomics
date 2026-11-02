@@ -105,7 +105,15 @@ Owner decided: menu prices are GST-inclusive, and the delivery fee comes from Bo
 - GST is included, never added. The included share is net food x 5/105, on client and server. Royalty is taken on the ex-GST food value; that base needs owner sign-off before Route goes live.
 - The delivery fee is a live courier quote from POST /checkout/fees, stored in `delivery_fee_quotes` and bound to one order. No static fee exists. If no courier can quote, delivery is unavailable. Only Borzo is enabled until Shadowfax has credentials.
 - `createPaymentOrder` prices the order document only. The branch comes from the order, and option prices come from the catalog.
-- POS `total` is what the restaurant is due, and excludes a third-party courier fee. `tax_inclusive:true` is unconfirmed: Petpooja has only approved exclusive runs.
+- POS `total` and the tax shape now follow Petpooja's BINDING 2 Nov 2026 ruling
+  (`references/petpooja_save_order_api.md` §23): the delivery/packing charges and
+  any GST on them are INSIDE `total`, COD `collect_cash` equals `total`, and a
+  tax-inclusive line omits `item_tax` with no food GST in the bottom `Tax` block.
+  The earlier "total excludes a third-party courier fee" reading is dead, as is
+  "`tax_inclusive:true` is unconfirmed" — the vendor now specifies the inclusive
+  shape explicitly. The exclusive menu path (the approved sandbox runs) is
+  unchanged. Still open: whether packing is order-wise or item-wise (merchant
+  portal configuration, to confirm with Petpooja support after integration).
 - Lines with unverified POS ids are parked, never sent with invented ids. Petpooja has rejected addon, variation, and group ids until they match the pushed menu.
 - Borzo returns a fee plus a phone warning at quote time. The adapter accepts that warning for quotes only. Booking needs a real store phone, and 9 of 17 stores, including DEMO, do not have one.
 - Windows Storage Sense on the dev machine deletes from Temp under low disk. Do not work from Temp.

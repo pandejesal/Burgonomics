@@ -167,9 +167,10 @@ describe("POS-11 POS line prices come from the catalog", () => {
     const info = payload().orderinfo.OrderInfo;
     expect(info.OrderItem.details[0].price).toBe("500.00");
     expect(info.OrderItem.details[0].final_price).toBe("500.00");
-    // Restaurant due follows the catalog price: 500 + 15 packing.
+    // Total follows the catalog price: 500 + 15 packing.
     expect(info.Order.details.total).toBe("515.00");
-    expect(info.Order.details.tax_total).toBe("23.81");
+    // Inclusive menu: the included GST is not asserted on the wire.
+    expect(info.Order.details.tax_total).toBe("0.00");
   });
 
   it("prices a line by line index when the doc mixes a real and a cheap line", async () => {

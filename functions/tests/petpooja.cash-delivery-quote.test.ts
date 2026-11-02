@@ -214,10 +214,11 @@ describe("R6b cash delivery KOT — quote binding", () => {
 
     const details = deliveredPayload().orderinfo.OrderInfo.Order.details;
     expect(details.delivery_charges).toBe("60.00");
-    // A courier fee is never in the restaurant due (corrected R4).
-    expect(details.total).toBe("250.00");
-    expect(details.collect_cash).toBe("250.00");
-    expect(details.tax_total).toBe("11.19");
+    // Ruling 2026-11-02: the courier fee is part of the amount collected.
+    expect(details.total).toBe("310.00");
+    expect(details.collect_cash).toBe("310.00");
+    // Inclusive menu: no food GST asserted, no charge GST.
+    expect(details.tax_total).toBe("0.00");
     expect(savedDocs["orders/ord_cash_1"].deliveryFeeUnverified).toBe(false);
   });
 

@@ -375,19 +375,12 @@ describe("M3 POS ids from the catalog", () => {
     // absolute price of the selected variation
     expect(line.price).toBe("160.00");
     expect(line.quantity).toBe("2");
-    // Tax rows are the exact sum of the serialized item tax.
-    const itemTax = line.item_tax.reduce(
-      (sum: number, t: any) => sum + Math.round(Number(t.amount) * 100),
-      0
-    );
-    const taxRows = info.Tax.details.reduce(
-      (sum: number, t: any) => sum + Math.round(Number(t.tax) * 100),
-      0
-    );
-    expect(itemTax).toBe(1524);
-    expect(taxRows).toBe(itemTax);
-    expect(info.Order.details.tax_total).toBe("15.24");
-    // Courier-free COD takeaway: restaurant due = 320 + 15 packaging.
+    // Ruling 2026-11-02: an inclusive line asserts no item tax and the bottom
+    // block carries no food GST; tax_total is only charge GST (none here).
+    expect(line).not.toHaveProperty("item_tax");
+    expect(info.Tax.details).toEqual([]);
+    expect(info.Order.details.tax_total).toBe("0.00");
+    // Courier-free COD takeaway: total = 320 + 15 packaging.
     expect(info.Order.details.total).toBe("335.00");
     expect(info.Order.details.delivery_charges).toBe("0.00");
   });

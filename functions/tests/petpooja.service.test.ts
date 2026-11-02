@@ -260,10 +260,11 @@ describe("Petpooja POS Bridge Service", () => {
       expect(orderDetails.order_type).toBe("H"); // H = home delivery
       // Petpooja accepts COD / CARD / ONLINE — "Prepaid" is not a valid value.
       expect(orderDetails.payment_type).toBe("ONLINE");
-      // R4b: restaurant due (420 net + 15 packing); the COURIER'S 40 is not
-      // restaurant revenue, so it stays in delivery_charges only.
-      expect(orderDetails.total).toBe("435.00");
-      expect(orderDetails.tax_total).toBe("20.00");
+      // Petpooja ruling 2026-11-02: `total` is the amount collected for this
+      // order — 420 net food + 15 packing + the 40 courier fee all belong in it.
+      expect(orderDetails.total).toBe("475.00");
+      // Inclusive prices add no food GST, so tax_total is 0 (no charge GST).
+      expect(orderDetails.tax_total).toBe("0.00");
       // The old `tax`/`discount` aliases are not in the sample.
       expect(orderDetails).not.toHaveProperty("tax");
       expect(orderDetails).not.toHaveProperty("discount");
@@ -301,12 +302,9 @@ describe("Petpooja POS Bridge Service", () => {
 
       // Official Tax[] shape (id/title/type/price/tax/restaurant_liable_amt).
       // `price` is a numeric percentage string, as in the vendor sample.
-      expect(info.Tax.details).toHaveLength(2);
-      expect(info.Tax.details[0].title).toBe("CGST");
-      expect(info.Tax.details[0].type).toBe("P");
-      expect(info.Tax.details[0].price).toBe("2.5");
-      expect(info.Tax.details[0].tax).toBe("10.00");
-      expect(info.Tax.details[0].restaurant_liable_amt).toBe("10.00");
+      // Ruling 2026-11-02: an inclusive order asserts no food GST, so the block
+      // keeps the required `details` key with NO rows.
+      expect(info.Tax.details).toEqual([]);
       // The sample has no Discount member at all.
       expect(info).not.toHaveProperty("Discount");
 
@@ -321,13 +319,12 @@ describe("Petpooja POS Bridge Service", () => {
       // total ("498.00") violated the vendor's own invariant.
       expect(line.final_price).toBe("235.00");
       expect(line.item_discount).toBe("0.00");
-      // R4: menu prices are GST-inclusive — the POS must be told so, and the
-      // line's tax is the INCLUDED share (20.00 / 2 rows).
+      // R4 + ruling 2026-11-02: menu prices are GST-inclusive, so the POS is
+      // told so and the line carries NO item_tax key at all (the included tax
+      // is never re-asserted per line).
       expect(line.tax_inclusive).toBe(true);
       expect(line.gst_liability).toBe("restaurant");
-      expect(line.item_tax).toHaveLength(2);
-      expect(line.item_tax[0].tax_percentage).toBe("2.5");
-      expect(line.item_tax[0].amount).toBe("10.00");
+      expect(line).not.toHaveProperty("item_tax");
       expect(line.description).toBe("");
       expect(line.variation_id).toBe("");
       expect(line.variation_name).toBe("");
@@ -351,12 +348,11 @@ describe("Petpooja POS Bridge Service", () => {
       expect(line).not.toHaveProperty("item_attribute");
     });
 
-    it("declares GST-inclusive prices and the included tax split (R4)", () => {
-      // Owner decision 2026-10-31: menu prices are GST-INCLUSIVE. The POS must
-      // be told `tax_inclusive: true`, each line's item_tax must be its share
-      // of the INCLUDED tax, the order tax_total is that included amount, and
-      // the order total is what the customer actually pays. Delivery and
-      // packaging carry no tax in our model, so they are never taxed twice.
+    it("declares GST-inclusive prices, omits item_tax and keeps the fee in total (ruling 2026-11-02)", () => {
+      // Petpooja's binding ruling: an inclusive line declares `tax_inclusive: true`
+      // and carries NO item_tax at all; the bottom Tax block reports no food GST;
+      // tax_total is only charge GST (none today); and total includes the
+      // courier fee and packaging. COD collect_cash equals total.
       const order = {
         id: "ord_incl_01",
         branchId: "branch_surat_01",
@@ -393,44 +389,27 @@ describe("Petpooja POS Bridge Service", () => {
 
       for (const line of info.OrderItem.details) {
         expect(line.tax_inclusive).toBe(true);
-        // line price stays the INCLUSIVE menu price
+        // line price stays the INCLUSIVE menu price, and no item tax is claimed
         expect(Number(line.price)).toBe(Number(line.final_price));
+        expect(line).not.toHaveProperty("item_tax");
       }
-
-      const taxRows = info.OrderItem.details.flatMap((l: any) => l.item_tax);
-      const itemTaxTotal = taxRows.reduce((s: number, t: any) => s + Number(t.amount), 0);
-      expect(itemTaxTotal).toBeCloseTo(order.pricing.gst, 2);
-      // Each line's share is proportional to its inclusive line total.
-      expect(info.OrderItem.details[0].item_tax.map((t: any) => t.amount)).toEqual([
-        "11.19",
-        "11.19",
-      ]);
-      expect(info.OrderItem.details[1].item_tax.map((t: any) => t.amount)).toEqual([
-        "2.50",
-        "2.50",
-      ]);
+      // No food GST asserted at the bottom either; the key stays present.
+      expect(info.Tax.details).toEqual([]);
 
       const details = info.Order.details;
-      // R4b: the restaurant due is 575 inclusive + 15 packaging. The courier's
-      // 35 stays in delivery_charges and is NOT added to total.
-      expect(details.total).toBe("590.00");
-      expect(details.tax_total).toBe("27.38");
+      // 575 inclusive + 15 packaging + 35 courier = 625 (the customer total).
+      expect(details.total).toBe("625.00");
+      expect(details.tax_total).toBe("0.00");
       expect(details.delivery_charges).toBe("35.00");
       expect(details.packing_charges).toBe("15.00");
       expect(details.enable_delivery).toBe(0);
-      expect(details.collect_cash).toBe("590.00");
-      // The vendor rule: total contains tax_total, never the other way round.
-      expect(Number(details.total)).toBeGreaterThan(Number(details.tax_total));
+      // COD collects exactly the total — same value, same string form.
+      expect(details.collect_cash).toBe("625.00");
+      expect(details.collect_cash).toBe(details.total);
       // Packaging and delivery are outside the GST base: no tax on either.
       expect(details.dc_tax_amount).toBe("0.00");
       expect(details.pc_tax_amount).toBe("0.00");
       expect(details.sc_tax_amount).toBe("0.00");
-      // The order-level tax rows carry the same included amount, split.
-      const taxTotal = info.Tax.details.reduce(
-        (s: number, t: any) => s + Number(t.tax),
-        0
-      );
-      expect(taxTotal).toBeCloseTo(order.pricing.gst, 2);
     });
 
     it("carries the vendor's optional variation fields, as empty strings when absent", () => {
@@ -603,11 +582,9 @@ describe("Petpooja POS Bridge Service", () => {
       // The vendor sample has no veg flag — the POS resolves it from the menu
       // item id, and the duplicate legacy key is no longer emitted.
       expect(lines[0]).not.toHaveProperty("item_attribute");
-      // The tax split is a share of the order's GST, per line.
-      expect(Number(lines[0].item_tax[0].amount) + Number(lines[0].item_tax[1].amount)).toBeCloseTo(
-        (46 * 700) / 920 / 1,
-        2
-      );
+      // Ruling 2026-11-02: an inclusive line asserts no per-line tax at all.
+      expect(lines[0]).not.toHaveProperty("item_tax");
+      expect(lines[0].tax_inclusive).toBe(true);
     });
 
     it("refuses a line whose item id cannot be resolved rather than inventing one", () => {

@@ -26,8 +26,16 @@ exactly `total`, including pickup; online collects zero. Captured `gst_type`
 remains product metadata and cannot alter the wire. The services/restaurant
 discrepancy remains a question for Petpooja, not an excuse to change liability.
 Production's inclusive prices retain GST without adding it twice; the exclusive
-sandbox adds GST. Both exclude third-party courier fees from restaurant due.
-No customer-pricing or delivery-provider calculation was changed.
+sandbox adds GST.
+
+> **SUPERSEDED 2026-11-02.** Petpooja's binding ruling on our sandbox orders
+> (verbatim in `references/petpooja_save_order_api.md` §23) requires the
+> delivery/packing charges — and any GST on them — INSIDE `total`, with COD
+> `collect_cash` exactly equal to `total`. The "both exclude third-party courier
+> fees from restaurant due" statement below, and every `total` figure in this
+> note that omits the fee, are historical: the current wire puts the fee in
+> `total`. Tax-inclusive lines also now omit `item_tax` and the bottom `Tax`
+> block reports no food GST for them. The exclusive sandbox path is unchanged.
 
 New current wire total / tax_total / collect_cash (all enable_delivery 0):
 case 2 = 356/16/356, case 3 = 609/29/609, case 5 = 334/14/334.

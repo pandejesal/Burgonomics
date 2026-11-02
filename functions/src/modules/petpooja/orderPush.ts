@@ -291,6 +291,14 @@ export interface PosCatalogLine {
   /** Present when the line selects a catalog variation option (M3). */
   variation?: { posItemId: string; posVariationId: string; name: string };
   addons: PosAddonRow[];
+  /**
+   * Vendor ruling 2026-11-02: menu-sync captured whether this item's price is
+   * TAX INCLUSIVE (`products.petpoojaTaxInclusive`, from Push Menu's
+   * `tax_inclusive` / backward-tax setting). `undefined` means the outlet's
+   * capture did not say, in which case the internal rule applies — our menu
+   * prices are GST-inclusive — so the line is treated as inclusive.
+   */
+  taxInclusive?: boolean;
 }
 
 /**
@@ -323,6 +331,8 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
   );
   const docByKey = new Map<string, any>();
   const priceByKey = new Map<string, number>();
+  // Vendor ruling 2026-11-02: the captured per-item inclusive/exclusive flag.
+  const taxInclusiveByKey = new Map<string, boolean | undefined>();
   // PAY-16: the product's own option data, so selected options are priced from
   // the catalog rather than the order document.
   const optionsByKey = new Map<string, any[] | undefined>();
@@ -342,6 +352,12 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
             if (typeof data.price === "number") {
               priceByKey.set(id, data.price);
               optionsByKey.set(id, data?.customizations);
+              taxInclusiveByKey.set(
+                id,
+                typeof data.petpoojaTaxInclusive === "boolean"
+                  ? data.petpoojaTaxInclusive
+                  : undefined
+              );
             }
           }
         });
@@ -354,6 +370,12 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
             if (typeof data.price === "number") {
               priceByKey.set(id, data.price);
               optionsByKey.set(id, data?.customizations);
+              taxInclusiveByKey.set(
+                id,
+                typeof data.petpoojaTaxInclusive === "boolean"
+                  ? data.petpoojaTaxInclusive
+                  : undefined
+              );
             }
           }
         }
@@ -497,6 +519,9 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
       ...(posItemId ? { posItemId } : {}),
       ...(variation ? { variation } : {}),
       addons,
+      ...(taxInclusiveByKey.get(key) !== undefined
+        ? { taxInclusive: taxInclusiveByKey.get(key) }
+        : {}),
     };
   });
 
@@ -682,7 +707,19 @@ export function formatPetpoojaOrderPayload(
    * shared `core/dropContact`). The push path ALWAYS supplies it; undefined
    * only for fixture callers, which fall back to the order's own fields.
    */
-  customerContact?: { phone: string; name?: string }
+  customerContact?: { phone: string; name?: string },
+  /**
+   * Vendor ruling 2026-11-02. `taxInclusive` decides the ITEM TAX SHAPE:
+   *   - `true` (default, our menu): a line declares `tax_inclusive: true` and
+   *     carries NO `item_tax` key; the bottom Tax block reports no food GST and
+   *     `tax_total` counts only GST on delivery/packing.
+   *   - `false` (an ex-GST menu, e.g. the approved sandbox DEMO runs): lines
+   *     carry `item_tax`, the Tax block carries FOOD GST, and GST is added on
+   *     top of the line prices.
+   * When omitted, the per-item capture (`catalogLine.taxInclusive`) wins, then
+   * `pricing.taxInclusive`, and finally the internal rule (inclusive).
+   */
+  options?: { taxInclusive?: boolean }
 ) {
   const { orderType: fulfillment, paymentType } = resolveKotType(order);
   // Official V2.1.0 order_type is a letter code: H (home delivery),
@@ -715,6 +752,17 @@ export function formatPetpoojaOrderPayload(
   const preItems = order.items || [];
   const preGst = Number(order?.pricing?.gst) || 0;
   const branchTaxes = outletTaxes(branch);
+  // Vendor ruling 2026-11-02: is THIS order priced ex-GST? Real sources, in
+  // order of authority: the caller's explicit answer, the per-item capture from
+  // menu sync, the order's own pricing stamp, and finally the internal rule
+  // (our prices are GST-inclusive). A per-item capture wins per line below.
+  const orderTaxInclusive = (index?: number): boolean => {
+    if (typeof options?.taxInclusive === "boolean") return options.taxInclusive;
+    const line = index !== undefined && catalogLines ? catalogLines[index] : undefined;
+    if (line && typeof line.taxInclusive === "boolean") return line.taxInclusive;
+    if (typeof order?.pricing?.taxInclusive === "boolean") return order.pricing.taxInclusive;
+    return true;
+  };
   // R4b: the included GST is divided across lines in EXACT integer paise
   // (largest remainder), so the Tax rows can be the literal sum of the
   // serialized item_tax amounts instead of an independently rounded figure.
@@ -826,23 +874,29 @@ export function formatPetpoojaOrderPayload(
     const lineTaxSplit = branchTaxes.length
       ? allocatePetpoojaTax(lineGst, branchTaxes.map(() => 1))
       : [];
+    // Vendor ruling 2026-11-02: for a tax-INCLUSIVE line "item_tax should not be
+    // calculated and avoided in the orderitem object for such items" — the key
+    // is OMITTED (not an empty array), so no food GST is asserted for a price
+    // that already contains it. An EXCLUSIVE line keeps its item_tax rows.
+    const lineTaxInclusive = orderTaxInclusive(itemIndex);
 
     return {
       id: itemPosId,
       name: lineName,
-      // Owner decision 2026-10-31 (pricing-contract.md R4): menu prices are
-      // GST-INCLUSIVE. `price`/`final_price` below stay the inclusive menu
-      // price and `item_tax` carries each line's share of the INCLUDED tax.
-      // Declaring false used to tell the POS the amount was ex-GST and let it
-      // add the tax on top a second time.
-      tax_inclusive: true,
+      // R4 (internal) + vendor ruling 2026-11-02: the flag now states the truth
+      // for THIS line, and the tax shape follows it.
+      tax_inclusive: lineTaxInclusive,
       gst_liability: "restaurant",
-      item_tax: branchTaxes.map((t, taxIndex) => ({
-        id: t.id,
-        name: t.name,
-        tax_percentage: String(t.rate),
-        amount: money(lineTaxSplit[taxIndex] ?? 0),
-      })),
+      ...(lineTaxInclusive
+        ? {}
+        : {
+            item_tax: branchTaxes.map((t, taxIndex) => ({
+              id: t.id,
+              name: t.name,
+              tax_percentage: String(t.rate),
+              amount: money(lineTaxSplit[taxIndex] ?? 0),
+            })),
+          }),
       // No per-line discount exists in this order model; order-level discounts
       // travel as `discount_type` + `discount_total`. The vendor sample defines
       // `final_price = price - item_discount` — a UNIT figure, not the line
@@ -876,8 +930,12 @@ export function formatPetpoojaOrderPayload(
   const gstAmount = Number(pricing.gst) || 0;
   // POS-11/R4b: a positive GST with NO captured tax rows would print a
   // tax_total the Tax[] section cannot explain — the vendor's own consistency
-  // rule. Block instead of emitting an empty tax split.
-  if (gstAmount > 0 && branchTaxes.length === 0) {
+  // rule. Block instead of emitting an empty tax split. Only meaningful for an
+  // EXCLUSIVE menu: an inclusive line carries no item_tax at all.
+  const anyExclusiveLine = (order.items || []).some(
+    (_item: any, index: number) => !orderTaxInclusive(index)
+  );
+  if (anyExclusiveLine && gstAmount > 0 && branchTaxes.length === 0) {
     throw new PetpoojaStructuralError([
       {
         field: "Tax.details",
@@ -888,8 +946,13 @@ export function formatPetpoojaOrderPayload(
   }
   // R6b: the caller's verified courier fee wins; the stored value is only a
   // fallback for callers that did not resolve one (non-delivery never does).
-  const deliveryFee =
-    kotDeliveryFee !== undefined
+  const isDelivery = orderTypeLegacy === "1";
+  // A takeaway/dine-in order is not delivered by anyone, so no delivery charge
+  // is owed. Keeping a stale stored fee in `delivery_charges` while omitting it
+  // from `total` is exactly the mismatch the vendor rejected on 2026-11-02.
+  const deliveryFee = !isDelivery
+    ? 0
+    : kotDeliveryFee !== undefined
       ? Math.round(Number(kotDeliveryFee) * 100) / 100
       : Number(pricing.deliveryFee) || 0;
   const packagingFee = Number(pricing.packagingFee) || 0;
@@ -897,20 +960,23 @@ export function formatPetpoojaOrderPayload(
   const loyaltyDiscount = Number(pricing.loyaltyDiscount) || 0;
   const grandTotal = Number(pricing.grandTotal);
 
-  // R4b: the POS `total` is the RESTAURANT DUE, not what the customer paid.
-  // A third-party courier fee (Borzo/Shadowfax/Porter) is not restaurant
-  // revenue: it stays in delivery_charges and out of `total`. Only a
-  // restaurant's OWN rider (dispatchType manual_branch_terminal) is
-  // self-delivery. Our menu prices are GST-inclusive, so the item net already
-  // contains the tax and `taxIncluded: true` keeps it from being added twice.
-  const isDelivery = orderTypeLegacy === "1";
+  // Petpooja's binding 2 November 2026 ruling: `total` is what the CUSTOMER
+  // pays for this order — delivery_charges and packing_charges (and any GST on
+  // them) ARE included. `enable_delivery` still says who delivers (0 for a
+  // third-party courier, 1 for our own rider). GST is only ADDED on top when
+  // the menu prices are ex-GST (the sanctioned sandbox DEMO shape); our
+  // inclusive prices already contain it.
   const restaurantDelivery =
     isDelivery && String(order?.dispatchType || "") === "manual_branch_terminal";
+  // Delivery/packing GST: our pricing engine charges none today
+  // (`dc_tax_percentage` / `pc_tax_percentage` are "0"), so the amounts stay
+  // "0.00" and tax_total stays food-only. Threaded as one number so total,
+  // tax_total and the dc/pc detail rows cannot drift apart.
+  const chargeTax = 0;
   const financials = petpoojaFinancials({
     items: orderItems,
-    // Both the coupon discount and the coin (loyalty) discount reduce what the
-    // restaurant is owed, so the POS total still reconciles to the customer
-    // total minus any courier fee.
+    // Both the coupon discount and the coin (loyalty) discount reduce the amount
+    // due, so the POS total reconciles to the customer total.
     discount: discountAmount + loyaltyDiscount,
     packagingFee,
     deliveryFee,
@@ -918,7 +984,13 @@ export function formatPetpoojaOrderPayload(
     isDelivery,
     restaurantDelivery,
     paymentType,
-    taxIncluded: true,
+    // Vendor ruling: an inclusive line carries NO item_tax, so summing the
+    // lines already yields only the EXCLUSIVE lines' food GST. `taxIncluded:
+    // false` therefore means "add whatever item_tax the lines actually carry",
+    // which is 0 for an all-inclusive order and the food GST for a mixed or
+    // exclusive one — never a double-add.
+    taxIncluded: false,
+    chargeTax,
   });
 
   // Normalized (never invented) contact + the clock fields Save Order marks
@@ -1052,24 +1124,28 @@ export function formatPetpoojaOrderPayload(
     table_no: tableNo,
     no_of_persons: String(noOfPersons),
     discount_total: money(discountAmount),
-    // R4: the INCLUDED GST amount. The POS backs it out of the inclusive line
-    // prices; it is never added to them.
-    tax_total: money(gstAmount),
+    // Petpooja 2 Nov 2026: `total_tax` carries only tax that was actually
+    // ADDED — food GST for an exclusive menu, plus any GST on delivery/packing.
+    // An inclusive line asserts no item_tax, so its included tax is not
+    // repeated here.
+    tax_total: financials.taxTotal,
     // Discounts are sent as discount_type + discount_total (spec §8).
     discount_type: "F",
-    // R4b: RESTAURANT DUE — item net (already GST-inclusive) less discounts,
-    // plus packing, plus delivery ONLY when the restaurant delivers itself.
-    // A third-party courier fee is not restaurant revenue.
+    // Petpooja 2 Nov 2026 (binding): `total` is what is collected for this
+    // order — item amounts less discount, plus packing, plus delivery, plus
+    // any GST on those charges. `collect_cash` equals it on COD.
     total: financials.total,
     description: order.notes || order.specialInstructions || "",
     created_on: createdOn,
-    // R4b: 1 only for restaurant self-delivery.
+    // Documented contract: 1 only when the restaurant's own rider delivers
+    // (0 for a third-party courier, so it cannot touch delivery statuses).
     enable_delivery: financials.enable_delivery,
     min_prep_time: Number.isFinite(prepTimeMinutes) && prepTimeMinutes > 0 ? prepTimeMinutes : 0,
     // The POS reads the URL it POSTs order-status updates (Accept / Food Ready
     // / Reject) from Order.details.
     callback_url: getCallbackUrl(),
-    // R4b: the restaurant's own rider collects cash only on self-delivery COD.
+    // Vendor ruling: on COD this EQUALS `total` exactly (same 2dp string);
+    // prepaid online collects nothing at the door.
     collect_cash: financials.collect_cash,
     // Deliberately empty: the delivery OTP is the customer/rider verification
     // secret and must not be printed on a kitchen ticket.
@@ -1079,19 +1155,26 @@ export function formatPetpoojaOrderPayload(
   // Official Tax[] shape: id / title / type / price / tax / restaurant_liable_amt.
   // The ids must name rows that exist on the outlet. `price` is the numeric
   // percentage, matching the vendor sample (not "2.5%").
-  // R4b: each row is the EXACT sum of the serialized item_tax amounts of that
-  // id, so the summary can never disagree with the lines.
-  const taxDetails = branchTaxes.map((t) => {
-    const rowTotal = sumPetpoojaItemTax(orderItems, t.id);
-    return {
-      id: t.id,
-      title: t.name,
-      type: "P",
-      price: String(t.rate),
-      tax: money(rowTotal),
-      restaurant_liable_amt: money(rowTotal),
-    };
-  });
+  //
+  // Petpooja 2 Nov 2026 ruling: "The Tax object at the bottom should only
+  // include the FOOD GST." For a tax-INCLUSIVE order no food GST is added at
+  // all (the lines omit item_tax), so the block is emitted with an EMPTY
+  // `details: []` — the key the vendor's schema requires stays present and
+  // valid while asserting no food tax. An EXCLUSIVE order keeps the rows, each
+  // the EXACT sum of its serialized item_tax amounts (R4b).
+  const taxDetails = anyExclusiveLine
+    ? branchTaxes.map((t) => {
+        const rowTotal = sumPetpoojaItemTax(orderItems, t.id);
+        return {
+          id: t.id,
+          title: t.name,
+          type: "P",
+          price: String(t.rate),
+          tax: money(rowTotal),
+          restaurant_liable_amt: money(rowTotal),
+        };
+      })
+    : [];
 
   return {
     orderinfo: {

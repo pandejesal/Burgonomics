@@ -1,19 +1,29 @@
 /**
- * Petpooja "restaurant due" financials (corrected rule R4, owner decision
- * 2026-10-31, adapted from 36cdd6b:functions/src/modules/petpooja/financials.ts).
+ * Petpooja financial primitives.
  *
- * The vendor's `total` is what the RESTAURANT is owed, not what the customer
- * paid. The vendor contract requires `total` to contain `tax_total`; a
- * third-party courier fee (Borzo/Shadowfax/Porter) is NOT restaurant revenue,
- * so it stays in `delivery_charges` and out of `total`.
+ * SUPERSEDED RULE — Petpooja's binding 2 November 2026 ruling (vendor review of
+ * our sandbox orders) replaces the internal 2026-10-31 "restaurant due"
+ * decision for `total`:
+ *   "If these orders have delivery_charges then they should be included in the
+ *    total. Also if there is any GST in delivery charges then they should also
+ *    be added in the total_tax key and the total key as well. Same goes with
+ *    packing charge and its GST."
+ *   "in a COD order this [collect_cash] key must match total."
  *
- * Adaptation for this branch: our menu prices are GST-INCLUSIVE (R1/R4), so the
- * per-unit `final_price` already carries its tax and the item net must not have
- * `tax_total` added a second time. 36cdd6b ran with `tax_inclusive: false`,
- * where adding it was correct. `taxIncluded` keeps both shapes honest and
- * defaults to nothing — the caller must say which world it is in.
+ * So `total` is the amount the CUSTOMER pays for this order at the outlet:
+ * items + their GST (only when the menu prices are ex-GST) + packing +
+ * delivery + any GST charged on packing/delivery. `enable_delivery` still
+ * distinguishes who delivers (0 = third-party courier, 1 = our own rider).
  *
- * The vendor's written 28 October instruction controls liability: all GST is
+ * Tax shape follows the same ruling: a GST-INCLUSIVE line carries NO item_tax
+ * at all (the key is omitted), and the bottom Tax block only ever describes
+ * FOOD GST that was actually added — i.e. the lines of a non-inclusive menu.
+ * `tax_total` is that food GST (exclusive menus only) plus any GST charged on
+ * delivery/packing, which our pricing engine currently charges none of
+ * (`dc_tax_percentage` / `pc_tax_percentage` are 0). The internal rule stands:
+ * menu prices are GST-inclusive and GST is never added on top of food.
+ *
+ * The vendor's written liability instruction controls: all GST is
  * restaurant-liable. Captured gst_type is metadata, not wire authority.
  *
  * All arithmetic is integer paise; every output is a 2dp string, the vendor's
@@ -44,13 +54,17 @@ export interface FinancialItem {
   quantity: string;
   /** Absent means restaurant-liable (our menu, R4); unknown values block. */
   gst_liability?: PetpoojaGstLiability;
-  item_tax: Array<{ id: string; amount: string }>;
+  /**
+   * Omitted entirely for GST-inclusive lines (vendor ruling 2026-11-02: "item_tax
+   * should not be calculated and avoided" for those items).
+   */
+  item_tax?: Array<{ id: string; amount: string }>;
 }
 
 /** The restaurant-liable share of one tax row, in rupees (vendor shape). */
 export function restaurantLiableItemTax(items: FinancialItem[], taxId: string): number {
   return items.reduce((sum, item) => sum +
-    item.item_tax.reduce((tax, row) => tax + (row.id === taxId ? paise(row.amount, "item tax") : 0), 0), 0) / 100;
+    (item.item_tax || []).reduce((tax, row) => tax + (row.id === taxId ? paise(row.amount, "item tax") : 0), 0), 0) / 100;
 }
 
 export interface PetpoojaFinancialInput {
@@ -65,15 +79,33 @@ export interface PetpoojaFinancialInput {
   paymentType: string;
   /** True when `final_price` already contains GST (our menu prices do). */
   taxIncluded: boolean;
+  /**
+   * GST charged on the delivery + packing charges, in rupees. Our pricing
+   * engine charges none (`dc_tax_percentage`/`pc_tax_percentage` are 0); the
+   * value is threaded so the vendor rule ("add charge GST to total_tax and
+   * total") stays expressible and the three figures can never drift apart.
+   */
+  chargeTax?: number;
 }
 
 export interface PetpoojaFinancials {
+  /** Amount collected for this order, including delivery + packing (+ their GST). */
   total: string;
+  /** FOOD GST actually added (exclusive menus only) plus charge GST. */
+  taxTotal: string;
   enable_delivery: number;
   collect_cash: string;
 }
 
-/** POS total is restaurant due, separate from the amount charged to the customer. */
+/**
+ * POS financials per Petpooja's binding 2 November 2026 ruling.
+ *
+ * `total` = item final amounts - order discount
+ *         + item GST (ONLY when the menu prices are ex-GST)
+ *         + packing + delivery + charge GST.
+ * COD collects exactly `total`; prepaid online collects nothing at the counter.
+ * `enable_delivery` is 1 only when the restaurant's own rider delivers.
+ */
 export function petpoojaFinancials(input: PetpoojaFinancialInput): PetpoojaFinancials {
   let itemNet = 0;
   let itemTax = 0;
@@ -91,7 +123,7 @@ export function petpoojaFinancials(input: PetpoojaFinancialInput): PetpoojaFinan
     }
     itemNet += paise(item.final_price, "item final price") * quantity;
     // All tax belongs to the restaurant, including stale vendor-labelled input.
-    itemTax += item.item_tax.reduce(
+    itemTax += (item.item_tax || []).reduce(
       (sum, row) => sum + paise(row.amount, "item tax"), 0
     );
   }
@@ -102,28 +134,28 @@ export function petpoojaFinancials(input: PetpoojaFinancialInput): PetpoojaFinan
   }
   const packing = paise(input.packagingFee, "packing charge");
   const delivery = paise(input.deliveryFee, "delivery charge");
+  const chargeTax = paise(input.chargeTax ?? 0, "charge tax");
   paise(input.customerTotal, "customer total");
 
-  // A courier order is NOT self-delivery: the fee is the courier's, so it is
-  // reported in delivery_charges and excluded from the restaurant due.
-  const selfDelivery = input.isDelivery && input.restaurantDelivery;
-  const restaurantTotal =
-    itemNet -
-    discount +
-    (input.taxIncluded ? 0 : itemTax) +
-    packing +
-    (selfDelivery ? delivery : 0);
+  // An inclusive line already contains its GST, so only an exclusive menu adds
+  // item tax on top. Charge GST (delivery/packing) is always on top of the fee.
+  const addedItemTax = input.taxIncluded ? 0 : itemTax;
+  const total = itemNet - discount + addedItemTax + packing + delivery + chargeTax;
+  const taxTotal = addedItemTax + chargeTax;
 
-  if (!Number.isSafeInteger(restaurantTotal) || restaurantTotal < 0) {
-    throw new Error("BLOCKED_CONFIGURATION: unsafe restaurant total");
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw new Error("BLOCKED_CONFIGURATION: unsafe order total");
+  }
+  if (!Number.isSafeInteger(taxTotal) || taxTotal < 0) {
+    throw new Error("BLOCKED_CONFIGURATION: unsafe tax total");
   }
 
   return {
-    total: (restaurantTotal / 100).toFixed(2),
-    enable_delivery: selfDelivery ? 1 : 0,
-    // Vendor instruction: COD cash equals restaurant total, including pickup.
-    collect_cash: (
-      (input.paymentType === "COD" ? restaurantTotal : 0) / 100
-    ).toFixed(2),
+    total: (total / 100).toFixed(2),
+    taxTotal: (taxTotal / 100).toFixed(2),
+    enable_delivery: input.isDelivery && input.restaurantDelivery ? 1 : 0,
+    // Vendor ruling: on a COD order collect_cash MUST equal total exactly, in
+    // the same 2dp string form. Prepaid (ONLINE) collects nothing at the door.
+    collect_cash: ((input.paymentType === "COD" ? total : 0) / 100).toFixed(2),
   };
 }

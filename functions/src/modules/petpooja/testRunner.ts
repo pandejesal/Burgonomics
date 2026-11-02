@@ -530,6 +530,8 @@ export function formatPetpoojaV21Payload(
     // the kept tax must be added explicitly — the production builder is the
     // one that runs with GST-inclusive menu prices (R1/R4).
     taxIncluded: false,
+    // This runner charges no GST on delivery/packing (dc/pc percentages are 0).
+    chargeTax: 0,
   });
 
   // Clearly-synthetic test contacts (test-only, sandbox dry-run fixture):
