@@ -88,6 +88,7 @@ import {
 } from "./modules/dispatch/shadowfax.reconcile";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
+import { recoverStuckCaptureFulfilments } from "./modules/payments/captureRecovery";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
 import {
   createTicket,
@@ -2096,8 +2097,7 @@ export const cleanupExpiredGuestSessions = onSchedule(
 // so a late capture wins. MUST DEPLOY ONLY AFTER the live payment test that
 // pays an existing unpaid order: this job would cancel those fixtures once they
 // are 30 minutes old.
-export const expireAbandonedUnpaidOrdersJob = onSchedule(
-  {
+export const expireAbandonedUnpaidOrdersJob = onSchedule(  {
     region: REGION,
     schedule: "*/10 * * * *", // Every 10 minutes
     timeZone: "Asia/Kolkata",
@@ -2119,6 +2119,42 @@ export const expireAbandonedUnpaidOrdersJob = onSchedule(
       `[Unpaid Expiry] scanned ${result!.scanned}, candidates ${result!.candidates}, ` +
         `cancelled ${result!.cancelled}, authorized ${result!.skippedAuthorized}, ` +
         `unknown ${result!.skippedUnknown}, failed ${result!.failed}`
+    );
+  }
+);
+
+// Capture-fulfilment recovery: the INDEPENDENT path that finishes a stuck
+// capture decision. A capture channel can die holding `checking`, an automatic
+// refund can fail transiently (`refund_failed`), or a retryable webhook refusal
+// may never be redelivered. Every such order is a paid customer who is neither
+// fed nor refunded, so this sweep takes over gates past their lease and either
+// finishes the decision, retries the refund with the SAME idempotency key, or
+// confirms a capture that is clear to proceed. It never depends on Razorpay
+// redelivering anything, and after CAPTURE_GATE_MAX_ATTEMPTS it stops and
+// raises a HIGH staff-visible alert instead of retrying forever.
+export const recoverStuckCaptureFulfilmentsJob = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+    // Up to 50 orders per lane × (gate transaction + possible refund POST):
+    // the 60s v2 default would die mid-batch on a busy tick.
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "recover-stuck-capture-fulfilments",
+      4 * 60 * 1000,
+      () => recoverStuckCaptureFulfilments()
+    );
+    if (!ran) {
+      console.log("[Capture Recovery] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Capture Recovery] scanned ${result!.scanned}, candidates ${result!.candidates}, ` +
+        `refunded ${result!.refunded}, confirmed ${result!.confirmed}, ` +
+        `retried ${result!.retried}, escalated ${result!.escalated}, failed ${result!.failed}`
     );
   }
 );

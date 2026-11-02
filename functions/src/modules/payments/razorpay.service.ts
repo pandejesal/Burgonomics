@@ -2270,6 +2270,99 @@ export type RouteSplitOutcome =
  *    lease released, so the retry worker can claim it on the next tick
  *    instead of idling out the lease.
  */
+/**
+ * RECOVERY-ONLY confirmation (scheduled capture-gate sweep).
+ *
+ * Used when a paid order's fulfilment decision is `fulfillable` but no channel
+ * ever finished the confirmation (the process died between the gate write and
+ * the confirm, or every webhook redelivery was lost). It deliberately does NOT
+ * re-run the gateway truth checks: the capture was already proven by the
+ * channel that made the decision, and this path is only reachable while the
+ * gate says `fulfillable` for this payment. It reuses `finishVerifiedPayment`
+ * so the CONFIRMED write, OTP hash, audit and the transactional compensation
+ * lock are identical to both capture channels, and it pushes the KOT exactly
+ * like they do (the POS de-dupes on its own markers).
+ *
+ * Returns false when the order is no longer confirmable — never throws, so one
+ * bad order cannot stop the sweep.
+ */
+export async function completeRecoveredCapture(args: {
+  orderId: string;
+  razorpayPaymentId: string;
+  orderData?: Record<string, any>;
+}): Promise<boolean> {
+  const orderId = typeof args.orderId === "string" ? args.orderId.trim() : "";
+  const razorpayPaymentId =
+    typeof args.razorpayPaymentId === "string" ? args.razorpayPaymentId.trim() : "";
+  if (!orderId || !razorpayPaymentId || !db) return false;
+
+  try {
+    const orderRef = db.collection("orders").doc(orderId);
+    const snap = await orderRef.get();
+    if (!snap.exists) return false;
+    const orderData = ((snap.data() || {}) as Record<string, any>) || {};
+
+    // The transactional lock inside finishVerifiedPayment still applies; this
+    // pre-check keeps "already confirmed" idempotent and cheap.
+    if (!captureGateAllowsConfirm(orderData, razorpayPaymentId)) return false;
+
+    const razorpayOrderId = readRecordedPaymentField(orderData, "razorpayOrderId") || "";
+    const capturedPaise =
+      Number(orderData?.payment?.capturedAmountPaise) ||
+      Number(orderData?.["payment.capturedAmountPaise"]) ||
+      (Number(orderData?.pricing?.grandTotal) > 0
+        ? Math.round(Number(orderData.pricing.grandTotal) * 100)
+        : undefined);
+
+    // A payout failure must never fail the recovery of a paid customer: the
+    // existing retry worker owns settlement.
+    let transferResult: any = null;
+    try {
+      const split = await executeRouteSplit({
+        orderRef,
+        orderId,
+        orderData,
+        razorpayPaymentId,
+        razorpayOrderId,
+        capturedAmountPaise: capturedPaise,
+      });
+      transferResult = split.state === "transferred" ? split.transfer : null;
+    } catch (err: any) {
+      console.warn(
+        `[Capture Recovery] route split skipped for order ${orderId}:`,
+        err?.message || err
+      );
+    }
+
+    const finished: any = await finishVerifiedPayment({
+      orderRef,
+      orderData,
+      orderId,
+      razorpayOrderId,
+      razorpayPaymentId,
+      transferResult,
+      capturedAmountPaise: capturedPaise,
+    });
+    if (!finished?.success) return false;
+
+    await pushConfirmedOrderToPos(orderId);
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "medium",
+      message: `Capture fulfilment recovered: order ${orderId} confirmed by the scheduled sweep after its gate stalled (payment ${razorpayPaymentId})`,
+      orderId,
+      razorpayPaymentId,
+    }).catch(() => undefined);
+    return true;
+  } catch (err: any) {
+    console.warn(
+      `[Capture Recovery] confirmation failed for order ${orderId} — retried next tick:`,
+      err?.message || err
+    );
+    return false;
+  }
+}
+
 export async function executeRouteSplit(args: {
   orderRef: any;
   orderId: string;
@@ -3881,6 +3974,13 @@ export async function autoRefund(
               ? priorRefundStatus
               : admin.firestore.FieldValue.delete(),
             refundClaimedAt: admin.firestore.FieldValue.delete(),
+            // The ACTIVE claim lease is the guard a retry actually hits
+            // (`REFUND_IN_PROGRESS`), so it must be released too — otherwise a
+            // failed attempt wedges the refund for the full TTL and every
+            // recovery retry is refused. `null` (not a delete sentinel) so the
+            // object-shape guard reads it as "no active claim"; the pending
+            // request record keeps the same idempotency identity for the retry.
+            refundActiveClaim: null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }

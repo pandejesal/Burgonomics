@@ -33,13 +33,22 @@ import { refundUnfulfillableCapture } from "./lateCaptureRefund";
 export type CaptureFulfillmentState =
   | "checking"
   | "fulfillable"
+  /** Refund decided; POST may or may not have left. Recoverable, never final. */
+  | "refund_pending"
   | "refunded"
+  /** Transient automatic-refund failure. RETRYABLE, not a terminal verdict. */
   | "refund_failed";
 
 export interface CaptureFulfillmentRecord {
   state: CaptureFulfillmentState;
   paymentId: string;
   atMs: number;
+  /** Attempt counter shared by the capture path and the recovery job. */
+  attempts?: number;
+  /** Last known refund detail (gateway error / item list). */
+  detail?: string;
+  /** Last gateway error text while a refund keeps failing. */
+  lastError?: string;
 }
 
 export type CaptureFulfillmentOutcome =
@@ -75,6 +84,29 @@ const CONFIRMED_OR_LATER = new Set([
 /** How long one channel may hold the decision before a takeover is allowed. */
 export const CAPTURE_GATE_LEASE_MS = 5 * 60_000;
 
+/**
+ * Attempts before the recovery job stops retrying and raises a HIGH alert.
+ * Small on purpose: a refund that fails this many times needs a human, and a
+ * silent infinite retry is exactly the failure mode this lane exists to end.
+ */
+export const CAPTURE_GATE_MAX_ATTEMPTS = 5;
+
+/**
+ * How long past its lease a `refund_pending`/`refund_failed`/`checking` gate
+ * may sit before the scheduled recovery job takes it over. Longer than the
+ * per-doc lease so a live channel is never raced by the job.
+ */
+export const CAPTURE_RECOVERY_AFTER_MS = 10 * 60_000;
+
+/**
+ * Backoff before retrying a KNOWN-FAILED refund. Deliberately ZERO: a gateway
+ * failure means nothing is in flight, the caller already waits a full scheduler
+ * tick (5 minutes) between attempts, and the attempt budget — not a timer — is
+ * what stops a runaway lane. A non-zero value here would only delay recovery
+ * for no safety gain.
+ */
+export const CAPTURE_REFUND_RETRY_BACKOFF_MS = 0;
+
 function statusCodeOf(order: any): string {
   const raw = typeof order?.status === "string" ? order.status : order?.status?.code;
   return String(raw || "").toUpperCase();
@@ -91,6 +123,24 @@ export function isOrderConfirmedOrLater(order: any): boolean {
   );
 }
 
+/**
+ * Lifecycle-only variant: CONFIRMED/PREPARING/…/terminal, ignoring
+ * `paymentStatus`.
+ *
+ * Compensation stamps `paymentStatus: "completed"` on the order (it must, so
+ * refund accounting can prove what it is refunding), which makes the broader
+ * check above say "already confirmed" for an order that was never confirmed.
+ * Every path that must still SEE a compensation state has to use this one.
+ */
+export function isOrderLifecycleConfirmedOrLater(order: any): boolean {
+  const code = statusCodeOf(order);
+  return (
+    CONFIRMED_OR_LATER.has(code) ||
+    order?.status?.terminal === true ||
+    order?.terminal === true
+  );
+}
+
 function gateRecordOf(order: any): CaptureFulfillmentRecord | null {
   const raw = order?.captureFulfillment;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -101,6 +151,7 @@ function gateRecordOf(order: any): CaptureFulfillmentRecord | null {
   if (
     state !== "checking" &&
     state !== "fulfillable" &&
+    state !== "refund_pending" &&
     state !== "refunded" &&
     state !== "refund_failed"
   ) {
@@ -110,7 +161,18 @@ function gateRecordOf(order: any): CaptureFulfillmentRecord | null {
     state: state as CaptureFulfillmentState,
     paymentId,
     atMs: Number((raw as any).atMs) || 0,
+    attempts: Number((raw as any).attempts) || 0,
+    detail: typeof (raw as any).detail === "string" ? (raw as any).detail : undefined,
+    lastError:
+      typeof (raw as any).lastError === "string" ? (raw as any).lastError : undefined,
   };
+}
+
+/** States in which money may already have moved and must not be re-decided. */
+export function isCompensationState(state: CaptureFulfillmentState): boolean {
+  return (
+    state === "refund_pending" || state === "refunded" || state === "refund_failed"
+  );
 }
 
 /**
@@ -133,11 +195,16 @@ export function captureGateAllowsConfirm(order: any, razorpayPaymentId: string):
   // truth on the order (so `paymentStatus` reads "completed"), which is exactly
   // why this must be checked BEFORE the already-confirmed allowance below —
   // otherwise a later `order.paid` confirms refunded food.
+  //
+  // `refund_pending` is included: the refund POST may already be on the wire,
+  // so confirming would produce exactly the food-plus-refund outcome.
   const record = gateRecordOf(order);
-  if (record && (record.state === "refunded" || record.state === "refund_failed")) {
-    return false;
-  }
-  if (isOrderConfirmedOrLater(order)) return true;
+  if (record && isCompensationState(record.state)) return false;
+  // Nothing to suppress for an order whose LIFECYCLE is already past
+  // confirming: the caller's later-status guard preserves it and performs no
+  // confirm. This uses the lifecycle-only check because compensation itself
+  // stamps `paymentStatus: "completed"` on an order that was never confirmed.
+  if (isOrderLifecycleConfirmedOrLater(order)) return true;
   if (!record) return false;
   return record.state === "fulfillable" && record.paymentId === razorpayPaymentId;
 }
@@ -149,12 +216,18 @@ export function captureGateAllowsConfirm(order: any, razorpayPaymentId: string):
 async function claimGate(args: {
   orderRef: any;
   razorpayPaymentId: string;
+  nowMs?: number;
 }): Promise<
   | { kind: "already_confirmed" }
   | { kind: "claimed" }
   | { kind: "fulfillable" }
   | { kind: "pending" }
   | { kind: "compensated"; state: CaptureFulfillmentState }
+  | {
+      kind: "resume_compensation";
+      state: CaptureFulfillmentState;
+      detail?: string;
+    }
 > {
   if (!db || typeof (db as any).runTransaction !== "function") {
     // Without a transaction there is no way to prove "first" — never compensate
@@ -172,23 +245,55 @@ async function claimGate(args: {
     }
     const fresh = (snap.data() || {}) as any;
 
-    // A later lifecycle state (staff already bumped it) is NOT a replay to
+    // A later LIFECYCLE state (staff already bumped it) is NOT a replay to
     // re-decide: the caller's confirmation logic preserves the status. Running
     // the availability decision here could refund an order in the kitchen, so
-    // it is left alone entirely.
-    if (isOrderConfirmedOrLater(fresh)) return { kind: "already_confirmed" } as const;
+    // it is left alone entirely. The lifecycle check ignores `paymentStatus`,
+    // which a compensation itself stamps as "completed".
+    if (isOrderLifecycleConfirmedOrLater(fresh)) return { kind: "already_confirmed" } as const;
 
     // COMPENSATION OUTRANKS CONFIRMATION. A compensated capture stamps payment
     // truth on the order (so a naive "is it paid?" read says yes); that must
     // never let a later `order.paid` confirm refunded food.
+    //
+    // `refund_pending` / `refund_failed` are RESERVED for this payment: the
+    // refund identity is already minted, so the caller must resume the SAME
+    // refund (idempotent key) rather than re-decide fulfilment. Only a grown
+    // lease may take them over.
     const record = gateRecordOf(fresh);
+    const nowMs = typeof args.nowMs === "number" ? args.nowMs : Date.now();
     if (record && record.paymentId === args.razorpayPaymentId) {
-      if (record.state === "refunded" || record.state === "refund_failed") {
+      if (record.state === "refunded") {
         return { kind: "compensated", state: record.state } as const;
+      }
+      if (record.state === "refund_pending" || record.state === "refund_failed") {
+        const age = nowMs - record.atMs;
+        const leaseLive =
+          Number.isFinite(record.atMs) && record.atMs > 0 && age < CAPTURE_GATE_LEASE_MS;
+        // A FAILED attempt has nothing in flight: it is retryable immediately,
+        // so a redelivery or the next sweep can finish it without waiting out a
+        // lease that only exists to protect an in-flight POST.
+        if (leaseLive && record.state === "refund_pending") {
+          return { kind: "compensated", state: record.state } as const;
+        }
+        if (leaseLive && record.state === "refund_failed") {
+          return {
+            kind: "resume_compensation",
+            state: record.state,
+            detail: record.detail,
+          } as const;
+        }
+        // Stale `refund_pending`: this caller RESUMES the refund below (never
+        // re-decides it).
+        return {
+          kind: "resume_compensation",
+          state: record.state,
+          detail: record.detail,
+        } as const;
       }
       if (record.state === "fulfillable") return { kind: "fulfillable" } as const;
       // state === "checking"
-      const age = Date.now() - record.atMs;
+      const age = nowMs - record.atMs;
       if (Number.isFinite(record.atMs) && record.atMs > 0 && age < CAPTURE_GATE_LEASE_MS) {
         return { kind: "pending" } as const;
       }
@@ -197,10 +302,9 @@ async function claimGate(args: {
       // A DIFFERENT capture already owns the decision for this order. A
       // compensation for another payment still forbids confirming this one; a
       // second live capture is the existing foreign-capture guards' business.
-      if (record.state === "refunded" || record.state === "refund_failed") {
+      if (isCompensationState(record.state)) {
         return { kind: "compensated", state: record.state } as const;
       }
-      if (record.state === "checking") return { kind: "pending" } as const;
       return { kind: "pending" } as const;
     }
 
@@ -212,6 +316,7 @@ async function claimGate(args: {
           paymentId: args.razorpayPaymentId,
           atMs: Date.now(),
         },
+        captureFulfillmentState: "checking",
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -220,12 +325,19 @@ async function claimGate(args: {
   })) as any;
 }
 
-/** Writes the decided state. Merge-only; never touches payment truth. */
+/**
+ * Writes the decided state. Merge-only; never touches payment truth.
+ *
+ * `attempts` is EXPLICIT (never inferred), so the capture path and the recovery
+ * job share one counter and neither resets the other's progress.
+ */
 async function recordGateState(args: {
   orderRef: any;
   razorpayPaymentId: string;
   state: CaptureFulfillmentState;
   detail?: string;
+  lastError?: string;
+  attempts?: number;
 }): Promise<boolean> {
   try {
     await args.orderRef.set(
@@ -234,15 +346,23 @@ async function recordGateState(args: {
           state: args.state,
           paymentId: args.razorpayPaymentId,
           atMs: Date.now(),
+          ...(typeof args.attempts === "number" ? { attempts: args.attempts } : {}),
           ...(args.detail ? { detail: args.detail.slice(0, 300) } : {}),
+          ...(args.lastError ? { lastError: args.lastError.slice(0, 300) } : {}),
         },
+        // MIRROR of the state at the TOP level. Firestore's automatic index
+        // covers a top-level field, and the recovery sweep needs an
+        // equality-scannable key with NO composite index. The nested record
+        // stays the authority for every decision.
+        captureFulfillmentState: args.state,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
     );
     return true;
   } catch (err: any) {
-    // A failure to record leaves "checking", which ages out and is retried.
+    // A failure to record leaves the previous state, which ages out and is
+    // retried by the recovery job.
     console.warn(
       `[Payments] capture-gate state write failed for ${args.razorpayPaymentId}:`,
       err?.message || err
@@ -272,12 +392,102 @@ async function unavailableProductIds(items: any[]): Promise<{
 }
 
 /**
+ * Runs (or RESUMES) the automatic refund for a proven-unfulfillable capture.
+ *
+ * Order of operations is the whole point:
+ *
+ *  1. persist `refund_pending` (with the outcome detail and an attempt count)
+ *     BEFORE the gateway call, so a crash between the write and the POST leaves
+ *     a RECOVERABLE record rather than a false "refunded";
+ *  2. call the ONE automatic-refund path. Its identity is deterministic
+ *     (`unful_<order>_<payment>`), so a retry from the crash above replays the
+ *     stored receipt instead of paying twice;
+ *  3. mark `refunded` only after the gateway answered with a refund id;
+ *  4. on failure mark `refund_failed` — a RETRYABLE state, not a verdict, so
+ *     the next delivery and the recovery job both try again.
+ *
+ * Returns the outcome plus whether the attempt budget is exhausted.
+ */
+async function runCompensatingRefund(args: {
+  orderRef: any;
+  orderId: string;
+  razorpayPaymentId: string;
+  razorpayOrderId?: string | null;
+  capturedAmountPaise?: number;
+  detail: string;
+  attempts: number;
+}): Promise<{
+  outcome: "refunded" | "refund_failed";
+  refundId?: string;
+  reused?: boolean;
+  detail?: string;
+  attempts: number;
+}> {
+  const attempts = args.attempts + 1;
+
+  const pendingWritten = await recordGateState({
+    orderRef: args.orderRef,
+    razorpayPaymentId: args.razorpayPaymentId,
+    state: "refund_pending",
+    detail: args.detail,
+    attempts,
+  });
+  if (!pendingWritten) {
+    // Without the pending mark a crash could be mistaken for "nothing spent".
+    // Fail the attempt (retryable) rather than move money on an unprovable
+    // state; the recovery job will pick the order up from its old state.
+    return {
+      outcome: "refund_failed",
+      detail: "could not persist refund_pending",
+      attempts: args.attempts,
+    };
+  }
+
+  const refund = await refundUnfulfillableCapture({
+    orderId: args.orderId,
+    razorpayPaymentId: args.razorpayPaymentId,
+    razorpayOrderId: args.razorpayOrderId || null,
+    capturedAmountPaise: args.capturedAmountPaise,
+    reason: "item_unavailable",
+    detail: args.detail,
+    source: "capture_fulfillment_gate",
+  });
+
+  if (!refund.refunded) {
+    await recordGateState({
+      orderRef: args.orderRef,
+      razorpayPaymentId: args.razorpayPaymentId,
+      state: "refund_failed",
+      detail: args.detail,
+      lastError: refund.detail,
+      attempts,
+    });
+    return { outcome: "refund_failed", detail: refund.detail, attempts };
+  }
+
+  // Gateway proof in hand: the ONLY write that may claim "refunded".
+  await recordGateState({
+    orderRef: args.orderRef,
+    razorpayPaymentId: args.razorpayPaymentId,
+    state: "refunded",
+    detail: args.detail,
+    attempts,
+  });
+  return {
+    outcome: "refunded",
+    refundId: refund.refundId,
+    reused: refund.reused,
+    attempts,
+  };
+}
+
+/**
  * Gate a capture before it is confirmed.
  *
  * `fulfillable` / `already_confirmed` → the caller may run its confirm logic
  * (which re-checks the record transactionally). `pending` → DO NOT confirm: the
  * caller must return a retryable signal. `refunded` / `already_compensated` →
- * never confirm, never KOT. `refund_failed` → never confirm; park and retry.
+ * never confirm, never KOT. `refund_failed` → never confirm; retry the refund.
  */
 export async function guardCaptureFulfillment(args: {
   orderRef: any;
@@ -286,20 +496,45 @@ export async function guardCaptureFulfillment(args: {
   razorpayOrderId?: string | null;
   orderData: Record<string, any>;
   capturedAmountPaise?: number;
+  /** Deterministic clock seam for the recovery job and tests. */
+  nowMs?: number;
 }): Promise<CaptureFulfillmentOutcome> {
   if (!args.razorpayPaymentId) return { outcome: "pending" };
 
   const claim = await claimGate({
     orderRef: args.orderRef,
     razorpayPaymentId: args.razorpayPaymentId,
+    nowMs: args.nowMs,
   });
 
   if (claim.kind === "already_confirmed") return { outcome: "already_confirmed" };
   if (claim.kind === "fulfillable") return { outcome: "fulfillable" };
   if (claim.kind === "pending") return { outcome: "pending" };
   if (claim.kind === "compensated") {
-    if (claim.state === "refunded") return { outcome: "already_compensated", state: claim.state };
-    return { outcome: "refund_failed", detail: "previously recorded compensation failure" };
+    // Only a PROVEN refund is "compensated". A refund that is pending or whose
+    // attempt failed is NOT money returned, so it must never be reported as one
+    // — the caller retries it instead.
+    if (claim.state !== "refunded") {
+      return { outcome: "refund_failed", detail: "compensation in progress" };
+    }
+    return { outcome: "already_compensated", state: claim.state };
+  }
+  if (claim.kind === "resume_compensation") {
+    // The decision was already made and money may already have moved. Resume
+    // the SAME refund identity — never re-decide fulfilment.
+    const resumed = await resumeCompensatingRefund({
+      orderRef: args.orderRef,
+      orderId: args.orderId,
+      razorpayPaymentId: args.razorpayPaymentId,
+      razorpayOrderId: args.razorpayOrderId,
+      capturedAmountPaise: args.capturedAmountPaise,
+      detail: claim.detail || "resumed",
+      staleState: claim.state,
+    });
+    if (resumed.outcome === "refunded") {
+      return { outcome: "refunded", refundId: resumed.refundId!, reused: !!resumed.reused };
+    }
+    return { outcome: "refund_failed", detail: resumed.detail || "refund retry failed" };
   }
 
   // We own the decision now.
@@ -309,6 +544,7 @@ export async function guardCaptureFulfillment(args: {
       orderRef: args.orderRef,
       razorpayPaymentId: args.razorpayPaymentId,
       state: "fulfillable",
+      attempts: 1,
     });
     return { outcome: "fulfillable" };
   }
@@ -329,6 +565,7 @@ export async function guardCaptureFulfillment(args: {
       razorpayPaymentId: args.razorpayPaymentId,
       state: "fulfillable",
       detail: "catalogue_read_failed",
+      attempts: 1,
     });
     return { outcome: "fulfillable" };
   }
@@ -337,38 +574,54 @@ export async function guardCaptureFulfillment(args: {
       orderRef: args.orderRef,
       razorpayPaymentId: args.razorpayPaymentId,
       state: "fulfillable",
+      attempts: 1,
     });
     return { outcome: "fulfillable" };
   }
 
-  // Proven unfulfillable: record the verdict BEFORE moving money, so no sibling
-  // can confirm while the refund is on the wire.
-  await recordGateState({
+  const result = await runCompensatingRefund({
     orderRef: args.orderRef,
-    razorpayPaymentId: args.razorpayPaymentId,
-    state: "refunded",
-    detail: unavailable.join(","),
-  });
-
-  const refund = await refundUnfulfillableCapture({
     orderId: args.orderId,
     razorpayPaymentId: args.razorpayPaymentId,
-    razorpayOrderId: args.razorpayOrderId || null,
+    razorpayOrderId: args.razorpayOrderId,
     capturedAmountPaise: args.capturedAmountPaise,
-    reason: "item_unavailable",
     detail: unavailable.join(","),
-    source: "capture_fulfillment_gate",
+    attempts: 0,
   });
-  if (!refund.refunded) {
-    // The pre-recorded "refunded" was optimistic: correct it so ops (and the
-    // retry path) see the truth instead of a silent success.
-    await recordGateState({
-      orderRef: args.orderRef,
-      razorpayPaymentId: args.razorpayPaymentId,
-      state: "refund_failed",
-      detail: refund.detail,
-    });
-    return { outcome: "refund_failed", detail: refund.detail };
+  if (result.outcome === "refunded") {
+    return { outcome: "refunded", refundId: result.refundId!, reused: !!result.reused };
   }
-  return { outcome: "refunded", refundId: refund.refundId, reused: refund.reused };
+  return { outcome: "refund_failed", detail: result.detail || "refund failed" };
+}
+
+/**
+ * Resume a compensation whose owner died (or whose attempt failed) — the path
+ * the capture channels take after a stale lease, and the path the scheduled
+ * recovery job takes. It NEVER re-decides fulfilment and NEVER changes the
+ * refund identity, so it can race a late webhook or verify safely.
+ */
+async function resumeCompensatingRefund(args: {
+  orderRef: any;
+  orderId: string;
+  razorpayPaymentId: string;
+  razorpayOrderId?: string | null;
+  capturedAmountPaise?: number;
+  detail: string;
+  staleState: CaptureFulfillmentState;
+}): Promise<{
+  outcome: "refunded" | "refund_failed";
+  refundId?: string;
+  reused?: boolean;
+  detail?: string;
+  attempts: number;
+}> {
+  return runCompensatingRefund({
+    orderRef: args.orderRef,
+    orderId: args.orderId,
+    razorpayPaymentId: args.razorpayPaymentId,
+    razorpayOrderId: args.razorpayOrderId,
+    capturedAmountPaise: args.capturedAmountPaise,
+    detail: args.detail,
+    attempts: 0,
+  });
 }

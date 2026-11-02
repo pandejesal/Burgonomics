@@ -109,24 +109,37 @@ export function webhookConfirmSettlementFields(freshOrder: any): Record<string, 
 }
 
 /**
- * Releases a delivery claim so a RETRYABLE refusal can actually be retried.
+ * Marks a delivery claim as HELD FOR RETRY instead of deleting it.
  *
- * The event-id claim is the replay defence: a claim left as "inflight" would be
- * treated as a crash and 500'd for 10 minutes, and a claim marked "done" would
- * be 200-acked forever. Deleting the just-created claim lets Razorpay's
- * redelivery be processed as a genuinely new attempt. Best effort — the lease
- * ages out anyway (CLAIM_TTL_MS), and this never throws into the response.
+ * The previous implementation deleted the claim, which destroyed the only proof
+ * that this event had ever been seen. Razorpay's redelivery cadence jumps past
+ * the 15-minute freshness window, so the redelivery then looked like a brand
+ * new STALE event and was 401'd forever — the order never recovered.
+ *
+ * The claim now keeps its history and records `retryHeldAt`/`retryReason`. A
+ * delivery of an event whose claim is held is a legitimate RETRY: the signature
+ * is still verified in full (auth never weakens), and only the freshness rule
+ * is relaxed, because this server has first-hand evidence the event is ours and
+ * was accepted for retry. The claim stays recoverable by ordinary lease
+ * takeover once its TTL passes.
  */
-async function releaseEventClaimForRetry(
+async function holdEventClaimForRetry(
   eventId: string,
   auditDocRef: any,
   reason: string
 ): Promise<void> {
   try {
-    await auditDocRef.delete();
+    await auditDocRef.set(
+      {
+        retryHeldAt: Date.now(),
+        retryReason: reason,
+        retryCount: admin.firestore.FieldValue.increment(1),
+      },
+      { merge: true }
+    );
   } catch (err: any) {
     console.warn(
-      `[Razorpay Webhook] claim release for retry failed for ${eventId} (${reason}):`,
+      `[Razorpay Webhook] claim hold-for-retry failed for ${eventId} (${reason}):`,
       err?.message || err
     );
   }
@@ -217,7 +230,9 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   // recently but never completed: crash or still working — 500 so Razorpay
   // retries. The old code 200-acked inflight claims, and a crash between
   // claim and completion silently dropped real money forever).
-  const acquireClaim = async (): Promise<"new" | "takeover" | "done" | "inflight"> => {
+  const acquireClaim = async (): Promise<
+    "new" | "takeover" | "done" | "inflight" | "retry_held" | "retry_inflight"
+  > => {
     try {
       await auditDocRef.create({
         eventId,
@@ -238,15 +253,23 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             : typeof data?.claimedAt === "number"
               ? data.claimedAt
               : 0;
+        // PROVENANCE: a claim we deliberately HELD FOR RETRY (gate pending,
+        // refund failed) is not a crash and not a forgery. Its redelivery is
+        // processed as a retry, with only the freshness rule relaxed.
+        const heldForRetry =
+          typeof data?.retryHeldAt === "number" && Number.isFinite(data.retryHeldAt);
         // Stale claim (previous attempt died >10 min ago): take over by
         // re-stamping a fresh numeric lease, then process. A takeover is a
         // RECOVERY attempt — it is exempt from the payload freshness reject
         // (the caller distinguishes "takeover" from "new").
         if (Date.now() - claimedMs >= CLAIM_TTL_MS) {
-          await auditDocRef.set({ claimedAt: Date.now() }, { merge: true });
-          return "takeover";
+          await auditDocRef.set(
+            { claimedAt: Date.now(), ...(heldForRetry ? { retryClaimedAt: Date.now() } : {}) },
+            { merge: true }
+          );
+          return heldForRetry ? "retry_held" : "takeover";
         }
-        return "inflight";
+        return heldForRetry ? "retry_inflight" : "inflight";
       } catch (leaseErr) {
         // Lease unreadable: we cannot prove a prior attempt completed.
         // Fail LOUD (500 → Razorpay retries) — the old `return true`
@@ -260,7 +283,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       }
     }
   };
-  let claim: "new" | "takeover" | "done" | "inflight";
+  let claim: "new" | "takeover" | "done" | "inflight" | "retry_held" | "retry_inflight";
   try {
     claim = await acquireClaim();
   } catch (leaseErr: any) {
@@ -275,15 +298,24 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
     res.status(200).json({ status: "already_processed" });
     return;
   }
-  if (claim === "inflight") {
+  if (claim === "inflight" || claim === "retry_inflight") {
     res.status(500).json({ error: "Event is being processed — retry shortly" });
     return;
   }
+
+  // PROVEN RETRY: this event was seen and deliberately held for retry. A live
+  // claim handled above; here the lease has passed, so the retry proceeds.
+  const provenRetry = claim === "retry_held";
 
   // Freshness window (relocated: claim-first so dead claims stay recoverable —
   // see the ordering note above). Applies ONLY to genuinely-new claims: a
   // takeover already owns a dead lease, and rejecting it would strand real
   // money forever (audit doc carries the evidence, claim released on reject).
+  //
+  // A claim HELD FOR RETRY is exempt for the same reason: this server accepted
+  // the event, failed a retryable step, and asked for the delivery again. The
+  // signature above was still verified in full, so an attacker gains nothing by
+  // replaying our own held event.
   const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
   const createdAtSec = typeof payload.created_at === "number" ? payload.created_at : null;
   if (
@@ -614,9 +646,14 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         if (captureFulfillment.outcome === "pending") {
           // A sibling channel owns the decision and its lease is live. Do NOT
           // confirm (that is the food-plus-refund race). Return a RETRYABLE
-          // non-2xx so Razorpay redelivers once the owner has finished; the
-          // event claim is released so the redelivery is processed, not acked.
-          await releaseEventClaimForRetry(eventId, auditDocRef, "capture_fulfillment_pending");
+          // non-2xx so Razorpay redelivers; the claim is HELD (history kept) so
+          // that a redelivery after the 15-minute freshness window is still a
+          // recognised retry rather than a "stale forgery".
+          await holdEventClaimForRetry(
+            eventId,
+            auditDocRef,
+            provenRetry ? "capture_fulfillment_pending_again" : "capture_fulfillment_pending"
+          );
           res.status(503).json({ error: "Fulfilment decision in progress — retry shortly" });
           return;
         }
@@ -656,9 +693,11 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         }
         if (captureFulfillment.outcome === "refund_failed") {
           // Captured money nobody can fulfil and the automatic refund failed.
-          // This is NOT a settled outcome: park it visibly for ops AND ask the
-          // provider to redeliver, so a transient refund failure retries itself
-          // instead of leaving a paid customer with neither food nor money.
+          // This is NOT a settled outcome and NOT terminal: hold the claim for
+          // an immediate retry (the same `unful_` identity replays the stored
+          // receipt if the POST actually landed) and ask the provider to
+          // redeliver. The scheduled recovery sweep is the path that does not
+          // depend on that redelivery ever arriving.
           await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
             {
               eventId,
@@ -674,7 +713,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             },
             { merge: true }
           );
-          await releaseEventClaimForRetry(eventId, auditDocRef, "refund_failed");
+          await holdEventClaimForRetry(eventId, auditDocRef, "refund_failed");
           res.status(500).json({ error: "Automatic refund failed — retry requested" });
           return;
         }

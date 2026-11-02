@@ -1067,19 +1067,24 @@ describe("ITEM 1 — a pending fulfilment decision blocks confirmation, with lea
     expect(anyRefundPost()).toBe(0);
   });
 
-  it("a refund_failed state refuses confirmation AND asks the provider to retry", async () => {
+  it("a refund_failed state is RETRYABLE: the redelivery retries the refund instead of reporting a permanent failure", async () => {
     const s = seedGateOrder("ord_lock_rf", "rzp_lock_rf", "pay_lock_rf", {
       state: "refund_failed",
       paymentId: "pay_lock_rf",
-      atMs: Date.now() - 1_000,
+      atMs: Date.now() - 60_000,
     });
 
     const payload = capturedPayload(s.orderId, s.gatewayOrderId, s.paymentId, 10000);
     const call = mockReqRes(payload, signWebhook(JSON.stringify(payload)));
     await handleRazorpayWebhook(call.req, call.res);
 
-    expect(call.out().statusCode).toBe(500);
-    expect(orderOf(s.orderId).paymentStatus).not.toBe("completed");
+    // The retry COMPLETED the refund (gateway healthy again) rather than
+    // answering the recorded failure forever.
+    expect(call.out().statusCode).toBe(200);
+    expect(anyRefundPost()).toBe(1);
+    expect(orderOf(s.orderId).captureFulfillment.state).toBe("refunded");
+    // Never confirmed, never rung.
+    expect(orderOf(s.orderId).status.code).not.toBe("CONFIRMED");
     expect(orderOf(s.orderId).petpoojaOrderId).toBeUndefined();
   });
 });
