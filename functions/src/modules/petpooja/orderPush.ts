@@ -202,6 +202,75 @@ function lineUnitPrice(item: any): number {
   return Number(item?.basePrice ?? item?.price ?? item?.unitPrice ?? 0) || 0;
 }
 
+/**
+ * P1-K: what a failed KOT POST actually proved.
+ *
+ * Once the request may have been written, an uncertain outcome is AMBIGUOUS:
+ * the POS cloud can hold a ticket we never saw acknowledged, and a re-POST
+ * rings the kitchen twice. Only two shapes may be retried automatically:
+ *
+ *   - `rejected`   — the origin ANSWERED and refused (an HTTP failure status, or
+ *                    an ack that explicitly says success:"0"/failure);
+ *   - `never_sent` — the failure is proof the bytes never left this process
+ *                    (DNS, connection refused, TLS/connect timeout, invalid
+ *                    URL) or one of our own pre-POST checks threw.
+ *
+ * Everything else — socket reset, socket hang-up, a body timeout, a truncated
+ * or unparseable 200 — is `ambiguous` and must be reconciled by a human.
+ */
+export type KotFailureClass = "rejected" | "never_sent" | "ambiguous";
+
+/** Connect-phase codes: the handshake never completed, so nothing was sent. */
+const PRE_SEND_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EADDRNOTAVAIL",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "ERR_INVALID_URL",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+
+function transportCodeOf(err: any): string {
+  const candidates = [err?.code, err?.cause?.code, err?.cause?.cause?.code, err?.errno];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim() !== "") return candidate.trim();
+  }
+  return "";
+}
+
+/** Marks an outcome whose provider-side effect is unknown. */
+export function markKotAmbiguous(err: any, detail: string): any {
+  const wrapped: any = err instanceof Error ? err : new Error(detail);
+  wrapped.petpoojaKotAmbiguous = true;
+  if (!wrapped.message || wrapped.message === detail) wrapped.message = detail;
+  return wrapped;
+}
+
+export function classifyKotFailure(err: any): KotFailureClass {
+  if (err?.petpoojaKotAmbiguous === true) return "ambiguous";
+  if (err?.petpoojaKotProvenRejection === true) return "rejected";
+  const name = String(err?.name || "");
+  // AbortSignal.timeout → TimeoutError; an explicit abort → AbortError. Both
+  // happen AFTER the request was written.
+  if (name === "TimeoutError" || name === "AbortError") return "ambiguous";
+  // A body that could not be parsed: the POS answered, we just cannot read it.
+  if (name === "SyntaxError") return "ambiguous";
+  const code = transportCodeOf(err);
+  if (code) return PRE_SEND_ERROR_CODES.has(code) ? "never_sent" : "ambiguous";
+  // fetch()'s own generic network failure (TypeError: fetch failed) carries no
+  // code when the socket dies mid-response. Assume the ticket may exist.
+  if (name === "TypeError") return "ambiguous";
+  // Anything else is one of our own checks, which run BEFORE the POST.
+  return "never_sent";
+}
+
 export interface PosAddonRow {
   posId: string;
   posGroupId: number;
@@ -1103,6 +1172,105 @@ export async function pushKotForCashOrderOnAccept(
   return pushOrderToPetpooja(orderId);
 }
 
+/**
+ * P1-K: the staff resolve path for a parked (ambiguous) KOT.
+ *
+ * Petpooja exposes NO order-lookup API (references/petpooja_save_order_api.md
+ * §16.2: only `save_order`, `update_order_status` and `mapped_restaurant_menus`
+ * exist, and no route returns an order id — §16.3), so we cannot ask the POS
+ * whether it holds the ticket. A human who can SEE the outlet's printer/order
+ * list is therefore the only reconciler. They confirm one of two truths:
+ *
+ *   - `printed` — the KOT exists at the POS. Record it as a human-confirmed
+ *     print (never a fabricated printer acknowledgement) and make every later
+ *     dedupe short-circuit, so no automatic or replayed push prints it twice.
+ *   - `retry`   — the KOT is NOT at the POS. Clear the ambiguity so exactly one
+ *     deliberate push can be sent; the normal idempotency guards then hold.
+ *
+ * The caller is branch-scoped: a Branch-A staff member cannot resolve Branch-B's
+ * ticket.
+ */
+export async function resolvePetpoojaKotAmbiguity(
+  orderId: string,
+  resolution: "printed" | "retry",
+  caller: StaffCaller
+): Promise<{ resolved: "printed" | "retry"; orderId: string }> {
+  if (resolution !== "printed" && resolution !== "retry") {
+    throw new Error("Unsupported reconciliation outcome — use 'printed' or 'retry'");
+  }
+  const orderDoc = await db.collection("orders").doc(orderId).get();
+  if (!orderDoc.exists) throw new Error(`Order ${orderId} does not exist`);
+  const order = orderDoc.data() || {};
+  const branchId = await assertOrderBranchAccess(caller, order as Record<string, any>);
+
+  const parked =
+    (order as any).petpoojaStatus === "reconciliation_required" ||
+    (order as any).petpoojaSyncStatus === "reconciliation_required" ||
+    (order as any).petpoojaAmbiguousProcessing === true ||
+    (order as any).petpoojaAcceptedUnrecorded === true;
+  if (!parked) {
+    throw new Error(
+      `Order ${orderId} is not parked for reconciliation — nothing to resolve`
+    );
+  }
+  if ((order as any).petpoojaOrderId && resolution === "retry") {
+    throw new Error(
+      `Order ${orderId} carries a POS order id (${(order as any).petpoojaOrderId}) — the ticket is already registered; confirm it as printed instead of retrying`
+    );
+  }
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const evidence = {
+    petpoojaAmbiguousProcessing: false,
+    petpoojaResolvedBy: (caller as any)?.uid || (caller as any)?.email || "staff",
+    petpoojaResolvedAt: now,
+    petpoojaResolution: resolution,
+    petpoojaResolvedBranchId: branchId,
+    updatedAt: now,
+  };
+
+  if (resolution === "printed") {
+    await orderDoc.ref.set(
+      {
+        ...evidence,
+        petpoojaStatus: "synced",
+        petpoojaSyncStatus: "synced",
+        // A human looked at the outlet and confirmed the ticket. That is real
+        // print evidence (unlike a relay ACK), so it is recorded as such — and
+        // attributed, never dressed up as a printer acknowledgement.
+        kotPrinted: true,
+        kotPrintedAt: now,
+        kotPrintedSource: "staff_confirmed",
+        kotSyncFailed: false,
+        petpoojaAcceptedNoId: true,
+        petpoojaAcceptedNoIdSource:
+          (order as any).petpoojaAcceptedNoIdSource || "staff_confirmed_print",
+        lastPetpoojaError: null,
+        petpoojaPushClaimedAt: null,
+        petpoojaClaimedAt: null,
+      },
+      { merge: true }
+    );
+    return { resolved: "printed", orderId };
+  }
+
+  await orderDoc.ref.set(
+    {
+      ...evidence,
+      // Hands the single deliberate attempt back to the normal lanes. The
+      // retry count is NOT reset: the exhausted-retry dead-letter still bounds
+      // how many times a hopeless order can be re-sent.
+      petpoojaStatus: "pending_retry",
+      petpoojaSyncStatus: "pending_retry",
+      kotSyncFailed: false,
+      petpoojaPushClaimedAt: null,
+      petpoojaClaimedAt: null,
+    },
+    { merge: true }
+  );
+  return { resolved: "retry", orderId };
+}
+
 export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller): Promise<boolean> {
   const orderDoc = await db.collection("orders").doc(orderId).get();
   if (!orderDoc.exists) {
@@ -1413,14 +1581,39 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     // retry worker never looks at it again. Fail closed instead and let the catch
     // below park it as pending_retry, which is the state that is retried.
     if (!response.ok) {
-      throw new Error(
+      // PROVEN REJECTION: the origin answered this request with a failure
+      // status. It is the one shape that may be retried automatically.
+      const httpErr: any = new Error(
         `Petpooja KOT push HTTP ${response.status ?? "(no status)"}${
           response.statusText ? ` ${response.statusText}` : ""
         } - refusing to read an acceptance from a failed response`
       );
+      httpErr.petpoojaKotProvenRejection = true;
+      throw httpErr;
     }
 
-    const result = await response.json();
+    // P1-K: a 200 whose body cannot be parsed is NOT a rejection — the POS may
+    // have registered the ticket before the stream was truncated. Wrap it as
+    // ambiguous so the catch below parks instead of retrying.
+    let result: any;
+    try {
+      result = await response.json();
+    } catch (parseErr: any) {
+      throw markKotAmbiguous(
+        parseErr,
+        `The POS answered HTTP ${response.status ?? 200} with an unreadable body — the KOT may already be at the kitchen (${parseErr?.message || parseErr})`
+      );
+    }
+    // A parseable but non-object body (a bare string, a number) proves nothing
+    // about acceptance either.
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      throw markKotAmbiguous(
+        new Error(
+          `The POS answered HTTP ${response.status ?? 200} with a non-ack body (${JSON.stringify(result).slice(0, 120)}) — the KOT may already be at the kitchen`
+        ),
+        "The POS answered with a non-ack body — the KOT may already be at the kitchen"
+      );
+    }
 
     // Official SaveOrderResponse signals success as success:"1" (variants seen:
     // true / "success"). Accept all three — a missed ack loses the KOT.
@@ -1502,7 +1695,13 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       );
       return true;
     }
-    throw new Error(result.message || "Petpooja KOT push rejected by POS server");
+    // P1-K: the POS ANSWERED and refused. That is the only in-band shape that
+    // may be retried automatically, so mark it explicitly.
+    const rejected: any = new Error(
+      result.message || "Petpooja KOT push rejected by POS server"
+    );
+    rejected.petpoojaKotProvenRejection = true;
+    throw rejected;
   } catch (err: any) {
     console.warn(`[Petpooja KOT Push Error] Order ${orderId}: ${err.message}`);
 
@@ -1535,17 +1734,18 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     const fallbackRetry = structural ? (order.petpoojaRetryCount || 0) : (order.petpoojaRetryCount || 0) + 1;
     let retryForSnapshot = fallbackRetry;
 
-    // TRANSPORT-AMBIGUITY (stress sweep 2026-10-24, K1): a POST whose fetch
-    // TIMED OUT / was Aborted after the request was written has an unknown
-    // KOT state — the POS cloud may already have registered the ticket.
-    // Parking it `pending_retry` re-POSTs the same paid order (a duplicate
-    // kitchen ticket). The crash lane (petpooja.scheduler) already parks
-    // this shape `reconciliation_required` with NO new POST; the in-process
-    // path now agrees. HTTP 5xx stays retryable on purpose — the origin
-    // provably did not process it cleanly (pinned by the retry-lifecycle
-    // suite).
-    const kotTransportAmbiguous =
-      err?.name === "TimeoutError" || err?.name === "AbortError";
+    // TRANSPORT-AMBIGUITY (stress sweep 2026-10-24, K1; widened 2026-11-02,
+    // P1-K): if the request MAY have been written, ANY uncertain outcome is
+    // ambiguous — a socket reset after the bytes left, a hung/half-read body, a
+    // truncated JSON, an unparseable 200. Parking it `pending_retry` re-POSTs
+    // the same paid order, and the 5-min worker then prints a DUPLICATE kitchen
+    // ticket. Only a proven rejection (the origin answered and refused) or
+    // proof the request never left (DNS / refused / connect timeout / one of our
+    // own pre-POST checks) may be retried. The crash lane
+    // (petpooja.scheduler) already parks ambiguous shapes
+    // `reconciliation_required` with NO new POST; the in-process path agrees.
+    const kotFailureClass = classifyKotFailure(err);
+    const kotTransportAmbiguous = !structural && kotFailureClass === "ambiguous";
 
     // F3: the ack landed but we could not persist it. This write is the
     // reconciliation park; it is intentionally NOT a retry and does NOT touch

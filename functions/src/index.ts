@@ -44,6 +44,9 @@ import {
   pushItemStockToPetpooja,
   runPetpoojaTestScenario,
 } from "./modules/petpooja";
+// P1-K: the staff reconciliation entry for an ambiguous KOT. Imported directly
+// (not via the barrel) so the route and its tests share one symbol.
+import { resolvePetpoojaKotAmbiguity } from "./modules/petpooja/orderPush";
 // Direct module import (not via the barrel): the /petpooja/menu-sync route's
 // 503-vs-400 mapping is a pure helper kept testable without booting this app.
 import { menuSyncFailureStatus } from "./modules/petpooja/menuSyncWebhook";
@@ -141,6 +144,7 @@ import {
   disposeRefundSchema,
   resolveDiscrepancySchema,
   pushOrderSchema,
+  resolveKotAmbiguitySchema,
   syncMenuSchema,
   pushStockSchema,
   petpoojaTestRunnerSchema,
@@ -291,6 +295,7 @@ app.use(
     "/notifications/broadcast",
     "/petpooja/syncMenu",
     "/petpooja/pushOrder",
+    "/petpooja/resolveKot",
     "/petpooja/pushStock",
     "/porter/quote",
     "/porter/book",
@@ -725,6 +730,30 @@ app.post(
       res.status(200).json({ success });
     } catch (err: any) {
       res.status(staffErrorStatus(err, 500)).json({ error: err.message || "KOT push failed" });
+    }
+  }
+);
+
+// P1-K: staff reconciliation of an ambiguous KOT. The order is parked because
+// the POST may or may not have reached the outlet; no API can ask Petpooja
+// (no lookup route exists), so staff confirm the PRINT at the POS and mark it
+// done, or confirm it did NOT print and allow exactly one deliberate retry.
+// Never a blind re-push: the service refuses an order that is not parked.
+app.post(
+  "/petpooja/resolveKot",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(resolveKotAmbiguitySchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await resolvePetpoojaKotAmbiguity(
+        req.body.orderId,
+        req.body.resolution,
+        req.user as any
+      );
+      res.status(200).json(result);
+    } catch (err: any) {
+      res.status(staffErrorStatus(err, 409)).json({ error: err.message || "KOT reconciliation failed" });
     }
   }
 );

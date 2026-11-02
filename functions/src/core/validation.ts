@@ -144,6 +144,17 @@ export const pushOrderSchema = z.object({
   orderId: nonEmptyString,
 });
 
+/**
+ * P1-K: staff reconciliation of an ambiguous KOT. Petpooja exposes no order
+ * lookup, so a human who can see the outlet decides one of two truths:
+ * `printed` (the ticket is at the POS — record it, stop all retries) or `retry`
+ * (it is not — allow exactly one deliberate push).
+ */
+export const resolveKotAmbiguitySchema = z.object({
+  orderId: nonEmptyString,
+  resolution: z.enum(["printed", "retry"]),
+});
+
 export const syncMenuSchema = z.object({
   branchId: nonEmptyString,
 });
