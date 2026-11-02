@@ -37,7 +37,14 @@ export type CaptureFulfillmentState =
   | "refund_pending"
   | "refunded"
   /** Transient automatic-refund failure. RETRYABLE, not a terminal verdict. */
-  | "refund_failed";
+  | "refund_failed"
+  /**
+   * The attempt budget is spent: money is still owed but automation has stopped.
+   * Excluded from the retry lanes and monitored separately, so it neither
+   * retries forever nor blocks the scan for the refunds behind it. NEVER
+   * confirmable and never auto-retried; a human settles it.
+   */
+  | "refund_exhausted";
 
 export interface CaptureFulfillmentRecord {
   state: CaptureFulfillmentState;
@@ -64,7 +71,9 @@ export type CaptureFulfillmentOutcome =
   /** A compensation was recorded for this order: NEVER confirm. */
   | { outcome: "already_compensated"; state: CaptureFulfillmentState }
   | { outcome: "refunded"; refundId: string; reused: boolean }
-  | { outcome: "refund_failed"; detail: string };
+  | { outcome: "refund_failed"; detail: string }
+  /** Budget spent: automation stopped, money still owed, a human owns it. */
+  | { outcome: "refund_exhausted" };
 
 const CONFIRMED_OR_LATER = new Set([
   "CONFIRMED",
@@ -153,7 +162,8 @@ function gateRecordOf(order: any): CaptureFulfillmentRecord | null {
     state !== "fulfillable" &&
     state !== "refund_pending" &&
     state !== "refunded" &&
-    state !== "refund_failed"
+    state !== "refund_failed" &&
+    state !== "refund_exhausted"
   ) {
     return null;
   }
@@ -171,7 +181,10 @@ function gateRecordOf(order: any): CaptureFulfillmentRecord | null {
 /** States in which money may already have moved and must not be re-decided. */
 export function isCompensationState(state: CaptureFulfillmentState): boolean {
   return (
-    state === "refund_pending" || state === "refunded" || state === "refund_failed"
+    state === "refund_pending" ||
+    state === "refunded" ||
+    state === "refund_failed" ||
+    state === "refund_exhausted"
   );
 }
 
@@ -223,10 +236,12 @@ async function claimGate(args: {
   | { kind: "fulfillable" }
   | { kind: "pending" }
   | { kind: "compensated"; state: CaptureFulfillmentState }
+  | { kind: "compensation_exhausted"; state: CaptureFulfillmentState }
   | {
       kind: "resume_compensation";
       state: CaptureFulfillmentState;
       detail?: string;
+      attempts: number;
     }
 > {
   if (!db || typeof (db as any).runTransaction !== "function") {
@@ -245,6 +260,40 @@ async function claimGate(args: {
     }
     const fresh = (snap.data() || {}) as any;
 
+    // ── OWED COMPENSATION OUTRANKS LIFECYCLE SUPPRESSION ────────────────────
+    // A refund that already failed is OWED money, whatever happened to the
+    // order afterwards. A customer who cancels a still-PLACED order turns it
+    // CANCELLED, and the check below would then treat the row as "nothing to
+    // do" — leaving the refund unpaid forever and, worse, occupying the bounded
+    // recovery page. So the compensation record is read FIRST, and a pending /
+    // failed / exhausted refund is always answered from it.
+    const record = gateRecordOf(fresh);
+    const nowMs = typeof args.nowMs === "number" ? args.nowMs : Date.now();
+    if (record && record.paymentId === args.razorpayPaymentId) {
+      if (record.state === "refunded") {
+        return { kind: "compensated", state: record.state } as const;
+      }
+      if (record.state === "refund_exhausted") {
+        // Budget spent: never auto-retried, never confirmed. A human owns it.
+        return { kind: "compensation_exhausted", state: record.state } as const;
+      }
+      if (record.state === "refund_pending" || record.state === "refund_failed") {
+        const age = nowMs - record.atMs;
+        const leaseLive =
+          Number.isFinite(record.atMs) && record.atMs > 0 && age < CAPTURE_GATE_LEASE_MS;
+        if (leaseLive && record.state === "refund_pending") {
+          return { kind: "compensated", state: record.state } as const;
+        }
+        // A failed attempt has nothing in flight, so it is retryable at once.
+        return {
+          kind: "resume_compensation",
+          state: record.state,
+          detail: record.detail,
+          attempts: record.attempts,
+        } as const;
+      }
+    }
+
     // A later LIFECYCLE state (staff already bumped it) is NOT a replay to
     // re-decide: the caller's confirmation logic preserves the status. Running
     // the availability decision here could refund an order in the kitchen, so
@@ -255,42 +304,7 @@ async function claimGate(args: {
     // COMPENSATION OUTRANKS CONFIRMATION. A compensated capture stamps payment
     // truth on the order (so a naive "is it paid?" read says yes); that must
     // never let a later `order.paid` confirm refunded food.
-    //
-    // `refund_pending` / `refund_failed` are RESERVED for this payment: the
-    // refund identity is already minted, so the caller must resume the SAME
-    // refund (idempotent key) rather than re-decide fulfilment. Only a grown
-    // lease may take them over.
-    const record = gateRecordOf(fresh);
-    const nowMs = typeof args.nowMs === "number" ? args.nowMs : Date.now();
     if (record && record.paymentId === args.razorpayPaymentId) {
-      if (record.state === "refunded") {
-        return { kind: "compensated", state: record.state } as const;
-      }
-      if (record.state === "refund_pending" || record.state === "refund_failed") {
-        const age = nowMs - record.atMs;
-        const leaseLive =
-          Number.isFinite(record.atMs) && record.atMs > 0 && age < CAPTURE_GATE_LEASE_MS;
-        // A FAILED attempt has nothing in flight: it is retryable immediately,
-        // so a redelivery or the next sweep can finish it without waiting out a
-        // lease that only exists to protect an in-flight POST.
-        if (leaseLive && record.state === "refund_pending") {
-          return { kind: "compensated", state: record.state } as const;
-        }
-        if (leaseLive && record.state === "refund_failed") {
-          return {
-            kind: "resume_compensation",
-            state: record.state,
-            detail: record.detail,
-          } as const;
-        }
-        // Stale `refund_pending`: this caller RESUMES the refund below (never
-        // re-decides it).
-        return {
-          kind: "resume_compensation",
-          state: record.state,
-          detail: record.detail,
-        } as const;
-      }
       if (record.state === "fulfillable") return { kind: "fulfillable" } as const;
       // state === "checking"
       const age = nowMs - record.atMs;
@@ -392,28 +406,28 @@ async function unavailableProductIds(items: any[]): Promise<{
 }
 
 /**
- * Serializes writers on one stalled compensation. Returns true when THIS caller
- * now owns the attempt.
+ * Serializes writers on one stalled compensation and INCREMENTS the persisted
+ * attempt counter inside the same transaction. Returns the number of attempts
+ * now recorded, or null when this caller lost (a sibling owns the attempt).
  *
- * The lease is the record's own `atMs`: a resume refreshes it, so a sibling that
- * read the same stale gate a moment earlier loses here instead of POSTing a
- * second refund. Only records already past the per-document lease can be
- * claimed, and a crashed resumer is recovered by that same lease expiring.
+ * The counter must be read-modify-written transactionally. The old code passed
+ * a hard-coded 0 on every resume, so a repeatedly failing refund recorded
+ * attempt 1 forever and the `CAPTURE_GATE_MAX_ATTEMPTS` escalation could never
+ * fire — the lane retried a doomed refund indefinitely.
  */
 async function claimResumeLease(args: {
   orderRef: any;
   razorpayPaymentId: string;
-  attempts: number;
-}): Promise<boolean> {
-  if (!db || typeof (db as any).runTransaction !== "function") return false;
-  return !!(await (db as any).runTransaction(async (tx: any) => {
+}): Promise<number | null> {
+  if (!db || typeof (db as any).runTransaction !== "function") return null;
+  return (await (db as any).runTransaction(async (tx: any) => {
     const snap = await tx.get(args.orderRef);
-    if (!snap || !snap.exists) return false;
+    if (!snap || !snap.exists) return null;
     const fresh = (snap.data() || {}) as any;
     const record = gateRecordOf(fresh);
-    if (!record) return false;
-    if (record.paymentId !== args.razorpayPaymentId) return false;
-    if (record.state === "refunded") return false;
+    if (!record) return null;
+    if (record.paymentId !== args.razorpayPaymentId) return null;
+    if (record.state === "refunded" || record.state === "refund_exhausted") return null;
 
     const age = Date.now() - record.atMs;
     const leaseLive =
@@ -422,8 +436,11 @@ async function claimResumeLease(args: {
     // immediately — only an in-flight (`refund_pending`/`checking`) lease has to
     // run out before a sibling may take over.
     if (leaseLive && (record.state === "refund_pending" || record.state === "checking")) {
-      return false;
+      return null;
     }
+
+    const persisted = Math.max(0, Math.floor(Number(record.attempts) || 0));
+    const attempts = persisted + 1;
 
     tx.set(
       args.orderRef,
@@ -432,7 +449,7 @@ async function claimResumeLease(args: {
           state: "refund_pending",
           paymentId: args.razorpayPaymentId,
           atMs: Date.now(),
-          attempts: args.attempts,
+          attempts,
           ...(record.detail ? { detail: record.detail } : {}),
         },
         captureFulfillmentState: "refund_pending",
@@ -440,8 +457,8 @@ async function claimResumeLease(args: {
       },
       { merge: true }
     );
-    return true;
-  }));
+    return attempts;
+  })) as number | null;
 }
 
 /**
@@ -472,34 +489,48 @@ async function runCompensatingRefund(args: {
   /** True when resuming an already-minted refund (needs the lease claim). */
   resume?: boolean;
 }): Promise<{
-  outcome: "refunded" | "refund_failed";
+  outcome: "refunded" | "refund_failed" | "refund_exhausted";
   refundId?: string;
   reused?: boolean;
   detail?: string;
   attempts: number;
 }> {
-  const attempts = args.attempts + 1;
-
   // CLAIM THE ATTEMPT transactionally before writing anything, but ONLY when
   // this is a RESUME of an already-minted refund. Two actors (a late webhook and
   // the scheduled sweep) can resume the same stalled gate at the same instant;
-  // without this both would POST and both would record. The first refreshes the
-  // record's timestamp, so the loser sees a FRESH `refund_pending` and backs
-  // off instead of moving money. The owner's first pass never re-reads its own
-  // freshly-claimed `checking` record and proceeds directly.
+  // without this both would POST and both would record. The claim also
+  // INCREMENTS the persisted counter, so a doomed refund actually reaches
+  // `CAPTURE_GATE_MAX_ATTEMPTS` instead of restarting at 1 every tick.
+  // The owner's first pass has nothing persisted yet and starts at 1.
+  let attempts = args.attempts + 1;
   if (args.resume) {
     const claimed = await claimResumeLease({
       orderRef: args.orderRef,
       razorpayPaymentId: args.razorpayPaymentId,
-      attempts,
     });
-    if (!claimed) {
+    if (claimed === null) {
       return {
         outcome: "refund_failed",
         detail: "another channel is already resuming this refund",
         attempts: args.attempts,
       };
     }
+    attempts = claimed;
+  }
+
+  // Budget spent: stop automating and hand the money to a human. The refund
+  // identity is NOT lost — the record keeps its payment id and detail, so the
+  // claim survives into the separately monitored state.
+  if (attempts > CAPTURE_GATE_MAX_ATTEMPTS) {
+    await recordGateState({
+      orderRef: args.orderRef,
+      razorpayPaymentId: args.razorpayPaymentId,
+      state: "refund_exhausted",
+      detail: args.detail,
+      lastError: "retry budget exhausted",
+      attempts,
+    });
+    return { outcome: "refund_exhausted", detail: args.detail, attempts };
   }
 
   const pendingWritten = await recordGateState({
@@ -596,6 +627,11 @@ export async function guardCaptureFulfillment(args: {
     }
     return { outcome: "already_compensated", state: claim.state };
   }
+  if (claim.kind === "compensation_exhausted") {
+    // Budget spent: automation must not retry or confirm. The owed money is
+    // monitored separately by the recovery job's escalation lane.
+    return { outcome: "refund_exhausted" };
+  }
   if (claim.kind === "resume_compensation") {
     // The decision was already made and money may already have moved. Resume
     // the SAME refund identity — never re-decide fulfilment.
@@ -607,9 +643,13 @@ export async function guardCaptureFulfillment(args: {
       capturedAmountPaise: args.capturedAmountPaise,
       detail: claim.detail || "resumed",
       staleState: claim.state,
+      attempts: claim.attempts,
     });
     if (resumed.outcome === "refunded") {
       return { outcome: "refunded", refundId: resumed.refundId!, reused: !!resumed.reused };
+    }
+    if (resumed.outcome === "refund_exhausted") {
+      return { outcome: "refund_exhausted" };
     }
     return { outcome: "refund_failed", detail: resumed.detail || "refund retry failed" };
   }
@@ -668,6 +708,9 @@ export async function guardCaptureFulfillment(args: {
   if (result.outcome === "refunded") {
     return { outcome: "refunded", refundId: result.refundId!, reused: !!result.reused };
   }
+  if (result.outcome === "refund_exhausted") {
+    return { outcome: "refund_exhausted" };
+  }
   return { outcome: "refund_failed", detail: result.detail || "refund failed" };
 }
 
@@ -676,6 +719,9 @@ export async function guardCaptureFulfillment(args: {
  * the capture channels take after a stale lease, and the path the scheduled
  * recovery job takes. It NEVER re-decides fulfilment and NEVER changes the
  * refund identity, so it can race a late webhook or verify safely.
+ *
+ * `attempts` is the PERSISTED count read from the record; the lease claim
+ * increments it transactionally, so the budget is honoured across ticks.
  */
 async function resumeCompensatingRefund(args: {
   orderRef: any;
@@ -685,8 +731,9 @@ async function resumeCompensatingRefund(args: {
   capturedAmountPaise?: number;
   detail: string;
   staleState: CaptureFulfillmentState;
+  attempts: number;
 }): Promise<{
-  outcome: "refunded" | "refund_failed";
+  outcome: "refunded" | "refund_failed" | "refund_exhausted";
   refundId?: string;
   reused?: boolean;
   detail?: string;
@@ -699,7 +746,7 @@ async function resumeCompensatingRefund(args: {
     razorpayOrderId: args.razorpayOrderId,
     capturedAmountPaise: args.capturedAmountPaise,
     detail: args.detail,
-    attempts: 0,
+    attempts: args.attempts,
     resume: true,
   });
 }

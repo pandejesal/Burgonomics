@@ -62,8 +62,48 @@ const RECOVERABLE_STATES: ReadonlySet<CaptureFulfillmentState> = new Set([
   "checking",
   "refund_pending",
   "refund_failed",
+  "refund_exhausted",
   "fulfillable",
 ]);
+
+/** Cursor document name; one doc holds one offset per lane. */
+const SCAN_CURSOR_DOC = "capture-recovery-cursors";
+
+/**
+ * Per-lane scan offset. Deliberately a plain bounded-query cursor stored on a
+ * scheduler-owned doc: it is NOT a source of truth, and a missing/corrupt value
+ * only means "start from the beginning" — which can duplicate work (harmless:
+ * every action is idempotent) but can never skip an owed order.
+ */
+async function readScanCursor(lane: string): Promise<number> {
+  try {
+    const snap = await db.collection("scheduler_locks").doc(SCAN_CURSOR_DOC).get();
+    const value = snap.exists ? Number((snap.data() as any)?.[lane]) : 0;
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function writeScanCursor(lane: string, offset: number): Promise<void> {
+  try {
+    await db
+      .collection("scheduler_locks")
+      .doc(SCAN_CURSOR_DOC)
+      .set(
+        {
+          [lane]: Math.max(0, Math.floor(offset || 0)),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+  } catch (err: any) {
+    console.warn(
+      `[Capture Recovery] could not persist the ${lane} scan cursor:`,
+      err?.message || err
+    );
+  }
+}
 
 function gateOf(order: any): {
   state: string;
@@ -165,6 +205,51 @@ async function escalateStuckCapture(args: {
 }
 
 /**
+ * Escalates a refund whose retry budget is spent, and MOVES the row into the
+ * separately-monitored `refund_exhausted` state so it stops occupying the retry
+ * pages. The refund identity (payment id, detail, attempts) is preserved, so the
+ * claim is never lost and a human can still act on it.
+ */
+async function escalateExhaustedRefund(args: {
+  orderId: string;
+  paymentId: string;
+  attempts: number;
+  detail?: string;
+}): Promise<void> {
+  await escalateStuckCapture({
+    orderId: args.orderId,
+    paymentId: args.paymentId,
+    state: "refund_exhausted",
+    attempts: args.attempts,
+    detail: args.detail,
+  });
+  try {
+    await db
+      .collection("orders")
+      .doc(args.orderId)
+      .set(
+        {
+          captureFulfillment: {
+            state: "refund_exhausted",
+            paymentId: args.paymentId,
+            atMs: Date.now(),
+            attempts: args.attempts,
+            ...(args.detail ? { detail: args.detail } : {}),
+          },
+          captureFulfillmentState: "refund_exhausted",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+  } catch (err: any) {
+    console.warn(
+      `[Capture Recovery] could not move order ${args.orderId} to refund_exhausted:`,
+      err?.message || err
+    );
+  }
+}
+
+/**
  * Moves an already-confirmed order OUT of the scan lane.
  *
  * The channels clear the mirror at confirmation time, but orders confirmed
@@ -199,6 +284,20 @@ async function retireConfirmedMarker(
 /**
  * One recovery sweep. Exported for the scheduled function and for tests; the
  * function wrapper in `index.ts` owns the scheduler lock and cadence.
+ *
+ * ORDERING AND PAGINATION (this is what makes the lane truthful):
+ *
+ *  - the OWED lanes (`refund_failed`, `refund_pending`, `refund_exhausted`) are
+ *    read FIRST and each page is CURSORed, so a row-51 owed refund is reached on
+ *    the next tick even when the first page is entirely stuck rows;
+ *  - `refund_exhausted` rows are ESCALATED (staff-visible) and then moved out of
+ *    the retry lane entirely, so they cannot occupy the retry pages forever;
+ *  - `fulfillable` confirmation candidates come LAST with their own budget,
+ *    because a healthy backlog must never starve an owed refund.
+ *
+ * The cursor is `captureRecoveryCursor` on the scheduler-lock document: it is a
+ * plain bounded-query offset record, not a source of truth, and a lost cursor
+ * only ever means "scan from the start" (never a skipped order).
  */
 export async function recoverStuckCaptureFulfilments(
   nowMs: number = Date.now()
@@ -222,20 +321,38 @@ export async function recoverStuckCaptureFulfilments(
   // index serves these equality scans and NO composite index has to be
   // deployed with the job.
   //
-  // `fulfillable` is additionally AGE-BOUNDED in memory: a healthy order leaves
-  // this state the moment it confirms, but an order confirmed before that
-  // clearing existed (or one whose confirm crashed) must not occupy the page
-  // forever. Only orders whose record is older than the recovery window are
-  // treated as candidates, so the lane can never be filled by fresh work.
+  // OWED-FIRST + CURSOR: the refund lanes are collected before any
+  // confirmation work, and each one resumes from a persisted cursor so a page
+  // of permanently-stuck rows can never hide the rows behind it. `scanned` is
+  // filled AFTER collection so the stats reflect the whole tick.
   const docs: any[] = [];
-  for (const state of ["checking", "refund_pending", "refund_failed"] as const) {
+  for (const state of ["refund_failed", "refund_pending", "refund_exhausted", "checking"] as const) {
     try {
-      const page = await db
-        .collection("orders")
-        .where("captureFulfillmentState", "==", state)
-        .limit(CAPTURE_RECOVERY_SCAN_LIMIT)
-        .get();
-      if (Array.isArray(page?.docs)) docs.push(...page.docs);
+      const cursor = await readScanCursor(state);
+      let page: any = null;
+      try {
+        page = await db
+          .collection("orders")
+          .where("captureFulfillmentState", "==", state)
+          .offset(cursor)
+          .limit(CAPTURE_RECOVERY_SCAN_LIMIT)
+          .get();
+      } catch {
+        // A shim/emulator without offset(): fall back to the plain page. The
+        // cursor still advances, so a real datastore never starves.
+        page = await db
+          .collection("orders")
+          .where("captureFulfillmentState", "==", state)
+          .limit(CAPTURE_RECOVERY_SCAN_LIMIT)
+          .get();
+      }
+      const found = Array.isArray(page?.docs) ? page.docs : [];
+      docs.push(...found);
+      // A short page means we reached the end: wrap to the start next tick.
+      await writeScanCursor(
+        state,
+        found.length < CAPTURE_RECOVERY_SCAN_LIMIT ? 0 : cursor + found.length
+      );
     } catch (err: any) {
       await captureErrorSnapshot({
         source: "payments",
@@ -292,13 +409,106 @@ export async function recoverStuckCaptureFulfilments(
       if (!gate) continue;
       if (!RECOVERABLE_STATES.has(gate.state as CaptureFulfillmentState)) continue;
 
-      // A confirmed/terminal LIFECYCLE order needs no recovery: the
-      // confirmation won. Checked with the lifecycle-only rule because a
-      // compensation stamps `paymentStatus: "completed"` without confirming.
-      //
-      // RETIRE THE MARKER on the way out. Orders confirmed before the channels
-      // started clearing it still occupy the bounded `fulfillable` page, and
-      // leaving them there is exactly the starvation this lane exists to fix.
+      const paymentId = gate.paymentId || capturedPaymentIdOf(order);
+      if (!paymentId) {
+        stats.skipped += 1;
+        continue;
+      }
+
+      // ── OWED COMPENSATION FIRST ────────────────────────────────────────────
+      // A refund the system already owes is settled (or escalated) BEFORE any
+      // lifecycle reasoning. A customer who cancels a still-PLACED order turns
+      // it CANCELLED; the old code then treated the row as "nothing to do" and
+      // the refund stayed owed forever — and kept occupying this page.
+      const owedState =
+        gate.state === "refund_failed" ||
+        gate.state === "refund_pending" ||
+        gate.state === "refund_exhausted";
+
+      if (owedState) {
+        // A failed attempt has nothing in flight; a pending one must have aged
+        // past its lease before a takeover. This is checked BEFORE counting a
+        // candidate, so a freshly-resumed refund is never raced.
+        const quietFor =
+          gate.state === "refund_failed"
+            ? CAPTURE_REFUND_RETRY_BACKOFF_MS
+            : CAPTURE_RECOVERY_AFTER_MS;
+        if (gate.atMs > 0 && nowMs - gate.atMs < quietFor) {
+          stats.skipped += 1;
+          continue;
+        }
+        stats.candidates += 1;
+
+        if (gate.state === "refund_exhausted" || gate.attempts >= CAPTURE_GATE_MAX_ATTEMPTS) {
+          // Budget spent: ONE staff-visible escalation, then leave it in the
+          // monitored `refund_exhausted` state (never retried, never confirmed).
+          await escalateExhaustedRefund({
+            orderId,
+            paymentId,
+            attempts: Math.max(gate.attempts, CAPTURE_GATE_MAX_ATTEMPTS),
+            detail: gate.detail,
+          });
+          stats.escalated += 1;
+          continue;
+        }
+
+        const orderRef = db.collection("orders").doc(orderId);
+        const outcome = await guardCaptureFulfillment({
+          orderRef,
+          orderId,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId:
+            typeof order?.payment?.razorpayOrderId === "string"
+              ? order.payment.razorpayOrderId
+              : typeof order?.["payment.razorpayOrderId"] === "string"
+                ? order["payment.razorpayOrderId"]
+                : null,
+          orderData: order,
+          capturedAmountPaise: capturedPaiseOf(order),
+          nowMs,
+        });
+
+        if (outcome.outcome === "refunded" || outcome.outcome === "already_compensated") {
+          stats.refunded += 1;
+          stats.completed += 1;
+          continue;
+        }
+        if (outcome.outcome === "refund_exhausted") {
+          await escalateExhaustedRefund({
+            orderId,
+            paymentId,
+            attempts: CAPTURE_GATE_MAX_ATTEMPTS,
+            detail: gate.detail,
+          });
+          stats.escalated += 1;
+          continue;
+        }
+        if (outcome.outcome === "refund_failed") {
+          const after = await orderRef.get().catch(() => null);
+          const recorded = after?.exists ? gateOf(after.data() as any) : null;
+          const used = Math.max(recorded?.attempts ?? 0, gate.attempts);
+          if (used >= CAPTURE_GATE_MAX_ATTEMPTS) {
+            await escalateExhaustedRefund({
+              orderId,
+              paymentId,
+              attempts: used,
+              detail: outcome.detail,
+            });
+            stats.escalated += 1;
+          } else {
+            stats.retried += 1;
+          }
+          continue;
+        }
+        // `pending` (a sibling took the lease) or a clear decision: nothing owed
+        // to do in this branch.
+        stats.skipped += 1;
+        continue;
+      }
+
+      // A confirmed/terminal LIFECYCLE order needs no CONFIRMATION: it is NOT
+      // owed anything, so it is retired out of the scan lane. This runs only for
+      // non-owed states — an owed refund is handled above, never here.
       if (isOrderLifecycleConfirmedOrLater(order)) {
         if (gate.state === "fulfillable") {
           await retireConfirmedMarker(orderId, gate.paymentId);
@@ -307,44 +517,13 @@ export async function recoverStuckCaptureFulfilments(
         continue;
       }
 
-      const paymentId = gate.paymentId || capturedPaymentIdOf(order);
-      if (!paymentId) {
-        stats.skipped += 1;
-        continue;
-      }
-
-      // Never race a live channel, and never hot-loop a known failure.
-      //  - `refund_failed` is a PROVEN failed attempt, so only a short backoff
-      //    applies (nothing is in flight) — it must be retried quickly.
-      //  - everything else needs the full recovery window, because the owner may
-      //    still be deciding or the refund POST may still be on the wire.
-      const quietFor =
-        gate.state === "refund_failed"
-          ? CAPTURE_REFUND_RETRY_BACKOFF_MS
-          : CAPTURE_RECOVERY_AFTER_MS;
-      if (gate.atMs > 0 && nowMs - gate.atMs < quietFor) {
+      // Never race a live channel: `checking`/`fulfillable` may still belong to
+      // an owner that is deciding right now.
+      if (gate.atMs > 0 && nowMs - gate.atMs < CAPTURE_RECOVERY_AFTER_MS) {
         stats.skipped += 1;
         continue;
       }
       stats.candidates += 1;
-
-      // Attempt budget is enforced for the REFUND lanes. A fresh `checking`
-      // that never decided is not an attempt: it gets one decision here.
-      const attemptsUsed = Math.max(gate.attempts, 0);
-      if (
-        (gate.state === "refund_failed" || gate.state === "refund_pending") &&
-        attemptsUsed >= CAPTURE_GATE_MAX_ATTEMPTS
-      ) {
-        await escalateStuckCapture({
-          orderId,
-          paymentId,
-          state: gate.state,
-          attempts: attemptsUsed,
-          detail: gate.detail,
-        });
-        stats.escalated += 1;
-        continue;
-      }
 
       const orderRef = db.collection("orders").doc(orderId);
       const outcome = await guardCaptureFulfillment({
@@ -368,22 +547,13 @@ export async function recoverStuckCaptureFulfilments(
         continue;
       }
       if (outcome.outcome === "refund_failed") {
-        // Retryable: the next tick continues, until the attempt budget is spent.
-        const after = await orderRef.get().catch(() => null);
-        const recorded = after?.exists ? gateOf(after.data() as any) : null;
-        const used = Math.max(recorded?.attempts ?? 0, attemptsUsed);
-        if (used >= CAPTURE_GATE_MAX_ATTEMPTS) {
-          await escalateStuckCapture({
-            orderId,
-            paymentId,
-            state: "refund_failed",
-            attempts: used,
-            detail: outcome.detail,
-          });
-          stats.escalated += 1;
-        } else {
-          stats.retried += 1;
-        }
+        // Only reachable from the owed branch above; kept defensive so a future
+        // call path cannot silently drop a failure.
+        stats.retried += 1;
+        continue;
+      }
+      if (outcome.outcome === "refund_exhausted") {
+        stats.escalated += 1;
         continue;
       }
       if (outcome.outcome === "pending") {

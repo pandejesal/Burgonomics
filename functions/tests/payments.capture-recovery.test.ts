@@ -90,21 +90,33 @@ const { mockDb, docs, writeLog, control, snapshots } = vi.hoisted(() => {
 
   const collectionMock = (colName: string) => {
     const filters: Array<{ field: string; value: any }> = [];
+    let limitN: number | null = null;
+    let offsetN = 0;
     const q: any = {
       where: (field: string, _op: string, value: any) => {
         filters.push({ field, value });
         return q;
       },
-      limit: () => q,
+      // ENFORCED like Firestore: a bounded query must really be bounded, so a
+      // test cannot pass by silently returning more rows than production would.
+      limit: (n: number) => {
+        limitN = typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null;
+        return q;
+      },
+      offset: (n: number) => {
+        offsetN = typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+        return q;
+      },
       get: async () => {
-        const found = [...docs.entries()]
+        const all = [...docs.entries()]
           .filter(([p]) => p.startsWith(`${colName}/`))
           .filter(([, d]) => filters.every((f) => getByPath(d, f.field) === f.value))
           .map(([p, d]) => {
             const id = p.slice(colName.length + 1);
             return { id, ref: docRef(colName, id), data: () => JSON.parse(JSON.stringify(d)) };
           });
-        return { empty: found.length === 0, size: found.length, docs: found };
+        const paged = all.slice(offsetN, limitN === null ? undefined : offsetN + limitN);
+        return { empty: paged.length === 0, size: paged.length, docs: paged };
       },
       doc: (docId?: string) =>
         docRef(colName, docId || `auto_${Math.random().toString(36).slice(2, 8)}`),
@@ -665,10 +677,11 @@ describe("recovery: the attempt budget ends in a staff-visible alert", () => {
     expect(stats.refunded).toBe(0);
     expect(refundPostCount()).toBe(before);
 
-    // Staff-visible: a deterministic ops doc plus a HIGH alert.
+    // Staff-visible: a deterministic ops doc plus a HIGH alert. The reason now
+    // names the exhausted budget explicitly.
     expect(docs.get("unmatched_payments/ump_gate_pay_exhaust")).toMatchObject({
       status: "needs_review",
-      reason: "refund_retries_exhausted",
+      gateState: "refund_exhausted",
       staffAction: "refund_manually_or_repair_gate",
     });
     expect(snapshots.some((s) => s.severity === "high")).toBe(true);
@@ -718,5 +731,146 @@ describe("recovery: the verify channel resumes a stale compensation", () => {
     expect(refundLedgerKeys()).toHaveLength(1);
     expect(orderOf("ord_verify_resume")!.captureFulfillment.state).toBe("refunded");
     expect(orderOf("ord_verify_resume")!.status.code).not.toBe("CONFIRMED");
+  });
+});
+
+// ===========================================================================
+// REVIEW FINDINGS (Sol on 1549b5a)
+//
+// (a) a failed refund on an order the customer later CANCELLED was skipped as
+//     "terminal" although the compensation was still owed;
+// (b) the first 50 such terminal rows permanently occupied the bounded query,
+//     so later owed refunds were never visited;
+// (c) the resume path reset `attempts` to 0, so the counter stayed at 1 and the
+//     max-attempts escalation never fired.
+//
+// These drive the REAL timed sweep with an ENFORCED limit(50) and a cursor,
+// 56 owed rows (6 of them terminal/CANCELLED), and six consecutive ticks.
+// ===========================================================================
+describe("REVIEW: owed compensation, pagination and the attempt budget", () => {
+  const seedOwed = (
+    orderId: string,
+    paymentId: string,
+    over: Record<string, any> = {}
+  ) => {
+    seedPaidOrder(orderId, `rzp_${orderId}`, paymentId, {
+      captureFulfillment: {
+        state: "refund_failed",
+        paymentId,
+        // Old enough to be a candidate immediately.
+        atMs: Date.now() - CAPTURE_RECOVERY_AFTER_MS - 60_000,
+        attempts: 1,
+        detail: "p1",
+      },
+      captureFulfillmentState: "refund_failed",
+      ...over,
+    });
+  };
+
+  it("resumes an OWED refund on a CANCELLED order instead of skipping the terminal row", async () => {
+    // The exact reported sequence: the refund fails, THEN the customer cancels
+    // the still-PLACED order, so the row is CANCELLED with money still owed.
+    seedOwed("ord_owed_cancel", "pay_owed_cancel", {
+      status: { code: "CANCELLED", label: "Cancelled", kind: "cancelled", terminal: true },
+      cancellationReason: "Customer called it off",
+    });
+
+    const stats = await recoverStuckCaptureFulfilments();
+
+    expect(stats.refunded).toBe(1);
+    expect(refundPostCount()).toBe(1);
+    expect(refundLedgerKeys()).toHaveLength(1);
+    expect(orderOf("ord_owed_cancel")!.captureFulfillment.state).toBe("refunded");
+    // The lifecycle status is never resurrected by the refund.
+    expect(orderOf("ord_owed_cancel")!.status).toMatchObject({ code: "CANCELLED" });
+  });
+
+  it("reaches owed refunds behind a full page of stuck rows (cursor, no starvation)", async () => {
+    const total = 56; // > 50: the first page cannot contain them all
+    for (let i = 0; i < total; i += 1) {
+      // The first 50 are the exhausted/terminal head of the queue that used to
+      // occupy the bounded page forever. They start with a partly-spent budget
+      // so six ticks are enough to reach the escalation threshold.
+      seedOwed(`ord_owed_${i}`, `pay_owed_${i}`, {
+        captureFulfillment: {
+          state: "refund_failed",
+          paymentId: `pay_owed_${i}`,
+          atMs: Date.now() - CAPTURE_RECOVERY_AFTER_MS - 60_000,
+          attempts: 3,
+          detail: "p1",
+        },
+      });
+      docs.set("products/p1", { id: "p1", name: "Burger", price: 100, inStock: false });
+    }
+    // The last six are behind the page and must be reached.
+
+    const seen = new Set<string>();
+    for (let tick = 0; tick < 6; tick += 1) {
+      // Every attempt fails: this is a batch of refunds that the gateway keeps
+      // rejecting, so the budget must advance and the cursor must move.
+      control.refundFailuresRemaining = 999;
+      const before = refundPostCount();
+      await recoverStuckCaptureFulfilments();
+      for (let i = 0; i < total; i += 1) {
+        const attempts = orderOf(`ord_owed_${i}`)!.captureFulfillment.attempts;
+        if (attempts > 1) seen.add(`ord_owed_${i}`);
+      }
+      expect(refundPostCount()).toBeGreaterThanOrEqual(before);
+    }
+
+    // Even with a permanently failing gateway, the LATER rows were reached:
+    // the first page cannot hide them across ticks.
+    const laterTouched = [...seen].filter((id) => {
+      const index = Number(id.split("_").pop());
+      return index >= 50;
+    });
+    expect(laterTouched.length).toBeGreaterThan(0);
+
+    // The counter is REAL (not stuck at 1) and the budget eventually escalates.
+    const anyEscalated = [...docs.keys()].some(
+      (k) => k.startsWith("unmatched_payments/ump_gate_")
+    );
+    expect(anyEscalated).toBe(true);
+    const maxAttempt = Math.max(
+      ...Array.from({ length: total }, (_, i) =>
+        Number(orderOf(`ord_owed_${i}`)!.captureFulfillment.attempts)
+      )
+    );
+    expect(maxAttempt).toBeGreaterThan(1);
+
+    // Escalated rows moved OUT of the retry lane into the monitored state.
+    const exhausted = Array.from({ length: total }, (_, i) =>
+      orderOf(`ord_owed_${i}`)!.captureFulfillment.state
+    ).filter((s) => s === "refund_exhausted");
+    expect(exhausted.length).toBeGreaterThan(0);
+  });
+
+  it("escalates at the budget and stops retrying that row (no infinite hot loop)", async () => {
+    seedOwed("ord_budget", "pay_budget", {
+      captureFulfillment: {
+        state: "refund_failed",
+        paymentId: "pay_budget",
+        atMs: Date.now() - CAPTURE_RECOVERY_AFTER_MS - 60_000,
+        attempts: CAPTURE_GATE_MAX_ATTEMPTS,
+        detail: "p1",
+      },
+    });
+    control.refundFailuresRemaining = 999;
+
+    const first = await recoverStuckCaptureFulfilments();
+    expect(first.escalated).toBe(1);
+    expect(refundPostCount()).toBe(0);
+    expect(orderOf("ord_budget")!.captureFulfillment.state).toBe("refund_exhausted");
+
+    // Second tick: the row is in the monitored state, no further POSTs and no
+    // further attempt is burned (it is escalated again only as a reminder, so
+    // the case stays visible rather than silently disappearing).
+    const second = await recoverStuckCaptureFulfilments();
+    expect(refundPostCount()).toBe(0);
+    expect(orderOf("ord_budget")!.captureFulfillment.attempts).toBe(
+      CAPTURE_GATE_MAX_ATTEMPTS
+    );
+    expect(second.refunded).toBe(0);
+    expect(second.retried).toBe(0);
   });
 });
