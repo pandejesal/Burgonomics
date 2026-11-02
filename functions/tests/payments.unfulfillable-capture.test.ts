@@ -217,6 +217,8 @@ describe("P1-I capture side — an unfulfillable capture is refunded, never conf
       control.refundPosts.push({ paymentId, body, key });
       return { id: `rfnd_unful_${paymentId}`, payment_id: paymentId, amount: body.amount ?? 50000, status: "processed" };
     });
+    // The refund seam is module-global: it is re-installed per test here and
+    // cleared in afterEach so a neighbouring suite's stub can never leak in.
   });
   afterEach(() => {
     config.mock.paymentGateway = prevMock;
