@@ -6,6 +6,7 @@ import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
 import { calculateOrderPricing, applyCatalogBasePrice, validateOptionSelections } from "../payments/pricing.engine";
+import { resolveKotCustomerPhone } from "../../core/dropContact";
 import * as admin from "firebase-admin";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 
@@ -675,7 +676,13 @@ export function formatPetpoojaOrderPayload(
    * identity). The push path ALWAYS supplies them; undefined only for
    * direct/fixture callers that have no catalog.
    */
-  catalogLines?: PosCatalogLine[]
+  catalogLines?: PosCatalogLine[],
+  /**
+   * KOT-PHONE: the customer contact the caller resolved (server-side, via the
+   * shared `core/dropContact`). The push path ALWAYS supplies it; undefined
+   * only for fixture callers, which fall back to the order's own fields.
+   */
+  customerContact?: { phone: string; name?: string }
 ) {
   const { orderType: fulfillment, paymentType } = resolveKotType(order);
   // Official V2.1.0 order_type is a letter code: H (home delivery),
@@ -917,9 +924,21 @@ export function formatPetpoojaOrderPayload(
   // Normalized (never invented) contact + the clock fields Save Order marks
   // required. Table number rides along whenever the order carries one —
   // dine-in KOTs are useless to the floor without it.
-  const customerPhone = normalizeCustomerPhone(
-    order.customerPhone || order.customer?.phone || order.address?.contactPhone
-  );
+  //
+  // KOT-PHONE: a real customer-app order has NO `customerPhone` and empty
+  // `contactPhone` strings, so the old three-field read relayed `phone: ""`.
+  // The caller now resolves the contact through the shared
+  // `core/dropContact` (order fields → verified Auth profile); this builder only
+  // normalises what it is given. Fixture callers that pass nothing keep the
+  // legacy order-field read.
+  const customerPhone = customerContact
+    ? normalizeCustomerPhone(customerContact.phone)
+    : normalizeCustomerPhone(
+        order.customerPhone ||
+          order.customer?.phone ||
+          order.address?.contactPhone ||
+          order.deliveryAddress?.contactPhone
+      );
   const { preorderDate, preorderTime, createdOn } = petpoojaClock();
   const tableNo = order.tableNumber ? String(order.tableNumber).trim() : "";
 
@@ -978,7 +997,13 @@ export function formatPetpoojaOrderPayload(
   const customerLat = order.deliveryAddress?.lat ?? order.address?.lat;
   const customerLng = order.deliveryAddress?.lng ?? order.address?.lng;
   const customerDetails = {
-    name: order.customerName || order.customer?.name || order.address?.contactName || "Customer",
+    name:
+      order.customerName ||
+      customerContact?.name ||
+      order.customer?.name ||
+      order.address?.contactName ||
+      order.deliveryAddress?.contactName ||
+      "Customer",
     phone: customerPhone,
     address: customerAddress,
     email: order.customerEmail || order.customer?.email || "",
@@ -1518,6 +1543,11 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     // variation POS ids from it too; park instead of relaying the order
     // document's (client-written) price or modifier ids.
     const catalogLines = await resolveCatalogLines(pricedOrder);
+    // KOT-PHONE: the ONE shared contact resolver. A persisted phone costs no
+    // I/O; only a genuinely contactless order pays for the verified-profile
+    // lookup, and that lookup already degrades to "" + a log on failure — so a
+    // broken Auth call can never stop the kitchen ticket.
+    const customerContact = await resolveKotCustomerPhone(pricedOrder);
     const payload = formatPetpoojaOrderPayload(
       pricedOrder,
       branchData,
@@ -1525,7 +1555,8 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       branchId,
       orderId,
       deliveryBinding.fee,
-      catalogLines
+      catalogLines,
+      { phone: customerContact.phone, name: customerContact.name }
     );
 
     // Debug visibility: missing contact or zero totals push a broken KOT that

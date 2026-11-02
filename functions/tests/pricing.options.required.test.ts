@@ -200,6 +200,11 @@ beforeEach(() => {
     packagingFee: 15,
   };
   savedDocs[`products/${PRODUCT}`] = {
+    id: PRODUCT,
+    // P1-J: the POS identity comes from the catalog document. The variation
+    // options still supply the line identity when one is selected.
+    branchId: BRANCH,
+    petpoojaItemId: "7765809",
     price: 140,
     inStock: true,
     customizations: mockDb.__variationGroups,

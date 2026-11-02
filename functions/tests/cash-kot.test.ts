@@ -156,8 +156,15 @@ describe("CASH-KOT push on staff acceptance", () => {
     ],
   };
     // POS-11: POS lines are priced from the catalog, so the line's product
-    // must exist there (a real order always does).
-    savedDocs["products/itm_1"] = { price: 199, inStock: true };
+    // must exist there (a real order always does). P1-J: the catalog document
+    // also carries the POS IDENTITY the KOT is allowed to relay.
+    savedDocs["products/itm_1"] = {
+      id: "itm_1",
+      branchId: "branch_a",
+      price: 199,
+      inStock: true,
+      petpoojaItemId: "7765862",
+    };
     savedDocs["orders/ord_cash_1"] = {
       id: "ord_cash_1",
       fulfillment: "takeaway",
