@@ -103,8 +103,12 @@ function seedCatalog() {
     coordinates: { lat: 23.0225, lng: 72.5714 },
   };
   savedDocs["products/prod_7765809"] = {
+    id: "prod_7765809",
+    branchId: BRANCH,
     price: 140,
     inStock: true,
+    // P1-J: the POS identity is the catalog document's own.
+    petpoojaItemId: "7765809",
     customizations: [
       {
         id: "variation",
@@ -138,8 +142,11 @@ function seedCatalog() {
     ],
   };
   savedDocs["products/prod_118829149"] = {
+    id: "prod_118829149",
+    branchId: BRANCH,
     price: 100,
     inStock: true,
+    petpoojaItemId: "118829149",
     customizations: [
       {
         id: "135699",
@@ -206,7 +213,7 @@ describe("M3 POS ids from the catalog", () => {
   it("relays the real combined variation and its lifted required add-on on one line", async () => {
     const real = JSON.parse(readFileSync(resolve(__dirname, "fixtures/petpooja-push-real-20261101.json"), "utf8"));
     const item = real.items.find((i: any) => i.itemid === "30672");
-    savedDocs["products/prod_real"] = { price: 270, inStock: true, customizations: buildItemCustomizations(item, addonGroupIndex(real)) };
+    savedDocs["products/prod_real"] = { id: "prod_real", branchId: BRANCH, price: 270, inStock: true, petpoojaItemId: item.itemid, customizations: buildItemCustomizations(item, addonGroupIndex(real)) };
     seedOrder("ord_real", [{ id: "l1", petpoojaItemId: item.itemid, name: item.itemname, productId: "prod_real", price: 280, quantity: 1, customizations: [{ id: "10657617", name: "Full [8 Pieces]", price: 0 }, { id: "93021", name: "Coke", price: 10 }] }], { foodSubtotal: 280, gst: 13.33, packagingFee: 0, deliveryFee: 0, discount: 0, loyaltyDiscount: 0, grandTotal: 280 });
     expect(await pushOrderToPetpooja("ord_real")).toBe(true);
     const line = payload().orderinfo.OrderInfo.OrderItem.details[0];

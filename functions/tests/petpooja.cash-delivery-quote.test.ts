@@ -169,8 +169,15 @@ beforeEach(() => {
       { id: "12", name: "SGST", rate: 2.5 },
     ],
   };
-  // POS-11: POS lines are priced from the catalog.
-  savedDocs["products/l1"] = { price: 235, inStock: true };
+  // POS-11: POS lines are priced from the catalog. P1-J: the POS IDENTITY must
+  // come from this document too, never from the cart line.
+  savedDocs["products/l1"] = {
+    id: "l1",
+    branchId: BRANCH,
+    price: 235,
+    inStock: true,
+    petpoojaItemId: "101",
+  };
 });
 
 afterEach(() => {

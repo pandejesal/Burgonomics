@@ -142,7 +142,14 @@ beforeEach(() => {
       { id: "12", name: "SGST", rate: 2.5 },
     ],
   };
-  savedDocs["products/prod_500"] = { price: 500, inStock: true };
+  savedDocs["products/prod_500"] = {
+    id: "prod_500",
+    branchId: BRANCH,
+    price: 500,
+    inStock: true,
+    // P1-J: the POS identity lives on the catalog document.
+    petpoojaItemId: "101",
+  };
 });
 
 afterEach(() => {
@@ -166,7 +173,18 @@ describe("POS-11 POS line prices come from the catalog", () => {
   });
 
   it("prices a line by line index when the doc mixes a real and a cheap line", async () => {
-    savedDocs["products/prod_199"] = { price: 199, inStock: true };
+    savedDocs["products/prod_199"] = {
+      id: "prod_199",
+      branchId: BRANCH,
+      price: 199,
+      inStock: true,
+      petpoojaItemId: "101",
+    };
+    // The expensive line's catalog document carries its own POS identity.
+    savedDocs["products/prod_500"] = {
+      ...savedDocs["products/prod_500"],
+      petpoojaItemId: "102",
+    };
     seedOrder("ord_price_mix", [
       { id: "l1", petpoojaItemId: "101", name: "Cheap", productId: "prod_199", price: 1, quantity: 1 },
       { id: "l2", petpoojaItemId: "102", name: "Big", productId: "prod_500", price: 1, quantity: 2 },
@@ -199,8 +217,11 @@ describe("POS-11 POS line prices come from the catalog", () => {
 describe("PAY-16 KOT option prices come from the catalog", () => {
   it("relays the catalog add-on price when the order line claims delta 0", async () => {
     savedDocs["products/prod_optioned"] = {
+      id: "prod_optioned",
+      branchId: BRANCH,
       price: 200,
       inStock: true,
+      petpoojaItemId: "101",
       customizations: [
         {
           id: "g1",

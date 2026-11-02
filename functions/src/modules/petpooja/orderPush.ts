@@ -141,22 +141,17 @@ export function petpoojaClock(now: Date = new Date()) {
 }
 
 /**
- * Petpooja item id for an order line.
+ * FIXTURE-ONLY POS id for a raw line, used ONLY when a caller passes no catalog
+ * lines (payload-shape tests, the sandbox harness). The production push path
+ * ALWAYS resolves `catalogLines` first, so a client-written id can never reach
+ * the wire through this function (P1-J).
  *
- * The `orders` document stores the app's `CartLine` shape — `productId`,
- * `unitPrice`, `veg`, and an optional `meta` bag — none of which is a field name
- * this relay used to read (`petpoojaItemId` / `itemId` / `id`). Every line
- * therefore went out with no id at all and the POS had nothing to match.
- *
- * Accepts, in order of authority:
- *   1. an explicit POS id on the line (`petpoojaItemId`)
- *   2. the cart's `meta` bag (`meta.petpoojaItemId`)
- *   3. a legacy `itemId` / `id`
- *   4. the menu doc id the sync writes, `prod_<branchId>_<petpoojaItemId>`,
- *      stripped by exact prefix — never parsed loosely.
- * Returns "" when nothing resolves, so the gap stays visible.
+ * Accepts, in order: an explicit POS id on the line, the cart's `meta` bag, a
+ * legacy `itemId` / `id`, then the menu doc id the sync writes,
+ * `prod_<branchId>_<petpoojaItemId>`, stripped by exact prefix — never parsed
+ * loosely. Returns "" when nothing resolves, so the gap stays visible.
  */
-function linePetpoojaItemId(item: any, firestoreBranchId?: string): string {
+function legacyLinePosItemId(item: any, firestoreBranchId?: string): string {
   const meta = item?.meta || {};
   for (const candidate of [item?.petpoojaItemId, meta.petpoojaItemId, item?.itemId, item?.id]) {
     if (candidate !== undefined && candidate !== null && String(candidate).trim() !== "") {
@@ -165,6 +160,37 @@ function linePetpoojaItemId(item: any, firestoreBranchId?: string): string {
   }
   const productId = item?.productId;
   if (firestoreBranchId && typeof productId === "string") {
+    const prefix = `prod_${firestoreBranchId}_`;
+    if (productId.startsWith(prefix)) return productId.slice(prefix.length);
+  }
+  return "";
+}
+
+/**
+ * Petpooja item id declared ON the catalog document (P1-J).
+ *
+ * The order document is client-written: `items[].petpoojaItemId`,
+ * `meta.petpoojaItemId`, `itemId` and `id` are all attacker-controlled strings,
+ * so none of them may decide which dish the kitchen cooks. The POS identity is
+ * a property of the PRODUCT that was priced and selected:
+ *
+ *   1. `products/{id}.petpoojaItemId` — the menu-sync join key;
+ *   2. a legacy synced doc id `prod_<branchId>_<petpoojaItemId>`, stripped by
+ *      exact prefix and only for THIS branch.
+ *
+ * Returns "" when the catalog doc carries no identity, so the caller parks the
+ * order instead of guessing.
+ */
+function catalogPosItemId(
+  productId: string,
+  productData: any,
+  firestoreBranchId?: string
+): string {
+  const declared = productData?.petpoojaItemId;
+  if (declared !== undefined && declared !== null && String(declared).trim() !== "") {
+    return String(declared).trim();
+  }
+  if (firestoreBranchId && productId) {
     const prefix = `prod_${firestoreBranchId}_`;
     if (productId.startsWith(prefix)) return productId.slice(prefix.length);
   }
@@ -187,17 +213,24 @@ export interface PosAddonRow {
 export interface PosCatalogLine {
   /** The unit price the POS line must carry (catalog-derived). */
   unitPrice: number;
+  /**
+   * P1-J: the BASE POS identity of the priced catalog document. Absent when the
+   * line selects a variation (the variation child item id is the line id then).
+   */
+  posItemId?: string;
   /** Present when the line selects a catalog variation option (M3). */
   variation?: { posItemId: string; posVariationId: string; name: string };
   addons: PosAddonRow[];
 }
 
 /**
- * POS-11 + M3: the POS lines for an order, in order, resolved from the
+ * POS-11 + M3 + P1-J: the POS lines for an order, in order, resolved from the
  * CATALOG, or a structural refusal.
  *
  * - Price: `products/{id}.price` plus the CATALOG prices of the selected
  *   options (PAY-16), never the order document's number.
+ * - Identity: `products/{id}.petpoojaItemId` of the priced, branch-owned
+ *   document. The order line's own ids are never read (they are client-written).
  * - Add-on: POS id and group id come from the catalog option/group, never from
  *   the client's modifier.
  * - Variation: the catalog variation option supplies posItemId (the line `id`),
@@ -210,10 +243,15 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
   const items = Array.isArray(order?.items) ? order.items : [];
   if (items.length === 0) return [];
 
+  const firestoreBranchId =
+    typeof order?.branchId === "string" && order.branchId.trim()
+      ? order.branchId.trim()
+      : undefined;
   const keyOf = (item: any): string => String(item?.productId || item?.id || "");
   const wanted: string[] = Array.from(
     new Set<string>(items.map(keyOf).filter((key: string) => key !== ""))
   );
+  const docByKey = new Map<string, any>();
   const priceByKey = new Map<string, number>();
   // PAY-16: the product's own option data, so selected options are priced from
   // the catalog rather than the order document.
@@ -229,18 +267,24 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
         wanted.forEach((id, index) => {
           const snap = snaps[index];
           const data = snap?.data?.();
-          if (snap?.exists && typeof data?.price === "number") {
-            priceByKey.set(id, data.price);
-            optionsByKey.set(id, data?.customizations);
+          if (snap?.exists && data) {
+            docByKey.set(id, data);
+            if (typeof data.price === "number") {
+              priceByKey.set(id, data.price);
+              optionsByKey.set(id, data?.customizations);
+            }
           }
         });
       } else {
         for (const id of wanted) {
           const snap = await db.collection("products").doc(id).get();
           const data = snap?.data?.();
-          if (snap?.exists && typeof data?.price === "number") {
-            priceByKey.set(id, data.price);
-            optionsByKey.set(id, data?.customizations);
+          if (snap?.exists && data) {
+            docByKey.set(id, data);
+            if (typeof data.price === "number") {
+              priceByKey.set(id, data.price);
+              optionsByKey.set(id, data?.customizations);
+            }
           }
         }
       }
@@ -264,6 +308,27 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
         reason: `item "${item?.name ?? "(unnamed)"}" has no catalog price (product "${key || "(no id)"}") — refusing to relay the order document's price`,
       });
       return { unitPrice: 0, addons: [] };
+    }
+
+    const catalogDoc = docByKey.get(key);
+    // P1-J: the branch that owns the priced document must be this order's
+    // branch. A catalog doc from another outlet carries another outlet's POS id
+    // (and another outlet's price); relaying it would print a dish this
+    // kitchen never priced. A doc without a branchId is a local/legacy doc —
+    // its own POS identity still has to come from the doc itself.
+    const docBranch = catalogDoc?.branchId;
+    if (typeof docBranch === "string" && docBranch !== "" && firestoreBranchId && docBranch !== firestoreBranchId) {
+      gaps.push({
+        field: `OrderItem.details[${index}].id`,
+        reason: `catalog product "${key}" belongs to branch "${docBranch}", not "${firestoreBranchId}" — refusing to relay another outlet's POS identity`,
+      });
+    }
+    const posItemId = catalogPosItemId(key, catalogDoc, firestoreBranchId);
+    if (posItemId === "") {
+      gaps.push({
+        field: `OrderItem.details[${index}].id`,
+        reason: `item "${item?.name ?? "(unnamed)"}" has no verified Petpooja item id (no menu-sync mapping on product "${key || "(no id)"}")`,
+      });
     }
 
     const customizations = optionsByKey.get(key);
@@ -359,6 +424,7 @@ async function resolveCatalogLines(order: any): Promise<PosCatalogLine[]> {
 
     return {
       unitPrice: Math.round(Math.max(0, unitPrice) * 100) / 100,
+      ...(posItemId ? { posItemId } : {}),
       ...(variation ? { variation } : {}),
       addons,
     };
@@ -588,12 +654,14 @@ export function formatPetpoojaOrderPayload(
     // POS-11: catalog-derived unit price, not the order document's price.
     const unit = lineUnit(item, itemIndex);
     const qty = Number(item.quantity) || 1;
-    // M3: when the caller resolved catalog lines, the POS ids, variation and
-    // add-on rows come from the CATALOG — never from the client's modifier.
+    // M3 + P1-J: when the caller resolved catalog lines (the push path ALWAYS
+    // does), the POS ids, variation and add-on rows come from the CATALOG —
+    // never from the line's own ids, which are client-written. An injected
+    // `petpoojaItemId` / `meta.petpoojaItemId` / `itemId` is ignored outright.
     const catalogLine = catalogLines ? (catalogLines[itemIndex] as PosCatalogLine) : undefined;
     const itemPosId = catalogLine
-      ? catalogLine.variation?.posItemId || linePetpoojaItemId(item, firestoreBranchId)
-      : linePetpoojaItemId(item, firestoreBranchId);
+      ? catalogLine.variation?.posItemId || catalogLine.posItemId || ""
+      : legacyLinePosItemId(item, firestoreBranchId);
     if (itemPosId === "") {
       structuralGaps.push({
         field: `OrderItem.details[${itemIndex}].id`,
