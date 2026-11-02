@@ -4,6 +4,10 @@ import { config, assertLiveDispatchContext } from "../../config/env";
 import { extractRiderGps } from "../dispatch/dispatch.webhooks";
 import { ACTIVE_DELIVERY_STATUSES, hasOwnedLiveBooking } from "../dispatch/types";
 import {
+  dispatchCancelUnconfirmedError,
+  pendingCancelBlocking,
+} from "../dispatch/dispatch.cancelPending";
+import {
   timingSafeEqual,
   verifyPorterWebhookSignature,
   computeHmacSha256,
@@ -535,6 +539,10 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
       // would resurrect (and re-pay for) a completed delivery.
       const terminal = porterTerminalStatus(d);
       if (terminal) return { terminal };
+      // P1-D: a released booking whose remote cancellation is unproven still
+      // owns the order — a direct Porter book is a replacement dispatch too.
+      const unconfirmedCancel = pendingCancelBlocking(d);
+      if (unconfirmedCancel) return { unconfirmedCancel };
       if (isDispatched(d)) return { reuse: true, data: d };
       const cross = crossProvider(d);
       if (cross === "in_house") return { in_house: true };
@@ -548,6 +556,7 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
     });
     if (outcome?.missing) throw orderMissingError(orderDoc.id);
     if (outcome?.terminal) throw manualAssignmentLockedError(outcome.terminal);
+    if (outcome?.unconfirmedCancel) throw dispatchCancelUnconfirmedError(outcome.unconfirmedCancel);
     if (outcome?.reuse) return storedDispatchSummary(outcome.data);
     if (outcome?.in_house) throw inHouseError();
     if (outcome?.conflict) throw conflictError(outcome.data);
@@ -560,6 +569,8 @@ async function claimPorterDispatch(orderDoc: any, order: any): Promise<any | nul
   // per-order pending UI state (partner H-M8 fix); this is the last guard.
   const terminal = porterTerminalStatus(order);
   if (terminal) throw manualAssignmentLockedError(terminal);
+  const unconfirmedCancel = pendingCancelBlocking(order);
+  if (unconfirmedCancel) throw dispatchCancelUnconfirmedError(unconfirmedCancel);
   if (isDispatched(order)) return storedDispatchSummary(order);
   const cross = crossProvider(order);
   if (cross === "in_house") throw inHouseError();
@@ -1806,6 +1817,13 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
 
     const terminal = porterTerminalStatus(d);
     if (terminal) return { terminal };
+    // P1-D: a local release whose REMOTE cancellation is unproven still OWNS
+    // the order. `dispatchCancel` nulls the active ids and settles
+    // `rider_cancelled`, so every binding guard below reads "free" — assigning
+    // an in-house rider here would put two riders on one delivery. Checked
+    // before any other decision, exactly like claimDispatch in the router.
+    const unconfirmedCancel = pendingCancelBlocking(d);
+    if (unconfirmedCancel) return { unconfirmedCancel };
     // CUS-16 re-check on the FRESH document: a capture may have landed after
     // the pre-read, or (more importantly) may still be absent — no in-house
     // rider is assigned to an unpaid online order. A paid channel passes.
@@ -1861,6 +1879,7 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
 
   if (outcome?.missing) throw orderMissingError(orderId);
   if (outcome?.terminal) throw manualAssignmentLockedError(outcome.terminal);
+  if (outcome?.unconfirmedCancel) throw dispatchCancelUnconfirmedError(outcome.unconfirmedCancel);
   if (outcome?.conflict) throw manualAssignmentConflictError(outcome.conflict);
   if (outcome?.busy) throw dispatchInProgressError();
   if (outcome?.staleClaim) throw manualAssignmentClaimStaleError();

@@ -1212,14 +1212,39 @@ export async function pushKotForCashOrderOnAccept(
  *   - `retry`   — the KOT is NOT at the POS. Clear the ambiguity so exactly one
  *     deliberate push can be sent; the normal idempotency guards then hold.
  *
+ * P1-K follow-up: `accepted_unconfirmed` is a FIRST-CLASS resolvable state. It
+ * is the sandbox's normal answer — the relay accepted the payload and issued no
+ * `orderID` — so the order carries `petpoojaAcceptedNoId`, which dedupes every
+ * later push into silence. Without admitting it here, a paid order whose ticket
+ * never printed had no exit at all: "retry" was deduped and this route refused.
+ * For that state `retry` additionally CLEARS the acceptance dedupe inside the
+ * same transaction that records the staff statement, then sends exactly one
+ * fresh push.
+ *
  * The caller is branch-scoped: a Branch-A staff member cannot resolve Branch-B's
  * ticket.
  */
+
+/** Same-instance single-flight: a double tap must not stack two KOT POSTs. */
+const resolveRetryInFlight = new Set<string>();
+
+/** How long a durable resolve-retry claim blocks another instance. */
+const RESOLVE_RETRY_CLAIM_TTL_MS = 2 * 60 * 1000;
+
+export interface ResolveKotResult {
+  resolved: "printed" | "retry";
+  orderId: string;
+  /** True only for the caller that actually sent the one fresh push. */
+  pushed?: boolean;
+  /** True when another press/instance already handled this resolution. */
+  reused?: boolean;
+}
+
 export async function resolvePetpoojaKotAmbiguity(
   orderId: string,
   resolution: "printed" | "retry",
   caller: StaffCaller
-): Promise<{ resolved: "printed" | "retry"; orderId: string }> {
+): Promise<ResolveKotResult> {
   if (resolution !== "printed" && resolution !== "retry") {
     throw new Error("Unsupported reconciliation outcome — use 'printed' or 'retry'");
   }
@@ -1228,12 +1253,47 @@ export async function resolvePetpoojaKotAmbiguity(
   const order = orderDoc.data() || {};
   const branchId = await assertOrderBranchAccess(caller, order as Record<string, any>);
 
-  const parked =
-    (order as any).petpoojaStatus === "reconciliation_required" ||
-    (order as any).petpoojaSyncStatus === "reconciliation_required" ||
-    (order as any).petpoojaAmbiguousProcessing === true ||
-    (order as any).petpoojaAcceptedUnrecorded === true;
-  if (!parked) {
+  /** States a human may resolve. `accepted_unconfirmed` is the id-less ack. */
+  const resolvable = (d: any): boolean =>
+    d?.petpoojaStatus === "reconciliation_required" ||
+    d?.petpoojaSyncStatus === "reconciliation_required" ||
+    d?.petpoojaAmbiguousProcessing === true ||
+    d?.petpoojaAcceptedUnrecorded === true ||
+    (d?.petpoojaAcceptedNoId === true && !d?.petpoojaOrderId) ||
+    d?.petpoojaStatus === "accepted_unconfirmed" ||
+    d?.petpoojaSyncStatus === "accepted_unconfirmed";
+
+  // A press that lands while THIS resolution is still running is a double tap:
+  // answer it with the in-flight outcome instead of a second push (or a
+  // timing-dependent conflict). Deterministic regardless of which half of the
+  // pair wins the race. Scoped to `retry`: a `printed` statement is a different
+  // truth and must never be answered by a retry that is merely in flight.
+  if (resolution === "retry" && resolveRetryInFlight.has(orderId)) {
+    return { resolved: resolution, orderId, pushed: false, reused: true };
+  }
+
+  if (!resolvable(order as any)) {
+    // Idempotent replay: the SAME resolution already recorded on this order is
+    // not an error — a double press must not read as "nothing to resolve".
+    // A DIFFERENT resolution on a settled order is a real conflict. Checked
+    // before the registered-id conflict so a landed retry replays as a no-op.
+    const recorded = (order as any).petpoojaResolution;
+    if (recorded === resolution) {
+      return { resolved: resolution, orderId, pushed: false, reused: true };
+    }
+    // A registered ticket is never re-sent: the POS already holds it. Only a
+    // RETRY conflicts with that — `printed` on a settled order is simply not
+    // parked (see below).
+    if (resolution === "retry" && (order as any).petpoojaOrderId) {
+      throw new Error(
+        `Order ${orderId} carries a POS order id (${(order as any).petpoojaOrderId}) — the ticket is already registered; confirm it as printed instead of retrying`
+      );
+    }
+    if (recorded) {
+      throw new Error(
+        `Order ${orderId} was already resolved as "${recorded}" — it cannot now be resolved as "${resolution}"`
+      );
+    }
     throw new Error(
       `Order ${orderId} is not parked for reconciliation — nothing to resolve`
     );
@@ -1245,15 +1305,17 @@ export async function resolvePetpoojaKotAmbiguity(
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const resolvedBy = (caller as any)?.uid || (caller as any)?.email || "staff";
   const evidence = {
     petpoojaAmbiguousProcessing: false,
-    petpoojaResolvedBy: (caller as any)?.uid || (caller as any)?.email || "staff",
+    petpoojaResolvedBy: resolvedBy,
     petpoojaResolvedAt: now,
     petpoojaResolution: resolution,
     petpoojaResolvedBranchId: branchId,
     updatedAt: now,
   };
 
+  // --- printed: keep the acceptance dedupe, the ticket IS at the POS ---------
   if (resolution === "printed") {
     await orderDoc.ref.set(
       {
@@ -1279,21 +1341,132 @@ export async function resolvePetpoojaKotAmbiguity(
     return { resolved: "printed", orderId };
   }
 
-  await orderDoc.ref.set(
-    {
-      ...evidence,
-      // Hands the single deliberate attempt back to the normal lanes. The
-      // retry count is NOT reset: the exhausted-retry dead-letter still bounds
-      // how many times a hopeless order can be re-sent.
-      petpoojaStatus: "pending_retry",
-      petpoojaSyncStatus: "pending_retry",
-      kotSyncFailed: false,
-      petpoojaPushClaimedAt: null,
-      petpoojaClaimedAt: null,
-    },
-    { merge: true }
-  );
-  return { resolved: "retry", orderId };
+  // --- retry ---------------------------------------------------------------
+  // An acceptance marker that already dedupes later pushes is what makes this
+  // state unrecoverable, so clearing it is the whole point of the retry.
+  const clearsAcceptanceDedupe =
+    (order as any).petpoojaAcceptedNoId === true && !(order as any).petpoojaOrderId;
+
+  if (!clearsAcceptanceDedupe) {
+    // Ambiguous POST with no acceptance marker: the retry worker owns the one
+    // deliberate attempt (its pending_retry lease is the single-push lock).
+    // The count is NOT reset: the dead-letter bound still applies.
+    await orderDoc.ref.set(
+      {
+        ...evidence,
+        petpoojaStatus: "pending_retry",
+        petpoojaSyncStatus: "pending_retry",
+        kotSyncFailed: false,
+        petpoojaPushClaimedAt: null,
+        petpoojaClaimedAt: null,
+      },
+      { merge: true }
+    );
+    return { resolved: "retry", orderId };
+  }
+
+  // Same-instance guard: a double tap must not stack two POSTs. The durable
+  // claim below is the cross-instance half of the same guarantee.
+  const inFlightAlready = resolveRetryInFlight.has(orderId);
+  if (inFlightAlready) {
+    return { resolved: "retry", orderId, pushed: false, reused: true };
+  }
+  resolveRetryInFlight.add(orderId);
+
+  try {
+    // Transaction: ONE caller clears the dedupe and records the staff statement
+    // that the kitchen did NOT print. The fresh claim is what makes a second
+    // press a no-op instead of a second KOT.
+    const outcome: any =
+      db && typeof (db as any).runTransaction === "function"
+        ? await (db as any).runTransaction(async (tx: any) => {
+            const fresh = await tx.get(orderDoc.ref);
+            const d = (fresh.exists ? fresh.data() : undefined) as any;
+            if (!d) return { missing: true as const };
+            await assertOrderBranchAccess(caller, d);
+            if (d.petpoojaOrderId) return { alreadyRegistered: true as const };
+            if (!resolvable(d)) return { notParked: true as const };
+            if (d.petpoojaAcceptedNoId !== true) return { resolvedElsewhere: true as const };
+            const claimedAt = Number(d.petpoojaResolveRetryAt);
+            if (
+              Number.isFinite(claimedAt) &&
+              claimedAt > 0 &&
+              Date.now() - claimedAt < RESOLVE_RETRY_CLAIM_TTL_MS
+            ) {
+              return { busy: true as const };
+            }
+            tx.set(
+              orderDoc.ref,
+              {
+                ...evidence,
+                petpoojaStatus: "pending_retry",
+                petpoojaSyncStatus: "pending_retry",
+                kotSyncFailed: false,
+                // The dedupe this state relied on is now explicitly lifted by a
+                // human. Written as `false`/`null`, never `undefined`.
+                petpoojaAcceptedNoId: false,
+                petpoojaAcceptedNoIdAt: null,
+                petpoojaAcceptedNoIdAck: null,
+                // The explicit statement, attributed and timestamped.
+                petpoojaKotNotPrintedConfirmedBy: resolvedBy,
+                petpoojaKotNotPrintedConfirmedAt: now,
+                petpoojaResolveRetryAt: Date.now(),
+                petpoojaResolveRetryBy: resolvedBy,
+                petpoojaPushClaimedAt: null,
+                petpoojaClaimedAt: null,
+              },
+              { merge: true }
+            );
+            return { claimed: true as const };
+          })
+        : { noTransaction: true as const };
+
+    if (outcome?.missing) throw new Error(`Order ${orderId} does not exist`);
+    if (outcome?.alreadyRegistered) {
+      throw new Error(
+        `Order ${orderId} carries a POS order id — the ticket is already registered; confirm it as printed instead of retrying`
+      );
+    }
+    if (outcome?.notParked) {
+      throw new Error(
+        `Order ${orderId} is not parked for reconciliation — nothing to resolve`
+      );
+    }
+    if (outcome?.noTransaction) {
+      const err: any = new Error(
+        "KOT reconciliation requires transactional storage — refusing to clear the acceptance dedupe without a race-safe re-read."
+      );
+      err.statusCode = 503;
+      err.code = "TRANSACTION_UNAVAILABLE";
+      throw err;
+    }
+    if (outcome?.busy || outcome?.resolvedElsewhere) {
+      return { resolved: "retry", orderId, pushed: false, reused: true };
+    }
+
+    // Exactly one fresh push. pushOrderToPetpooja re-claims, re-reads and
+    // dedupes on its own, so a concurrent automatic path still cannot double
+    // print; on a retryable failure it parks pending_retry for the worker.
+    const pushed = await pushOrderToPetpooja(orderId, caller).catch((err: any) => {
+      console.warn(
+        `[Petpooja KOT Resolve] fresh push after staff retry failed for ${orderId}:`,
+        err?.message || err
+      );
+      return false;
+    });
+
+    // Release our durable claim so a LATER deliberate retry is still possible
+    // when the push did not land (pending_retry keeps the worker's own lease).
+    try {
+      await orderDoc.ref.set({ petpoojaResolveRetryAt: null }, { merge: true });
+    } catch {
+      // Best-effort: the claim ages out via RESOLVE_RETRY_CLAIM_TTL_MS.
+    }
+
+    return { resolved: "retry", orderId, pushed };
+  } finally {
+    resolveRetryInFlight.delete(orderId);
+  }
 }
 
 export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller): Promise<boolean> {

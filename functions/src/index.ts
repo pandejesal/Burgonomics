@@ -942,6 +942,15 @@ function sendDispatchError(res: Response, err: any, fallback: string): void {
   // DISPATCH_TEST_BOOKING_BLOCKED, PROVIDER_BOOK_AMBIGUOUS) is indistinguishable
   // from an opaque 500 and cannot be handled or logged precisely.
   if (typeof err?.code === "string" && err.code) extra.code = err.code;
+  // P1-D: a refusal to replace an unconfirmed courier cancellation carries the
+  // durable record and the staff instruction. Without them the app can only say
+  // "failed", and a stale/orphan record is unrecoverable from the UI.
+  if (err?.pendingCancel && typeof err.pendingCancel === "object") {
+    extra.pendingCancel = err.pendingCancel;
+  }
+  if (typeof err?.staffActionRequired === "string" && err.staffActionRequired) {
+    extra.staffActionRequired = err.staffActionRequired;
+  }
   res.status(status).json({ error: err?.message || fallback, ...extra });
 }
 
@@ -1161,7 +1170,12 @@ app.post(
       const result = await manualBranchDispatch({ ...req.body, staffName, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(staffErrorStatus(err, 500)).json({ error: err.message || "Manual dispatch failed" });
+      // Typed refusals keep their status AND machine-readable code: the in-house
+      // lane now shares the dispatch ownership guards, so DISPATCH_CANCEL_UNCONFIRMED
+      // / DISPATCH_RECONCILIATION_REQUIRED / DISPATCH_LOCKED must reach the Partner
+      // app the same way /dispatch/book returns them (a bare 500 hides why the
+      // rider cannot be assigned).
+      sendDispatchError(res, err, "Manual dispatch failed");
     }
   }
 );
