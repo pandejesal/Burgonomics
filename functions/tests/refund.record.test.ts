@@ -257,14 +257,15 @@ describe("PAY-02: refund claim release on gateway failure", () => {
 
   it("releases the claim so a retry is not wedged for 10 minutes", async () => {
     __setRefundPostForTests(async () => {
-      throw new Error("gateway timeout");
+      throw Object.assign(new Error("gateway rejected: card declined"), { statusCode: 400 });
     });
     await expect(
       autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1" , refundRequestId: "refund_req_f1_release" })
     ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
-    // "MOCK_DELETE" is the FieldValue.delete() sentinel in this rig.
-    expect(savedDocs["orders/ord_f1"].refundClaimedAt).toBe("MOCK_DELETE");
-    expect(savedDocs["orders/ord_f1"].refundStatus).toBe("MOCK_DELETE");
+    // Release writes `null` for both claim fields (shim-safe "no lease"), so the
+    // next legitimate refund is not wedged behind the 10-minute TTL.
+    expect(savedDocs["orders/ord_f1"].refundClaimedAt ?? null).toBeNull();
+    expect(savedDocs["orders/ord_f1"].refundStatus ?? null).toBeNull();
   });
 
   it("restores a prior partially_refunded status instead of erasing it", async () => {
@@ -275,20 +276,20 @@ describe("PAY-02: refund claim release on gateway failure", () => {
       refundStatus: "partially_refunded",
     };
     __setRefundPostForTests(async () => {
-      throw new Error("gateway refused");
+      throw Object.assign(new Error("gateway rejected: invalid amount"), { statusCode: 400 });
     });
     await expect(
       autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1", amountRupees: 200 , refundRequestId: "refund_req_f1_restore" })
     ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
     expect(savedDocs["orders/ord_f1"].refundStatus).toBe("partially_refunded");
-    expect(savedDocs["orders/ord_f1"].refundClaimedAt).toBe("MOCK_DELETE");
+    expect(savedDocs["orders/ord_f1"].refundClaimedAt ?? null).toBeNull();
   });
 
   it("still throws the original 502 when releasing the claim fails", async () => {
     // Write 1 = claim, write 2 = release. Fail the release.
     control.failOrderWriteAt = 2;
     __setRefundPostForTests(async () => {
-      throw new Error("gateway timeout");
+      throw Object.assign(new Error("gateway rejected: card declined"), { statusCode: 400 });
     });
     await expect(
       autoRefund({ orderId: "ord_f1", razorpayPaymentId: "pay_f1" , refundRequestId: "refund_req_f1_release_fail" })

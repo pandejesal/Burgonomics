@@ -777,6 +777,12 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           "payment.status": "completed",
           // F8: the stream marker survives a suppressed confirm.
           paymentChannel: "razorpay",
+          // RECOVERY SCAN STATE: a terminal confirmation means this order is
+          // done and must LEAVE the recovery sweep's `fulfillable` lane, so a
+          // healthy backlog can never fill the bounded page and starve a later
+          // crashed paid order. The nested record stays as the audit trail and
+          // the compensation lock.
+          captureFulfillmentState: "confirmed",
           ...(typeof gatewayCreatedAtMs === "number"
             ? { "payment.gatewayCreatedAtMs": gatewayCreatedAtMs }
             : {}),

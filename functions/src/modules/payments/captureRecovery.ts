@@ -165,6 +165,38 @@ async function escalateStuckCapture(args: {
 }
 
 /**
+ * Moves an already-confirmed order OUT of the scan lane.
+ *
+ * The channels clear the mirror at confirmation time, but orders confirmed
+ * before that existed still sit in `fulfillable`. Without this retirement the
+ * first bounded page fills with healthy history and a later crashed paid order
+ * is never scanned — the starvation this sweep exists to end. Merge-only and
+ * idempotent.
+ */
+async function retireConfirmedMarker(
+  orderId: string,
+  paymentId: string
+): Promise<void> {
+  try {
+    await db
+      .collection("orders")
+      .doc(orderId)
+      .set(
+        {
+          captureFulfillmentState: "confirmed",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+  } catch (err: any) {
+    console.warn(
+      `[Capture Recovery] could not retire the confirmed marker for ${orderId} (payment ${paymentId}):`,
+      err?.message || err
+    );
+  }
+}
+
+/**
  * One recovery sweep. Exported for the scheduled function and for tests; the
  * function wrapper in `index.ts` owns the scheduler lock and cadence.
  */
@@ -188,9 +220,13 @@ export async function recoverStuckCaptureFulfilments(
   // `captureFulfillmentState` is a mirrored top-level scalar (written beside the
   // nested record on every transition), so Firestore's automatic single-field
   // index serves these equality scans and NO composite index has to be
-  // deployed with the job. Scanning the nested path instead would need one, and
-  // `state` is not the only recoverable value, so a single query cannot cover
-  // the lane.
+  // deployed with the job.
+  //
+  // `fulfillable` is additionally AGE-BOUNDED in memory: a healthy order leaves
+  // this state the moment it confirms, but an order confirmed before that
+  // clearing existed (or one whose confirm crashed) must not occupy the page
+  // forever. Only orders whose record is older than the recovery window are
+  // treated as candidates, so the lane can never be filled by fresh work.
   const docs: any[] = [];
   for (const state of ["checking", "refund_pending", "refund_failed"] as const) {
     try {
@@ -219,7 +255,20 @@ export async function recoverStuckCaptureFulfilments(
       .where("captureFulfillmentState", "==", "fulfillable")
       .limit(CAPTURE_RECOVERY_SCAN_LIMIT)
       .get();
-    if (Array.isArray(page?.docs)) docs.push(...page.docs);
+    if (Array.isArray(page?.docs)) {
+      for (const doc of page.docs) {
+        const data = ((typeof doc?.data === "function" ? doc.data() : doc) || {}) as any;
+        const gate = data?.captureFulfillment;
+        const atMs = Number(gate?.atMs);
+        // Fresh work belongs to a live channel; only a genuinely stalled
+        // decision is ours. An unreadable stamp is treated as stale so a
+        // corrupt record still reaches a human instead of vanishing.
+        if (Number.isFinite(atMs) && atMs > 0 && nowMs - atMs < CAPTURE_RECOVERY_AFTER_MS) {
+          continue;
+        }
+        docs.push(doc);
+      }
+    }
   } catch (err: any) {
     await captureErrorSnapshot({
       source: "payments",
@@ -246,7 +295,14 @@ export async function recoverStuckCaptureFulfilments(
       // A confirmed/terminal LIFECYCLE order needs no recovery: the
       // confirmation won. Checked with the lifecycle-only rule because a
       // compensation stamps `paymentStatus: "completed"` without confirming.
+      //
+      // RETIRE THE MARKER on the way out. Orders confirmed before the channels
+      // started clearing it still occupy the bounded `fulfillable` page, and
+      // leaving them there is exactly the starvation this lane exists to fix.
       if (isOrderLifecycleConfirmedOrLater(order)) {
+        if (gate.state === "fulfillable") {
+          await retireConfirmedMarker(orderId, gate.paymentId);
+        }
         stats.skipped += 1;
         continue;
       }

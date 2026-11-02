@@ -392,6 +392,59 @@ async function unavailableProductIds(items: any[]): Promise<{
 }
 
 /**
+ * Serializes writers on one stalled compensation. Returns true when THIS caller
+ * now owns the attempt.
+ *
+ * The lease is the record's own `atMs`: a resume refreshes it, so a sibling that
+ * read the same stale gate a moment earlier loses here instead of POSTing a
+ * second refund. Only records already past the per-document lease can be
+ * claimed, and a crashed resumer is recovered by that same lease expiring.
+ */
+async function claimResumeLease(args: {
+  orderRef: any;
+  razorpayPaymentId: string;
+  attempts: number;
+}): Promise<boolean> {
+  if (!db || typeof (db as any).runTransaction !== "function") return false;
+  return !!(await (db as any).runTransaction(async (tx: any) => {
+    const snap = await tx.get(args.orderRef);
+    if (!snap || !snap.exists) return false;
+    const fresh = (snap.data() || {}) as any;
+    const record = gateRecordOf(fresh);
+    if (!record) return false;
+    if (record.paymentId !== args.razorpayPaymentId) return false;
+    if (record.state === "refunded") return false;
+
+    const age = Date.now() - record.atMs;
+    const leaseLive =
+      Number.isFinite(record.atMs) && record.atMs > 0 && age < CAPTURE_GATE_LEASE_MS;
+    // A KNOWN-FAILED attempt has nothing in flight, so it is claimable
+    // immediately — only an in-flight (`refund_pending`/`checking`) lease has to
+    // run out before a sibling may take over.
+    if (leaseLive && (record.state === "refund_pending" || record.state === "checking")) {
+      return false;
+    }
+
+    tx.set(
+      args.orderRef,
+      {
+        captureFulfillment: {
+          state: "refund_pending",
+          paymentId: args.razorpayPaymentId,
+          atMs: Date.now(),
+          attempts: args.attempts,
+          ...(record.detail ? { detail: record.detail } : {}),
+        },
+        captureFulfillmentState: "refund_pending",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return true;
+  }));
+}
+
+/**
  * Runs (or RESUMES) the automatic refund for a proven-unfulfillable capture.
  *
  * Order of operations is the whole point:
@@ -416,6 +469,8 @@ async function runCompensatingRefund(args: {
   capturedAmountPaise?: number;
   detail: string;
   attempts: number;
+  /** True when resuming an already-minted refund (needs the lease claim). */
+  resume?: boolean;
 }): Promise<{
   outcome: "refunded" | "refund_failed";
   refundId?: string;
@@ -424,6 +479,28 @@ async function runCompensatingRefund(args: {
   attempts: number;
 }> {
   const attempts = args.attempts + 1;
+
+  // CLAIM THE ATTEMPT transactionally before writing anything, but ONLY when
+  // this is a RESUME of an already-minted refund. Two actors (a late webhook and
+  // the scheduled sweep) can resume the same stalled gate at the same instant;
+  // without this both would POST and both would record. The first refreshes the
+  // record's timestamp, so the loser sees a FRESH `refund_pending` and backs
+  // off instead of moving money. The owner's first pass never re-reads its own
+  // freshly-claimed `checking` record and proceeds directly.
+  if (args.resume) {
+    const claimed = await claimResumeLease({
+      orderRef: args.orderRef,
+      razorpayPaymentId: args.razorpayPaymentId,
+      attempts,
+    });
+    if (!claimed) {
+      return {
+        outcome: "refund_failed",
+        detail: "another channel is already resuming this refund",
+        attempts: args.attempts,
+      };
+    }
+  }
 
   const pendingWritten = await recordGateState({
     orderRef: args.orderRef,
@@ -623,5 +700,6 @@ async function resumeCompensatingRefund(args: {
     capturedAmountPaise: args.capturedAmountPaise,
     detail: args.detail,
     attempts: 0,
+    resume: true,
   });
 }

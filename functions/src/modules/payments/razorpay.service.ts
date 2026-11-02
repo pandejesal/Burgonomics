@@ -22,7 +22,11 @@ import {
   clearPaymentVerificationInFlight,
 } from "../orders/paymentGate";
 import { calculateOrderPricing, assertCatalogLinesSellable, CalculateOrderPricingInput } from "./pricing.engine";
-import { guardCaptureFulfillment, captureGateAllowsConfirm } from "./captureFulfillment";
+import {
+  guardCaptureFulfillment,
+  captureGateAllowsConfirm,
+  isOrderLifecycleConfirmedOrLater,
+} from "./captureFulfillment";
 import { PAYMENT_INTENT_TTL_MS } from "./lifetimes";
 import { resolveBranchId } from "./branchResolver";
 import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } from "./monthlyFee";
@@ -261,7 +265,13 @@ function postRefundWithIdempotency(
           (parsed && parsed.message) ||
           text ||
           `HTTP ${status}`;
-        reject(new Error(String(desc).slice(0, 500)));
+        // Carry the HTTP STATUS so the caller can distinguish a DEFINITE
+        // rejection (4xx: no money moved, the claim may be released) from an
+        // UNCERTAIN one (5xx or a mangled body: the refund may exist).
+        const httpErr: any = new Error(String(desc).slice(0, 500));
+        httpErr.statusCode = status;
+        httpErr.gatewayStatus = status;
+        reject(httpErr);
       });
     });
     req.on("error", (err) => reject(err));
@@ -269,6 +279,44 @@ function postRefundWithIdempotency(
     req.write(body);
     req.end();
   });
+}
+
+/**
+ * Did this refund failure PROVE that no money moved?
+ *
+ * Only two outcomes do:
+ *  - a definite gateway 4xx (the gateway answered and refused the request), and
+ *  - an error that provably never left this process (DNS/connect failures and
+ *    a refused connection happen before the request is written).
+ *
+ * Everything else — a timeout, a socket reset after the bytes were sent, a 5xx,
+ * a non-JSON body, or any error with no status at all — is UNCERTAIN: the
+ * gateway may have accepted the refund. Those must KEEP the outstanding claim
+ * identity, because releasing it would let a different operator post a second
+ * partial refund with a different key and return the customer's money twice.
+ */
+export function classifyRefundFailure(err: any): {
+  claimReleased: boolean;
+  reason: string;
+} {
+  const status = Number(err?.statusCode ?? err?.status ?? err?.response?.status);
+  if (Number.isFinite(status) && status >= 400 && status < 500) {
+    // A 4xx with a retryable-signal body (rate limit / lock) is still a
+    // rejection: the gateway did not create a refund. 408/429 included.
+    return { claimReleased: true, reason: `gateway_rejected_${status}` };
+  }
+  const code = String(err?.code || "");
+  // Pre-request transport failures: nothing was accepted by the gateway.
+  if (
+    code === "ENOTFOUND" ||
+    code === "EAI_AGAIN" ||
+    code === "ECONNREFUSED" ||
+    code === "EHOSTUNREACH" ||
+    code === "ENETUNREACH"
+  ) {
+    return { claimReleased: true, reason: `request_never_sent_${code}` };
+  }
+  return { claimReleased: false, reason: "uncertain_outcome" };
 }
 
 export interface CreateOrderParams {
@@ -2306,6 +2354,29 @@ export async function completeRecoveredCapture(args: {
     // pre-check keeps "already confirmed" idempotent and cheap.
     if (!captureGateAllowsConfirm(orderData, razorpayPaymentId)) return false;
 
+    // ALREADY CONFIRMED (a replay): there is nothing to confirm, but leaving the
+    // `fulfillable` mirror behind keeps this order in the recovery page forever.
+    // Retire it and report success — the job is done, not skipped.
+    const lifecycleCode = String(
+      typeof orderData?.status === "string"
+        ? orderData.status
+        : orderData?.status?.code ?? ""
+    ).toUpperCase();
+    const alreadyConfirmed =
+      isOrderLifecycleConfirmedOrLater(orderData) ||
+      orderData?.paymentStatus === "completed" ||
+      lifecycleCode === "CONFIRMED";
+    if (alreadyConfirmed) {
+      await orderRef.set(
+        {
+          captureFulfillmentState: "confirmed",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return true;
+    }
+
     const razorpayOrderId = readRecordedPaymentField(orderData, "razorpayOrderId") || "";
     const capturedPaise =
       Number(orderData?.payment?.capturedAmountPaise) ||
@@ -3118,6 +3189,12 @@ async function finishVerifiedPayment(args: {
         // F8: the payment stream marker. Clients can never write it, so an
         // analytics reader can tell a gateway capture from cash/counter.
         paymentChannel: "razorpay",
+        // RECOVERY SCAN STATE: a terminal confirmation means this order is done
+        // and must LEAVE the recovery sweep's `fulfillable` lane. Leaving the
+        // state behind let the first N healthy orders fill the bounded page
+        // forever, starving a later crashed paid order. The nested record stays
+        // (it is the audit trail and the compensation lock).
+        captureFulfillmentState: "confirmed",
         "payment.razorpayPaymentId": razorpayPaymentId,
         "payment.razorpayOrderId": razorpayOrderId,
         "payment.verifiedAt": admin.firestore.FieldValue.serverTimestamp(),
@@ -3169,6 +3246,9 @@ async function finishVerifiedPayment(args: {
       if (mintedOtp) {
         updatePayload.deliveryOtpHash = mintedOtp.deliveryOtpHash;
       }
+      // RECOVERY SCAN STATE: this order is now terminally confirmed, so it must
+      // not keep occupying a bounded `fulfillable` recovery page.
+      updatePayload.captureFulfillmentState = "confirmed";
       tx.set(orderRef, updatePayload, { merge: true });
       return {
         performedConfirm: true,
@@ -3669,17 +3749,50 @@ export async function autoRefund(
     if (activeClaim) {
       const claimedAt = Number(activeClaim.claimedAt) || 0;
       const isLeaseActive = Date.now() - claimedAt < REFUND_CLAIM_TTL_MS;
-      if (isLeaseActive) {
+      const sameIdentity =
+        !!refundRequestId && activeClaim.requestId === refundRequestId;
+      const samePayload =
+        sameIdentity &&
+        !(
+          (activeClaim.paymentId && activeClaim.paymentId !== razorpayPaymentId) ||
+          (activeClaim.requestedPaise !== undefined &&
+            activeClaim.requestedPaise !== requestedPaise) ||
+          (activeClaim.reason !== undefined &&
+            (activeClaim.reason ?? null) !== (reason ?? null))
+        );
+
+      // An UNRESOLVED identity that was explicitly parked for reconciliation
+      // (a 2xx with no usable refund id, or a corrupt pending record) must NEVER
+      // be re-POSTed — not even with the same key. Money almost certainly moved
+      // and only a webhook or a human can settle it. A plain `pending` record
+      // (a transport loss, or a gateway 4xx/5xx we already classified) may
+      // still replay on the SAME key, because the gateway dedupes it.
+      const requestStatus = reqSnap && reqSnap.exists
+        ? String((reqSnap.data() as any)?.status || "")
+        : "";
+      const claimUnresolved =
+        !activeClaim.requestId || requestStatus === "reconciliation_required";
+
+      if (isLeaseActive && (!samePayload || claimUnresolved)) {
+        // A live lease owned by a DIFFERENT request, or an identity parked for
+        // reconciliation: two operators must never both be on the wire.
         const busy: any = new Error("A refund for this order is already in progress — do not retry.");
         busy.statusCode = 409;
-        busy.code = "REFUND_IN_PROGRESS";
+        busy.code =
+          requestStatus === "reconciliation_required"
+            ? "REFUND_RECONCILIATION_REQUIRED"
+            : "REFUND_IN_PROGRESS";
         throw busy;
       }
+      // A KNOWN-FAILED same-identity retry is safe to re-POST: the gateway key
+      // is identical, so Razorpay replays the ORIGINAL refund rather than
+      // creating a second one — which is what makes recovery work without ever
+      // releasing the outstanding identity.
       // Stale lease (>10m): previous worker died mid-flight. Take over safety requirements:
       // - Stale same-id lease takeover reuses same gateway key and asserts immutable payload (including reason);
       // - Different unresolved identity (including old unkeyed in-flight attempt) requires reconciliation,
       //   no blind new-key POST.
-      if (refundRequestId && activeClaim.requestId === refundRequestId) {
+      if (sameIdentity) {
         const claimedPayment = activeClaim.paymentId;
         const claimedPaise = activeClaim.requestedPaise;
         const claimedReason = activeClaim.reason;
@@ -3953,33 +4066,49 @@ export async function autoRefund(
         );
       }
     } catch (err: any) {
+      const outcome = classifyRefundFailure(err);
       await captureErrorSnapshot({
         source: "payments",
-        severity: "high",
-        message: `Refund execution failed for payment ${razorpayPaymentId}: ${err.message}`,
+        severity: outcome.claimReleased ? "high" : "high",
+        message:
+          `Refund execution ${outcome.claimReleased ? "rejected" : "UNCERTAIN"} for payment ` +
+          `${razorpayPaymentId}: ${err.message}${outcome.claimReleased ? "" : " — claim retained, reconciliation required"}`,
         orderId,
         razorpayPaymentId,
       });
-      // Release the claim lease so a retry is not wedged behind
-      // REFUND_IN_PROGRESS for the full 10-minute TTL (same pattern as
-      // executeRouteSplit). Safe because the gateway POST above used a STABLE
-      // idempotency key (`refund_{orderId}_{paise|full}`): a retry after a
-      // lost response replays the original refund instead of posting a second
-      // one. Restore the pre-claim status so a "partially_refunded" order keeps
-      // its history. If the release write fails, the original 502 still wins.
+
+      if (!outcome.claimReleased) {
+        // UNCERTAIN: the request may have reached the gateway (lost response,
+        // timeout, transport reset, or any 5xx/unknown status). The money may
+        // ALREADY be out, so the outstanding claim identity is the ONLY thing
+        // stopping a different operator — with a different idempotency key —
+        // from posting a second partial refund. Keep it and require
+        // reconciliation. A same-key retry remains safe (the pending request
+        // record and the gateway's own idempotency replay the original), and a
+        // proven transient failure still retries through the recovery lanes.
+        const uncertain: any = new Error(
+          `Refund outcome is uncertain for order ${orderId} — do not retry with a new key; reconcile before issuing another refund.`
+        );
+        uncertain.statusCode = 409;
+        uncertain.code = "REFUND_RECONCILIATION_REQUIRED";
+        throw uncertain;
+      }
+
+      // PROVEN REJECTION: the gateway answered with a definite 4xx (or the
+      // request provably never left), so no money moved. Release the claim
+      // lease so a later legitimate refund is not wedged behind
+      // REFUND_IN_PROGRESS for the full TTL (same pattern as
+      // executeRouteSplit). Restore the pre-claim status so a
+      // "partially_refunded" order keeps its history. If the release write
+      // fails, the original 502 still wins.
       try {
         await orderRef.set(
           {
-            refundStatus: priorRefundStatus
-              ? priorRefundStatus
-              : admin.firestore.FieldValue.delete(),
-            refundClaimedAt: admin.firestore.FieldValue.delete(),
-            // The ACTIVE claim lease is the guard a retry actually hits
-            // (`REFUND_IN_PROGRESS`), so it must be released too — otherwise a
-            // failed attempt wedges the refund for the full TTL and every
-            // recovery retry is refused. `null` (not a delete sentinel) so the
-            // object-shape guard reads it as "no active claim"; the pending
-            // request record keeps the same idempotency identity for the retry.
+            refundStatus: priorRefundStatus ? priorRefundStatus : null,
+            // `null`, not a delete sentinel: every reader here guards on a
+            // positive numeric stamp or an object shape, so `null` reads as
+            // "no lease" on both real Firestore and the datastore shims.
+            refundClaimedAt: null,
             refundActiveClaim: null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },

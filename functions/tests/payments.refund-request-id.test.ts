@@ -486,7 +486,8 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
       return reqEmitter;
     });
 
-    // 1st attempt: fails with 502 REFUND_GATEWAY_FAILED
+    // 1st attempt: transport loss -> UNCERTAIN, so the outstanding identity is
+    // retained (only a PROVEN gateway rejection may release it).
     await expect(
       autoRefund({
         orderId: "ord_live_net",
@@ -495,7 +496,7 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
         reason: "item rejection note",
         refundRequestId: "req_live_retry_1",
       })
-    ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
+    ).rejects.toMatchObject({ statusCode: 409, code: "REFUND_RECONCILIATION_REQUIRED" });
 
     // Advance lease past TTL to simulate worker retry after timeout
     savedDocs["orders/ord_live_net"].refundClaimedAt = Date.now() - 11 * 60_000;
@@ -792,7 +793,7 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
       return reqEmitter;
     });
 
-    // 1st attempt: fails on transport drop
+    // 1st attempt: transport drop -> UNCERTAIN outcome, identity retained.
     await expect(
       autoRefund({
         orderId: "ord_wh_conv_1",
@@ -801,7 +802,7 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
         reason: "conv reason",
         refundRequestId: "req_wh_conv_1",
       })
-    ).rejects.toMatchObject({ statusCode: 502, code: "REFUND_GATEWAY_FAILED" });
+    ).rejects.toMatchObject({ statusCode: 409, code: "REFUND_RECONCILIATION_REQUIRED" });
 
     // Webhook refund.processed lands asynchronously:
     // It adds rfnd_echo_wh_123 to order.refundLedger and updates refundedTotalPaise
@@ -878,7 +879,7 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
       return reqEmitter;
     });
 
-    // 1st attempt: fails on transport drop
+    // 1st attempt: transport drop -> UNCERTAIN, identity retained.
     await expect(
       autoRefund({
         orderId: "ord_full_wh",
@@ -887,7 +888,7 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
         reason: "full cancel reason",
         refundRequestId: "req_full_pending_1",
       })
-    ).rejects.toMatchObject({ statusCode: 502 });
+    ).rejects.toMatchObject({ statusCode: 409, code: "REFUND_RECONCILIATION_REQUIRED" });
 
     // Webhook delivers full capture refund in background
     savedDocs["orders/ord_full_wh"].refundLedger = { rfnd_full_echo_200: 20000 };
