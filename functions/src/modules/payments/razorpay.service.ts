@@ -4354,7 +4354,15 @@ export async function autoRefund(
     // reconciler later withdrew the row as stale. The row was READ at the top of
     // this transaction (before any write) and is completed here in the SAME
     // transaction that records the gateway receipt.
-    if (refundRowRefForCompletion && refundRowExisted) {
+    // A HUMAN decision is never rewritten by a refund completing. REJECTED means
+    // an operator refused this request; if a refund still moved (e.g. released
+    // out-of-band) that is a separate fact to record, not a reason to relabel
+    // their decision. WITHDRAWN is likewise terminal.
+    const priorStatus = refundRowExisted
+      ? String((refundRowSnapForCompletion?.data() || {}).status || "").toUpperCase()
+      : "";
+    const humanDecided = priorStatus === "REJECTED" || priorStatus === "WITHDRAWN";
+    if (refundRowRefForCompletion && refundRowExisted && !humanDecided) {
       tx.set(
         refundRowRefForCompletion,
         {
@@ -4365,6 +4373,22 @@ export async function autoRefund(
           settledPaise: Number(refundResult.amount) || requestedPaise || null,
           processedBy: caller?.email || caller?.uid || "server",
           completedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } else if (refundRowRefForCompletion && humanDecided) {
+      // Record the money truth WITHOUT touching the decision status.
+      tx.set(
+        refundRowRefForCompletion,
+        {
+          refundAfterDecision: {
+            gatewayRefundId: refundResult.id,
+            settledPaise: Number(refundResult.amount) || requestedPaise || null,
+            processedBy: caller?.email || caller?.uid || "server",
+            at: admin.firestore.FieldValue.serverTimestamp(),
+            note: "A refund was processed after this request was already decided — review required.",
+          },
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }

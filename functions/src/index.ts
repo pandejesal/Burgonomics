@@ -5,7 +5,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as functionsV1 from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import express from "express";
-import type { Response } from "express";
+import type { Response, NextFunction } from "express";
 import cors from "cors";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
@@ -281,6 +281,33 @@ app.use(
     },
   })
 );
+
+/**
+ * JSON body errors must fail CLOSED in the API's own contract, not as Express's
+ * default HTML page. Two distinct cases:
+ *  - malformed JSON: 400 with a machine code, so a client can react;
+ *  - oversized body: 413 (the parser's real verdict), never a 5xx.
+ *
+ * NOTE (deliberate): the parser still runs before auth, because the webhook
+ * routes need the raw bytes and their signature covers the body. A caller can
+ * therefore force parsing up to the 2 MB cap before authentication. That is
+ * bounded and rate-limited above, and is recorded as a hardening note rather
+ * than pretending auth precedes parsing.
+ */
+const jsonBodyErrorHandler = (err: any, _req: any, res: any, next: any) => {
+  if (!err) return next();
+  const type = String(err?.type || "");
+  if (type === "entity.parse.failed") {
+    res.status(400).json({ error: "Malformed JSON body", code: "INVALID_JSON" });
+    return;
+  }
+  if (type === "entity.too.large") {
+    res.status(413).json({ error: "Request body too large", code: "PAYLOAD_TOO_LARGE" });
+    return;
+  }
+  next(err);
+};
+app.use(jsonBodyErrorHandler as any);
 
 const REGION = "asia-south1";
 
