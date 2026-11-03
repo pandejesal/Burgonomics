@@ -164,6 +164,13 @@ beforeEach(() => {
   config.mock.porterDispatch = false;
 
   for (const k of Object.keys(savedDocs)) delete savedDocs[k];
+  // Canonical branch record: the pickup contact is resolved ONLY from
+  // `branches/{branchId}` (client-writable `order.store` is not an authority).
+  savedDocs["branches/branch_ahmedabad_1"] = {
+    name: "Burgonomics CG Road",
+    phone: "+91 98250 12345",
+    coordinates: { lat: 23.0131, lng: 72.5085 },
+  };
   fetchCalls = [];
   vi.clearAllMocks();
 });

@@ -161,6 +161,7 @@ service cloud.firestore {
         'petpoojaAcceptedNoId', 'petpoojaAcceptedNoIdAt', 'petpoojaAcceptedNoIdAck',
         'petpoojaAcceptedNoIdSource', 'petpoojaAcceptedUnrecorded', 'petpoojaAcceptedAck',
         'petpoojaStatus', 'petpoojaSyncStatus', 'petpoojaRetryCount',
+        'petpoojaNextRetryAtMs',
         'petpoojaPushClaimedAt', 'petpoojaClaimedAt', 'petpoojaAmbiguousProcessing',
         'petpoojaCallbackAck', 'petpoojaCallbackOrderId', 'petpoojaCallbackClientRef',
         'petpoojaKitchenStatus', 'petpoojaWebhookEventId', 'petpoojaWebhookReceivedAtMs',
@@ -193,6 +194,7 @@ service cloud.firestore {
         'petpoojaAcceptedNoId', 'petpoojaAcceptedNoIdAt', 'petpoojaAcceptedNoIdAck',
         'petpoojaAcceptedNoIdSource', 'petpoojaAcceptedUnrecorded', 'petpoojaAcceptedAck',
         'petpoojaStatus', 'petpoojaSyncStatus', 'petpoojaRetryCount',
+        'petpoojaNextRetryAtMs',
         'petpoojaPushClaimedAt', 'petpoojaClaimedAt', 'petpoojaAmbiguousProcessing',
         'petpoojaCallbackAck', 'petpoojaCallbackOrderId', 'petpoojaCallbackClientRef',
         'petpoojaKitchenStatus', 'petpoojaWebhookEventId', 'petpoojaWebhookReceivedAtMs',
@@ -529,7 +531,11 @@ service cloud.firestore {
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'price', 'costPrice', 'compareAtPrice', 'discountPercentage', 'name', 'description',
           'categoryId', 'categoryName', 'branchId', 'restId', 'petpoojaItemId', 'id',
-          'customizations', 'packingCharge', 'priceAvailable'
+          'customizations', 'packingCharge', 'priceAvailable',
+          // POS delisting state is decided by the Petpooja sync, never by a
+          // client: without these a partner could clear the marker while the
+          // SKU is still absent from the POS.
+          'delistedFromPos', 'delistedAt'
         ])
       );
       allow delete: if isBrandOwner();

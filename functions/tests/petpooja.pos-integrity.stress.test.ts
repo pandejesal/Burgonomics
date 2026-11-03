@@ -548,7 +548,7 @@ describe("F7 — menu tombstone guard", () => {
       snapshotRows().some(
         (path) =>
           savedDocs[path].severity === "high" &&
-          String(savedDocs[path].message).includes("REFUSED to retire ghost SKUs")
+          String(savedDocs[path].message).includes("REFUSED to delist POS SKUs")
       )
     ).toBe(true);
     // The guard's own memory of the catalogue size is not lowered.
@@ -556,11 +556,22 @@ describe("F7 — menu tombstone guard", () => {
   });
 
   it("still retires a genuinely absent SKU when the feed is complete", async () => {
+    // A 10-SKU baseline so ONE retirement (10%) stays inside the 20% ceiling.
+    setMockDoc("branches/pos_branch", {
+      name: "Completeness Branch",
+      petpoojaStoreId: "res_pos_1",
+      petpoojaItemCount: 10,
+    });
     for (const id of ["a", "b", "c"]) seedProduct(id);
+    for (let i = 0; i < 7; i++) seedProduct(`keep${i}`);
 
     await syncPetpoojaMenu("pos_branch", undefined, {
       success: "1",
-      items: [feedItem("a"), feedItem("b")],
+      items: [
+        feedItem("a"),
+        feedItem("b"),
+        ...Array.from({ length: 7 }, (_v, i) => feedItem(`keep${i}`)),
+      ],
     });
 
     expect(savedDocs["products/prod_pos_branch_a"].inStock).toBe(true);

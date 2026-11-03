@@ -7,6 +7,7 @@ import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig } from "./client";
 import { calculateOrderPricing, applyCatalogBasePrice, validateOptionSelections } from "../payments/pricing.engine";
 import { resolveKotCustomerPhone } from "../../core/dropContact";
+import { petpoojaRetryScheduledAtMs } from "./retryBackoff";
 import * as admin from "firebase-admin";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 
@@ -1543,6 +1544,11 @@ export async function resolvePetpoojaKotAmbiguity(
         petpoojaStatus: "pending_retry",
         petpoojaSyncStatus: "pending_retry",
         kotSyncFailed: false,
+        // STAFF DECISION, not an automatic retry: a human is asking for the one
+        // attempt the worker will now make, so it must NOT wait out the
+        // exponential backoff. Due immediately (the lease above is what keeps
+        // it single-push). The worker's own next failure reschedules normally.
+        petpoojaNextRetryAtMs: null,
         // Nothing is accepted yet, so the baseline generation is 0 (defined,
         // never `undefined`, so a read-back always compares numbers).
         petpoojaAcceptanceGeneration: acceptanceGenerationOf(order),
@@ -1636,6 +1642,10 @@ export async function resolvePetpoojaKotAmbiguity(
                 petpoojaKotNotPrintedConfirmedAt: now,
                 petpoojaResolveRetryAt: Date.now(),
                 petpoojaResolveRetryBy: resolvedBy,
+                // Same rule as the ambiguous lane above: a staff retry is an
+                // explicit decision to push NOW, so the backoff does not gate
+                // it. The push this decision authorises happens inline.
+                petpoojaNextRetryAtMs: null,
                 petpoojaPushClaimedAt: null,
                 petpoojaClaimedAt: null,
               },
@@ -2344,6 +2354,14 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
               petpoojaStatus: parkedStatus,
               petpoojaSyncStatus: parkedStatus,
               petpoojaRetryCount: freshRetry,
+              // Backoff: the retry worker must not re-POST on the next 5-min
+              // tick. Written in the SAME merge as the retry status so the two
+              // can never disagree. A structural refusal
+              // (blocked_configuration) is not retried at all, so it carries no
+              // schedule.
+              petpoojaNextRetryAtMs: structural
+                ? null
+                : petpoojaRetryScheduledAtMs(freshRetry),
               lastPetpoojaError: err.message,
               ...(structural ? { kotSyncFailed: true } : {}),
               petpoojaPushClaimedAt: null,
@@ -2392,6 +2410,10 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
                 petpoojaStatus: parkedStatus,
                 petpoojaSyncStatus: parkedStatus,
                 petpoojaRetryCount: fallbackRetry,
+                // Same schedule as the transactional write above.
+                petpoojaNextRetryAtMs: structural
+                  ? null
+                  : petpoojaRetryScheduledAtMs(fallbackRetry),
                 lastPetpoojaError: err.message,
                 ...(structural ? { kotSyncFailed: true } : {}),
                 petpoojaPushClaimedAt: null,
