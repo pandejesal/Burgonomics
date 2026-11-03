@@ -8,6 +8,17 @@ import path from "path";
 // resolves. No behavior change for existing suites — identical module code.
 export default defineConfig({
   test: {
+    // Files run in separate PROCESSES, not threads.
+    //
+    // Several suites declare a capability as a module-load side effect because
+    // the config module reads process.env at import time — e.g.
+    // dispatch.autoRebook sets PORTER_ENABLED=true in vi.hoisted, while
+    // dispatch.porter-retired asserts the unset default. Under the default
+    // thread pool those files share one process.env, so the pair raced: the
+    // full suite intermittently reported "is disabled when PORTER_ENABLED is
+    // unset" as failing while passing in isolation. Fork isolation removes the
+    // shared mutable state by construction instead of serialising the files.
+    pool: "forks",
     // Emulator-backed suites are excluded from the default run because they
     // require a live emulator that `npm test` does not start (the deploy script
     // requires `npm test` to pass on a bare machine). They are NOT deleted or
