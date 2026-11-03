@@ -207,7 +207,13 @@ service cloud.firestore {
         // staff-editable basket would let the kitchen cook a different order
         // than the one charged.
         'items', 'orderType', 'fulfillment', 'deliveryStatus',
-        'refund', 'refunds'
+        'refund', 'refunds',
+        // Capture-fulfilment recovery state (payments). These decide whether an
+        // order may be confirmed, refunded, or escalated to a human, so a
+        // branch/brand owner must never be able to forge or wipe them:
+        // `captureStall` alone would let a stalled paid order be hidden, and
+        // `captureFulfillmentState` drives the recovery scan's lane membership.
+        'captureFulfillment', 'captureFulfillmentState', 'captureStall',
       ];
     }
 

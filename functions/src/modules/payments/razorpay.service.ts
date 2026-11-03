@@ -2884,6 +2884,56 @@ export function __setRefundPostForTests(
 }
 
 /**
+ * Does the LIVE gateway already show a refund on this payment?
+ *
+ * This is the guard that stops "fed AND refunded": staff can refund in the
+ * Razorpay dashboard at any moment, and an automatic recovery that confirms
+ * afterwards would cook food that has already been returned.
+ *
+ * Returns:
+ *  - `refunded`    — the gateway reports a refunded amount / refund status;
+ *  - `clean`       — the gateway answered and shows no refund;
+ *  - `unknown`     — the read failed (or was ambiguous): the caller must NOT
+ *                    confirm this tick (fail closed) and must not treat the
+ *                    failed read as a recovery failure.
+ *
+ * Uses the SAME fetch seam as verify (`__setPaymentsFetchForTests`) so no test
+ * touches the network, and never writes anything.
+ */
+export type GatewayRefundProbe = "refunded" | "clean" | "unknown";
+
+export async function probeGatewayRefund(
+  razorpayPaymentId: string
+): Promise<GatewayRefundProbe> {
+  if (!razorpayPaymentId) return "unknown";
+  let payment: any;
+  try {
+    payment = paymentsFetchOverride
+      ? await paymentsFetchOverride(razorpayPaymentId)
+      : await getRazorpayClient().payments.fetch(razorpayPaymentId);
+  } catch (err: any) {
+    console.warn(
+      `[Payments] refund probe failed for ${razorpayPaymentId} — treating as unknown:`,
+      err?.message || err
+    );
+    return "unknown";
+  }
+  if (!payment || typeof payment !== "object") return "unknown";
+
+  const refundedPaise = Number(payment.amount_refunded);
+  if (Number.isFinite(refundedPaise) && refundedPaise > 0) return "refunded";
+  const refundStatus = String(payment.refund_status ?? "").toLowerCase();
+  if (refundStatus && refundStatus !== "null" && refundStatus !== "none") {
+    return "refunded";
+  }
+  // A payment whose own status says refunded also counts.
+  if (String(payment.status ?? "").toLowerCase() === "refunded") return "refunded";
+  // An explicit, readable status with no refund fields is proof of "clean".
+  if (typeof payment.status === "string" && payment.status.length > 0) return "clean";
+  return "unknown";
+}
+
+/**
  * Fetches the live Razorpay payment and binds it to the server-priced order.
  * Fail-closed: order binding, paise amount, captured status, and currency must
  * ALL match. Any mismatch writes a payment_discrepancies doc for ops review

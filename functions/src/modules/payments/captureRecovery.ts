@@ -550,17 +550,21 @@ async function retryStuckDecisionAlert(args: {
  *  - an undelivered alert is marked `superseded`: nobody should be paged for a
  *    decision that no longer needs making;
  *  - an ALREADY DELIVERED alert is left in place (staff may already be holding
- *    the case) but the case is stamped `recovered`, so nobody refunds an order
- *    that was actually fulfilled. This is the double-handling risk: the alert
- *    said "neither confirmed nor refunded", and that is now false.
+ *    the case) AND a SECOND, follow-up alert is queued through the same outbox:
+ *    "order X recovered automatically and was confirmed; the customer will
+ *    receive food; do NOT refund". Stamping the case alone is not enough —
+ *    nobody re-reads a case, and a staff member holding only the first alert
+ *    would otherwise refund an order that was actually fulfilled.
  */
 async function clearCaptureStallOnRecovery(args: {
   orderId: string;
   paymentId: string;
   outcome: "confirmed" | "compensated";
+  nowMs: number;
 }): Promise<void> {
   const orderRef = db.collection("orders").doc(args.orderId);
   const caseRef = gateCaseRef(args.paymentId);
+  let needsFollowUp = false;
   try {
     await (db as any).runTransaction(async (tx: any) => {
       const orderSnap = await tx.get(orderRef);
@@ -577,6 +581,9 @@ async function clearCaptureStallOnRecovery(args: {
       if (caseData.status !== "needs_review") return false;
       const delivery = deliveryOf(caseData);
 
+      const alreadyDelivered = delivery.state === "delivered";
+      needsFollowUp = alreadyDelivered;
+
       tx.set(
         caseRef,
         {
@@ -588,14 +595,25 @@ async function clearCaptureStallOnRecovery(args: {
                 ? "Order was confirmed by automatic recovery — do NOT refund."
                 : "Capture was compensated by automatic recovery — no further refund due.",
           },
-          alertDelivery:
-            delivery.state === "delivered"
-              ? { ...delivery, recoveredAtMs: Date.now() }
-              : {
-                  ...delivery,
-                  state: "superseded",
-                  lastError: "gate_recovered",
-                },
+          alertDelivery: alreadyDelivered
+            ? {
+                ...delivery,
+                recoveredAtMs: Date.now(),
+                // Queue the follow-up on the SAME delivery record, so it uses
+                // the same lease/backoff/sanitized machinery.
+                state: "pending",
+                alertKind: "recovered_confirmed",
+                attempts: 0,
+                lastError: null,
+                leaseUntilMs: 0,
+                nextAttemptAtMs: 0,
+                deliveredAtMs: 0,
+              }
+            : {
+                ...delivery,
+                state: "superseded",
+                lastError: "gate_recovered",
+              },
         },
         { merge: true }
       );
@@ -604,6 +622,202 @@ async function clearCaptureStallOnRecovery(args: {
   } catch (err: any) {
     console.warn(
       `[Capture Recovery] could not clear the stall record for order ${args.orderId}:`,
+      err?.message || err
+    );
+    return;
+  }
+
+  if (needsFollowUp) {
+    await deliverRecoveredConfirmedAlert({
+      orderId: args.orderId,
+      paymentId: args.paymentId,
+      nowMs: args.nowMs,
+    });
+  }
+}
+
+/**
+ * Sends (and retries) the "recovered automatically — do NOT refund" follow-up.
+ *
+ * Same outbox, same lease, same capped backoff, same sanitized error codes as
+ * every other alert here, and the case records which alert kind is pending
+ * (`alertDelivery.alertKind`) so a retry of the FIRST alert can never be
+ * confused with this one.
+ */
+async function deliverRecoveredConfirmedAlert(args: {
+  orderId: string;
+  paymentId: string;
+  nowMs: number;
+}): Promise<"delivered" | "pending" | "skipped"> {
+  const caseRef = gateCaseRef(args.paymentId);
+  const snap = await caseRef.get().catch(() => null);
+  if (!snap || !snap.exists) return "skipped";
+  const caseData = (snap.data() || {}) as any;
+  if (caseData.status !== "needs_review") return "skipped";
+  const delivery = deliveryOf(caseData);
+  if (delivery.alertKind !== "recovered_confirmed") return "skipped";
+  if (delivery.state === "delivered") return "skipped";
+  if (delivery.state === "sending" && Number(delivery.leaseUntilMs) > args.nowMs) {
+    return "skipped";
+  }
+  if (Number(delivery.nextAttemptAtMs) > args.nowMs) return "skipped";
+
+  // Claim the attempt before sending (one sender at a time).
+  const claimedAttempt = await (db as any)
+    .runTransaction(async (tx: any) => {
+      const caseSnap = await tx.get(caseRef);
+      if (!caseSnap || !caseSnap.exists) return 0;
+      const current = (caseSnap.data() || {}) as any;
+      if (current.status !== "needs_review") return 0;
+      const currentDelivery = deliveryOf(current);
+      if (currentDelivery.alertKind !== "recovered_confirmed") return 0;
+      if (currentDelivery.state === "delivered") return 0;
+      if (
+        currentDelivery.state === "sending" &&
+        Number(currentDelivery.leaseUntilMs) > args.nowMs
+      ) {
+        return 0;
+      }
+      const attempts = Math.floor(Number(currentDelivery.attempts) || 0) + 1;
+      tx.set(
+        caseRef,
+        {
+          alertDelivery: {
+            ...currentDelivery,
+            state: "sending",
+            attempts,
+            leaseUntilMs: args.nowMs + CAPTURE_GATE_LEASE_MS,
+          },
+        },
+        { merge: true }
+      );
+      return attempts;
+    })
+    .catch(() => 0);
+  if (!claimedAttempt) return "skipped";
+
+  let delivered = false;
+  let failureCode = "";
+  try {
+    await captureErrorSnapshot(
+      {
+        source: "payments",
+        severity: "high",
+        message:
+          `UPDATE — order ${args.orderId} RECOVERED AUTOMATICALLY and was CONFIRMED. ` +
+          `The customer WILL receive food. Do NOT refund this order. ` +
+          `(An earlier alert said it was neither confirmed nor refunded; that is now resolved.)`,
+        orderId: args.orderId,
+        razorpayPaymentId: args.paymentId,
+      },
+      {
+        requireAlertDelivery: true,
+        snapshotId: `err_capture_recovered_${args.orderId}`,
+      }
+    );
+    delivered = true;
+  } catch (err: any) {
+    const failures = Array.isArray(err?.detail?.failures) ? err.detail.failures : [];
+    const code = typeof err?.code === "string" ? err.code : "ALERT_DELIVERY_FAILED";
+    failureCode = [code, ...failures].filter(Boolean).join("|").slice(0, 200);
+  }
+
+  try {
+    await (db as any).runTransaction(async (tx: any) => {
+      const caseSnap = await tx.get(caseRef);
+      if (!caseSnap || !caseSnap.exists) return false;
+      const current = (caseSnap.data() || {}) as any;
+      if (current.status !== "needs_review") return false;
+      const currentDelivery = deliveryOf(current);
+      if (Number(currentDelivery.attempts) > claimedAttempt) return false;
+
+      tx.set(
+        caseRef,
+        {
+          alertDelivery: delivered
+            ? {
+                ...currentDelivery,
+                state: "delivered",
+                alertKind: "recovered_confirmed",
+                attempts: claimedAttempt,
+                deliveredAtMs: Date.now(),
+                lastError: null,
+                leaseUntilMs: 0,
+                nextAttemptAtMs: 0,
+              }
+            : {
+                ...currentDelivery,
+                state: "pending",
+                alertKind: "recovered_confirmed",
+                attempts: claimedAttempt,
+                lastError: failureCode || "ALERT_DELIVERY_FAILED",
+                leaseUntilMs: 0,
+                nextAttemptAtMs: Date.now() + alertRetryDelayMs(claimedAttempt),
+              },
+        },
+        { merge: true }
+      );
+      return true;
+    });
+  } catch (err: any) {
+    console.error(
+      `[Capture Recovery] could not record the recovered-follow-up delivery for ` +
+        `order ${args.orderId} (${failureCode || "delivered"}):`,
+      err?.message || err
+    );
+  }
+
+  if (!delivered) {
+    console.error(
+      `[Capture Recovery] recovered-follow-up alert NOT delivered for order ` +
+        `${args.orderId} — code ${failureCode || "ALERT_DELIVERY_FAILED"}`
+    );
+  }
+  return delivered ? "delivered" : "pending";
+}
+
+/**
+ * The gateway (or staff in the dashboard) already refunded this payment, so the
+ * order must NOT be confirmed automatically: the customer would get food that
+ * has already been paid back.
+ *
+ * It records the fact on the case for staff and stands the row down from
+ * automatic confirmation. It intentionally does NOT write any refund
+ * accounting of its own — that is the refund webhook's job.
+ */
+async function markCaseRefundedExternally(args: {
+  orderId: string;
+  paymentId: string;
+}): Promise<void> {
+  const caseRef = gateCaseRef(args.paymentId);
+  try {
+    const snap = await caseRef.get();
+    const caseData = snap?.exists ? ((snap.data() || {}) as any) : null;
+    const delivery = deliveryOf(caseData);
+    await caseRef.set(
+      {
+        status: "refunded_externally",
+        refundedExternallyAtMs: Date.now(),
+        staffAction: "refund_already_issued_do_not_confirm",
+        ...(delivery.state === "delivered"
+          ? {}
+          : { alertDelivery: { ...delivery, state: "superseded", lastError: "refunded_externally" } }),
+      },
+      { merge: true }
+    );
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message:
+        `Order ${args.orderId} was REFUNDED at the gateway while awaiting recovery — ` +
+        `automatic confirmation withheld so the customer is not fed AND refunded. ` +
+        `No further action unless the refund is reversed.`,
+      orderId: args.orderId,
+      razorpayPaymentId: args.paymentId,
+    }).catch(() => undefined);
+  } catch (err: any) {
+    console.warn(
+      `[Capture Recovery] could not mark order ${args.orderId} refunded-externally:`,
       err?.message || err
     );
   }
@@ -659,6 +873,12 @@ type DeliveryRecord = {
   escalatedAtMs?: number;
   /** Set when automatic recovery later resolved the decision. */
   recoveredAtMs?: number;
+  /**
+   * Which alert this delivery record is carrying. `recovered_confirmed` is the
+   * follow-up that says the order was fulfilled, so a retry can never confuse it
+   * with the original "stuck decision" page.
+   */
+  alertKind?: "stuck_decision" | "recovered_confirmed" | "refund_exhausted";
 };
 
 function deliveryOf(caseData: any): DeliveryRecord {
@@ -763,23 +983,39 @@ async function escalateExhaustedRefund(args: {
           // Staff settled it: never alert again, never reset their status.
           return { kind: "skip" } as const;
         }
-        if (delivery.state === "delivered") return { kind: "skip" } as const;
+
+        // ── REASON UPGRADE ───────────────────────────────────────────────
+        // A refund-exhausted case is MORE urgent than a stuck decision. If this
+        // case was raised for a different reason and its alert already went
+        // out, silently keeping the old reason would hide the new problem.
+        // Re-open the delivery so the new alert really sends — but an identical
+        // reason never re-alerts, so a steady case cannot spam staff.
+        const priorReason = String(caseData.reason || "");
+        const reasonChanged = priorReason !== "refund_retries_exhausted";
+        const alreadyDelivered = delivery.state === "delivered";
+        if (reasonChanged && alreadyDelivered) {
+          // Falls through with a reset delivery below.
+        } else if (alreadyDelivered) {
+          return { kind: "skip" } as const;
+        }
         // A sibling is mid-send under a live lease.
         if (
+          !(reasonChanged && alreadyDelivered) &&
           delivery.state === "sending" &&
           Number(delivery.leaseUntilMs) > nowMs
         ) {
           return { kind: "skip" } as const;
         }
-        if (Number(delivery.nextAttemptAtMs) > nowMs) return { kind: "skip" } as const;
+        if (!(reasonChanged && alreadyDelivered) && Number(delivery.nextAttemptAtMs) > nowMs) {
+          return { kind: "skip" } as const;
+        }
       }
 
       const attempts = Math.max(
         Math.floor(Number(delivery.attempts) || 0) + 1,
         1
       );
-      // A still-owed row is transitioned to `refund_exhausted` in THIS same
-      // transaction as its ops case: if the case write fails below the whole
+      // A still-owed row is transitioned to `refund_exhausted` in THIS same      // transaction as its ops case: if the case write fails below the whole
       // transaction aborts, so the row stays owed and the next sweep reclaims
       // it. That is what makes a transient case-write failure recoverable
       // instead of permanently losing the escalation.
@@ -802,6 +1038,17 @@ async function escalateExhaustedRefund(args: {
           { merge: true }
         );
       }
+      const priorReason = String(caseData?.reason || "");
+      const upgradingReason =
+        !!caseData &&
+        priorReason.length > 0 &&
+        priorReason !== "refund_retries_exhausted";
+      // A reason change restarts delivery at attempt 1 so the MORE urgent alert
+      // really goes out (the delivered record would otherwise suppress it).
+      const deliveryAttempts = upgradingReason ? 1 : Math.max(
+        Math.floor(Number(delivery.attempts) || 0) + 1,
+        1
+      );
       tx.set(
         caseRef,
         {
@@ -821,17 +1068,22 @@ async function escalateExhaustedRefund(args: {
           ...(caseData && caseData.receivedAt ? {} : {
             receivedAt: admin.firestore.FieldValue.serverTimestamp(),
           }),
+          ...(upgradingReason
+            ? { reasonUpgradedAtMs: nowMs, priorReason }
+            : {}),
           alertDelivery: {
             state: "sending",
-            attempts,
+            alertKind: "refund_exhausted",
+            attempts: deliveryAttempts,
             leaseUntilMs: nowMs + CAPTURE_GATE_LEASE_MS,
             nextAttemptAtMs: nowMs + CAPTURE_GATE_LEASE_MS,
             lastError: null,
+            ...(upgradingReason ? { deliveredAtMs: 0 } : {}),
           },
         },
         { merge: true }
       );
-      return { kind: "send", attempts } as const;
+      return { kind: "send", attempts: deliveryAttempts } as const;
     });
   } catch (err: any) {
     console.error(
@@ -1069,6 +1321,42 @@ export async function recoverStuckCaptureFulfilments(
     }
   }
 
+  // ── PENDING FOLLOW-UPS ───────────────────────────────────────────────────
+  // A confirmed order LEAVES every recovery lane, yet its "recovered — do NOT
+  // refund" follow-up may still be undelivered. Those cases are retried here, by
+  // case id, so a transient channel failure cannot silently lose the one message
+  // that stops staff refunding a fulfilled order.
+  try {
+    const pending = await db
+      .collection("unmatched_payments")
+      .where("alertDelivery.state", "==", "pending")
+      .limit(CAPTURE_RECOVERY_SCAN_LIMIT)
+      .get();
+    for (const caseDoc of Array.isArray(pending?.docs) ? pending.docs : []) {
+      const caseData = ((typeof caseDoc?.data === "function" ? caseDoc.data() : caseDoc) ||
+        {}) as any;
+      const delivery = deliveryOf(caseData);
+      if (delivery.alertKind !== "recovered_confirmed") continue;
+      if (caseData.status !== "needs_review") continue;
+      if (Number(delivery.nextAttemptAtMs) > nowMs) {
+        stats.escalationPending += 1;
+        continue;
+      }
+      const result = await deliverRecoveredConfirmedAlert({
+        orderId: String(caseData.orderId || ""),
+        paymentId: String(caseData.razorpayPaymentId || ""),
+        nowMs,
+      });
+      if (result === "delivered") stats.escalated += 1;
+      else if (result === "pending") stats.escalationPending += 1;
+    }
+  } catch (err: any) {
+    console.warn(
+      "[Capture Recovery] pending follow-up scan failed — retried next tick:",
+      err?.message || err
+    );
+  }
+
   const seen = new Set<string>();
   stats.scanned = docs.length;
 
@@ -1251,6 +1539,7 @@ export async function recoverStuckCaptureFulfilments(
           orderId,
           paymentId,
           outcome: "compensated",
+          nowMs,
         });
         continue;
       }
@@ -1291,7 +1580,53 @@ export async function recoverStuckCaptureFulfilments(
           stats.skipped += 1;
           continue;
         }
+
+        // ── FED-AND-REFUNDED GUARD ─────────────────────────────────────────
+        // Only for a row a human was already paged about (an escalated stall
+        // case exists): staff can refund in the Razorpay dashboard at any
+        // moment, and confirming afterwards would cook food that has already
+        // been returned. A healthy row never pays for this extra read.
+        const escalatedCase = await gateCaseRef(paymentId).get().catch(() => null);
+        const caseData = escalatedCase?.exists
+          ? ((escalatedCase.data() || {}) as any)
+          : null;
+        const staffResolved =
+          !!caseData &&
+          typeof caseData.status === "string" &&
+          caseData.status !== "needs_review";
+
+        if (caseData && !staffResolved) {
+          const { probeGatewayRefund } = await import("./razorpay.service");
+          const probe = await probeGatewayRefund(paymentId);
+          if (probe !== "clean") {
+            // `refunded` -> record it and stand down; `unknown` -> fail CLOSED
+            // for this tick without counting a recovery failure (an unreadable
+            // gateway is not evidence the customer is stuck).
+            if (probe === "refunded") {
+              await markCaseRefundedExternally({ orderId, paymentId });
+              stats.skipped += 1;
+            } else {
+              await captureErrorSnapshot({
+                source: "payments",
+                severity: "medium",
+                message:
+                  `Refund probe unreadable for escalated order ${orderId} — automatic ` +
+                  `confirmation withheld this tick (fail closed)`,
+                orderId,
+                razorpayPaymentId: paymentId,
+              }).catch(() => undefined);
+              stats.skipped += 1;
+            }
+            continue;
+          }
+        }
+
         const { completeRecoveredCapture } = await import("./razorpay.service");
+        // HONEST LIMIT: a dashboard refund can still land between this gateway
+        // read and the confirmation transaction below; that window is small
+        // (one order-doc write) and unavoidable without a gateway-side lock, so
+        // the follow-up alert is the backstop rather than a claim of
+        // impossibility.
         const confirmed = await completeRecoveredCapture({
           orderId,
           razorpayPaymentId: paymentId,
@@ -1304,6 +1639,7 @@ export async function recoverStuckCaptureFulfilments(
             orderId,
             paymentId,
             outcome: "confirmed",
+            nowMs,
           });
         } else {
           // A paid customer whose confirmation keeps failing must reach a human.

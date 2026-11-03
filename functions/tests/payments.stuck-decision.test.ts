@@ -228,7 +228,10 @@ vi.mock("../src/core/errors", async (io) => {
 });
 
 import { captureErrorSnapshot } from "../src/core/errors";
-import { __setRefundPostForTests } from "../src/modules/payments/razorpay.service";
+import {
+  __setPaymentsFetchForTests,
+  __setRefundPostForTests,
+} from "../src/modules/payments/razorpay.service";
 import {
   recoverStuckCaptureFulfilments,
   CAPTURE_STALL_ESCALATE_AFTER_MS,
@@ -335,11 +338,23 @@ beforeEach(() => {
     control.refundPosts.push({ paymentId, body });
     return { id: `rfnd_${paymentId}`, payment_id: paymentId, amount: 10000, status: "processed" };
   });
+  // Default gateway truth: captured, NO refund. A specific test overrides this to
+  // simulate a dashboard refund or an unreadable gateway.
+  __setPaymentsFetchForTests(async (paymentId: string) => ({
+    id: paymentId,
+    order_id: `rzp_${paymentId}`,
+    amount: 10000,
+    currency: "INR",
+    status: "captured",
+    amount_refunded: 0,
+    notes: {},
+  }));
 });
 
 afterEach(() => {
   vi.useRealTimers();
   __setRefundPostForTests(null);
+  __setPaymentsFetchForTests(null);
 });
 
 describe("stuck DECISION escalation (checking / fulfillable)", () => {
@@ -378,21 +393,27 @@ describe("stuck DECISION escalation (checking / fulfillable)", () => {
     }
   });
 
-  it("a stalled `checking` row escalates the same way", async () => {
+  it("a `checking` row ALWAYS resolves to a terminal gate in one sweep, so it cannot stall (proven, not assumed)", async () => {
+    // PROVEN FROM THE CODE, deliberately not a hollow "checking escalates" test:
+    // `guardCaptureFulfillment` claims the `checking` lease and, in the SAME call,
+    // unconditionally writes a terminal decision (`fulfillable`, `refund_pending`
+    // or `refunded`) via recordGateState. A `checking` row therefore cannot
+    // survive a completed sweep — its only stall mode is a CRASH between the
+    // claim write and that decision, which surfaces through the sweep's outer
+    // catch as `stats.failed` and is reported as a residual limit rather than
+    // pretended to be covered by the stall counter.
     seedOrder("ord_check", "checking");
-    // A `checking` row whose guard keeps returning pending is NOT a failure; use
-    // an unconfirmable decision by making the confirm seam fail.
-    control.confirmFailsFor.add("ord_check");
     const alerts = await installRealAlerts();
     try {
-      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS + 10 * 60_000);
-      expect(caseOf("pay_ord_check")).toBeDefined();
-      expect(alerts.sends.length).toBeGreaterThan(0);
+      await recoverStuckCaptureFulfilments();
+
+      const gateState = orderOf("ord_check").captureFulfillment.state;
+      expect(["fulfillable", "refund_pending", "refunded"]).toContain(gateState);
+      expect(orderOf("ord_check").captureFulfillment.state).not.toBe("checking");
+      // No human is paged for a decision that resolved itself, and no money moved.
+      expect(caseOf("pay_ord_check")).toBeUndefined();
+      expect(alerts.sends).toHaveLength(0);
       expect(control.refundPosts).toHaveLength(0);
-      const gateState =
-        orderOf("ord_check").captureFulfillment.state ??
-        orderOf("ord_check").captureFulfillmentState;
-      expect(["checking", "fulfillable"]).toContain(gateState);
     } finally {
       alerts.restore();
     }
@@ -450,26 +471,33 @@ describe("stuck DECISION escalation (checking / fulfillable)", () => {
     }
   });
 
-  it("a later success AFTER delivery records recovery on the case", async () => {
+  it("a later success AFTER delivery sends a follow-up 'do NOT refund' alert on the same outbox", async () => {
     seedOrder("ord_after", "fulfillable");
     control.confirmFailsFor.add("ord_after");
     const alerts = await installRealAlerts("ok");
     try {
       await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS + 10 * 60_000);
-      expect(alerts.sends.length).toBeGreaterThan(0);
+      const firstAlertCount = alerts.sends.length;
+      expect(firstAlertCount).toBeGreaterThan(0);
       expect(caseOf("pay_ord_after").alertDelivery.state).toBe("delivered");
 
       control.confirmFailsFor.delete("ord_after");
       control.confirmSucceedsOnce.add("ord_after");
       await sweepFor(10 * 60_000);
 
-      // The case stays for staff, but it is stamped recovered so nobody
-      // refunds an order that was actually fulfilled.
+      // The case stays for staff AND a SECOND, follow-up alert really went out:
+      // stamping the case alone is not enough, nobody re-reads a case.
       const staffCase = caseOf("pay_ord_after");
       expect(staffCase.status).toBe("needs_review");
       expect(staffCase.recovered).toMatchObject({ outcome: "confirmed" });
       expect(staffCase.recovered.note).toContain("do NOT refund");
-      expect(staffCase.alertDelivery.recoveredAtMs).toBeDefined();
+      expect(staffCase.alertDelivery.alertKind).toBe("recovered_confirmed");
+      expect(staffCase.alertDelivery.state).toBe("delivered");
+      expect(alerts.sends.length).toBe(firstAlertCount + 1);
+      const followUp = alerts.sends[alerts.sends.length - 1].text;
+      expect(followUp).toContain("ord_after");
+      expect(followUp.toLowerCase()).toContain("do not refund");
+      expect(followUp.toLowerCase()).toContain("confirmed");
       expect(orderOf("ord_after").captureStall).toBeNull();
       expect(control.refundPosts).toHaveLength(0);
     } finally {
@@ -505,6 +533,237 @@ describe("stuck DECISION escalation (checking / fulfillable)", () => {
       expect(staffCase.alertDelivery.deliveredAtMs).toBeUndefined();
       // Still retrying automatically; the row is not silently dropped.
       expect(orderOf("ord_nochan").captureFulfillment.state).toBe("fulfillable");
+    } finally {
+      alerts.restore();
+    }
+  });
+});
+
+// ===========================================================================
+// FED AND REFUNDED — real guards, not wording.
+// ===========================================================================
+describe("fed-and-refunded guards (escalated rows only)", () => {
+  it("a gateway refund BLOCKS confirmation: no confirm, no KOT, case marked refunded_externally", async () => {
+    seedOrder("ord_gwrefund", "fulfillable");
+    control.confirmFailsFor.add("ord_gwrefund");
+    const alerts = await installRealAlerts("ok");
+    try {
+      // Escalate first, so the order carries a delivered staff case.
+      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS + 10 * 60_000);
+      expect(alerts.sends.length).toBeGreaterThan(0);
+
+      // Staff refund it in the Razorpay dashboard.
+      __setPaymentsFetchForTests(async (paymentId: string) => ({
+        id: paymentId,
+        order_id: `rzp_${paymentId}`,
+        amount: 10000,
+        amount_refunded: 10000,
+        refund_status: "full",
+        currency: "INR",
+        status: "refunded",
+        notes: {},
+      }));
+
+      // Recovery would now succeed — but must stand down.
+      control.confirmFailsFor.delete("ord_gwrefund");
+      control.confirmSucceedsOnce.add("ord_gwrefund");
+
+      const stats = await recoverStuckCaptureFulfilments();
+
+      expect(stats.confirmed).toBe(0);
+      expect(orderOf("ord_gwrefund").status.code).not.toBe("CONFIRMED");
+      expect(orderOf("ord_gwrefund").petpoojaOrderId).toBeUndefined();
+      expect(caseOf("pay_ord_gwrefund").status).toBe("refunded_externally");
+      expect(caseOf("pay_ord_gwrefund").staffAction).toBe(
+        "refund_already_issued_do_not_confirm"
+      );
+      // Never issues a refund of its own; the refund webhook owns that.
+      expect(control.refundPosts).toHaveLength(0);
+    } finally {
+      alerts.restore();
+    }
+  });
+
+  it("an UNREADABLE gateway blocks confirmation, and is not counted as a recovery failure", async () => {
+    seedOrder("ord_gwfail", "fulfillable");
+    control.confirmFailsFor.add("ord_gwfail");
+    const alerts = await installRealAlerts("ok");
+    try {
+      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS + 10 * 60_000);
+      const stallBefore = orderOf("ord_gwfail").captureStall.failedAttempts;
+
+      __setPaymentsFetchForTests(async () => {
+        throw new Error("gateway unavailable");
+      });
+      control.confirmFailsFor.delete("ord_gwfail");
+      control.confirmSucceedsOnce.add("ord_gwfail");
+
+      const stats = await recoverStuckCaptureFulfilments();
+
+      // Fail closed for the tick…
+      expect(stats.confirmed).toBe(0);
+      expect(orderOf("ord_gwfail").status.code).not.toBe("CONFIRMED");
+      // …but an unreadable gateway is NOT evidence the customer is stuck.
+      expect(orderOf("ord_gwfail").captureStall.failedAttempts).toBe(stallBefore);
+      expect(control.refundPosts).toHaveLength(0);
+    } finally {
+      alerts.restore();
+    }
+  });
+
+  it("a healthy never-escalated row skips the extra gateway read", async () => {
+    seedOrder("ord_noprobe", "fulfillable");
+    control.confirmSucceedsOnce.add("ord_noprobe");
+    const alerts = await installRealAlerts("ok");
+    let probeCalls = 0;
+    __setPaymentsFetchForTests(async (paymentId: string) => {
+      probeCalls += 1;
+      return {
+        id: paymentId,
+        order_id: `rzp_${paymentId}`,
+        amount: 10000,
+        currency: "INR",
+        status: "captured",
+        amount_refunded: 0,
+        notes: {},
+      };
+    });
+    try {
+      await sweepFor(10 * 60_000);
+      expect(orderOf("ord_noprobe").paymentStatus).toBe("completed");
+      // No escalated case existed, so no extra gateway read was paid for.
+      expect(probeCalls).toBe(0);
+      expect(caseOf("pay_ord_noprobe")).toBeUndefined();
+      expect(control.refundPosts).toHaveLength(0);
+    } finally {
+      alerts.restore();
+    }
+  });
+
+  it("the recovered follow-up alert actually transmits and retries after one transport failure", async () => {
+    seedOrder("ord_follow", "fulfillable");
+    control.confirmFailsFor.add("ord_follow");
+    const actual = await vi.importActual<any>("../src/core/errors");
+    const capture = vi.mocked(captureErrorSnapshot);
+    const previous = capture.getMockImplementation()!;
+    const oldSlack = config.alerts.slackWebhookUrl;
+    const sends: Array<{ text: string }> = [];
+    let failuresRemaining = 0;
+    capture.mockImplementation(actual.captureErrorSnapshot);
+    config.alerts.slackWebhookUrl = "https://follow.invalid/hook";
+    config.alerts.discordWebhookUrl = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: any, options: any) => {
+        if (failuresRemaining > 0) {
+          failuresRemaining -= 1;
+          throw new Error("one transient transport failure");
+        }
+        sends.push({ text: JSON.parse(options.body).text });
+        return { ok: true, status: 200 };
+      })
+    );
+    try {
+      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS + 10 * 60_000);
+      expect(sends.length).toBeGreaterThan(0);
+
+      // The FIRST follow-up send fails at the transport.
+      failuresRemaining = 1;
+      control.confirmFailsFor.delete("ord_follow");
+      control.confirmSucceedsOnce.add("ord_follow");
+      await sweepFor(5 * 60_000);
+
+      const pendingFollowUp = caseOf("pay_ord_follow");
+      expect(pendingFollowUp.alertDelivery.alertKind).toBe("recovered_confirmed");
+      expect(pendingFollowUp.alertDelivery.state).toBe("pending");
+      expect(pendingFollowUp.alertDelivery.lastError).toContain("slack_transport");
+
+      // It retries on its own and finally lands.
+      const before = sends.length;
+      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS * 2);
+      expect(sends.length).toBeGreaterThan(before);
+      expect(caseOf("pay_ord_follow").alertDelivery.state).toBe("delivered");
+      expect(sends[sends.length - 1].text.toLowerCase()).toContain("do not refund");
+    } finally {
+      capture.mockImplementation(previous);
+      config.alerts.slackWebhookUrl = oldSlack;
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("a reason upgrade (decision stuck -> refund exhausted) re-alerts ONCE", async () => {
+    seedOrder("ord_upgrade", "fulfillable");
+    control.confirmFailsFor.add("ord_upgrade");
+    const alerts = await installRealAlerts("ok");
+    try {
+      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS + 10 * 60_000);
+      const firstCount = alerts.sends.length;
+      expect(firstCount).toBeGreaterThan(0);
+      const caseBefore = caseOf("pay_ord_upgrade");
+      expect(caseBefore.reason).toBe("capture_decision_stuck");
+      expect(caseBefore.alertDelivery.state).toBe("delivered");
+
+      // The refund lane now exhausts its own budget on the SAME payment.
+      docs.set("orders/ord_upgrade", {
+        ...orderOf("ord_upgrade"),
+        captureFulfillment: {
+          state: "refund_exhausted",
+          paymentId: "pay_ord_upgrade",
+          atMs: Date.now() - CAPTURE_RECOVERY_AFTER_MS - 60_000,
+          attempts: 5,
+          detail: "p1",
+        },
+        captureFulfillmentState: "refund_exhausted",
+      });
+      await recoverStuckCaptureFulfilments();
+
+      const upgraded = caseOf("pay_ord_upgrade");
+      expect(upgraded.reason).toBe("refund_retries_exhausted");
+      expect(upgraded.gateState).toBe("refund_exhausted");
+      expect(upgraded.staffAction).toBe("refund_manually_or_repair_gate");
+      expect(alerts.sends.length).toBe(firstCount + 1);
+
+      // An IDENTICAL reason never re-alerts.
+      const afterUpgrade = alerts.sends.length;
+      await sweepFor(20 * 60_000);
+      expect(alerts.sends.length).toBe(afterUpgrade);
+      expect(control.refundPosts).toHaveLength(0);
+    } finally {
+      alerts.restore();
+    }
+  });
+
+  it("a staff-resolved case is never reopened by a reason upgrade", async () => {
+    seedOrder("ord_settled", "fulfillable");
+    docs.set("unmatched_payments/ump_gate_pay_ord_settled", {
+      orderId: "ord_settled",
+      razorpayPaymentId: "pay_ord_settled",
+      status: "resolved",
+      reason: "capture_decision_stuck",
+      staffAction: "confirm_or_refund_manually",
+      receivedAt: "STAFF_ORIGINAL",
+      alertDelivery: { state: "delivered", attempts: 1, deliveredAtMs: 1 },
+    });
+    const alerts = await installRealAlerts("ok");
+    try {
+      docs.set("orders/ord_settled", {
+        ...orderOf("ord_settled"),
+        captureFulfillment: {
+          state: "refund_exhausted",
+          paymentId: "pay_ord_settled",
+          atMs: Date.now() - CAPTURE_RECOVERY_AFTER_MS - 60_000,
+          attempts: 5,
+        },
+        captureFulfillmentState: "refund_exhausted",
+      });
+      await recoverStuckCaptureFulfilments();
+
+      const staffCase = caseOf("pay_ord_settled");
+      expect(staffCase.status).toBe("resolved");
+      expect(staffCase.reason).toBe("capture_decision_stuck");
+      expect(staffCase.receivedAt).toBe("STAFF_ORIGINAL");
+      expect(alerts.sends).toHaveLength(0);
+      expect(control.refundPosts).toHaveLength(0);
     } finally {
       alerts.restore();
     }
