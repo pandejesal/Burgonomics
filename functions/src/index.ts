@@ -90,6 +90,8 @@ import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { recoverStuckCaptureFulfilments } from "./modules/payments/captureRecovery";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
+import { getOwnerDeliveryOtp } from "./modules/orders/deliveryHandover.service";
+import { DeliveryOtpError } from "./modules/orders/deliveryOtp";
 import {
   createTicket,
   addTicketMessage,
@@ -159,6 +161,7 @@ import {
   dispatchCancelSchema,
   dispatchCancelConfirmSchema,
   verifyDeliveryOtpSchema,
+  deliveryOtpSchema,
   manualDispatchSchema,
   orderBumpSchema,
   adjustCoinsSchema,
@@ -1146,6 +1149,24 @@ app.post("/porter/webhook", async (req, res) => {
   }
 });
 
+app.post("/orders/deliveryOtp",
+  requireAuth,
+  validateBody(deliveryOtpSchema),
+  async (req: AuthenticatedRequest, res) => {
+    // Deliberately no requireRole(customer): that helper has a brand bypass.
+    res.set("Cache-Control", "no-store, private");
+    try {
+      res.status(200).json(await getOwnerDeliveryOtp(req.body.orderId, req.user));
+    } catch (error: unknown) {
+      if (error instanceof DeliveryOtpError) {
+        res.status(error.statusCode).json({ code: error.code, error: error.message });
+      } else {
+        res.status(500).json({ error: "Delivery code could not be read" });
+      }
+    }
+  }
+);
+
 app.post("/orders/verifyDeliveryOtp",
   // Staff-only: the OTP is a customer-possession secret read off the customer
   // screen. Anonymous verification would let anyone burn attempts or flip an
@@ -1159,7 +1180,11 @@ app.post("/orders/verifyDeliveryOtp",
       const result = await verifyDeliveryOtp({ ...req.body, staffName, caller: req.user });
       res.status(200).json(result);
     } catch (err: any) {
-      res.status(staffErrorStatus(err, 400)).json({ error: err.message || "OTP verification failed" });
+      if (err instanceof DeliveryOtpError) {
+        res.status(err.statusCode).json({ code: err.code, error: err.message });
+      } else {
+        res.status(staffErrorStatus(err, 500)).json({ error: "OTP verification failed" });
+      }
     }
   }
 );

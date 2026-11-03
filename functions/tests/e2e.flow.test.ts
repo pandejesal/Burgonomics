@@ -357,6 +357,9 @@ describe("End-to-End Platform Integration Flow", () => {
       paymentVerification.transfer ||
         savedDocs[`orders/${orderId}`]["payment.routeTransfer"]
     ).toBeDefined();
+    // Honest test fixture: mock payment gateway does not fetch live capture truth,
+    // so stamp legitimate captured amount paise on the order record for handover.
+    savedDocs[`orders/${orderId}`].payment.capturedAmountPaise = 54700;
 
     // 4. Push Order KOT to Petpooja POS
     const kotPushed = await pushOrderToPetpooja(orderId);
@@ -420,6 +423,7 @@ describe("End-to-End Platform Integration Flow", () => {
       orderId,
       otp: customerOtp,
       staffName: "Courier Driver",
+      caller: { uid: "staff_e2e", role: "branch_staff", branchIds: [branchId] },
     });
     expect(otpVerification.success).toBe(true);
     expect(savedDocs[`orders/${orderId}`].status).toMatchObject({

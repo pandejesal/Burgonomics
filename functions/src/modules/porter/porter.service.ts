@@ -17,6 +17,7 @@ import {
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 import { assertOnlineOrderPaid } from "../orders/paymentGate";
+export { verifyDeliveryOtp, OTP_MAX_ATTEMPTS, OTP_LOCKOUT_MS, type VerifyDeliveryOtpParams } from "../orders/deliveryHandover.service";
 import {
   dropContactMissingError,
   persistResolvedCustomerPhone,
@@ -1574,133 +1575,6 @@ export async function rebookPorterRider(
  */
 export function generateDeliveryOtp(): string {
   return String(crypto.randomInt(1000, 10000));
-}
-
-export interface VerifyDeliveryOtpParams {
-  orderId: string;
-  otp: string;
-  staffName?: string;
-  /** Authenticated staff caller — enforced when present (all HTTP routes pass it). */
-  caller?: StaffCaller;
-}
-
-export const OTP_MAX_ATTEMPTS = 3;
-export const OTP_LOCKOUT_MS = 15 * 60 * 1000;
-
-/**
- * Verifies Customer 4-digit Delivery OTP on handover to finalize order delivery.
- * 3-attempt lockout (15 min) stops brute-forcing the 10k OTP space.
- */
-export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promise<{
-  success: boolean;
-  orderId: string;
-  deliveredAt: string;
-}> {
-  const { orderId, otp, staffName, caller } = params;
-  if (!orderId || !otp) {
-    throw new Error("orderId and 4-digit OTP are required for delivery verification");
-  }
-
-  const orderDoc = await db.collection("orders").doc(orderId).get();
-  if (!orderDoc.exists) {
-    throw new Error(`Order ${orderId} not found`);
-  }
-
-  const order = orderDoc.data() || {};
-  // Branch-scoped authorization BEFORE touching OTP state: an anonymous
-  // caller must never be able to burn attempts or flip an order to DELIVERED.
-  if (caller) await assertOrderBranchAccess(caller, order);
-  const storedHash =
-    typeof order.deliveryOtpHash === "string" ? order.deliveryOtpHash.trim() : "";
-  const legacyOtp = typeof order.deliveryOtp === "string" ? order.deliveryOtp.trim() : "";
-
-  if (!storedHash && !legacyOtp) {
-    throw new Error("No delivery OTP found on order record");
-  }
-
-  const lockedUntil = Number(order.deliveryOtpLockedUntil || 0);
-  if (lockedUntil > Date.now()) {
-    const retryIn = Math.ceil((lockedUntil - Date.now()) / 60000);
-    throw new Error(
-      `Too many wrong attempts. Retry in ${retryIn} minute${retryIn === 1 ? "" : "s"}.`
-    );
-  }
-
-  const enteredOtp = String(otp).trim();
-  if (enteredOtp.length !== 4) {
-    throw new Error("Delivery OTP must be exactly 4 digits");
-  }
-
-  // Timing-safe OTP comparison (prevents timing oracle).
-  // Hash-first: new orders persist only an HMAC-SHA256 hash; legacy plaintext
-  // orders are still verified until they are re-verified and migrated.
-  const isValid = storedHash
-    ? timingSafeEqual(
-        computeHmacSha256(enteredOtp, getOtpHmacSecret()),
-        storedHash
-      )
-    : timingSafeEqual(enteredOtp, legacyOtp);
-
-  if (!isValid) {
-    // Integer-coerced counter: a corrupt non-numeric value (console edit,
-    // partial write) used to yield NaN, and NaN >= MAX is always false — the
-    // lockout never engaged and guesses were unlimited.
-    const priorAttempts = Number(order.deliveryOtpAttempts || 0);
-    const attempts = (Number.isInteger(priorAttempts) ? priorAttempts : 0) + 1;
-    const locked = attempts >= OTP_MAX_ATTEMPTS;
-    await orderDoc.ref.set(
-      {
-        deliveryOtpAttempts: attempts,
-        ...(locked ? { deliveryOtpLockedUntil: Date.now() + OTP_LOCKOUT_MS } : {}),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    await captureErrorSnapshot({
-      source: "porter",
-      severity: locked ? "high" : "medium",
-      message: `Invalid Delivery OTP attempt ${attempts}/${OTP_MAX_ATTEMPTS} for order ${orderId}${locked ? " — LOCKED" : ""}`,
-      orderId,
-    });
-    if (locked) {
-      throw new Error(
-        `Too many wrong attempts. Retry in ${OTP_LOCKOUT_MS / 60000} minutes.`
-      );
-    }
-    throw new Error("Invalid Delivery OTP. Please verify the code on the customer screen.");
-  }
-
-  // Canonical object form (both apps + triggers accept it; bare strings with
-  // invalid kinds like "delivered" break Delivery tracking).
-  // Successful verification also clears the attempt counter + lockout.
-  const updateData = {
-    deliveryOtpAttempts: 0,
-    deliveryOtpLockedUntil: null,
-    // P2: burn the OTP after successful verification — the HMAC hash (and any
-    // legacy plaintext copy) must not outlive the handover, otherwise a
-    // delivered order keeps a reusable secret on its document forever.
-    deliveryOtpHash: null,
-    deliveryOtp: null,
-    status: {
-      code: "DELIVERED",
-      label: "Delivered",
-      kind: "completed",
-      terminal: true,
-    },
-    deliveryStatus: "delivered",
-    deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
-    deliveryVerifiedBy: "customer_otp",
-    verifiedByStaff: staffName || "Branch Staff",
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
-
-  await orderDoc.ref.set(updateData, { merge: true });
-
-  return {
-    success: true,
-    orderId,
-    deliveredAt: new Date().toISOString(),
-  };
 }
 
 export interface ManualBranchDispatchParams {

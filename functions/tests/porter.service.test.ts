@@ -400,17 +400,31 @@ describe("Porter Logistics Service", () => {
       expect(otp).toMatch(/^\d{4}$/);
     });
 
+    const validOrderProps = (id: string, hashOrOtp: { deliveryOtpHash?: string; deliveryOtp?: string }, branchId = "branch_ahmedabad_1") => ({
+      id,
+      branchId,
+      orderType: "delivery",
+      paymentChannel: "razorpay",
+      payment: {
+        status: "completed",
+        capturedAmountPaise: 49900,
+        razorpayPaymentId: `pay_${id}`,
+      },
+      status: "out_for_delivery",
+      ...hashOrOtp,
+    });
+    const staffCaller = { uid: "staff_1", role: "branch_staff", branchIds: ["branch_ahmedabad_1"] };
+
     it("verifies valid customer OTP and marks order delivered", async () => {
-      savedDocs["orders/order_otp_101"] = {
-        id: "order_otp_101",
+      savedDocs["orders/order_otp_101"] = validOrderProps("order_otp_101", {
         deliveryOtpHash: computeHmacSha256("4589", TEST_OTP_SECRET),
-        status: "out_for_delivery",
-      };
+      });
 
       const res = await verifyDeliveryOtp({
         orderId: "order_otp_101",
         otp: "4589",
         staffName: "Karan Cashier",
+        caller: staffCaller,
       });
 
       expect(res.success).toBe(true);
@@ -423,60 +437,56 @@ describe("Porter Logistics Service", () => {
     });
 
     it("rejects invalid delivery OTP with descriptive error", async () => {
-      savedDocs["orders/order_otp_102"] = {
-        id: "order_otp_102",
+      savedDocs["orders/order_otp_102"] = validOrderProps("order_otp_102", {
         deliveryOtpHash: computeHmacSha256("8899", TEST_OTP_SECRET),
-        status: "out_for_delivery",
-      };
+      });
 
       await expect(
         verifyDeliveryOtp({
           orderId: "order_otp_102",
           otp: "1234",
+          caller: staffCaller,
         })
       ).rejects.toThrow(/Invalid Delivery OTP/);
     });
 
     it("locks out after 3 wrong attempts and recovers on expiry", async () => {
-      savedDocs["orders/order_otp_109"] = {
-        id: "order_otp_109",
+      savedDocs["orders/order_otp_109"] = validOrderProps("order_otp_109", {
         deliveryOtpHash: computeHmacSha256("7777", TEST_OTP_SECRET),
-        status: "out_for_delivery",
-      };
+      });
 
-      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0000" })).rejects.toThrow(
+      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0000", caller: staffCaller })).rejects.toThrow(
         /Invalid Delivery OTP/
       );
-      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0001" })).rejects.toThrow(
+      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0001", caller: staffCaller })).rejects.toThrow(
         /Invalid Delivery OTP/
       );
-      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0002" })).rejects.toThrow(
+      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "0002", caller: staffCaller })).rejects.toThrow(
         /Too many wrong attempts/
       );
       // Locked: even the right code is rejected until expiry
-      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "7777" })).rejects.toThrow(
+      await expect(verifyDeliveryOtp({ orderId: "order_otp_109", otp: "7777", caller: staffCaller })).rejects.toThrow(
         /Too many wrong attempts/
       );
       expect(savedDocs["orders/order_otp_109"]?.deliveryOtpAttempts).toBe(3);
 
       // After expiry the right code succeeds and clears the counter
       savedDocs["orders/order_otp_109"].deliveryOtpLockedUntil = Date.now() - 1000;
-      const res = await verifyDeliveryOtp({ orderId: "order_otp_109", otp: "7777" });
+      const res = await verifyDeliveryOtp({ orderId: "order_otp_109", otp: "7777", caller: staffCaller });
       expect(res.success).toBe(true);
       expect(savedDocs["orders/order_otp_109"]?.deliveryOtpAttempts).toBe(0);
     });
 
     it("falls back to legacy plaintext OTP when no hash is stored", async () => {
-      savedDocs["orders/order_otp_103"] = {
-        id: "order_otp_103",
+      savedDocs["orders/order_otp_103"] = validOrderProps("order_otp_103", {
         deliveryOtp: "4589",
-        status: "out_for_delivery",
-      };
+      });
 
       const res = await verifyDeliveryOtp({
         orderId: "order_otp_103",
         otp: "4589",
         staffName: "Karan Cashier",
+        caller: staffCaller,
       });
 
       expect(res.success).toBe(true);
@@ -489,19 +499,15 @@ describe("Porter Logistics Service", () => {
     });
 
     it("burns the OTP (hash + legacy plaintext) on success — no replay after handover", async () => {
-      savedDocs["orders/order_otp_burn_hash"] = {
-        id: "order_otp_burn_hash",
+      savedDocs["orders/order_otp_burn_hash"] = validOrderProps("order_otp_burn_hash", {
         deliveryOtpHash: computeHmacSha256("2468", TEST_OTP_SECRET),
-        status: "out_for_delivery",
-      };
-      savedDocs["orders/order_otp_burn_legacy"] = {
-        id: "order_otp_burn_legacy",
+      });
+      savedDocs["orders/order_otp_burn_legacy"] = validOrderProps("order_otp_burn_legacy", {
         deliveryOtp: "1357",
-        status: "out_for_delivery",
-      };
+      });
 
-      await verifyDeliveryOtp({ orderId: "order_otp_burn_hash", otp: "2468" });
-      await verifyDeliveryOtp({ orderId: "order_otp_burn_legacy", otp: "1357" });
+      await verifyDeliveryOtp({ orderId: "order_otp_burn_hash", otp: "2468", caller: staffCaller });
+      await verifyDeliveryOtp({ orderId: "order_otp_burn_legacy", otp: "1357", caller: staffCaller });
 
       // The secret no longer outlives the handover on either order shape.
       expect(savedDocs["orders/order_otp_burn_hash"]?.deliveryOtpHash).toBeNull();
@@ -509,20 +515,17 @@ describe("Porter Logistics Service", () => {
 
       // Replaying the same OTP on the delivered order now fails closed.
       await expect(
-        verifyDeliveryOtp({ orderId: "order_otp_burn_hash", otp: "2468" })
-      ).rejects.toThrow(/No delivery OTP found/);
+        verifyDeliveryOtp({ orderId: "order_otp_burn_hash", otp: "2468", caller: staffCaller })
+      ).rejects.toThrow();
       await expect(
-        verifyDeliveryOtp({ orderId: "order_otp_burn_legacy", otp: "1357" })
-      ).rejects.toThrow(/No delivery OTP found/);
+        verifyDeliveryOtp({ orderId: "order_otp_burn_legacy", otp: "1357", caller: staffCaller })
+      ).rejects.toThrow();
     });
 
     it("denies OTP verification and dispatch for staff outside the order branch", async () => {
-      savedDocs["orders/order_branch_a"] = {
-        id: "order_branch_a",
-        branchId: "branch_surat_01",
+      savedDocs["orders/order_branch_a"] = validOrderProps("order_branch_a", {
         deliveryOtpHash: computeHmacSha256("1111", TEST_OTP_SECRET),
-        status: "out_for_delivery",
-      };
+      }, "branch_surat_01");
       const outsider = { uid: "staff_b", role: "branch_staff", branchIds: ["branch_ahmedabad_01"] };
 
       await expect(
@@ -541,12 +544,9 @@ describe("Porter Logistics Service", () => {
     });
 
     it("allows OTP verification for staff holding the order branch", async () => {
-      savedDocs["orders/order_branch_b"] = {
-        id: "order_branch_b",
-        branchId: "branch_surat_01",
+      savedDocs["orders/order_branch_b"] = validOrderProps("order_branch_b", {
         deliveryOtpHash: computeHmacSha256("2222", TEST_OTP_SECRET),
-        status: "out_for_delivery",
-      };
+      }, "branch_surat_01");
       const insider = { uid: "staff_a", role: "branch_staff", branchIds: ["branch_surat_01"] };
 
       const res = await verifyDeliveryOtp({

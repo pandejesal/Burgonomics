@@ -279,8 +279,12 @@ export const dispatchCancelConfirmSchema = z.object({
   note: z.string().max(300).optional(),
 });
 
+const deliveryOrderId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, "Invalid order ID");
+
+export const deliveryOtpSchema = z.object({ orderId: deliveryOrderId }).strict();
+
 export const verifyDeliveryOtpSchema = z.object({
-  orderId: nonEmptyString,
+  orderId: deliveryOrderId,
   otp: z.string().regex(/^\d{4}$/, "OTP must be exactly 4 digits"),
   staffName: z.string().optional(),
 });

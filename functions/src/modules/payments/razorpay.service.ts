@@ -5,7 +5,6 @@ import { db } from "../../core/firebase";
 import { config, assertLivePaymentsContext } from "../../config/env";
 import {
   verifyRazorpaySignature,
-  computeHmacSha256,
   getOtpHmacSecret,
   isSafeDocId,
 } from "../../core/security";
@@ -42,47 +41,11 @@ import {
 
 export { retryPendingRouteTransfersWorker, calculateRouteSplit } from "./routeTransfers";
 export { getOtpHmacSecret };
+import { isDeliveryOtpEligible, hasDeliveryOtpHash, mintDeliveryOtp } from "../orders/deliveryOtp";
+export { isDeliveryOtpEligible, hasDeliveryOtpHash, mintDeliveryOtp } from "../orders/deliveryOtp";
 // Grill-Coins redemption is disabled for launch (D31-D33); the reservation-aware
 // debit is no longer exported from the payment lane. The function itself stays
 // in `coinCapture.ts` for a future, explicitly enabled launch.
-
-/**
- * Delivery-OTP invariant, SHARED by every channel that can confirm payment
- * (client verify primary, client-verify backfill, Razorpay webhook).
- *
- * The webhook path used to write CONFIRMED with no `deliveryOtpHash` at all,
- * so an app-closed payer's delivery order could never be handed over —
- * `verifyDeliveryOtp` throws "No delivery OTP found" — for exactly the payers
- * the authoritative webhook channel exists to serve. One implementation keeps
- * the rule identical everywhere:
- *
- *   eligible  = orderType is "delivery", or absent (legacy docs predate the
- *               field; refusing those would strand paid orders);
- *   mint      = only when NO hash is present yet — an existing hash is never
- *               overwritten, which is what makes replays idempotent.
- *
- * The plaintext is returned ONLY so the client-verify channel can show it to
- * the payer (the single defined delivery of the code — a product decision,
- * A08 P2). The webhook path satisfies the hash invariant but must NOT surface
- * a code it never showed the customer.
- */
-export function isDeliveryOtpEligible(doc: any): boolean {
-  const ot = typeof doc?.orderType === "string" ? doc.orderType.trim() : doc?.orderType;
-  return ot === "delivery" || !ot;
-}
-
-export function hasDeliveryOtpHash(doc: any): boolean {
-  return typeof doc?.deliveryOtpHash === "string" && doc.deliveryOtpHash.length > 0;
-}
-
-/** Fresh mint for an eligible order with no hash yet; `undefined` otherwise. */
-export function mintDeliveryOtp(
-  doc: any
-): { otp: string; deliveryOtpHash: string } | undefined {
-  if (!isDeliveryOtpEligible(doc) || hasDeliveryOtpHash(doc)) return undefined;
-  const otp = String(crypto.randomInt(1000, 10000));
-  return { otp, deliveryOtpHash: computeHmacSha256(otp, getOtpHmacSecret()) };
-}
 
 /**
  * The only currency Burgonomics settles in. Route splits, refund reversal
@@ -3226,7 +3189,7 @@ async function finishVerifiedPayment(args: {
     // hash is written in the SAME transaction as CONFIRMED, and an existing
     // hash is never overwritten.
     if (performedConfirm) {
-      const mintedOtp = mintDeliveryOtp(fresh);
+      const mintedOtp = mintDeliveryOtp(fresh, orderRef.id);
       const capturedPaiseStamp =
         typeof capturedAmountPaise === "number" && Number.isFinite(capturedAmountPaise)
           ? capturedAmountPaise
@@ -3295,6 +3258,7 @@ async function finishVerifiedPayment(args: {
       };
       if (mintedOtp) {
         updatePayload.deliveryOtpHash = mintedOtp.deliveryOtpHash;
+        updatePayload.deliveryOtpVersion = mintedOtp.deliveryOtpVersion;
       }
       // RECOVERY SCAN STATE: this order is now terminally confirmed, so it must
       // not keep occupying a bounded `fulfillable` recovery page.
@@ -3321,13 +3285,14 @@ async function finishVerifiedPayment(args: {
       !terminalCanceledOrRefunded &&
       (normalized === "CONFIRMED" || laterStatus === false);
     if (backfillEligible) {
-      const minted = mintDeliveryOtp(fresh);
+      const minted = mintDeliveryOtp(fresh, orderRef.id);
       if (minted) {
         generatedOtp = minted.otp;
         tx.set(
           orderRef,
           {
             deliveryOtpHash: minted.deliveryOtpHash,
+            deliveryOtpVersion: minted.deliveryOtpVersion,
             // B5: this path only runs for an ALREADY-confirmed order, so it is
             // also the natural place to retire a stale reconciliation marker.
             reconciliation: null,

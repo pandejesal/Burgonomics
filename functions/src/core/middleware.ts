@@ -180,7 +180,8 @@ export function assertBranchAccess(
  * global callers alike (assertOrderBranchAccess below does the enforcement).
  */
 export async function resolveOrderBranchId(
-  order: Record<string, any>
+  order: Record<string, any>,
+  transaction?: Pick<admin.firestore.Transaction, "get">
 ): Promise<string | null> {
   // CAUTION: an explicit branchId on the order doc is user-input-shaped (the
   // customer writer stamps it); it stays the priority per current policy, but
@@ -209,7 +210,8 @@ export async function resolveOrderBranchId(
 
   for (const storeId of candidates) {
     try {
-      const snap = await db.collection("stores").doc(storeId).get();
+      const storeRef = db.collection("stores").doc(storeId);
+      const snap = transaction ? await transaction.get(storeRef) : await storeRef.get();
       const linked = snap.exists ? (snap.data() as any)?.partnerBranchId : undefined;
       if (typeof linked === "string" && linked) return linked;
     } catch {
@@ -227,12 +229,13 @@ export async function resolveOrderBranchId(
  */
 export async function assertOrderBranchAccess(
   caller: StaffCaller | undefined,
-  order: Record<string, any>
+  order: Record<string, any>,
+  transaction?: Pick<admin.firestore.Transaction, "get">
 ): Promise<string> {
   if (!caller || (!caller.uid && !caller.email && !caller.role)) {
     throw new Error("Unauthorized: staff authentication required");
   }
-  const branchId = await resolveOrderBranchId(order);
+  const branchId = await resolveOrderBranchId(order, transaction);
   if (!branchId) {
     throw new Error("Forbidden: order has no resolvable branch — link the outlet first");
   }

@@ -880,7 +880,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           // order is eligible and has none. An existing hash is left untouched,
           // so a redelivery (payment.captured vs order.paid) or a verify that
           // already confirmed is idempotent rather than re-minting.
-          const mintedOtp = mintDeliveryOtp(fresh);
+          const mintedOtp = mintDeliveryOtp(fresh, orderRef.id);
           // Keep BOTH storage shapes in lockstep. The app's finalizePaidOrder
           // reads the nested payment object (status + payment id + captured
           // amount); writing only the literal dotted keys leaves it seeing
@@ -909,7 +909,10 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               // CONFIRMED, so a crash before the split leaves an order the
               // retry worker can finish.
               ...webhookConfirmSettlementFields(fresh),
-              ...(mintedOtp ? { deliveryOtpHash: mintedOtp.deliveryOtpHash } : {}),
+              ...(mintedOtp ? {
+                deliveryOtpHash: mintedOtp.deliveryOtpHash,
+                deliveryOtpVersion: mintedOtp.deliveryOtpVersion,
+              } : {}),
             },
             { merge: true }
           );

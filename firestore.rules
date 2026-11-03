@@ -148,6 +148,7 @@ service cloud.firestore {
     function orderCreateForbiddenKeys() {
       return [
         'deliveryOtp', 'deliveryOtpHash', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
+        'deliveryOtpVersion', 'deliveryOtpConsumedAt',
         'refund', 'refundStatus', 'refundId', 'refundAmount',
         'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
         'refundActiveClaim', 'refundClaimedAt', 'refundClaimedRequestId',
@@ -191,6 +192,7 @@ service cloud.firestore {
         'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
         'paymentChannel', 'monthlyFeeHold',
         'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
+        'deliveryOtpVersion', 'deliveryOtpConsumedAt',
         'petpoojaAcceptedNoId', 'petpoojaAcceptedNoIdAt', 'petpoojaAcceptedNoIdAck',
         'petpoojaAcceptedNoIdSource', 'petpoojaAcceptedUnrecorded', 'petpoojaAcceptedAck',
         'petpoojaStatus', 'petpoojaSyncStatus', 'petpoojaRetryCount',
