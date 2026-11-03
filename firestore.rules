@@ -218,6 +218,14 @@ service cloud.firestore {
         // `captureStall` alone would let a stalled paid order be hidden, and
         // `captureFulfillmentState` drives the recovery scan's lane membership.
         'captureFulfillment', 'captureFulfillmentState', 'captureStall',
+        // Legacy money fields. The policy statement above declares financial
+        // fields server-owned, but these were absent from the list, so branch
+        // staff could rewrite the totals and payment method of an already
+        // settled order. They are not the authority for money decisions
+        // (pricing.grandTotal and payment.capturedAmountPaise are), but they
+        // feed cash reconciliation, POS financials and customer-facing totals.
+        'subtotal', 'tax', 'deliveryFee', 'total', 'tipAmount',
+        'promo', 'loyaltyPointsRedeemed', 'paymentMethod', 'deliveryQuoteId',
       ];
     }
 
@@ -594,10 +602,24 @@ service cloud.firestore {
       allow write: if isBrandOwner();
     }
 
+    // Store metadata. Public read is intentional (guest store discovery), which
+    // is exactly why client create must not be a scoped privilege: the old
+    // `isBranchOwner()` arm let ANY branch operator (including branch_staff)
+    // create a doc for ANY store id with an arbitrary shape, and that doc is
+    // world-readable. Nothing in the product writes here from a client - the
+    // Admin SDK bypasses rules - so create is brand-only and key-masked, and
+    // updates stay restricted to the operator's own branch.
     match /admin_stores/{storeId} {
       allow read: if true;
-      allow create: if isBrandOwner() || isBranchOwner();
-      allow update: if isBrandOwner() || ownsBranch(storeId);
+      allow create: if isBrandOwner()
+        && request.resource.data.keys().hasOnly([
+          'title', 'branchId', 'name', 'address', 'city', 'area', 'phone',
+          'isActive', 'createdAt', 'updatedAt'
+        ]);
+      allow update: if isBrandOwner() || (ownsBranch(storeId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'name', 'address', 'city', 'area', 'phone', 'isActive', 'updatedAt'
+        ]));
       allow delete: if isBrandOwner();
     }
 
@@ -914,12 +936,57 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/chats/$(pairId)).data.get('participantIds', []);
     }
 
+    // Hardening (audit F3): a participant could forge the message author, so a
+    // customer could post as "Burgonomics Support" inside their own thread.
+    // The author identity must be the caller: senderId is pinned to the uid,
+    // readBy may only contain the caller, and the body is key-masked to the
+    // exact shape chatService.sendMessage writes.
+    function chatMessageClientKeys() {
+      return [
+        'chatId', 'senderId', 'senderName', 'senderRole', 'text', 'imageUrl',
+        'orderReference', 'ticketReference', 'createdAt', 'readBy'
+      ];
+    }
+
+    // The claimed role must be one the caller actually holds: their token role,
+    // their admin-doc role, or plain 'customer' for a non-staff account.
+    // Anything else is an impersonation attempt and is refused.
+    // Note: reading a missing map key raises in rules, so the key is tested
+    // with `in` before it is read.
+    function chatSenderRoleIsOwn() {
+      return (
+        'role' in request.auth.token
+          ? request.resource.data.senderRole == request.auth.token.role
+          : (
+            exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+              ? (
+                'role' in getAdminDoc().data
+                  ? request.resource.data.senderRole == getAdminDoc().data.role
+                  : false
+              )
+              : request.resource.data.senderRole == 'customer'
+          )
+      );
+    }
+
+    function chatMessageShapeIsOwn() {
+      return request.resource.data.senderId == request.auth.uid
+        && request.resource.data.keys().hasOnly(chatMessageClientKeys())
+        && chatSenderRoleIsOwn();
+    }
+
     match /chats/{pairId}/messages/{messageId} {
       allow read: if isBrandOwner() || (
         isAuthenticated() && request.auth.uid in chatParticipantIds(pairId)
       );
-      allow create: if isBrandOwner() || (
-        isAuthenticated() && request.auth.uid in chatParticipantIds(pairId)
+      allow create: if (
+        isBrandOwner() && chatMessageShapeIsOwn()
+      ) || (
+        isAuthenticated() &&
+        request.auth.uid in chatParticipantIds(pairId) &&
+        chatMessageShapeIsOwn() &&
+        request.resource.data.chatId == pairId &&
+        request.resource.data.readBy == [request.auth.uid]
       );
       allow update, delete: if false;
     }
@@ -1019,10 +1086,28 @@ service cloud.firestore {
     // brand-level data. `isBranchOwner()` includes branch_staff, so any cashier
     // could read every applicant in the country. Read/update are brand-only;
     // create stays as it was so an applicant can still submit.
+    //
+    // Hardening (audit F4): create previously had no field allowlist, so an
+    // applicant could plant `status: "approved"` / `isApproved: true` at birth
+    // and poison the human-reviewed pipeline. `status` stays writable ONLY as
+    // the initial `new` value; the brand-side decision is an update, which is
+    // brand-only above.
+    function franchiseLeadApplicantKeys() {
+      return [
+        'customerId', 'status', 'name', 'applicantName', 'email', 'phone',
+        'city', 'budget', 'investmentBudget', 'commercialSpace', 'spaceAreaSqFt',
+        'foodExperienceYears', 'preferredLocation', 'notes', 'message',
+        'createdAt', 'updatedAt'
+      ];
+    }
+
     match /franchise_leads/{leadId} {
       allow read: if isBrandOwner();
       allow create: if isAuthenticated()
-        && request.resource.data.customerId == request.auth.uid;
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.keys().hasOnly(franchiseLeadApplicantKeys())
+        && (!('status' in request.resource.data)
+          || request.resource.data.status == 'new');
       allow update: if isBrandOwner();
       allow delete: if isBrandOwner();
     }
@@ -1031,7 +1116,10 @@ service cloud.firestore {
     match /franchise_inquiries/{leadId} {
       allow read: if isBrandOwner();
       allow create: if isAuthenticated()
-        && request.resource.data.customerId == request.auth.uid;
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.keys().hasOnly(franchiseLeadApplicantKeys())
+        && (!('status' in request.resource.data)
+          || request.resource.data.status == 'new');
       allow update: if isBrandOwner();
       allow delete: if isBrandOwner();
     }
