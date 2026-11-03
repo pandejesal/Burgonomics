@@ -4311,6 +4311,21 @@ export async function autoRefund(
 
     if (stillOwnsClaim) {
       orderCompleteData.refundStatus = refundStatusValue;
+      /**
+       * The nested payment marker and the obligation marker are the two fields
+       * the partner console and the customer card read to decide "is a refund
+       * still pending here". Leaving them at PENDING_APPROVAL / QUEUED after the
+       * money has moved made a completed order look like it was still awaiting a
+       * human — observed live on ord_1793721600000_l29btj, where the top-level
+       * refundStatus was "refunded" and refundedTotalPaise was 26300 while both
+       * markers still said pending. They are cleared on the same write that
+       * records the gateway receipt, so the two never disagree.
+       */
+      orderCompleteData["payment.refundStatus"] = refundStatusValue;
+      orderCompleteData["refundObligation.status"] = "SETTLED";
+      orderCompleteData["refundObligation.settledAt"] =
+        admin.firestore.FieldValue.serverTimestamp();
+      orderCompleteData["refundObligation.settledRefundId"] = refundResult.id;
       orderCompleteData.refundClaimedAt = admin.firestore.FieldValue.delete();
       orderCompleteData.refundClaimedRequestId = admin.firestore.FieldValue.delete();
       orderCompleteData.refundClaimedPaymentId = admin.firestore.FieldValue.delete();
