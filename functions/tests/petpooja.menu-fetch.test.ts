@@ -1352,14 +1352,20 @@ describe("Petpooja Menu API — a body with NO `items` array (census edge, live 
 
       expect(syncLogRows().length).toBe(1);
       expect(savedDocs[syncLogRows()[0]].inStockValues).toEqual({});
-      expect(warn).not.toHaveBeenCalled();
+      // An empty feed now raises the delist guard's HIGH snapshot, and with no
+      // alert channel configured errors.ts says so. That warning is correct and
+      // separate from what this test pins: no menu parsing warning.
+      const menuWarnings = warn.mock.calls.filter(
+        ([message]) => !String(message).startsWith("[Errors] No developer-alert channel")
+      );
+      expect(menuWarnings).toEqual([]);
     } finally {
       warn.mockRestore();
     }
   });
 });
 
-describe("Petpooja menu PUSH — unpriced SKU observability", () => {
+describe("Petpooja menu PUSH - unpriced SKU observability", () => {
   let prevMock: boolean;
   const spyOnWarn = () => vi.spyOn(console, "warn").mockImplementation(() => {});
   const latestSyncLog = () => savedDocs[syncLogRows()[0]];
