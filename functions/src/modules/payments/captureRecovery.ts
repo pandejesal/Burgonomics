@@ -1365,13 +1365,20 @@ export async function recoverStuckCaptureFulfilments(
     if (!orderId || seen.has(orderId)) continue;
     seen.add(orderId);
 
+    // Hoisted OUT of the try so the catch can escalate a row that THREW before
+    // any decision was reached (a malformed order, a datastore fault). A throw
+    // before these are known leaves them null/empty and the catch stays
+    // conservative.
+    let gate: ReturnType<typeof gateOf> = null;
+    let paymentId = "";
+
     try {
       const order = (typeof doc.data === "function" ? doc.data() : doc) || {};
-      const gate = gateOf(order);
+      gate = gateOf(order);
       if (!gate) continue;
       if (!RECOVERABLE_STATES.has(gate.state as CaptureFulfillmentState)) continue;
 
-      const paymentId = gate.paymentId || capturedPaymentIdOf(order);
+      paymentId = gate.paymentId || capturedPaymentIdOf(order);
       if (!paymentId) {
         stats.skipped += 1;
         continue;
@@ -1668,6 +1675,41 @@ export async function recoverStuckCaptureFulfilments(
         err?.message || err,
         err?.stack
       );
+
+      // ── EXCEPTION PATH ESCALATION ──────────────────────────────────────────
+      // A row that THROWS on every sweep (malformed order, datastore fault) is
+      // exactly as stuck as one whose confirmation returns false — and before
+      // this it looped forever, because the normal stall counter was never
+      // reached. Only DECISION lanes are counted here: the owed refund lanes
+      // (`refund_failed`/`refund_pending`/`refund_exhausted`) have their own
+      // budget and escalation, and a lease refusal or a skip never reaches the
+      // catch at all.
+      //
+      // Best effort: if recording throws too, the medium snapshot below still
+      // runs and the sweep loop continues with the next order.
+      const decisionLane =
+        !!gate &&
+        !!paymentId &&
+        (gate.state === "checking" || gate.state === "fulfillable");
+      if (decisionLane) {
+        try {
+          const stall = await recordCaptureRecoveryFailure({
+            orderId,
+            paymentId,
+            state: gate!.state as CaptureFulfillmentState,
+            nowMs,
+          });
+          if (stall === "escalated") stats.escalated += 1;
+          else if (stall === "pending") stats.escalationPending += 1;
+        } catch (recordErr: any) {
+          console.warn(
+            `[Capture Recovery] stall recording failed for order ${orderId} ` +
+              `(the row stays retried, not escalated):`,
+            recordErr?.message || recordErr
+          );
+        }
+      }
+
       await captureErrorSnapshot({
         source: "payments",
         severity: "medium",

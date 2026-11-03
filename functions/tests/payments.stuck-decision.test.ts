@@ -31,6 +31,10 @@ const { mockDb, docs, writeLog, control, snapshots } = vi.hoisted(() => {
     confirmFailsFor: new Set<string>(),
     /** Orders whose next confirmation should succeed (recovery wins). */
     confirmSucceedsOnce: new Set<string>(),
+    /** Orders whose confirmation THROWS (the exception path). */
+    confirmThrowsFor: new Set<string>(),
+    /** One failed transactional read for this order (the guard throws). */
+    failNextTxReadFor: null as string | null,
   };
 
   const clone = (v: any) => JSON.parse(JSON.stringify(v));
@@ -201,6 +205,11 @@ vi.mock("../src/modules/payments/razorpay.service", async (io) => {
   return {
     ...actual,
     completeRecoveredCapture: vi.fn(async (args: any) => {
+      if (control.confirmThrowsFor.has(args.orderId)) {
+        // The exception path: a malformed order / datastore fault THROWS rather
+        // than returning false.
+        throw new Error(`malformed order ${args.orderId} cannot be confirmed`);
+      }
       if (control.confirmSucceedsOnce.has(args.orderId)) {
         control.confirmSucceedsOnce.delete(args.orderId);
         docs.set(`orders/${args.orderId}`, {
@@ -328,6 +337,8 @@ beforeEach(() => {
   control.refundPosts = [];
   control.confirmFailsFor = new Set<string>();
   control.confirmSucceedsOnce = new Set<string>();
+  control.confirmThrowsFor = new Set<string>();
+  control.failNextTxReadFor = null;
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-11-03T09:00:00Z"));
   config.mock.paymentGateway = false;
@@ -764,6 +775,176 @@ describe("fed-and-refunded guards (escalated rows only)", () => {
       expect(staffCase.receivedAt).toBe("STAFF_ORIGINAL");
       expect(alerts.sends).toHaveLength(0);
       expect(control.refundPosts).toHaveLength(0);
+    } finally {
+      alerts.restore();
+    }
+  });
+});
+
+// ===========================================================================
+// EXCEPTION PATH — a row that THROWS every sweep is just as stuck as one whose
+// confirmation returns false, and used to loop forever without a case.
+// ===========================================================================
+describe("a row that THROWS on every sweep escalates through the same outbox", () => {
+  it("a `fulfillable` row whose confirmation throws escalates after the hour, not before", async () => {
+    seedOrder("ord_throw", "fulfillable");
+    control.confirmThrowsFor.add("ord_throw");
+    const alerts = await installRealAlerts("ok");
+    try {
+      // Before the threshold: failures counted, nobody paged, still non-terminal.
+      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS - 10 * 60_000);
+      expect(caseOf("pay_ord_throw")).toBeUndefined();
+      expect(alerts.sends).toHaveLength(0);
+      expect(orderOf("ord_throw").captureStall.failedAttempts).toBeGreaterThan(1);
+      expect(orderOf("ord_throw").captureFulfillmentState).toBe("fulfillable");
+
+      // After the threshold: a durable case and a real transport delivery.
+      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS);
+      expect(caseOf("pay_ord_throw")).toMatchObject({
+        orderId: "ord_throw",
+        reason: "capture_decision_stuck",
+        gateState: "fulfillable",
+        status: "needs_review",
+        staffAction: "confirm_or_refund_manually",
+      });
+      expect(alerts.sends.length).toBeGreaterThan(0);
+      expect(alerts.sends[0].text).toContain("ord_throw");
+      // The customer is never auto-refunded and the gate never moves.
+      expect(control.refundPosts).toHaveLength(0);
+      expect(orderOf("ord_throw").captureFulfillmentState).toBe("fulfillable");
+      expect(orderOf("ord_throw").captureFulfillment.state).toBe("fulfillable");
+    } finally {
+      alerts.restore();
+    }
+  });
+
+  it("a `checking` row whose GUARD throws escalates the same way", async () => {
+    seedOrder("ord_guardthrow", "checking");
+    const alerts = await installRealAlerts("ok");
+    // Force the guard's own transaction to throw for this row only, so the outer
+    // catch — not the normal decision path — is what runs.
+    const originalTx = mockDb.runTransaction.bind(mockDb);
+    const spy = vi.spyOn(mockDb, "runTransaction").mockImplementation((fn: any) =>
+      originalTx(async (tx: any) => {
+        const get = tx.get.bind(tx);
+        tx.get = async (ref: any) => {
+          if (
+            String(ref.path) === "orders/ord_guardthrow" &&
+            control.failNextTxReadFor === "ord_guardthrow"
+          ) {
+            control.failNextTxReadFor = null;
+            throw new Error("malformed order document");
+          }
+          return get(ref);
+        };
+        return fn(tx);
+      })
+    );
+    try {
+      // Every sweep throws for this row.
+      for (let tick = 0; tick < 14; tick += 1) {
+        control.failNextTxReadFor = "ord_guardthrow";
+        await recoverStuckCaptureFulfilments();
+        vi.advanceTimersByTime(5 * 60_000);
+      }
+
+      const staffCase = caseOf("pay_ord_guardthrow");
+      expect(staffCase).toBeTruthy();
+      expect(staffCase).toMatchObject({
+        orderId: "ord_guardthrow",
+        reason: "capture_decision_stuck",
+        status: "needs_review",
+      });
+      expect(alerts.sends.length).toBeGreaterThan(0);
+      expect(alerts.sends[0].text).toContain("ord_guardthrow");
+      // Never auto-refunded, gate never moved.
+      expect(control.refundPosts).toHaveLength(0);
+      expect(orderOf("ord_guardthrow").captureFulfillmentState).toBe("checking");
+      expect(orderOf("ord_guardthrow").captureFulfillment.state).toBe("checking");
+    } finally {
+      spy.mockRestore();
+      alerts.restore();
+    }
+  });
+
+  it("a recording failure inside the catch does not stop the next order in the same sweep", async () => {
+    seedOrder("ord_badrecord", "fulfillable");
+    control.confirmThrowsFor.add("ord_badrecord");
+    // A HEALTHY row later in the same sweep must still be confirmed.
+    seedOrder("ord_after_bad", "fulfillable");
+    control.confirmSucceedsOnce.add("ord_after_bad");
+
+    const alerts = await installRealAlerts("ok");
+    // Make the stall recorder THROW for the first order only.
+    const original = mockDb.runTransaction.bind(mockDb);
+    let thrown = 0;
+    const spy = vi.spyOn(mockDb, "runTransaction").mockImplementation((fn: any) =>
+      original(async (tx: any) => {
+        if (thrown === 0 && control.confirmThrowsFor.has("ord_badrecord")) {
+          const set = tx.set.bind(tx);
+          tx.set = (ref: any, ...rest: any[]) => {
+            const data = rest[0] as any;
+            if (
+              String(ref.path) === "orders/ord_badrecord" &&
+              data?.captureStall &&
+              data.captureStall.failedAttempts >= 1
+            ) {
+              thrown += 1;
+              throw new Error("stall recorder unavailable");
+            }
+            return set(ref, ...rest);
+          };
+        }
+        return fn(tx);
+      })
+    );
+    try {
+      await sweepFor(10 * 60_000);
+      spy.mockRestore();
+
+      // The sweep kept going: the healthy order was confirmed in the same tick.
+      expect(orderOf("ord_after_bad").paymentStatus).toBe("completed");
+      expect(orderOf("ord_after_bad").captureFulfillmentState).toBe("confirmed");
+      expect(caseOf("pay_ord_after_bad")).toBeUndefined();
+      expect(control.refundPosts).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+      alerts.restore();
+    }
+  });
+
+  it("an OWED-lane row that throws gets NO stuck-decision case (its own budget owns it)", async () => {
+    seedOrder("ord_owed_throw", "checking");
+    // A refund lane row that THROWS on its own path (malformed cart).
+    docs.set("orders/ord_owed_throw", {
+      ...orderOf("ord_owed_throw"),
+      items: "not-an-array",
+      captureFulfillment: {
+        state: "refund_failed",
+        paymentId: "pay_ord_owed_throw",
+        atMs: Date.now() - CAPTURE_RECOVERY_AFTER_MS - 60_000,
+        attempts: 1,
+        detail: "p1",
+      },
+      captureFulfillmentState: "refund_failed",
+    });
+    const alerts = await installRealAlerts("ok");
+    try {
+      await sweepFor(CAPTURE_STALL_ESCALATE_AFTER_MS + 10 * 60_000);
+
+      // The decision-lane exception path must NOT adopt an owed refund row: its
+      // budget/escalation lives in the refund lane.
+      const staffCase = caseOf("pay_ord_owed_throw");
+      expect(staffCase?.reason).not.toBe("capture_decision_stuck");
+      // The row stayed in the REFUND lane end-to-end (settled by its own path,
+      // never reclassified as a stuck decision) and no stuck-decision page fired.
+      expect(["refund_failed", "refunded"]).toContain(
+        orderOf("ord_owed_throw").captureFulfillmentState
+      );
+      expect(alerts.sends.filter((s) => s.text.includes("capture_decision_stuck"))).toHaveLength(0);
+      expect(
+        alerts.sends.filter((s) => s.text.includes("neither a confirmed order"))
+      ).toHaveLength(0);
     } finally {
       alerts.restore();
     }
