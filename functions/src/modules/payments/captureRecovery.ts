@@ -567,18 +567,25 @@ async function clearCaptureStallOnRecovery(args: {
   let needsFollowUp = false;
   try {
     await (db as any).runTransaction(async (tx: any) => {
+      // Firestore requires EVERY read before the first write. Reading the case
+      // after writing the order aborted the whole transaction, so the recovered
+      // stamp and the queued follow-up were lost on the real backend while
+      // permissive fakes hid it.
       const orderSnap = await tx.get(orderRef);
+      const caseSnap = await tx.get(caseRef);
       if (!orderSnap || !orderSnap.exists) return false;
       const fresh = (orderSnap.data() || {}) as any;
       if (!fresh.captureStall) return false;
 
-      tx.set(orderRef, { captureStall: null }, { merge: true });
+      const caseData =
+        caseSnap && caseSnap.exists ? ((caseSnap.data() || {}) as any) : null;
+      // NEVER reset a staff decision or its received timestamp. Nothing is
+      // written for that case, but the stall record still clears: the order DID
+      // recover, and a stale stall counter would page staff forever.
+      const stampCase = !!caseData && caseData.status === "needs_review";
 
-      const caseSnap = await tx.get(caseRef);
-      if (!caseSnap || !caseSnap.exists) return false;
-      const caseData = (caseSnap.data() || {}) as any;
-      // NEVER reset a staff decision or its received timestamp.
-      if (caseData.status !== "needs_review") return false;
+      tx.set(orderRef, { captureStall: null }, { merge: true });
+      if (!stampCase) return true;
       const delivery = deliveryOf(caseData);
 
       const alreadyDelivered = delivery.state === "delivered";
@@ -1597,12 +1604,49 @@ export async function recoverStuckCaptureFulfilments(
         const caseData = escalatedCase?.exists
           ? ((escalatedCase.data() || {}) as any)
           : null;
-        const staffResolved =
-          !!caseData &&
-          typeof caseData.status === "string" &&
-          caseData.status !== "needs_review";
+        const caseStatus =
+          caseData && typeof caseData.status === "string" ? caseData.status : "";
 
-        if (caseData && !staffResolved) {
+        // A case that is NOT `needs_review` has already been settled elsewhere
+        // and must STAND DOWN — it is never permission to confirm.
+        //
+        // `refunded_externally` means the gateway itself refunded this payment,
+        // so the next tick must not probe-then-confirm it: that is exactly the
+        // fed-and-refunded outcome this guard exists to prevent. It is already
+        // recorded, so it needs no new write and no new gateway call.
+        //
+        // `resolved` / `ignored` (staff or ops) can also describe an
+        // out-of-band refund, and a clean gateway probe cannot disprove that.
+        // Confirming anyway would be a permanent silent "paid, fed AND refunded"
+        // lane, so confirmation is withheld and a deterministic snapshot keeps
+        // it visible instead. The legitimate path stays intact: a staff member
+        // who actually fulfilled the order moves it to a CONFIRMED lifecycle,
+        // and that is retired out of this lane ABOVE, before this block.
+        if (caseData && caseStatus !== "needs_review") {
+          if (caseStatus !== "refunded_externally") {
+            await captureErrorSnapshot(
+              {
+                source: "payments",
+                severity: "medium",
+                message:
+                  `Capture recovery held order ${orderId}: its ops case is settled as ` +
+                  `"${caseStatus}" but the order is still unconfirmed — automatic confirmation ` +
+                  `withheld (staff action may already have moved the money). No automatic refund.`,
+                orderId,
+                razorpayPaymentId: paymentId,
+              },
+              {
+                // One deterministic snapshot per order: this row is re-scanned
+                // every tick, and a new doc per tick would be noise, not signal.
+                snapshotId: `err_capture_settled_${orderId}`,
+              }
+            ).catch(() => undefined);
+          }
+          stats.skipped += 1;
+          continue;
+        }
+
+        if (caseData) {
           const { probeGatewayRefund } = await import("./razorpay.service");
           const probe = await probeGatewayRefund(paymentId);
           if (probe !== "clean") {
