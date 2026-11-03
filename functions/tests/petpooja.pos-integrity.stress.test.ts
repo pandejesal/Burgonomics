@@ -548,7 +548,7 @@ describe("F7 — menu tombstone guard", () => {
       snapshotRows().some(
         (path) =>
           savedDocs[path].severity === "high" &&
-          String(savedDocs[path].message).includes("REFUSED to retire ghost SKUs")
+          String(savedDocs[path].message).includes("REFUSED to delist POS SKUs")
       )
     ).toBe(true);
     // The guard's own memory of the catalogue size is not lowered.

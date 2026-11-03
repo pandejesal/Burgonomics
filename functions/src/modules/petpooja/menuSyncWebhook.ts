@@ -843,49 +843,115 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     );
   }
 
-  // Loop 6: tombstone pass — SKUs absent from the POS feed otherwise stay
-  // live/orderable forever (ghost catalog → kitchen can't fulfill → refunds).
-  // Live mode only (mock feeds are canned subsets; retiring around them would
-  // wipe test catalogs). Never DELETE: flip inStock:false + ghostRetired so a
-  // bad feed is recoverable. Local-only docs (combos / no petpoojaItemId) are
-  // never touched. Skipped entirely on an empty feed (API glitch must not
-  // retire the whole catalog).
+  // Loop 6 / POS DELISTING — a SKU deleted or retired on the POS must stop being
+  // orderable. The merge above only touches items PRESENT in the push, so
+  // without this pass a removed SKU stays live forever (ghost catalog → the
+  // kitchen has to reject it → refunds).
   //
-  // F7 (tombstone-guard integrity): the ONLY guard used to be "the feed is not
-  // empty". A TRUNCATED feed — the menu API returning a partial page, a push
-  // carrying half the catalogue — then retired every SKU it happened to omit,
-  // taking the branch's menu dark on the customer app. Two proportional guards
-  // now decide BEFORE any write:
-  //   (a) the feed must cover at least half of the branch's known catalogue;
-  //   (b) a single run may not retire more than half of it.
-  // Both compare against the LARGER of the last sync's reported item count and
-  // this run's own scan, and both raise a HIGH snapshot and skip the pass
-  // (nothing is written, so there is nothing to reverse). A catalogue that
-  // legitimately shrinks by more than half therefore needs an operator to
-  // reconcile it deliberately — the alternative is silently taking a live menu
-  // dark on a partial feed, which is strictly worse.
-  let tombstoneRefused = false;
-  if (!config.mock.petpoojaPos && validItemIds.length > 0) {
+  // OWNERSHIP (the thing the first version of this pass got wrong): only
+  // products THIS sync writes for THIS branch are candidates. That means, on the
+  // document:
+  //   - `branchId` equal to this branch (never another outlet),
+  //   - a `petpoojaItemId` (a locally authored product has none — leave it),
+  //   - not a combo (`isCombo`, local-only),
+  //   - not tagged `demoMenuLoad: "qa_20261102_demo_menu"` — the 56 staging DEMO
+  //     docs (tools/menu-load-demo.cjs) deliberately borrow unused sandbox item
+  //     ids, so they carry a `petpoojaItemId` and would otherwise be delisted on
+  //     every sandbox push. This tag is the DEFINITIVE protection for them.
+  //
+  // The doc-id shape is deliberately NOT required. `prod_<branchId>_<itemid>` is
+  // what this sync writes today, but requiring the suffix to equal the
+  // `petpoojaItemId` would skip docs whose id was minted under an earlier id (a
+  // renumbered POS item) — i.e. it would silently re-open the very defect this
+  // pass exists to close. A branch-scoped doc carrying a `petpoojaItemId` was
+  // written by this sync (the 86-ing webhook only ever updates existing docs),
+  // and delisting is reversible, so ownership rests on those fields.
+  //
+  // SAFETY: a partial or empty push must never take a menu dark. Two guards:
+  //   (a) an empty feed prunes NOTHING;
+  //   (b) the feed must cover DELIST_MIN_FEED_SHARE of the branch's known
+  //       catalogue.
+  // 50% is deliberate and asymmetric: a real menu rarely loses half its SKUs at
+  // once, while the failures this guards against (a truncated multi-page API
+  // response, a push that carried half the catalogue, a sandbox outlet whose
+  // push is a small subset) routinely land far below half. A refused pass writes
+  // NOTHING, so there is nothing to reverse, and it is loud: a sync-log reason
+  // plus a HIGH snapshot for a human. A first-ever sync has no known catalogue
+  // (0), so the guard is inactive and there is nothing to prune anyway.
+  //
+  // ACTION: never DELETE a product — history, favourites and old orders refer to
+  // it. Flip `inStock:false` + `delistedFromPos:true` + `delistedAt`, merging so
+  // every other field survives. A SKU that reappears in a later push has the
+  // marker CLEARED (and its stock comes from the push as normal).
+  const DELIST_MIN_FEED_SHARE = 0.5;
+  const DELIST_MAX_PRUNE_SHARE = 0.5;
+  /** Firestore caps a batch at 500 writes; prune writes are chunked to match. */
+  const DELIST_BATCH_LIMIT = 500;
+  const DELIST_EXCLUDED_TAG = "qa_20261102_demo_menu";
+
+  let prunedCount = 0;
+  let restoredCount = 0;
+  let skippedPruneReason: string | null = null;
+  let pruneRefused = false;
+
+  /** True when this document is one this sync owns for this branch. */
+  const isSyncOwnedProduct = (dd: any): boolean => {
+    if (!dd || typeof dd !== "object") return false;
+    if (dd.isCombo === true) return false;
+    if (dd.branchId !== branchId) return false;
+    if (dd.demoMenuLoad === DELIST_EXCLUDED_TAG) return false;
+    const pid = dd.petpoojaItemId ? String(dd.petpoojaItemId) : "";
+    return pid !== "";
+  };
+
+  /** Merge-write a set of delist/restore patches in ≤500-write batches. */
+  const commitPatches = async (
+    patches: Array<{ ref: any; data: Record<string, any> }>
+  ): Promise<number> => {
+    let written = 0;
+    for (let i = 0; i < patches.length; i += DELIST_BATCH_LIMIT) {
+      const chunk = patches.slice(i, i + DELIST_BATCH_LIMIT);
+      const b = db.batch();
+      for (const patch of chunk) b.set(patch.ref, patch.data, { merge: true });
+      await b.commit();
+      written += chunk.length;
+    }
+    return written;
+  };
+
+  if (config.mock.petpoojaPos) {
+    // Mock feeds are canned subsets; pruning around them would wipe test
+    // catalogs. Reported so the sync log never implies a prune ran.
+    skippedPruneReason = "mock_mode";
+  } else if (validItemIds.length === 0) {
+    // An empty feed leaves the guard's memory untouched (see pruneRefused at
+    // the branch stamp): zero is not the catalogue size this branch has.
+    pruneRefused = true;
+    skippedPruneReason = "empty_feed";
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Menu sync for branch ${branchId} received an EMPTY feed — no SKU was delisted (an empty push is far more likely a vendor/API fault than a genuinely bare menu). Verify the outlet's menu in Petpooja.`,
+      branchId,
+    });
+  } else {
     try {
       const feedIds = new Set(validItemIds);
-      // Paginated by doc id: the old single limit(1000) pass left SKUs past
-      // the window live/orderable forever on catalogs bigger than the page.
-      const TOMBSTONE_PAGE = 500;
+      // Paginated by doc id: a single page would leave SKUs past the window
+      // orderable forever on catalogs bigger than the page.
+      const DELIST_PAGE = 500;
       let lastDoc: any = null;
       // Two-phase on purpose: collect first, so a refused pass writes nothing.
-      const retireCandidates: any[] = [];
-      // F7 (SKU re-appearance): a SKU that comes BACK in the feed must stop
-      // being a tombstone. Cleared here (not in the product payload) so a live
-      // SKU that was never retired does not carry a misleading
-      // `ghostRetired: false` field of its own.
+      const delistCandidates: any[] = [];
       const restoreCandidates: any[] = [];
       let knownActiveItems = 0;
+
       for (;;) {
         let pageQuery: any = db
           .collection("products")
           .where("branchId", "==", branchId)
           .orderBy("__name__")
-          .limit(TOMBSTONE_PAGE);
+          .limit(DELIST_PAGE);
         if (lastDoc && typeof pageQuery.startAfter === "function") {
           pageQuery = pageQuery.startAfter(lastDoc);
         }
@@ -893,105 +959,132 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
         const docs = existingSnap.docs || [];
         for (const d of docs) {
           const dd = (d.data() as any) || {};
-          if (dd.isCombo) continue;
-          const pid = dd.petpoojaItemId ? String(dd.petpoojaItemId) : null;
-          if (!pid) continue;
+          if (!isSyncOwnedProduct(dd)) continue;
+          const pid = String(dd.petpoojaItemId);
+          // The legacy tombstone flag counts as already-delisted, so an old
+          // marker is neither re-written nor allowed to inflate the denominator.
+          const alreadyDelisted = dd.delistedFromPos === true || dd.ghostRetired === true;
+
           if (feedIds.has(pid)) {
-            // Back in the feed → drop the tombstone. A live SKU carrying
-            // `ghostRetired: true` misleads operators/reports that read the flag.
-            if (dd.ghostRetired === true) restoreCandidates.push(d.ref);
-            // A feed-present SKU is part of the live catalogue: it must count
-            // toward the denominator, or the feed-share guard compares a feed
-            // against only the SKUs it omits.
+            // Back in the feed → clear the delist marker. The ingest loop has
+            // already taken this SKU's stock from the push.
+            if (alreadyDelisted) restoreCandidates.push(d.ref);
+            // A feed-present SKU is live catalogue and must count toward the
+            // denominator, or the share guard would compare a feed only against
+            // the SKUs it omits.
             knownActiveItems++;
             continue;
           }
-          // A tombstone that stays absent is already off the menu; counting it
+
+          // Already delisted and still absent: nothing to write, and counting it
           // would inflate the denominator until the guard refused every pass.
-          if (dd.ghostRetired === true) continue;
+          if (alreadyDelisted) continue;
+
           knownActiveItems++;
-          if (dd.inStock !== false) {
-            retireCandidates.push(d.ref);
-          }
+          delistCandidates.push(d.ref);
         }
-        if (docs.length < TOMBSTONE_PAGE) break;
+        if (docs.length < DELIST_PAGE) break;
         lastDoc = docs[docs.length - 1];
         if (!lastDoc || typeof pageQuery.startAfter !== "function") break;
       }
+
+      // The guard's memory of the catalogue size, observed by this run.
       observedItemCount = knownActiveItems;
 
-      // Restores are never dangerous (they only clear a tombstone), so they run
-      // even when the retirement pass below is refused.
-      if (restoreCandidates.length > 0) {
-        for (const ref of restoreCandidates) {
-          await ref.set(
-            {
-              ghostRetired: false,
-              ghostRetiredAt: null,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-        }
-        console.log(
-          `[Petpooja Menu Sync] restored ${restoreCandidates.length} returned SKU(s) for branch ${branchId} (cleared ghostRetired)`
-        );
-      }
-
       const knownItems = Math.max(previousItemCount, knownActiveItems);
-      const MIN_FEED_SHARE = 0.5;
-      const MAX_RETIRE_SHARE = 0.5;
-      const truncatedFeed =
-        knownItems > 0 && feedIds.size < knownItems * MIN_FEED_SHARE;
-      const massRetirement =
-        retireCandidates.length > 0 &&
+      const truncatedFeed = knownItems > 0 && feedIds.size < knownItems * DELIST_MIN_FEED_SHARE;
+      const massDelisting =
+        delistCandidates.length > 0 &&
         knownItems > 0 &&
-        retireCandidates.length > knownItems * MAX_RETIRE_SHARE;
+        delistCandidates.length > knownItems * DELIST_MAX_PRUNE_SHARE;
 
-      if (truncatedFeed || massRetirement) {
-        tombstoneRefused = true;
+      if (truncatedFeed || massDelisting) {
+        pruneRefused = true;
+        skippedPruneReason = "feed_below_threshold";
         console.warn(
-          `[Petpooja Menu Sync] REFUSING the ghost-SKU tombstone pass for branch ${branchId}: ${
+          `[Petpooja Menu Sync] REFUSING the POS delisting pass for branch ${branchId}: ${
             truncatedFeed
               ? `feed carries ${feedIds.size} SKU(s) against ${knownItems} known item(s)`
-              : `this run would retire ${retireCandidates.length} of ${knownItems} known item(s)`
-          } — a truncated feed must not take the catalogue dark`
+              : `this run would delist ${delistCandidates.length} of ${knownItems} known item(s)`
+          } — a partial feed must not take the catalogue dark`
         );
         await captureErrorSnapshot({
           source: "petpooja",
           severity: "high",
-          message: `Menu sync REFUSED to retire ghost SKUs for branch ${branchId}: ${
+          message: `Menu sync REFUSED to delist POS SKUs for branch ${branchId}: ${
             truncatedFeed
-              ? `feed has ${feedIds.size} SKU(s) vs ${knownItems} known item(s) (suspected truncated feed)`
-              : `would retire ${retireCandidates.length} of ${knownItems} known item(s) in one run`
-          }. No product was retired; re-run once the feed is complete.`,
+              ? `feed has ${feedIds.size} SKU(s) vs ${knownItems} known item(s) (suspected partial/truncated feed)`
+              : `would delist ${delistCandidates.length} of ${knownItems} known item(s) in one run`
+          }. No product was delisted; re-run once the feed is complete.`,
           branchId,
         });
       } else {
-        let retired = 0;
-        for (const ref of retireCandidates) {
-          await ref.set(
-            {
-              inStock: false,
-              ghostRetired: true,
-              ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
+        // Restores are never dangerous (they only clear a marker), so they run
+        // even when nothing is being delisted.
+        if (restoreCandidates.length > 0) {
+          restoredCount = await commitPatches(
+            restoreCandidates.map((ref) => ({
+              ref,
+              data: {
+                delistedFromPos: false,
+                delistedAt: null,
+                ghostRetired: false,
+                ghostRetiredAt: null,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+            }))
           );
-          retired++;
+          console.log(
+            `[Petpooja Menu Sync] restored ${restoredCount} returned SKU(s) for branch ${branchId} (cleared delistedFromPos)`
+          );
         }
-        if (retired > 0) {
+
+        if (delistCandidates.length > 0) {
+          prunedCount = await commitPatches(
+            delistCandidates.map((ref) => ({
+              ref,
+              data: {
+                inStock: false,
+                // The POS no longer lists this SKU: it is not merely "out of
+                // stock today", it is gone from the source of truth. The marker
+                // says so, and is cleared if it ever comes back.
+                delistedFromPos: true,
+                delistedAt: admin.firestore.FieldValue.serverTimestamp(),
+                // Legacy mirror for any operator query written against the
+                // previous tombstone flag; both are cleared on re-appearance.
+                ghostRetired: true,
+                ghostRetiredAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+            }))
+          );
           await captureErrorSnapshot({
             source: "petpooja",
             severity: "medium",
-            message: `Menu sync retired ${retired} ghost SKU(s) for branch ${branchId} (absent from POS feed, flipped out-of-stock — not deleted)`,
+            message: `Menu sync delisted ${prunedCount} POS SKU(s) for branch ${branchId} (absent from the POS feed, flipped out-of-stock — not deleted)`,
             branchId,
           });
         }
       }
     } catch (err: any) {
-      console.warn(`[Petpooja Menu Sync] Ghost-SKU tombstone pass failed for ${branchId}:`, err?.message || err);
+      // A prune failure must NEVER lose the sync result: the merge already
+      // committed and the caller still gets its counts. The failure is reported
+      // honestly in the sync log and to the operator instead of looking clean.
+      prunedCount = 0;
+      restoredCount = 0;
+      // The pass did not complete, so the catalogue memory must be preserved too.
+      pruneRefused = true;
+      skippedPruneReason = "prune_failed";
+      console.warn(
+        `[Petpooja Menu Sync] POS delisting pass failed for ${branchId}:`,
+        err?.message || err
+      );
+      await captureErrorSnapshot({
+        source: "petpooja",
+        severity: "high",
+        message: `Menu sync for branch ${branchId} ingested the feed but FAILED to run the POS delisting pass: ${err?.message || err}. Absent POS SKUs may still be orderable; the sync itself completed.`,
+        branchId,
+      });
     }
   }
 
@@ -1018,10 +1111,11 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   await db.collection("branches").doc(branchId).set(
     {
       lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
-      // A refused tombstone run must NOT lower the recorded catalogue size:
-      // that field is the guard's own memory of how many SKUs this branch has,
-      // and lowering it on a truncated feed would disarm the guard next tick.
-      petpoojaItemCount: tombstoneRefused
+      // A refused, skipped or failed prune must NOT lower the recorded
+      // catalogue size: that field is the guard's own memory of how many SKUs
+      // this branch has, and lowering it on a partial/empty feed would disarm
+      // the guard next tick.
+      petpoojaItemCount: pruneRefused
         ? Math.max(previousItemCount, observedItemCount, validItemsCount)
         : validItemsCount,
       // P1: only ever written when the push actually carried packaging keys, so
@@ -1112,6 +1206,12 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       itemsWithUnsupportedVariationScopedAddons,
       malformedItemCount,
       anomalyCensus,
+      // POS DELISTING (the sync's other half): how many POS SKUs this run
+      // flipped out-of-stock because the feed no longer lists them, and — when
+      // it pruned nothing — exactly why. `null` means "the pass ran clean".
+      prunedCount,
+      restoredCount,
+      skippedPruneReason,
       // ADDITIVE tax-metadata census (2026-10-26): the captured rows + every
       // straight count the branch decision depends on. Record-only.
       taxCatalogCaptured: taxCatalogue.rows.length,
