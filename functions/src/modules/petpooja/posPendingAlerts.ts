@@ -1,6 +1,7 @@
 import { db } from "../../core/firebase";
 import * as logger from "firebase-functions/logger";
 import { dispatchFCM } from "../notifications/fcm.service";
+import { TRUSTED_SERVER_ACTOR } from "../notifications/sendGate";
 
 /**
  * Paid-but-POS-pending staff alerts.
@@ -228,6 +229,8 @@ export async function posPendingAlertsWorker(): Promise<{
           branchId,
           stage: "5m",
         },
+        purpose: "operational",
+        actor: TRUSTED_SERVER_ACTOR,
       });
       const escalationOk = await dispatchFCM({
         topic: "tickets_escalated",
@@ -239,6 +242,8 @@ export async function posPendingAlertsWorker(): Promise<{
           branchId,
           stage: "5m",
         },
+        purpose: "operational",
+        actor: TRUSTED_SERVER_ACTOR,
       });
       // At least one staff channel must have accepted the push before the
       // marker is written; otherwise the next tick retries the alert.
@@ -268,6 +273,8 @@ export async function posPendingAlertsWorker(): Promise<{
         branchId,
         stage: "2m",
       },
+      purpose: "operational",
+      actor: TRUSTED_SERVER_ACTOR,
     });
     if (ok) {
       await doc.ref.set({ posPendingAlert2mAt: Date.now() }, { merge: true });

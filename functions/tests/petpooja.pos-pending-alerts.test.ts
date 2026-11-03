@@ -55,6 +55,7 @@ vi.mock("../src/modules/notifications/fcm.service", () => ({
 }));
 
 import { dispatchFCM } from "../src/modules/notifications/fcm.service";
+import { resolveSend } from "../src/modules/notifications/sendGate";
 import {
   POS_PENDING_ALERT_MS,
   POS_PENDING_ESCALATION_MS,
@@ -120,6 +121,28 @@ describe("paid-but-POS-pending alerts", () => {
     });
     expect(savedDocs["orders/five_min"].posPendingAlert2mAt).toBeTypeOf("number");
     expect(savedDocs["orders/five_min"].posPendingEscalated5mAt).toBeTypeOf("number");
+  });
+
+  it("every stage clears the REAL notification gate", async () => {
+    // dispatchFCM is mocked above, which is how this stayed hidden: these alerts
+    // declared no purpose, the real gate quarantined all of them, and a paid
+    // order stuck before the kitchen never told anyone. Staging logged one
+    // blocked send a minute from at least 1 Nov.
+    addOrder("gate_2m", {
+      payment: { status: "completed", verifiedAt: Date.now() - (POS_PENDING_ALERT_MS + 10_000) },
+    });
+    addOrder("gate_5m", {
+      payment: { status: "completed", verifiedAt: Date.now() - (POS_PENDING_ESCALATION_MS + 30_000) },
+    });
+    await posPendingAlertsWorker();
+
+    const calls = vi.mocked(dispatchFCM).mock.calls.map((c) => c[0]);
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      await expect(
+        resolveSend({ purpose: call.purpose, actor: call.actor, topic: call.topic, payloadType: call.data?.type })
+      ).resolves.toMatchObject({ kind: "staff" });
+    }
   });
 
   it("ignores unpaid orders, already-pushed orders, and orders with no paid timestamp", async () => {
