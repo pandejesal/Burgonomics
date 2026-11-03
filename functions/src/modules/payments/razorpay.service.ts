@@ -4212,6 +4212,21 @@ export async function autoRefund(
   // see the full context above.
   const refundedTotal = await runTx(async (tx) => {
     const snap = await tx.get(orderRef);
+
+    // READ-BEFORE-WRITE: the partner refund row (when this request names one)
+    // must be read here, before any write, so the operator-visible
+    // `refunds/{id}` completion can be written atomically below.
+    const completionDocId = refundRequestId
+      ? refundRequestId.replace(/^refundreq_/, "")
+      : "";
+    const refundRowRefForCompletion =
+      completionDocId && completionDocId !== refundRequestId && isSafeDocId(completionDocId)
+        ? db.collection("refunds").doc(completionDocId)
+        : null;
+    const refundRowSnapForCompletion = refundRowRefForCompletion
+      ? await tx.get(refundRowRefForCompletion)
+      : null;
+    const refundRowExisted = !!refundRowSnapForCompletion?.exists;
     const fresh = ((snap && snap.exists ? snap.data() : {}) || {}) as any;
     const freshLedger: Record<string, number> =
       fresh.refundLedger && typeof fresh.refundLedger === "object" && !Array.isArray(fresh.refundLedger)
@@ -4325,6 +4340,31 @@ export async function autoRefund(
           refundId: refundResult.id,
           gatewayKey,
           completedAt: Date.now(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+
+    // OPERATOR-VISIBLE COMPLETION. The partner Refund Clearance Terminal reads
+    // the `refunds` collection, while this routine used to record completion
+    // only in `payment_refund_requests`. The consequence was visible in staging:
+    // a released refund left the review row PENDING, so the terminal offered
+    // "Approve Payout" for money that had already gone back, and the cancellation
+    // reconciler later withdrew the row as stale. The row was READ at the top of
+    // this transaction (before any write) and is completed here in the SAME
+    // transaction that records the gateway receipt.
+    if (refundRowRefForCompletion && refundRowExisted) {
+      tx.set(
+        refundRowRefForCompletion,
+        {
+          status: "COMPLETED",
+          gatewayStatus: "processed",
+          gatewayRefundId: refundResult.id,
+          refundId: refundResult.id,
+          settledPaise: Number(refundResult.amount) || requestedPaise || null,
+          processedBy: caller?.email || caller?.uid || "server",
+          completedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
