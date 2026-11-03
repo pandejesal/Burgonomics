@@ -273,14 +273,8 @@ app.use(
 
 app.use(limiter);
 
-app.use(
-  express.json({
-    limit: "2mb",
-    verify: (req, _res, buf) => {
-      (req as any).rawBody = buf;
-    },
-  })
-);
+// NOTE: body parsing is registered once, in `apiBodyParsers` below, BEFORE the
+// route definitions. Do not reintroduce a parser here.
 
 /**
  * JSON body errors must fail CLOSED in the API's own contract, not as Express's
@@ -307,7 +301,18 @@ const jsonBodyErrorHandler = (err: any, _req: any, res: any, next: any) => {
   }
   next(err);
 };
-app.use(jsonBodyErrorHandler as any);
+
+// Body parsing for the API routes is installed as ONE router BEFORE the route
+// definitions. An earlier revision registered `express.json()` after the routes,
+// so malformed JSON was rejected by the per-route parser and Express answered
+// with its default HTML page instead of this module's JSON contract.
+const rawBodyCapture = (req: any, _res: any, buf: Buffer) => {
+  req.rawBody = buf;
+};
+const apiBodyParsers = express.Router();
+apiBodyParsers.use(express.json({ limit: "2mb", verify: rawBodyCapture }));
+apiBodyParsers.use(jsonBodyErrorHandler as any);
+app.use(apiBodyParsers);
 
 const REGION = "asia-south1";
 
