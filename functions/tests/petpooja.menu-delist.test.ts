@@ -225,12 +225,16 @@ afterEach(() => {
 
 describe("POS delisting — an item removed on the POS stops being orderable", () => {
   it("marks the absent owned SKU out of stock with the delist marker, and never deletes it", async () => {
-    seedBranch("demo", 3);
+    // A realistic menu size: with a 20%-per-run ceiling a 3-item menu could
+    // never delist even one SKU (33%), so the fixture must be big enough for
+    // the guarantee to be meaningful rather than the assertion weakened.
+    seedBranch("demo", 20);
     const gone = seedOwnedProduct("gone", { name: "Retired Burger", price: 249, categoryId: "cat_1" });
-    seedOwnedProduct("a");
-    seedOwnedProduct("b");
+    for (let i = 0; i < 19; i++) seedOwnedProduct(`keep${String(i).padStart(2, "0")}`);
+    const feed = [];
+    for (let i = 0; i < 19; i++) feed.push(feedItem(`keep${String(i).padStart(2, "0")}`));
 
-    await push([feedItem("a"), feedItem("b")]);
+    await push(feed);
 
     const doc = savedDocs[gone];
     expect(doc).toBeDefined(); // NEVER deleted: history/favourites/orders point here
@@ -245,8 +249,8 @@ describe("POS delisting — an item removed on the POS stops being orderable", (
       branchId: "demo",
     });
     // The feed's own items stay orderable and untouched by the prune.
-    expect(savedDocs["products/prod_demo_a"].inStock).toBe(true);
-    expect(savedDocs["products/prod_demo_b"].inStock).toBe(true);
+    expect(savedDocs["products/prod_demo_keep00"].inStock).toBe(true);
+    expect(savedDocs["products/prod_demo_keep18"].inStock).toBe(true);
 
     expect(lastSyncLog()).toMatchObject({ prunedCount: 1, skippedPruneReason: null });
   });
@@ -411,17 +415,17 @@ describe("POS delisting — an item removed on the POS stops being orderable", (
   });
 
   it("delists a large backlog within the 500-write batch limit", async () => {
-    // A big menu where the feed is COMPLETE (well over the 50% bar) but 620
-    // SKUs were removed at once — under the 50% single-run cap, so the pass is
-    // allowed and must chunk its writes at Firestore's 500.
-    const present = 800;
+    // 620 delistings in one run has to fit BOTH the 500-write batch cap and the
+    // 20%-per-run ceiling, so the baseline is 3100 (20% = 620). The feed is
+    // 2480 present — 80% of the baseline, the largest allowed drop.
     const total = 620;
+    const present = 2480;
     seedBranch("demo", present + total);
-    for (let i = 0; i < total; i++) seedOwnedProduct(`old${String(i).padStart(3, "0")}`);
+    for (let i = 0; i < total; i++) seedOwnedProduct(`old${String(i).padStart(4, "0")}`);
     const feed = [];
     for (let i = 0; i < present; i++) {
-      seedOwnedProduct(`keep${String(i).padStart(3, "0")}`);
-      feed.push(feedItem(`keep${String(i).padStart(3, "0")}`));
+      seedOwnedProduct(`keep${String(i).padStart(4, "0")}`);
+      feed.push(feedItem(`keep${String(i).padStart(4, "0")}`));
     }
 
     await push(feed);
@@ -431,8 +435,8 @@ describe("POS delisting — an item removed on the POS stops being orderable", (
       (p) => p.startsWith("products/") && savedDocs[p].delistedFromPos === true
     );
     expect(delisted).toHaveLength(total);
-    expect(savedDocs["products/prod_demo_keep000"].delistedFromPos).toBeUndefined();
-    expect(savedDocs["products/prod_demo_keep000"].inStock).toBe(true);
+    expect(savedDocs["products/prod_demo_keep0000"].delistedFromPos).toBeUndefined();
+    expect(savedDocs["products/prod_demo_keep0000"].inStock).toBe(true);
 
     expect(lastSyncLog()).toMatchObject({ prunedCount: total, skippedPruneReason: null });
     // Firestore caps a batch at 500 writes; nothing may exceed it.
@@ -454,18 +458,23 @@ describe("POS delisting — an item removed on the POS stops being orderable", (
   });
 
   it("reports a prune failure honestly without losing the sync result", async () => {
-    seedBranch("demo", 3);
+    // 1 of 20 absent = a 5% drop, inside the 20% ceiling, so the pass is
+    // ALLOWED and the failure comes from the commit itself.
+    seedBranch("demo", 20);
     seedOwnedProduct("gone");
-    seedOwnedProduct("a");
-    seedOwnedProduct("b");
+    const feed = [];
+    for (let i = 0; i < 19; i++) {
+      seedOwnedProduct(`keep${String(i).padStart(2, "0")}`);
+      feed.push(feedItem(`keep${String(i).padStart(2, "0")}`));
+    }
     hooks.failDelistCommit = true;
 
-    const result = await push([feedItem("a"), feedItem("b")]);
+    const result = await push(feed);
 
     // The main sync still succeeded and still merged its items.
-    expect(result).toEqual({ itemCount: 2, categoriesCount: 1 });
-    expect(savedDocs["products/prod_demo_a"].inStock).toBe(true);
-    expect(savedDocs["products/prod_demo_b"].inStock).toBe(true);
+    expect(result).toEqual({ itemCount: 19, categoriesCount: 1 });
+    expect(savedDocs["products/prod_demo_keep00"].inStock).toBe(true);
+    expect(savedDocs["products/prod_demo_keep18"].inStock).toBe(true);
     // The failed prune is NOT reported as a clean run.
     expect(lastSyncLog()).toMatchObject({
       status: "COMPLETED",
@@ -473,5 +482,134 @@ describe("POS delisting — an item removed on the POS stops being orderable", (
       skippedPruneReason: "prune_failed",
     });
     expect(savedDocs["products/prod_demo_gone"].inStock).toBe(true);
+  });
+});
+
+describe("POS delisting — REVIEW BLOCKERS: ratchet limits, visibility, re-listing", () => {
+  /**
+   * The 20% ceiling, exactly as the source computes it:
+   *   truncatedFeed = feed < baseline * 0.8
+   *   massDelisting = candidates > baseline * 0.2
+   * Delist candidates are the owned SKUs absent from the feed, so a feed of N
+   * with baseline B has B-N candidates. Both guards are evaluated on the
+   * baseline `max(petpoojaItemCount, this run's scan)`.
+   */
+  const BASELINE = 100;
+  const seedMenu = (absent: number, present: number) => {
+    seedBranch("demo", BASELINE);
+    for (let i = 0; i < absent; i++) seedOwnedProduct(`gone${String(i).padStart(3, "0")}`);
+    const feed = [];
+    for (let i = 0; i < present; i++) {
+      seedOwnedProduct(`keep${String(i).padStart(3, "0")}`);
+      feed.push(feedItem(`keep${String(i).padStart(3, "0")}`));
+    }
+    return feed;
+  };
+
+  it("a 79% feed prunes nothing and raises the HIGH snapshot", async () => {
+    // 21 absent of 100 = 79% feed: one item past the 20% ceiling.
+    await push(seedMenu(21, 79));
+
+    for (let i = 0; i < 21; i++) {
+      expect(
+        savedDocs[`products/prod_demo_gone${String(i).padStart(3, "0")}`].inStock,
+        `gone${i} must stay orderable`
+      ).toBe(true);
+    }
+    expect(lastSyncLog()).toMatchObject({
+      prunedCount: 0,
+      skippedPruneReason: "feed_below_threshold",
+    });
+    expect(highSnapshots().some((s) => /REFUSED to delist/.test(String(s.message)))).toBe(true);
+    // Nothing was delisted, so the baseline memory is preserved.
+    expect(savedDocs["branches/demo"].petpoojaItemCount).toBe(BASELINE);
+  });
+
+  it("an 80% feed prunes, and alerts exactly once at HIGH", async () => {
+    // Exactly 20 of 100: the largest allowed drop.
+    await push(seedMenu(20, 80));
+
+    const delisted = Object.keys(savedDocs).filter(
+      (p) => p.startsWith("products/") && savedDocs[p].delistedFromPos === true
+    );
+    expect(delisted).toHaveLength(20);
+    expect(lastSyncLog()).toMatchObject({ prunedCount: 20, skippedPruneReason: null });
+
+    // Exactly ONE snapshot for the whole sync — not one per item — at HIGH.
+    expect(snapshotRows()).toHaveLength(1);
+    const snap = savedDocs[snapshotRows()[0]];
+    expect(snap).toMatchObject({ source: "petpooja", severity: "high", branchId: "demo" });
+    // The count is named, so a slow ratchet is never silent.
+    expect(String(snap.message)).toContain("20");
+    expect(String(snap.message)).toContain("demo");
+  });
+
+  it("the 100/60/36/21 slide cannot delist beyond the first refused step", async () => {
+    // The ratchet the review found: each drop passes a coarse 50% guard, and
+    // lowering petpoojaItemCount after a prune let the baseline follow the menu
+    // down (100 -> 60 -> 36 -> 21 wipes ~80% across ticks, silently). With a
+    // 20% ceiling the FIRST drop (100 -> 60, 40 absent) is already refused, and
+    // because a refused pass preserves the baseline, every later step is
+    // measured against the real 100. Nothing is delisted at any step.
+    seedBranch("demo", BASELINE);
+    const allIds: string[] = [];
+    for (let i = 0; i < BASELINE; i++) {
+      const id = `sku${String(i).padStart(3, "0")}`;
+      allIds.push(id);
+      seedOwnedProduct(id);
+    }
+
+    const delistedNow = () =>
+      Object.keys(savedDocs).filter(
+        (p) => p.startsWith("products/") && savedDocs[p].delistedFromPos === true
+      );
+
+    for (const feedSize of [60, 36, 21]) {
+      await push(allIds.slice(0, feedSize).map(feedItem));
+
+      expect(delistedNow(), `feed of ${feedSize} must delist nothing`).toHaveLength(0);
+      // The baseline never ratchets down, so the next step cannot smuggle in a
+      // proportionally larger drop.
+      expect(
+        savedDocs["branches/demo"].petpoojaItemCount,
+        `baseline after a ${feedSize}-item feed`
+      ).toBe(BASELINE);
+      expect(lastSyncLog()).toMatchObject({
+        prunedCount: 0,
+        skippedPruneReason: "feed_below_threshold",
+      });
+    }
+
+    // Every SKU is still orderable: the failure direction is "menu stays up,
+    // a human is told".
+    for (const id of allIds) {
+      expect(savedDocs[`products/prod_demo_${id}`].inStock).toBe(true);
+    }
+  });
+
+  it("re-delists a staff re-listed SKU that is still absent from the POS", async () => {
+    // Staff flipped a delisted, POS-absent SKU back to orderable. Nothing about
+    // the POS changed, so the next sync must put it back out of stock.
+    seedBranch("demo", BASELINE);
+    const path = seedOwnedProduct("resurrected", {
+      inStock: true,
+      delistedFromPos: true,
+      delistedAt: "OLD_DELIST",
+    });
+    const feed = [];
+    for (let i = 0; i < 95; i++) {
+      seedOwnedProduct(`keep${String(i).padStart(3, "0")}`);
+      feed.push(feedItem(`keep${String(i).padStart(3, "0")}`));
+    }
+    // 5 absent (4 more below), well inside the 20% ceiling.
+    for (let i = 0; i < 4; i++) seedOwnedProduct(`gone${i}`);
+
+    await push(feed);
+
+    expect(savedDocs[path]).toMatchObject({
+      inStock: false,
+      delistedFromPos: true,
+    });
+    expect(savedDocs[path].delistedAt).toBe("MOCK_TIMESTAMP");
   });
 });

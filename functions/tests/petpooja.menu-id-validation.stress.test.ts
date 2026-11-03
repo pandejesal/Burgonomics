@@ -248,7 +248,9 @@ describe("Petpooja menuSyncWebhook Firestore doc ID validation (F2 stress)", () 
       petpoojaStoreId: "res_live_99",
     };
 
-    // Pre-seed an existing item with padded vendor ID and an existing ghost SKU
+    // Pre-seed an existing item with padded vendor ID and an existing ghost SKU.
+    // Three filler SKUs that are present in the feed bring the catalogue to 5,
+    // so the one ghost retirement is 20% of it — inside the per-run ceiling.
     savedDocs["products/prod_branch_live_ sku_distinct "] = {
       id: "prod_branch_live_ sku_distinct ",
       petpoojaItemId: " sku_distinct ",
@@ -263,6 +265,15 @@ describe("Petpooja menuSyncWebhook Firestore doc ID validation (F2 stress)", () 
       branchId: "branch_live",
       inStock: true,
     };
+    for (let i = 0; i < 3; i++) {
+      savedDocs[`products/prod_branch_live_filler${i}`] = {
+        id: `prod_branch_live_filler${i}`,
+        petpoojaItemId: `filler${i}`,
+        name: `Filler Item ${i}`,
+        branchId: "branch_live",
+        inStock: true,
+      };
+    }
 
     const incomingMenu = {
       success: "1",
@@ -276,6 +287,13 @@ describe("Petpooja menuSyncWebhook Firestore doc ID validation (F2 stress)", () 
           itemcategoryid: "cat_live",
           in_stock: 1,
         },
+        ...Array.from({ length: 3 }, (_v, i) => ({
+          itemid: `filler${i}`,
+          itemname: `Filler Item ${i}`,
+          price: 111,
+          itemcategoryid: "cat_live",
+          in_stock: 1,
+        })),
         // Whitespace-padded vendor ID (must NOT alias with "sku_distinct")
         {
           itemid: " sku_distinct ",
@@ -331,7 +349,8 @@ describe("Petpooja menuSyncWebhook Firestore doc ID validation (F2 stress)", () 
       .map((k) => savedDocs[k]);
     const latestLog = syncLogs[syncLogs.length - 1];
     expect(latestLog.status).toBe("COMPLETED");
-    expect(latestLog.created).toBe(2);
+    // 5 valid items: the 2 originals, the padded-id item, and the 3 fillers.
+    expect(latestLog.created).toBe(5);
     expect(latestLog.malformedItemCount).toBe(2);
     expect(latestLog.anomalyCensus["exceeds_1500_bytes"]).toBe(2);
   });

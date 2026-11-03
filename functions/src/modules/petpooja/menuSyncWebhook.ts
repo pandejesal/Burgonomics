@@ -871,20 +871,24 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   //   (a) an empty feed prunes NOTHING;
   //   (b) the feed must cover DELIST_MIN_FEED_SHARE of the branch's known
   //       catalogue.
-  // 50% is deliberate and asymmetric: a real menu rarely loses half its SKUs at
-  // once, while the failures this guards against (a truncated multi-page API
-  // response, a push that carried half the catalogue, a sandbox outlet whose
-  // push is a small subset) routinely land far below half. A refused pass writes
-  // NOTHING, so there is nothing to reverse, and it is loud: a sync-log reason
-  // plus a HIGH snapshot for a human. A first-ever sync has no known catalogue
-  // (0), so the guard is inactive and there is nothing to prune anyway.
+  // 80% (i.e. at most a 20% single-run drop) because a coarse 50% bar let one
+  // push delist 49% of a menu, and because each prune lowers the baseline the
+  // next guard is measured against — a slide of 100 → 60 → 36 → 21 wiped ~80%
+  // across ticks with no single step looking wrong. A real menu does not lose a
+  // fifth of its SKUs between two pushes; when it appears to, the correct
+  // failure direction is that items stay ORDERABLE and a human is told. A
+  // genuine large menu change therefore needs a person, deliberately — there is
+  // no override. A first-ever sync has no known catalogue (0), so the guard is
+  // inactive and there is nothing to prune anyway.
   //
   // ACTION: never DELETE a product — history, favourites and old orders refer to
   // it. Flip `inStock:false` + `delistedFromPos:true` + `delistedAt`, merging so
   // every other field survives. A SKU that reappears in a later push has the
   // marker CLEARED (and its stock comes from the push as normal).
-  const DELIST_MIN_FEED_SHARE = 0.5;
-  const DELIST_MAX_PRUNE_SHARE = 0.5;
+  /** Feed must carry ≥80% of the baseline, so one run delists at most 20%. */
+  const DELIST_MIN_FEED_SHARE = 0.8;
+  /** Hard ceiling on one run's prune: 20% of the baseline. A bigger drop needs a human. */
+  const DELIST_MAX_PRUNE_SHARE = 0.2;
   /** Firestore caps a batch at 500 writes; prune writes are chunked to match. */
   const DELIST_BATCH_LIMIT = 500;
   const DELIST_EXCLUDED_TAG = "qa_20261102_demo_menu";
@@ -976,9 +980,12 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
             continue;
           }
 
-          // Already delisted and still absent: nothing to write, and counting it
-          // would inflate the denominator until the guard refused every pass.
-          if (alreadyDelisted) continue;
+          // Already delisted, still absent, AND still out of stock: nothing to
+          // write, and counting it would inflate the denominator until the
+          // guard refused every pass. The `inStock === false` half matters: if
+          // staff re-listed this SKU while the POS still omits it, skipping
+          // unconditionally would leave it orderable forever.
+          if (alreadyDelisted && dd.inStock === false) continue;
 
           knownActiveItems++;
           delistCandidates.push(d.ref);
@@ -1060,8 +1067,11 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
           );
           await captureErrorSnapshot({
             source: "petpooja",
-            severity: "medium",
-            message: `Menu sync delisted ${prunedCount} POS SKU(s) for branch ${branchId} (absent from the POS feed, flipped out-of-stock — not deleted)`,
+            // HIGH, and once per sync (not per item): a slow ratchet — a few
+            // SKUs delisted on each of several pushes — must never be silent.
+            // Only the branch id and a count: no customer data.
+            severity: "high",
+            message: `Menu sync delisted ${prunedCount} POS SKU(s) for branch ${branchId} (absent from the POS feed, flipped out-of-stock — not deleted). Verify the outlet's menu if this was not expected; items can be re-listed from the partner app.`,
             branchId,
           });
         }

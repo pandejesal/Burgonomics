@@ -444,6 +444,23 @@ describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDIN
   });
 
   it("resolves a LIVE push by sharing code, ingests under the branch, and retires only absent orderable POS SKUs", async () => {
+    // A realistic 20-item feed: a 2-item feed could never delist 2 SKUs under a
+    // 20%-per-run ceiling (50%), so the fixture is a real menu size while every
+    // assertion about WHICH docs change stays exactly as before.
+    const bigPushBody = {
+      ...REAL_PUSH_BODY,
+      items: [
+        ...REAL_PUSH_BODY.items,
+        ...Array.from({ length: 18 }, (_v, i) => ({
+          itemid: `pp_keep${String(i).padStart(2, "0")}`,
+          itemname: `Kept Item ${i}`,
+          price: 120,
+          itemcategoryid: "cat_burgers",
+          in_stock: 1,
+          item_attributeid: "1",
+        })),
+      ],
+    };
     const ghostPath = "products/prod_demo_ghost";
     savedDocs[ghostPath] = {
       branchId: "demo", restId: DEMO_REST_ID, petpoojaItemId: "ghost",
@@ -464,22 +481,22 @@ describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDIN
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     try {
-      expect(menuApiFailureReason(REAL_PUSH_BODY, DEMO_REST_ID)).toBeNull();
-      const res = await handlePetpoojaMenuWebhook(REAL_PUSH_BODY);
+      expect(menuApiFailureReason(bigPushBody, DEMO_REST_ID)).toBeNull();
+      const res = await handlePetpoojaMenuWebhook(bigPushBody);
 
-      expect(res).toEqual({ success: true, itemCount: 2 });
+      expect(res).toEqual({ success: true, itemCount: 20 });
       expect(fetchMock).not.toHaveBeenCalled(); // inbound catalog, not a pull
-      for (const item of REAL_PUSH_BODY.items) {
+      for (const item of bigPushBody.items) {
         expect(savedDocs[`products/prod_demo_${item.itemid}`]).toMatchObject({
           branchId: "demo", restId: DEMO_REST_ID, petpoojaItemId: item.itemid,
           name: item.itemname, inStock: true,
         });
         expect(savedDocs[`products/prod_${DEMO_REST_ID}_${item.itemid}`]).toBeUndefined();
       }
-      expect(savedDocs["branches/demo"].petpoojaItemCount).toBe(2);
+      expect(savedDocs["branches/demo"].petpoojaItemCount).toBe(20);
       expect(syncLogRows()).toHaveLength(1);
       expect(savedDocs[syncLogRows()[0]]).toMatchObject({
-        storeId: "demo", status: "COMPLETED", created: 2, error: null, simulated: false,
+        storeId: "demo", status: "COMPLETED", created: 20, error: null, simulated: false,
       });
 
       // Source: "Never DELETE: flip inStock:false + delistedFromPos"; preserve data.
@@ -498,7 +515,9 @@ describe("Petpooja menu PUSH webhook — the LIVE (mock=false) push path (FINDIN
       });
       expect(snapshotRows()).toHaveLength(1);
       expect(savedDocs[snapshotRows()[0]]).toMatchObject({
-        branchId: "demo", severity: "medium",
+        branchId: "demo",
+        // HIGH once per sync, naming the count — the visibility requirement.
+        severity: "high",
         message: expect.stringContaining("delisted 2 POS SKU(s)"),
       });
     } finally {
@@ -672,14 +691,24 @@ describe("demo re-push blast radius (isolation)", () => {
   });
 
   it("RETIREs only the absent DEMO-scoped SKU, leaving a stale foreign SKU untouched", async () => {
-    // Source `syncPetpoojaMenu` tombstone block (live-only, items.length > 0):
-    //   where("branchId","==",branchId) → per doc with a petpoojaItemId NOT in
-    //   the feed and inStock !== false:
-    //   d.ref.set({ inStock:false, ghostRetired:true,
-    //               ghostRetiredAt: serverTimestamp(),
-    //               updatedAt: serverTimestamp() }, { merge:true })
-    // `branchId` is the resolved DEMO branch, so the query is branch-scoped and
-    // cannot see another branch's docs — asserted below rather than assumed.
+    // 1 delisting of a 20-item catalogue (5%) — inside the 20% ceiling, so the
+    // pass runs. The feed is a realistic 20 items; what the test asserts about
+    // WHICH doc changes is unchanged.
+    savedDocs["branches/demo"] = { petpoojaStoreId: DEMO_REST_ID, petpoojaItemCount: 20 };
+    const bigPushBody = {
+      ...REAL_PUSH_BODY,
+      items: [
+        ...REAL_PUSH_BODY.items,
+        ...Array.from({ length: 18 }, (_v, i) => ({
+          itemid: `pp_keep${String(i).padStart(2, "0")}`,
+          itemname: `Kept Item ${i}`,
+          price: 120,
+          itemcategoryid: "cat_burgers",
+          in_stock: 1,
+          item_attributeid: "1",
+        })),
+      ],
+    };
     const staleDemo = {
       id: "prod_demo_stale",
       branchId: "demo",
@@ -702,9 +731,9 @@ describe("demo re-push blast radius (isolation)", () => {
     savedDocs["products/prod_demo_stale"] = staleDemo;
     savedDocs["products/prod_westbank_70001"] = staleForeign;
 
-    const res = await handlePetpoojaMenuWebhook(REAL_PUSH_BODY);
+    const res = await handlePetpoojaMenuWebhook(bigPushBody);
 
-    expect(res).toEqual({ success: true, itemCount: 2 });
+    expect(res).toEqual({ success: true, itemCount: 20 });
 
     // The stale DEMO SKU is retired EXACTLY as the source does it: merged onto
     // the existing doc (never deleted, never re-priced/re-described), flipped
@@ -728,11 +757,12 @@ describe("demo re-push blast radius (isolation)", () => {
     // The stale FOREIGN SKU is untouched — the retire query is demo-scoped.
     expect(savedDocs["products/prod_westbank_70001"]).toEqual(staleForeign);
 
-    // The retire pass reported exactly one retirement, for the demo branch.
+    // The retire pass reported exactly one retirement, for the demo branch, at
+    // HIGH (visibility: every delisting sync is loud).
     expect(snapshotRows()).toHaveLength(1);
     expect(savedDocs[snapshotRows()[0]]).toMatchObject({
       source: "petpooja",
-      severity: "medium",
+      severity: "high",
       branchId: "demo",
       message: expect.stringContaining("delisted 1 POS SKU(s)"),
     });
