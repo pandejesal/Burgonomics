@@ -1,12 +1,55 @@
 import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { db } from "../../core/firebase";
-import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlertMessage } from "./templates";
+import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlertMessage, buildRefundReviewAlertMessage } from "./templates";
 import { sendFcmMessage, sendMulticastFcm } from "./fcmClient";
 import { TRUSTED_SERVER_ACTOR } from "./sendGate";
 import { captureErrorSnapshot } from "../../core/errors";
 import { pushKotForCashOrderOnAccept } from "../petpooja/orderPush";
+import {
+  ensureCancelledPaidRefundObligation,
+  claimRefundReviewAlert,
+  settleRefundReviewAlert,
+  planCancelRefundObligation,
+} from "../orders/cancelRefundObligation";
+import { hasServerPaymentChannel } from "../orders/paymentGate";
 
 const REGION = "asia-south1";
+
+/**
+ * The ONLY fields this module writes for its own bookkeeping. An update whose
+ * diff is confined to these is a self-write and must not re-enter reconcile.
+ *
+ * `payment.refundStatus` is deliberately NOT here: autoRefund and the
+ * refund.processed webhook settle money by stamping exactly that field, and
+ * filtering it would skip a genuine settle. A `refundStatus`-only change is
+ * therefore a REAL event (it reconciles and may withdraw our row); the loop
+ * protection comes from the obligation marker and from the queue being
+ * idempotent, not from ignoring settlement.
+ */
+const REFUND_OBLIGATION_SELF_WRITE_KEYS = new Set(["refundObligation"]);
+
+/**
+ * True only when every changed key is one this module provably wrote as its
+ * own queue marker. Anything else — a capture, a settlement stamp, a staff
+ * action — is a genuine event and reconciles.
+ */
+function isRefundObligationSelfWrite(before: any, after: any): boolean {
+  const a = before || {};
+  const b = after || {};
+  const touched = new Set<string>([...Object.keys(a), ...Object.keys(b)]);
+  let sawSelfKey = false;
+  for (const key of touched) {
+    const av = a[key];
+    const bv = b[key];
+    if (JSON.stringify(av) === JSON.stringify(bv)) continue;
+    if (REFUND_OBLIGATION_SELF_WRITE_KEYS.has(key)) {
+      sawSelfKey = true;
+      continue;
+    }
+    return false;
+  }
+  return sawSelfKey;
+}
 
 /**
  * Trigger: Fires when an order is first created in Firestore.
@@ -144,7 +187,110 @@ export async function handleOrderStatusChanged(
   const afterStatusCode =
     typeof after.status === "object" ? after.status?.code : after.status;
 
-  // Strict state-delta check: Exit if status did not change
+  const isCancelled = String(afterStatusCode || "").toUpperCase() === "CANCELLED";
+
+  // A write this module itself made (obligation marker / alert claim) must
+  // never re-enter the reconcile below — that is the loop that produced
+  // unbounded timestamp writes. Genuine CANCELLED→CANCELLED updates (a capture
+  // landing after the cancel, a refund settling) are NOT self-writes and DO
+  // reconcile; only notifications stay behind the status-delta gate.
+  if (isCancelled && isRefundObligationSelfWrite(before, after)) {
+    return;
+  }
+
+  // Cancelled-order refund obligation: a server-confirmed Razorpay capture on
+  // a cancelled order owes a refund REVIEW, never an automatic refund. This
+  // runs BEFORE the status-delta gate so a capture that lands after the
+  // cancellation, and the retry after a failed queue write, both reconcile on
+  // the next genuine order update. It also runs before the customer push so
+  // that copy can honestly say the refund is awaiting review.
+  //
+  // Bounded retry, honestly: the retry trigger is a LATER GENUINE UPDATE of
+  // the order. There is no self-scheduled retry and no timer here — if the
+  // order is never touched again, the queue-failure snapshot is the operator
+  // path (documented residual, not a promise).
+  let refundReview: {
+    created: boolean;
+    amountPaise?: number;
+    pendingRefundId?: string;
+    refundedPaise?: number;
+  } = { created: false };
+  if (isCancelled) {
+    try {
+      const outcome = await ensureCancelledPaidRefundObligation({
+        orderId,
+        after,
+        reason: after.cancellationReason || "ORDER_CANCELLED_AFTER_PAYMENT",
+      });
+      refundReview = {
+        created: outcome.created,
+        amountPaise: outcome.reviewAmountPaise ?? outcome.amountPaise,
+        pendingRefundId: outcome.pendingRefundId,
+        refundedPaise: planCancelRefundObligation(after).refundedPaise,
+      };
+    } catch (err: any) {
+      // The helper is total (it reports queue_failed); this is belt-and-braces
+      // so a refund-obligation fault can never fail/replay the whole trigger.
+      console.error(
+        `[onOrderStatusChangedTrigger] Refund obligation failed for ${orderId}:`,
+        err?.message || err
+      );
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Cancelled PAID order ${orderId} refund obligation threw — refund is owed and must be queued manually`,
+        orderId,
+        errorStack: err?.stack,
+      }).catch(() => undefined);
+    }
+
+    // Claim on the REFUND ROW, not the immutable event. Acknowledged delivery
+    // dedupes ordinary replay; bounded retries after an ambiguous send or failed
+    // settlement can still duplicate the alert. No exactly-once guarantee.
+    const branchId = after.branchId || after.store?.id;
+    if (refundReview.pendingRefundId && branchId) {
+      const claim = await claimRefundReviewAlert({ refundId: refundReview.pendingRefundId });
+      if (claim.claimed && claim.token) {
+        let delivered = false;
+        let failure = "";
+        try {
+          delivered = await sendFcmMessage(
+            buildRefundReviewAlertMessage(branchId, {
+              orderId,
+              orderNumber:
+                after.shortCode || after.orderNumber || orderId.substring(0, 6).toUpperCase(),
+              // The ROW's amount at claim time is authoritative — the event
+              // snapshot can be stale after a partial refund re-cut the row.
+              amountPaise: claim.amountPaise ?? refundReview.amountPaise ?? 0,
+            }),
+            { purpose: "operational", actor: TRUSTED_SERVER_ACTOR, critical: false }
+          );
+          if (!delivered) failure = "transport returned false";
+        } catch (err: any) {
+          failure = err?.message || String(err);
+        }
+        await settleRefundReviewAlert({
+          refundId: refundReview.pendingRefundId,
+          token: claim.token,
+          delivered,
+          error: failure,
+        });
+        if (!delivered) {
+          // Observable, not silent: the queue row is durable and the claim is
+          // released for a later retry.
+          await captureErrorSnapshot({
+            source: "notifications",
+            severity: "medium",
+            message: `Refund review alert for order ${orderId} was not delivered — refund queue row exists, staff may be unaware`,
+            orderId,
+            branchId,
+          }).catch(() => undefined);
+        }
+      }
+    }
+  }
+
+  // Strict state-delta check: notifications only fire on a real transition.
   if (beforeStatusCode === afterStatusCode) {
     return;
   }
@@ -181,6 +327,14 @@ export async function handleOrderStatusChanged(
                 ? true
                 : undefined,
             paymentMethod: after.payment?.method,
+            // Copy honesty for cancels: a captured payment is "money recorded",
+            // never "no money charged"; a queued row means the refund awaits
+            // review (it is NOT initiated — nothing moved yet).
+            paymentCaptured: hasServerPaymentChannel(after) && String(afterStatusCode || "").toUpperCase() === "CANCELLED",
+            refundAwaitingReview: refundReview.pendingRefundId !== undefined,
+            // Truthful partial copy: money already returned is never described
+            // as "nothing refunded yet".
+            partiallyRefundedPaise: refundReview.refundedPaise || undefined,
           },
           afterStatusCode
         );

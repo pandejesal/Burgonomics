@@ -85,6 +85,12 @@ export interface CustomerOrderPayload {
   allVeg?: boolean;
   refundInitiated?: boolean;
   paymentMethod?: string;
+  /** Server-confirmed capture exists (paymentChannel=razorpay + capturedPaise). */
+  paymentCaptured?: boolean;
+  /** A cancellation refund row is queued and awaiting staff approval. */
+  refundAwaitingReview?: boolean;
+  /** Paise already returned on this order (partial refund). */
+  partiallyRefundedPaise?: number;
 }
 
 /**
@@ -199,10 +205,32 @@ export const STATUS_MESSAGES: Record<
     // Refund copy only when a refund was actually initiated (H33): COD /
     // unpaid cancels must never promise money movement. paymentMethod and
     // refundInitiated come from the order doc via triggers.ts.
-    body: (o) =>
-      o.refundInitiated === true
-        ? `Order #${o.orderNumber} was cancelled. A refund has been initiated to your original payment method.`
-        : `Order #${o.orderNumber} was cancelled. No money was charged for this order.`,
+    //
+    // Paid-but-unrefunded cancels owe the customer a human review: copy says
+    // the refund awaits review and NEVER "no money was charged" (that would be
+    // a false claim about captured money). Nothing here promises a refund has
+    // been initiated — only refundInitiated (gateway-record backed) may.
+    //
+    // After a partial refund has already landed, "nothing has been refunded
+    // yet" would be equally false, so that branch states the partial plainly.
+    body: (o) => {
+      if (o.refundInitiated === true) {
+        return `Order #${o.orderNumber} was cancelled. A refund has been initiated to your original payment method.`;
+      }
+      const partialPaise = Number(o.partiallyRefundedPaise) || 0;
+      if (partialPaise > 0) {
+        return `Order #${o.orderNumber} was cancelled. A partial refund of ₹${Math.round(
+          partialPaise / 100
+        )} has already been processed${o.refundAwaitingReview === true ? "; the remaining refund is awaiting review" : ""}.`;
+      }
+      if (o.refundAwaitingReview === true) {
+        return `Order #${o.orderNumber} was cancelled. Your refund is awaiting review by our team.`;
+      }
+      if (o.paymentCaptured === true) {
+        return `Order #${o.orderNumber} was cancelled. Your payment is recorded and a refund review is required — our team will follow up.`;
+      }
+      return `Order #${o.orderNumber} was cancelled. No money was charged for this order.`;
+    },
     sound: "default",
   },
 };
@@ -280,6 +308,46 @@ export function buildTicketAlertMessage(
       ticketNumber: String(ticket.ticketNumber),
       priority: String(ticket.priority),
       type: "TICKET_ESCALATION",
+    },
+    android: {
+      priority: "high",
+      notification: {
+        // Must match a channel created on device (see note above).
+        channelId: "burgonomics_updates_channel",
+        sound: "default",
+      },
+    },
+    // Shared iOS/Web parity (H34).
+    ...buildParityExtras(title, body, { badge }),
+  };
+}
+
+/**
+ * Staff-visible refund-review alert for a cancelled PAID order.
+ *
+ * Deliberately operational, not financial: it asks a human to review a queued
+ * refund. It never claims money moved (no refund was initiated — the queue row
+ * is PENDING approval) and it carries no customer PII; the order id rides in
+ * `data` so the partner app can open the order/refund detail.
+ */
+export function buildRefundReviewAlertMessage(
+  branchId: string,
+  refund: { orderId: string; orderNumber: string; amountPaise: number },
+  badge?: number
+): admin.messaging.Message {
+  const title = "Refund review required";
+  const rupees = Math.round((Number(refund.amountPaise) || 0) / 100);
+  const body = truncatePushText(
+    `Order #${refund.orderNumber} was paid and then cancelled. A refund of ₹${rupees} is awaiting approval — review the refund queue.`
+  );
+  return {
+    topic: `branch_${branchId}_orders`,
+    notification: { title, body },
+    data: {
+      orderId: String(refund.orderId),
+      orderNumber: String(refund.orderNumber),
+      amountPaise: String(refund.amountPaise),
+      type: "REFUND_REVIEW_REQUIRED",
     },
     android: {
       priority: "high",
