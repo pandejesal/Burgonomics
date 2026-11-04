@@ -3425,6 +3425,25 @@ export function computeGatewayRefundKey(orderId: string, paymentId: string, requ
 }
 
 /**
+ * Deterministic server-only id for the `payment_refund_requests` record of one
+ * [order, payment, request] identity. Exported so the `refund.processed`
+ * webhook can address the SAME record the released attempt created — the
+ * correlation must be derived, never guessed from a free-text field (the
+ * refund payload notes still carry only orderId/reason).
+ */
+export function refundRequestDocId(
+  orderId: string,
+  paymentId: string,
+  requestId: string
+): string {
+  const digest = crypto
+    .createHash("sha256")
+    .update(JSON.stringify([orderId, paymentId, requestId]))
+    .digest("hex");
+  return `prfnd_${digest.slice(0, 48)}`;
+}
+
+/**
  * Executes a full or partial refund with proportional Route transfer reversal.
  *
  * Fail-closed + idempotent (B2-S1, H-M6/C9 companion): the order must exist
@@ -3557,7 +3576,7 @@ export async function autoRefund(
     ? computeGatewayRefundKey(orderId, capturedPaymentId, refundRequestId)
     : `refund_${orderId}_${requestedPaise ?? "full"}`;
   const reqDocId = refundRequestId
-    ? `prfnd_${crypto.createHash("sha256").update(JSON.stringify([orderId, capturedPaymentId, refundRequestId])).digest("hex").slice(0, 48)}`
+    ? refundRequestDocId(orderId, capturedPaymentId, refundRequestId)
     : null;
   const reqRef = reqDocId ? db.collection("payment_refund_requests").doc(reqDocId) : null;
   const claimed = await runTx(async (tx) => {
@@ -3706,6 +3725,31 @@ export async function autoRefund(
           conflict.code = "REFUND_REQUEST_CONFLICT";
           throw conflict;
         }
+        // ACCEPTED-BUT-UNSETTLED identity: the gateway already answered this
+        // request with a refund id (recorded by the release path below), so the
+        // money is committed under that id and the ONLY thing left is the
+        // final-state webhook. Re-POSTing it would reach the provider a second
+        // time for a refund we know, so the identity is replayed locally and
+        // the reserved amount is left untouched. Excluded from this shortcut:
+        // any record parked for reconciliation (an UNRESOLVED attempt may still
+        // be on the wire — it must never be treated as safely completed).
+        const knownPendingId =
+          typeof existingReq.refundId === "string" && existingReq.refundId.trim()
+            ? existingReq.refundId.trim()
+            : null;
+        if (knownPendingId && existingReq.status !== "reconciliation_required") {
+          return {
+            replay: {
+              id: knownPendingId,
+              payment_id: razorpayPaymentId,
+              status: "pending",
+              reused: true as const,
+            },
+          };
+        }
+        // A pending record with NO accepted identity is a transport loss or a
+        // classified gateway refusal: recovering it on the SAME key is the
+        // established contract (the gateway replays the original refund).
         isMatchingPendingRecovery = true;
         gatewayKeyToUse = existingReq.gatewayKey;
       }
@@ -3928,6 +3972,45 @@ export async function autoRefund(
         partials.statusCode = 409;
         partials.code = "REFUND_PARTIALS_EXIST";
         throw partials;
+      }
+    }
+
+    // SINGLE IN-FLIGHT REFUND (contract 3). A refund the gateway ACCEPTED but
+    // has not settled still owns this order's payout lane: its amount already
+    // occupies the ledger and the order carries its identity in the single
+    // current-pending marker. A second, different request must not start while
+    // that identity is open — two unknowns on one payment would leave nobody
+    // able to say which callback settles which amount. This is deliberately NOT
+    // a multi-pending model: one open identity is refused, never tracked beside
+    // a second. The designed remainder refund proceeds once the webhook settles
+    // the first (that write clears the marker). Checked AFTER the cumulative-cap
+    // guard so an over-cap request keeps its own 400 diagnostic.
+    {
+      const pendingGatewayId =
+        typeof data?.refundPendingGatewayId === "string" && data.refundPendingGatewayId.trim()
+          ? data.refundPendingGatewayId.trim()
+          : "";
+      const ledgerForPending =
+        data.refundLedger &&
+        typeof data.refundLedger === "object" &&
+        !Array.isArray(data.refundLedger)
+          ? (data.refundLedger as Record<string, number>)
+          : {};
+      const knownPendingReservedPaise = pendingGatewayId
+        ? Number(ledgerForPending[pendingGatewayId]) || 0
+        : 0;
+      if (
+        pendingGatewayId &&
+        knownPendingReservedPaise > 0 &&
+        String(data.refundStatus || "") === "refund_pending" &&
+        !isMatchingPendingRecovery
+      ) {
+        const inflight: any = new Error(
+          "A refund for this order was accepted by the gateway and is still in flight — wait for it to settle before releasing another."
+        );
+        inflight.statusCode = 409;
+        inflight.code = "REFUND_IN_PROGRESS";
+        throw inflight;
       }
     }
 
@@ -4227,12 +4310,64 @@ export async function autoRefund(
       ? await tx.get(refundRowRefForCompletion)
       : null;
     const refundRowExisted = !!refundRowSnapForCompletion?.exists;
+    const priorRowData =
+      refundRowExisted && refundRowSnapForCompletion
+        ? (refundRowSnapForCompletion.data() as any)
+        : null;
+    // READ-BEFORE-WRITE: the refund request record is read here as well. The
+    // pending branch needs it (to record the accepted identity without
+    // downgrading a completed record), and the settled-race guard needs it
+    // because a completed record naming THIS gateway refund id is per-ID proof
+    // of settlement. Both are decided from the POST response and this read,
+    // never from this transaction's own writes.
+    const reqSnapForPending =
+      reqRef && refundRequestId ? await tx.get(reqRef) : null;
+    const priorReqData =
+      reqSnapForPending && reqSnapForPending.exists
+        ? (reqSnapForPending.data() as any)
+        : null;
+    const priorReqStatus = String(priorReqData?.status || "");
     const fresh = ((snap && snap.exists ? snap.data() : {}) || {}) as any;
     const freshLedger: Record<string, number> =
       fresh.refundLedger && typeof fresh.refundLedger === "object" && !Array.isArray(fresh.refundLedger)
         ? { ...(fresh.refundLedger as Record<string, number>) }
         : {};
     const refundId = typeof refundResult.id === "string" ? refundResult.id : "";
+    /**
+     * Was THIS gateway refund already SETTLED before this response arrived?
+     *
+     * PER-ID PROOF ONLY. A ledger entry is not proof — a pending refund
+     * reserves its amount in that same ledger — and a global status word is not
+     * proof either, because it describes the ORDER (and may belong to a
+     * different, settled refund while this one is still in flight). Accepted
+     * evidence is a settlement fact that NAMES this refund id:
+     *   • the obligation's settledRefundId / settledAfterDecision.gatewayRefundId,
+     *   • a completed request record carrying this refundId,
+     *   • a completed operator row carrying this gatewayRefundId.
+     * When none of these exists, the outcome is NOT proven settled and the
+     * caller records `pending` — never an invented settlement.
+     */
+    const obligationForSettled =
+      fresh.refundObligation && typeof fresh.refundObligation === "object"
+        ? (fresh.refundObligation as any)
+        : {};
+    const priorSettledThisRefund =
+      !!refundId &&
+      (obligationForSettled.settledRefundId === refundId ||
+        obligationForSettled.settledAfterDecision?.gatewayRefundId === refundId ||
+        // A completed request record is proof only when it is THIS identity: it
+        // must name this order and payment (undefined tolerated for legacy
+        // records, matching the webhook) and carry this very gateway refund id.
+        (priorReqStatus === "completed" &&
+          priorReqData?.refundId === refundId &&
+          (priorReqData?.orderId === undefined || priorReqData.orderId === orderId) &&
+          (priorReqData?.paymentId === undefined ||
+            priorReqData.paymentId === razorpayPaymentId)) ||
+        // Same standard for the operator row: a COMPLETED row that names
+        // another order is not evidence about this refund.
+        (String(priorRowData?.status || "").toUpperCase() === "COMPLETED" &&
+          priorRowData?.orderId === orderId &&
+          priorRowData?.gatewayRefundId === refundId));
     if (refundId && (Number(refundResult.amount) || 0) > 0 && freshLedger[refundId] === undefined) {
       freshLedger[refundId] = Number(refundResult.amount);
     }
@@ -4330,6 +4465,138 @@ export async function autoRefund(
         },
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
+      // NO REGRESSION: this gateway refund was already SETTLED (per-ID proof —
+      // see `priorSettledThisRefund` above) before this response arrived: a
+      // `refund.processed` callback won the race while the POST was still on
+      // the wire. A late `pending` echo must never un-settle it, and the
+      // request/row loop must close on the gateway id the POST actually
+      // returned. Both records were read before any write.
+      if (priorSettledThisRefund) {
+        // PERSIST THE ACCEPTED IDENTITY. The callback already wrote the money
+        // truth, but OUR id was never bound to its request — the in-flight
+        // patch below is skipped on this path. Without this receipt the next
+        // legitimate equal-amount refund looks like an ambiguous unkeyed legacy
+        // entry and is wrongly refused. Only the money ledger/mapping/total are
+        // written: no `refundStatus`, no `payment.refundStatus`, no obligation
+        // status, so the settled truth from the callback is never regressed.
+        if (refundId) {
+          tx.set(
+            orderRef,
+            {
+              refundedTotalPaise: nextTotal,
+              refundLedger: freshLedger,
+              ...(refundRequestId
+                ? {
+                    refundKeyedReceipts: {
+                      ...(fresh.refundKeyedReceipts || {}),
+                      [refundId]: refundRequestId,
+                    },
+                  }
+                : {}),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+        if (
+          reqRef &&
+          refundRequestId &&
+          priorReqStatus !== "completed" &&
+          // Never claim a record that names a DIFFERENT gateway refund, and
+          // never one whose own orderId/paymentId contradicts this attempt.
+          (!priorReqData?.refundId || priorReqData.refundId === refundResult.id) &&
+          (priorReqData?.orderId === undefined || priorReqData.orderId === orderId) &&
+          (priorReqData?.paymentId === undefined ||
+            priorReqData.paymentId === razorpayPaymentId)
+        ) {
+          // Close the request loop for the same reason: the money IS settled.
+          tx.set(
+            reqRef,
+            {
+              status: "completed",
+              refundId: refundResult.id,
+              gatewayStatus: "processed",
+              gatewayKey,
+              completedAt: Date.now(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+        // Promote the operator row ONLY from a machine state (PENDING — not yet
+        // claimed, which is what the callback-before-response window sees — or
+        // IN_FLIGHT). The row must name THIS order and, if it already carries a
+        // gateway id, THIS refund; a foreign or mismatched row is never adopted.
+        // A human decision keeps its decision, and a row a human already
+        // completed keeps its own attribution, amount and timestamps.
+        if (refundRowRefForCompletion && refundRowExisted) {
+          const priorRowStatusUpper = String(priorRowData?.status || "").toUpperCase();
+          const rowBelongsToThisOrder = priorRowData?.orderId === orderId;
+          const rowNamesAnotherRefund =
+            !!priorRowData?.gatewayRefundId &&
+            priorRowData.gatewayRefundId !== refundResult.id;
+          const rowAwaitingSettlement =
+            priorRowStatusUpper === "IN_FLIGHT" || priorRowStatusUpper === "PENDING";
+          if (
+            rowBelongsToThisOrder &&
+            (priorRowStatusUpper === "REJECTED" || priorRowStatusUpper === "WITHDRAWN")
+          ) {
+            tx.set(
+              refundRowRefForCompletion,
+              {
+                refundAfterDecision: {
+                  gatewayRefundId: refundResult.id,
+                  settledPaise: Number(refundResult.amount) || requestedPaise || null,
+                  at: admin.firestore.FieldValue.serverTimestamp(),
+                  note: "A refund was processed after this request was already decided — review required.",
+                },
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          } else if (
+            rowBelongsToThisOrder &&
+            rowAwaitingSettlement &&
+            !rowNamesAnotherRefund
+          ) {
+            tx.set(
+              refundRowRefForCompletion,
+              {
+                status: "COMPLETED",
+                gatewayStatus: "processed",
+                gatewayRefundId: refundResult.id,
+                refundId: refundResult.id,
+                settledPaise: Number(refundResult.amount) || requestedPaise || null,
+                processedBy: caller?.email || caller?.uid || "server",
+                completedAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          }
+        }
+        // The lease this run took is finished (the refund it was protecting is
+        // already settled), so it is released — but ONLY if this run still owns
+        // it. No status, marker or obligation field is touched: the settled
+        // truth written by the callback stands.
+        if (stillOwnsClaim) {
+          tx.set(
+            orderRef,
+            {
+              refundClaimedAt: admin.firestore.FieldValue.delete(),
+              refundClaimedRequestId: admin.firestore.FieldValue.delete(),
+              refundClaimedPaymentId: admin.firestore.FieldValue.delete(),
+              refundClaimedPaise: admin.firestore.FieldValue.delete(),
+              refundClaimedKey: admin.firestore.FieldValue.delete(),
+              refundClaimedReason: admin.firestore.FieldValue.delete(),
+              refundActiveClaim: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+        return { nextTotal, fullyRefunded: false };
+      }
       if (stillOwnsClaim) {
         // A human decision already recorded on the obligation (the cancel-review
         // queue withdraws a superseded row, an operator may reject one) is NOT a
@@ -4378,14 +4645,64 @@ export async function autoRefund(
         inFlightData.refundActiveClaim = admin.firestore.FieldValue.delete();
       }
       tx.set(orderRef, inFlightData, { merge: true });
+      // DURABLE ACCEPTED IDENTITY (contract 1): the gateway has now confirmed
+      // this refund exists, so the request record keeps the proven refund id.
+      // Without it the record is indistinguishable from a transport loss and a
+      // same-identity retry would POST the provider again. Status stays
+      // "pending" — accepted is not settled, and the final word is the
+      // refund.processed webhook. A record already completed by a callback that
+      // beat this response is never downgraded.
+      if (reqRef && refundRequestId && priorReqStatus !== "completed") {
+        // A record whose own identity contradicts this attempt is another
+        // money fact; never downgrade or re-label it.
+        const reqContradictsThisAttempt =
+          (priorReqData?.refundId !== undefined &&
+            priorReqData.refundId !== null &&
+            priorReqData.refundId !== refundResult.id) ||
+          (priorReqData?.orderId !== undefined && priorReqData.orderId !== orderId) ||
+          (priorReqData?.paymentId !== undefined &&
+            priorReqData.paymentId !== razorpayPaymentId);
+        if (!reqContradictsThisAttempt) {
+          tx.set(
+            reqRef,
+            {
+              orderId,
+              paymentId: razorpayPaymentId,
+              refundRequestId,
+              requestedPaise,
+              reason: reason ?? null,
+              status: "pending",
+              refundId: refundResult.id,
+              gatewayStatus: "pending",
+              // The outer `gatewayKey` is the key this POST was actually sent
+              // with (the claim's resolved key, returned from the claim
+              // transaction); `gatewayKeyToUse` is scoped to that transaction.
+              gatewayKey,
+              acceptedAt: Date.now(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+      }
       // The operator-visible row stays actionable and says truthfully that the
       // gateway accepted the refund but has not settled it. A human decision is
-      // still never overwritten.
+      // still never overwritten, and a row is only adopted when it names THIS
+      // order and (if it already carries one) THIS gateway refund — a foreign
+      // row is left untouched.
       if (refundRowRefForCompletion && refundRowExisted) {
         const priorStatus = String(
           (refundRowSnapForCompletion?.data() || {}).status || "",
         ).toUpperCase();
-        if (priorStatus !== "REJECTED" && priorStatus !== "WITHDRAWN") {
+        // The two guards the frozen slice-1 test pins are kept verbatim in this
+        // exact shape; the order/id scoping is applied as an additional outer
+        // condition so a foreign or mismatched row is never adopted.
+        const rowScopedToThisAttempt =
+          priorRowData?.orderId === orderId &&
+          (!priorRowData?.gatewayRefundId ||
+            priorRowData.gatewayRefundId === refundResult.id) &&
+          priorStatus !== "COMPLETED";
+        if (priorStatus !== "REJECTED" && priorStatus !== "WITHDRAWN" && rowScopedToThisAttempt) {
           tx.set(
             refundRowRefForCompletion,
             {
@@ -4484,22 +4801,39 @@ export async function autoRefund(
     applyRefundToMonthlyFee(tx, orderRef, fresh, nextTotal);
 
     if (reqRef && refundRequestId) {
-      tx.set(
-        reqRef,
-        {
-          orderId,
-          paymentId: razorpayPaymentId,
-          refundRequestId,
-          requestedPaise,
-          reason: reason ?? null,
-          status: "completed",
-          refundId: refundResult.id,
-          gatewayKey,
-          completedAt: Date.now(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      // A record already COMPLETED for THIS refund id is that release's own
+      // record: its completedAt and gateway key are preserved on a replay. A
+      // record completed for a DIFFERENT gateway refund is another money fact —
+      // leave it, do not claim it as this one.
+      const reqAlreadyCompletedThisRefund =
+        priorReqStatus === "completed" && priorReqData?.refundId === refundResult.id;
+      const reqNamesAnotherRefund =
+        (priorReqStatus === "completed" &&
+          !!priorReqData?.refundId &&
+          priorReqData.refundId !== refundResult.id) ||
+        (priorReqData?.orderId !== undefined && priorReqData.orderId !== orderId) ||
+        (priorReqData?.paymentId !== undefined &&
+          priorReqData.paymentId !== razorpayPaymentId);
+      if (!reqNamesAnotherRefund) {
+        tx.set(
+          reqRef,
+          {
+            orderId,
+            paymentId: razorpayPaymentId,
+            refundRequestId,
+            requestedPaise,
+            reason: reason ?? null,
+            status: "completed",
+            refundId: refundResult.id,
+            gatewayKey,
+            ...(reqAlreadyCompletedThisRefund
+              ? {}
+              : { completedAt: Date.now() }),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
     }
 
     // OPERATOR-VISIBLE COMPLETION. The partner Refund Clearance Terminal reads
@@ -4518,22 +4852,16 @@ export async function autoRefund(
       ? String((refundRowSnapForCompletion?.data() || {}).status || "").toUpperCase()
       : "";
     const humanDecided = priorStatus === "REJECTED" || priorStatus === "WITHDRAWN";
-    if (refundRowRefForCompletion && refundRowExisted && !humanDecided) {
-      tx.set(
-        refundRowRefForCompletion,
-        {
-          status: "COMPLETED",
-          gatewayStatus: "processed",
-          gatewayRefundId: refundResult.id,
-          refundId: refundResult.id,
-          settledPaise: Number(refundResult.amount) || requestedPaise || null,
-          processedBy: caller?.email || caller?.uid || "server",
-          completedAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } else if (refundRowRefForCompletion && humanDecided) {
+    // Contract 4 promotes the IN_FLIGHT row for this request. A row already
+    // COMPLETED belongs to an earlier release: its attribution, settled amount
+    // and completion time are that release's record and are never restamped by
+    // a replay. A row whose gatewayRefundId names a DIFFERENT refund is also
+    // left alone — it is another money fact, not this one.
+    const rowAlreadyCompleted = priorStatus === "COMPLETED";
+    const rowNamesAnotherRefund =
+      !!priorRowData?.gatewayRefundId &&
+      priorRowData.gatewayRefundId !== refundResult.id;
+    if (refundRowRefForCompletion && refundRowExisted && humanDecided) {
       // Record the money truth WITHOUT touching the decision status.
       tx.set(
         refundRowRefForCompletion,
@@ -4545,6 +4873,26 @@ export async function autoRefund(
             at: admin.firestore.FieldValue.serverTimestamp(),
             note: "A refund was processed after this request was already decided — review required.",
           },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } else if (
+      refundRowRefForCompletion &&
+      refundRowExisted &&
+      !rowAlreadyCompleted &&
+      !rowNamesAnotherRefund
+    ) {
+      tx.set(
+        refundRowRefForCompletion,
+        {
+          status: "COMPLETED",
+          gatewayStatus: "processed",
+          gatewayRefundId: refundResult.id,
+          refundId: refundResult.id,
+          settledPaise: Number(refundResult.amount) || requestedPaise || null,
+          processedBy: caller?.email || caller?.uid || "server",
+          completedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
