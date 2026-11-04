@@ -50,14 +50,17 @@ describe("a pending gateway refund is not stamped settled", () => {
   it("marks the order in-flight instead of refunded", () => {
     const block = releaseBlock();
     expect(block).toContain('inFlightData.refundStatus = "refund_pending"');
-    expect(block).toContain('inFlightData["payment.refundStatus"] = "pending"');
-    expect(block).toContain('inFlightData["refundObligation.status"] = "IN_FLIGHT"');
+    // NESTED MAP patch: a dotted set() key stays literal and leaves the real
+    // marker stale (see refund.marker-nested-write.test.ts for the behaviour).
+    expect(block).toContain("inFlightData.payment = {");
+    expect(block).toContain('refundStatus: "pending"');
+    expect(block).toContain('status: "IN_FLIGHT"');
   });
 
   it("records the gateway refund id so the webhook can match it", () => {
     const block = releaseBlock();
     expect(block).toContain("refundPendingGatewayId = refundResult.id");
-    expect(block).toContain('inFlightData["refundObligation.gatewayRefundId"] = refundResult.id');
+    expect(block).toContain("gatewayRefundId: refundResult.id");
   });
 
   it("still counts the amount against the cap to block an over-refund", () => {
@@ -94,11 +97,15 @@ describe("the refund.processed webhook is what makes it final", () => {
   });
 
   it("settles the obligation with the proven refund id", () => {
-    expect(WEBHOOK).toContain('"refundObligation.status": "SETTLED"');
-    expect(WEBHOOK).toContain('"refundObligation.settledRefundId": refundId');
+    expect(WEBHOOK).toContain('status: "SETTLED"');
+    expect(WEBHOOK).toContain("settledRefundId: refundId");
   });
 
   it("writes the nested payment marker the console reads, not only the top-level one", () => {
-    expect(WEBHOOK).toContain('"payment.refundStatus":');
+    // NESTED MAP form: a dotted key passed to set() stays LITERAL and would
+    // leave the real `payment.refundStatus` stale.
+    expect(WEBHOOK).toContain("payment: {");
+    expect(WEBHOOK).toContain("refundStatus: hasCapture && nextTotal < capturedPaise");
+    expect(WEBHOOK).not.toContain('"payment.refundStatus":');
   });
 });

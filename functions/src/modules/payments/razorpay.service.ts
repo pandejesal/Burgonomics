@@ -4331,14 +4331,44 @@ export async function autoRefund(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
       if (stillOwnsClaim) {
+        // A human decision already recorded on the obligation (the cancel-review
+        // queue withdraws a superseded row, an operator may reject one) is NOT a
+        // machine state: this write records the gateway fact beside it instead
+        // of relabelling the decision. Now that these markers reach the nested
+        // map at all, the guard is what keeps a decision safe.
+        const priorObligationStatus = String(
+          (fresh.refundObligation || {}).status || ""
+        ).toUpperCase();
+        const obligationDecided =
+          priorObligationStatus === "REJECTED" || priorObligationStatus === "WITHDRAWN";
         inFlightData.refundStatus = "refund_pending";
         inFlightData.refundPendingSince = admin.firestore.FieldValue.serverTimestamp();
         inFlightData.refundPendingGatewayId = refundResult.id;
-        inFlightData["payment.refundStatus"] = "pending";
-        inFlightData["refundObligation.status"] = "IN_FLIGHT";
-        inFlightData["refundObligation.gatewayRefundId"] = refundResult.id;
-        inFlightData["refundObligation.pendingSince"] =
-          admin.firestore.FieldValue.serverTimestamp();
+        // NESTED MAPS, never dotted keys: `set()` treats a dotted key as a
+        // LITERAL field name (dot paths are `update()` syntax), so the old
+        // `"payment.refundStatus"` entries left the real nested marker stale and
+        // created sibling junk fields no reader consults. The existing map is
+        // carried into the patch, so this write lands identically under real
+        // Firestore's RECURSIVE merge and under a shallow-spread harness — the
+        // capture fields and the queue's own refundId/amountPaise survive both.
+        inFlightData.payment = {
+          ...((fresh.payment && typeof fresh.payment === "object" && !Array.isArray(fresh.payment))
+            ? fresh.payment
+            : {}),
+          refundStatus: "pending",
+        };
+        const priorObligation =
+          fresh.refundObligation &&
+          typeof fresh.refundObligation === "object" &&
+          !Array.isArray(fresh.refundObligation)
+            ? fresh.refundObligation
+            : {};
+        inFlightData.refundObligation = {
+          ...priorObligation,
+          ...(obligationDecided ? {} : { status: "IN_FLIGHT" }),
+          gatewayRefundId: refundResult.id,
+          pendingSince: admin.firestore.FieldValue.serverTimestamp(),
+        };
         inFlightData.refundClaimedAt = admin.firestore.FieldValue.delete();
         inFlightData.refundClaimedRequestId = admin.firestore.FieldValue.delete();
         inFlightData.refundClaimedPaymentId = admin.firestore.FieldValue.delete();
@@ -4397,12 +4427,46 @@ export async function autoRefund(
        * refundStatus was "refunded" and refundedTotalPaise was 26300 while both
        * markers still said pending. They are cleared on the same write that
        * records the gateway receipt, so the two never disagree.
+       *
+       * These are NESTED MAP patches, not dotted keys: `set()` treats a dotted
+       * key as a literal field name, so the dotted form silently left the real
+       * `payment.refundStatus` / `refundObligation.status` stale. The fresh maps
+       * are carried into the patch so the write lands identically under real
+       * Firestore's recursive merge and under a shallow-spread harness.
+       *
+       * A human decision is never relabelled: REJECTED/WITHDRAWN obligations keep
+       * their status and receive the settlement as a fact beside it.
        */
-      orderCompleteData["payment.refundStatus"] = refundStatusValue;
-      orderCompleteData["refundObligation.status"] = "SETTLED";
-      orderCompleteData["refundObligation.settledAt"] =
-        admin.firestore.FieldValue.serverTimestamp();
-      orderCompleteData["refundObligation.settledRefundId"] = refundResult.id;
+      const priorPayment =
+        fresh.payment && typeof fresh.payment === "object" && !Array.isArray(fresh.payment)
+          ? fresh.payment
+          : {};
+      orderCompleteData.payment = { ...priorPayment, refundStatus: refundStatusValue };
+      const priorObligationStatus = String(
+        (fresh.refundObligation || {}).status || ""
+      ).toUpperCase();
+      const obligationDecided =
+        priorObligationStatus === "REJECTED" || priorObligationStatus === "WITHDRAWN";
+      const priorObligation =
+        fresh.refundObligation &&
+        typeof fresh.refundObligation === "object" &&
+        !Array.isArray(fresh.refundObligation)
+          ? fresh.refundObligation
+          : {};
+      orderCompleteData.refundObligation = obligationDecided
+        ? {
+            ...priorObligation,
+            settledAfterDecision: {
+              gatewayRefundId: refundResult.id,
+              settledAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          }
+        : {
+            ...priorObligation,
+            status: "SETTLED",
+            settledAt: admin.firestore.FieldValue.serverTimestamp(),
+            settledRefundId: refundResult.id,
+          };
       orderCompleteData.refundClaimedAt = admin.firestore.FieldValue.delete();
       orderCompleteData.refundClaimedRequestId = admin.firestore.FieldValue.delete();
       orderCompleteData.refundClaimedPaymentId = admin.firestore.FieldValue.delete();

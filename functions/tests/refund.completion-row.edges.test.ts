@@ -17,16 +17,41 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockDb, savedDocs } = vi.hoisted(() => {
   const savedDocs: Record<string, any> = {};
+
+  /**
+   * Firestore merge semantics, faithfully:
+   *  - keys are used VERBATIM (a dotted key stays a literal field name);
+   *  - nested plain-object values merge RECURSIVELY, so a map patch keeps the
+   *    sibling keys of that map (a shallow spread would wrongly drop
+   *    `payment.razorpayPaymentId` when only `refundStatus` is patched).
+   */
+  const isPlain = (value: any) => !!value && typeof value === "object" && !Array.isArray(value);
+  const mergeInto = (target: any, patch: any): any => {
+    const out: any = isPlain(target) ? { ...target } : {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === "MOCK_DELETE") {
+        delete out[key];
+        continue;
+      }
+      out[key] = isPlain(value) ? mergeInto(out[key], value) : value;
+    }
+    return out;
+  };
+  // Snapshots are immutable copies: a stored doc is never aliased to a caller.
+  const clone = (value: any) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
+
   const docRef = (colName: string, docId: string) => ({
     id: docId,
     path: `${colName}/${docId}`,
     get: vi.fn(async () => ({
       exists: !!savedDocs[`${colName}/${docId}`],
-      data: () => savedDocs[`${colName}/${docId}`] || {},
+      data: () => clone(savedDocs[`${colName}/${docId}`]) || {},
     })),
     set: vi.fn(async (data: any, options?: any) => {
       const p = `${colName}/${docId}`;
-      savedDocs[p] = options?.merge && savedDocs[p] ? { ...savedDocs[p], ...data } : data;
+      savedDocs[p] = clone(
+        options?.merge && savedDocs[p] ? mergeInto(savedDocs[p], data) : mergeInto(undefined, data)
+      );
     }),
   });
   const mockDb: any = {

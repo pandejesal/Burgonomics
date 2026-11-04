@@ -1365,6 +1365,15 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           const overCapturedPaise =
             hasCapture && nextTotal > capturedPaise ? nextTotal - capturedPaise : 0;
           const refundWithoutCapture = !captureRecorded;
+          // A human decision on the obligation (operator reject, superseded
+          // withdrawal by the cancel-review queue) is never relabelled by a
+          // settlement. Computed from this transaction's fresh read, before any
+          // write, so a decision that landed first always wins.
+          const priorObligationStatus = String(
+            (data?.refundObligation || {}).status || ""
+          ).toUpperCase();
+          const obligationDecided =
+            priorObligationStatus === "REJECTED" || priorObligationStatus === "WITHDRAWN";
           tx.set(
             orderDoc.ref,
             {
@@ -1389,13 +1398,44 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               // stop showing "pending" the moment the gateway says processed.
               // A human REJECTED/WITHDRAWN decision on the obligation is never
               // touched: this only clears the states the machine wrote.
-              "payment.refundStatus": hasCapture && nextTotal < capturedPaise
-                ? "partially_refunded"
-                : "refunded",
-              "refundObligation.status": "SETTLED",
-              "refundObligation.settledAt":
-                admin.firestore.FieldValue.serverTimestamp(),
-              "refundObligation.settledRefundId": refundId,
+              //
+              // NESTED MAPS, not dotted keys: `set()` treats a dotted key as a
+              // LITERAL field name (dot paths are `update()` syntax), so the old
+              // entries created sibling junk fields and left the real
+              // `payment.refundStatus` / `refundObligation.status` stale. The
+              // fresh maps are carried into the patch so the write lands
+              // identically under real Firestore's recursive merge and under a
+              // shallow-spread harness.
+              payment: {
+                ...(data?.payment && typeof data.payment === "object" && !Array.isArray(data.payment)
+                  ? data.payment
+                  : {}),
+                refundStatus: hasCapture && nextTotal < capturedPaise
+                  ? "partially_refunded"
+                  : "refunded",
+              },
+              refundObligation: obligationDecided
+                ? {
+                    ...(data?.refundObligation &&
+                    typeof data.refundObligation === "object" &&
+                    !Array.isArray(data.refundObligation)
+                      ? data.refundObligation
+                      : {}),
+                    settledAfterDecision: {
+                      gatewayRefundId: refundId,
+                      settledAt: admin.firestore.FieldValue.serverTimestamp(),
+                    },
+                  }
+                : {
+                    ...(data?.refundObligation &&
+                    typeof data.refundObligation === "object" &&
+                    !Array.isArray(data.refundObligation)
+                      ? data.refundObligation
+                      : {}),
+                    status: "SETTLED",
+                    settledAt: admin.firestore.FieldValue.serverTimestamp(),
+                    settledRefundId: refundId,
+                  },
               refundPendingSince: admin.firestore.FieldValue.delete(),
               refundPendingGatewayId: admin.firestore.FieldValue.delete(),
               ...(overCapturedPaise > 0
