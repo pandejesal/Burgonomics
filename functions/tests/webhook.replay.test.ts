@@ -4,13 +4,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // re-implementation): replay idempotency via the audit-claim doc, stale-claim
 // takeover, and unmatched-payment parking.
 
-const { mockDb, savedDocs } = vi.hoisted(() => {
+const { mockDb, savedDocs, notifySpy } = vi.hoisted(() => {
   // The webhook confirm path now satisfies the delivery-OTP invariant (B6/C12),
   // and getOtpHmacSecret() is FAIL-CLOSED, so this suite must provide the
   // dedicated secret exactly as a real deployment does (functions/.env sets it;
   // it is one of env.ts's REQUIRED_SECRETS). Without this, a delivery confirm
   // would throw instead of minting the handover hash.
   process.env.OTP_HMAC_SECRET = "test_otp_replay_webhook";
+  // Notification boundary spy: the refund branch calls
+  // dispatchCustomerAccountNotification once per NEW refund id. Hoisted so the
+  // vi.mock factory below can close over the same instance. Hoisting two
+  // independent vi.hoisted calls would break the shared mockDb/savedDocs
+  // closure, so the spy lives in this one.
+  const notifySpy = vi.fn(async (_request: any) => ({ outcome: "unknown" as const }));
   const savedDocs: Record<string, any> = {};
   const docRef = (colName: string, docId: string) => ({
     id: docId,
@@ -72,7 +78,7 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
       })
     ),
   };
-  return { mockDb, savedDocs };
+  return { mockDb, savedDocs, notifySpy };
 });
 
 vi.mock("firebase-admin", () => {
@@ -99,6 +105,13 @@ vi.mock("firebase-admin", () => {
     apps: [{ name: "mock" }],
   };
 });
+
+// The refund branch announces a NEW refund id to the customer through this
+// boundary. Spy on it only - the real dispatch would fan out to FCM, which this
+// hermetic suite never touches. Everything else in the handler stays real.
+vi.mock("../src/modules/tickets/supportNotifications", () => ({
+  dispatchCustomerAccountNotification: (...args: unknown[]) => notifySpy(...args),
+}));
 
 import { handleRazorpayWebhook } from "../src/modules/payments/webhookHandler";
 import { config } from "../src/config/env";
@@ -672,6 +685,64 @@ describe("Razorpay webhook idempotency (real handler)", () => {
       refundedTotalPaise: 15000,
       refundAmount: 150,
       refundLedger: { rfnd_1: 10000, rfnd_2: 5000 },
+    });
+  });
+
+  // ── Customer-notice side effect. The refund branch announces each NEW refund
+  // id exactly once (webhookHandler.ts:1474 gates the dispatch on isNewRefund).
+  // The replay fixture above has no customerId/userId, so that branch never runs
+  // there; this case supplies the recipient and pins the contract: a duplicate
+  // delivery under a new event id must not re-announce the same money, while a
+  // distinct second partial must announce, with the ledger accumulating both.
+  it("notifies the customer once per new refund id, never on a duplicate delivery", async () => {
+    savedDocs["orders/order_notif_1"] = {
+      id: "order_notif_1",
+      branchId: "branch_surat_01",
+      customerId: "cust_notif_1",
+      paymentStatus: "completed",
+      payment: { razorpayPaymentId: "pay_notif_1", status: "completed", capturedAmountPaise: 30000 },
+    };
+    const refundPayload = (eventId: string, refundId: string, amountPaise: number) => ({
+      id: eventId,
+      event: "refund.processed",
+      payload: {
+        refund: {
+          entity: { id: refundId, payment_id: "pay_notif_1", amount: amountPaise, currency: "INR" },
+        },
+      },
+    });
+
+    notifySpy.mockClear();
+
+    const first = mockReqRes(refundPayload("evt_notif_1", "rfnd_notif_1", 10000));
+    await handleRazorpayWebhook(first.req, first.res);
+    expect(first.out().statusCode).toBe(200);
+    expect(notifySpy).toHaveBeenCalledTimes(1);
+    expect(notifySpy.mock.calls[0][0]).toMatchObject({
+      purpose: "orderUpdates",
+      recipientUid: "cust_notif_1",
+      targetId: "order_notif_1",
+      type: "refund_processed",
+    });
+
+    // Same refund, different event id: no second ledger entry AND no second
+    // customer announcement.
+    const replay = mockReqRes(refundPayload("evt_notif_2", "rfnd_notif_1", 10000));
+    await handleRazorpayWebhook(replay.req, replay.res);
+    expect(replay.out().statusCode).toBe(200);
+    expect(notifySpy).toHaveBeenCalledTimes(1);
+    expect(savedDocs["orders/order_notif_1"].refundedTotalPaise).toBe(10000);
+    expect(Object.keys(savedDocs["orders/order_notif_1"].refundLedger)).toEqual(["rfnd_notif_1"]);
+
+    // A distinct second partial is new money: one more announcement, both
+    // ledger entries kept.
+    const partial = mockReqRes(refundPayload("evt_notif_3", "rfnd_notif_2", 5000));
+    await handleRazorpayWebhook(partial.req, partial.res);
+    expect(partial.out().statusCode).toBe(200);
+    expect(notifySpy).toHaveBeenCalledTimes(2);
+    expect(savedDocs["orders/order_notif_1"]).toMatchObject({
+      refundedTotalPaise: 15000,
+      refundLedger: { rfnd_notif_1: 10000, rfnd_notif_2: 5000 },
     });
   });
 
