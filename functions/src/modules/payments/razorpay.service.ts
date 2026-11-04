@@ -4297,6 +4297,83 @@ export async function autoRefund(
     const stillOwnsClaim =
       !freshClaim || (freshClaim.requestId ?? null) === (refundRequestId ?? null);
 
+    /**
+     * Razorpay documents three refund states, and `processed` is the only FINAL
+     * one: "pending: This state indicates that Razorpay is attempting to process
+     * the refund", "processed: This is the final state of the refund", "failed: …"
+     * — and it explicitly warns that a 2xx refund response can return `pending`,
+     * with the `refund.processed` webhook as the reliable final-status signal.
+     * Sources:
+     *   https://razorpay.com/docs/api/refunds/entity
+     *   https://razorpay.com/docs/payments/refunds/faqs
+     *
+     * So a pending refund must NOT be stamped settled. The money is committed
+     * with the gateway but has not reached the customer, so the order is marked
+     * in-flight and the webhook promotes it. Treating it as settled told the
+     * customer "refunded" before the gateway had moved anything, and dropped the
+     * console row an operator would need to chase a stuck refund.
+     */
+    const gatewaySaysPending =
+      typeof refundResult?.status === "string" &&
+      refundResult.status.toLowerCase() === "pending";
+    if (gatewaySaysPending) {
+      const inFlightData: Record<string, any> = {
+        refundAmount: amountRupees ?? null,
+        // The gateway accepted the amount, so count it against the cap to block
+        // an over-refund, while keeping the status explicitly non-terminal.
+        refundedTotalPaise: nextTotal,
+        refundLedger: freshLedger,
+        refundId: refundResult.id,
+        refundKeyedReceipts: {
+          ...(fresh.refundKeyedReceipts || {}),
+          ...(refundRequestId ? { [refundResult.id]: refundRequestId } : {}),
+        },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (stillOwnsClaim) {
+        inFlightData.refundStatus = "refund_pending";
+        inFlightData.refundPendingSince = admin.firestore.FieldValue.serverTimestamp();
+        inFlightData.refundPendingGatewayId = refundResult.id;
+        inFlightData["payment.refundStatus"] = "pending";
+        inFlightData["refundObligation.status"] = "IN_FLIGHT";
+        inFlightData["refundObligation.gatewayRefundId"] = refundResult.id;
+        inFlightData["refundObligation.pendingSince"] =
+          admin.firestore.FieldValue.serverTimestamp();
+        inFlightData.refundClaimedAt = admin.firestore.FieldValue.delete();
+        inFlightData.refundClaimedRequestId = admin.firestore.FieldValue.delete();
+        inFlightData.refundClaimedPaymentId = admin.firestore.FieldValue.delete();
+        inFlightData.refundClaimedPaise = admin.firestore.FieldValue.delete();
+        inFlightData.refundClaimedKey = admin.firestore.FieldValue.delete();
+        inFlightData.refundClaimedReason = admin.firestore.FieldValue.delete();
+        inFlightData.refundActiveClaim = admin.firestore.FieldValue.delete();
+      }
+      tx.set(orderRef, inFlightData, { merge: true });
+      // The operator-visible row stays actionable and says truthfully that the
+      // gateway accepted the refund but has not settled it. A human decision is
+      // still never overwritten.
+      if (refundRowRefForCompletion && refundRowExisted) {
+        const priorStatus = String(
+          (refundRowSnapForCompletion?.data() || {}).status || "",
+        ).toUpperCase();
+        if (priorStatus !== "REJECTED" && priorStatus !== "WITHDRAWN") {
+          tx.set(
+            refundRowRefForCompletion,
+            {
+              status: "IN_FLIGHT",
+              gatewayStatus: "pending",
+              gatewayRefundId: refundResult.id,
+              refundId: refundResult.id,
+              pendingSince: admin.firestore.FieldValue.serverTimestamp(),
+              processedBy: caller?.email || caller?.uid || "server",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+      }
+      return { nextTotal, fullyRefunded: false };
+    }
+
     const orderCompleteData: Record<string, any> = {
       refundAmount: amountRupees ?? null,
       refundedTotalPaise: nextTotal,

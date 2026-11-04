@@ -1382,6 +1382,22 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               refundAmount: nextTotal / 100,
               refundedTotalPaise: nextTotal,
               refundLedger: ledger,
+              // A refund that was accepted as `pending` becomes final HERE, on
+              // the webhook Razorpay documents as the reliable final-status
+              // signal. The in-flight markers written by the release path are
+              // cleared on the same write, so the console and the customer card
+              // stop showing "pending" the moment the gateway says processed.
+              // A human REJECTED/WITHDRAWN decision on the obligation is never
+              // touched: this only clears the states the machine wrote.
+              "payment.refundStatus": hasCapture && nextTotal < capturedPaise
+                ? "partially_refunded"
+                : "refunded",
+              "refundObligation.status": "SETTLED",
+              "refundObligation.settledAt":
+                admin.firestore.FieldValue.serverTimestamp(),
+              "refundObligation.settledRefundId": refundId,
+              refundPendingSince: admin.firestore.FieldValue.delete(),
+              refundPendingGatewayId: admin.firestore.FieldValue.delete(),
               ...(overCapturedPaise > 0
                 ? { refundOverCapturedPaise: overCapturedPaise }
                 : {}),
