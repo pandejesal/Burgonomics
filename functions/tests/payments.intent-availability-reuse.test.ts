@@ -257,13 +257,38 @@ describe("P1-I — intent reuse must revalidate availability", () => {
 
   it("a stale intent whose order was already cancelled is not handed out", async () => {
     seedWorld(true);
-    await create();
+    const first: any = await create();
+    const mintedAfterFirst = control.mintCounter;
+    const intentKeysAfterFirst = [...docs.keys()].filter((k) => k.startsWith("payment_intents/"));
+    expect(intentKeysAfterFirst).toHaveLength(1);
+    const intentAfterFirst = JSON.parse(JSON.stringify(docs.get(intentKeysAfterFirst[0])));
+
+    // 1) The ACTIVE order's item is 86'd: reuse must still refuse on
+    //    AVAILABILITY. This is the pre-existing P1-I contract, unchanged.
+    docs.set("products/p1", { ...docs.get("products/p1"), inStock: false });
+    await expect(create()).rejects.toMatchObject({ code: "ITEM_UNAVAILABLE" });
+
+    // 2) The item is sellable again, but the ORDER is now closed. Availability
+    //    is no longer the reason to refuse — the terminal gate is, and it runs
+    //    before any intent reuse or gateway mint. Asserting the exact code (not
+    //    an either/or) keeps the two contracts distinguishable.
+    docs.set("products/p1", { ...docs.get("products/p1"), inStock: true });
     docs.set("orders/ord_1", {
       ...docs.get("orders/ord_1"),
       status: { code: "CANCELLED", label: "Cancelled", kind: "cancelled", terminal: true },
     });
-    docs.set("products/p1", { ...docs.get("products/p1"), inStock: false });
 
-    await expect(create()).rejects.toMatchObject({ code: "ITEM_UNAVAILABLE" });
+    await expect(create()).rejects.toMatchObject({
+      statusCode: 409,
+      code: "ORDER_TERMINAL",
+    });
+
+    // Nothing payable was created by either refusal: the same single intent and
+    // the same single gateway order from the FIRST attempt are all that exist.
+    expect(control.mintCounter).toBe(mintedAfterFirst);
+    expect([...docs.keys()].filter((k) => k.startsWith("payment_intents/"))).toEqual(
+      intentKeysAfterFirst
+    );
+    expect(docs.get(intentKeysAfterFirst[0])).toEqual(intentAfterFirst);
   });
 });

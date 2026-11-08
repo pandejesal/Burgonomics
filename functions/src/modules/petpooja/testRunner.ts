@@ -1,5 +1,5 @@
 import { config, isDeclaredProduction } from "../../config/env";
-import { getPetpoojaConfig } from "./client";
+import { getPetpoojaConfig, assertPetpoojaEnabled } from "./client";
 import { db } from "../../core/firebase";
 import { assertBranchAccess } from "../../core/middleware";
 import { allocatePetpoojaTax, sumPetpoojaItemTax } from "./taxAmounts";
@@ -983,6 +983,12 @@ export async function runPetpoojaTestScenario(
     err.statusCode = 403;
     throw err;
   }
+  // DISABLED BRIDGE (ORDER MATTERS): branch RBAC above and the production
+  // refusal above keep precedence — a caller must never learn the capability
+  // state instead of being denied, and production must never be talked into
+  // relaying. Only then does an explicitly disabled integration refuse, before
+  // a scenario is built or a synthetic `pp_test_*` id can be reported.
+  assertPetpoojaEnabled(`QA relay scenario "${params.scenarioId}"`);
   const order = buildPetpoojaTestOrder(params.scenarioId);
   const clientOrderID = `pp_test_${order.scenarioId}_${Date.now()}`;
 

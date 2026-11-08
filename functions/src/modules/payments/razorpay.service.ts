@@ -377,6 +377,35 @@ async function resolveOrderBranchForPayment(orderData: any): Promise<string> {
 }
 
 /**
+ * Terminal ("closed") order statuses. These are the codes the KDS freezes in
+ * orderStatus.ts (delivered/cancelled and their fulfillment forks) plus the
+ * refund terminal. A closed order is not payable, so `assertPayableOrderDoc`
+ * refuses it; an ACTIVE order (PLACED/CONFIRMED/PREPARING/READY/…) keeps the
+ * pre-existing checkout behaviour.
+ */
+const CLOSED_ORDER_STATUSES = new Set([
+  "CANCELLED",
+  "CANCELED",
+  "REFUNDED",
+  "DELIVERED",
+  "COMPLETED",
+  "PICKED_UP",
+]);
+
+/**
+ * True when the stored order document is already CLOSED. Accepts the canonical
+ * `status.code`, a legacy flat-string status, the stored `terminal` flag, and
+ * the refund markers the capture/route lanes already honour
+ * (`isOrderTerminalForRouteTransfer`).
+ */
+function isClosedOrderDoc(order: any): boolean {
+  const rawStatus = typeof order?.status === "string" ? order.status : order?.status?.code;
+  if (CLOSED_ORDER_STATUSES.has(String(rawStatus || "").toUpperCase())) return true;
+  if (order?.status?.terminal === true || order?.terminal === true) return true;
+  return isOrderTerminalForRouteTransfer(order).isTerminal;
+}
+
+/**
  * PAYMENTS_CONTRACT_SPEC §1 gate: the internal orders/{orderId} doc must
  * EXIST, be UNPAID, and belong to the CALLER before any payable gateway
  * order is minted. 404 for an unknown id, 409 for paid/foreign orders, 503
@@ -386,6 +415,11 @@ async function resolveOrderBranchForPayment(orderData: any): Promise<string> {
  * PAY-13: it also RETURNS the order document, because that document — not the
  * request body — is the cart the money is computed from (the KOT builder
  * fulfils `orders/{orderId}.items`).
+ *
+ * A CLOSED order (cancelled/refunded/delivered/completed/picked up) is refused
+ * with 409 ORDER_TERMINAL: a stale "Pay now" retry must never mint a payable
+ * gateway order for food nobody will cook. A concurrent cancel AFTER this read
+ * is still covered by the late-capture compensation lane, not by this check.
  */
 async function assertPayableOrderDoc(
   orderId: string,
@@ -433,6 +467,17 @@ async function assertPayableOrderDoc(
     const err: any = new Error("This order belongs to a different customer — refusing checkout.");
     err.statusCode = 409;
     err.code = "ORDER_NOT_OWNED";
+    throw err;
+  }
+  // Ordering note: this sits AFTER paid and ownership so the pre-existing
+  // 404 / ORDER_ALREADY_PAID / ORDER_NOT_OWNED contracts keep their codes — a
+  // foreign or already-paid order is still reported as such, never as terminal.
+  if (isClosedOrderDoc(data)) {
+    const err: any = new Error(
+      "This order is closed (cancelled, refunded or already completed) — refusing to mint a new gateway order for it."
+    );
+    err.statusCode = 409;
+    err.code = "ORDER_TERMINAL";
     throw err;
   }
   return data;

@@ -4,7 +4,7 @@ import { allocatePetpoojaTax, sumPetpoojaItemTax } from "./taxAmounts";
 import { petpoojaFinancials } from "./financials";
 import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
-import { getPetpoojaConfig } from "./client";
+import { getPetpoojaConfig, assertPetpoojaEnabled } from "./client";
 import { calculateOrderPricing, applyCatalogBasePrice, validateOptionSelections } from "../payments/pricing.engine";
 import { resolveKotCustomerPhone } from "../../core/dropContact";
 import { petpoojaRetryScheduledAtMs } from "./retryBackoff";
@@ -1380,6 +1380,18 @@ export async function resolvePetpoojaKotAmbiguity(
   const order = orderDoc.data() || {};
   const branchId = await assertOrderBranchAccess(caller, order as Record<string, any>);
 
+  // DISABLED BRIDGE: a staff "retry" is a REQUEST TO POST THIS KOT. With the
+  // integration explicitly disabled there is nothing to send, so refuse before
+  // the decision writes anything — no status flip, no retry lease, no cleared
+  // acceptance dedupe. Refusing early (rather than letting the inner push throw
+  // after the decision write) is what keeps the order's queue state untouched
+  // and re-enabling the flag able to resume it. A "printed" statement is NOT
+  // gated: it sends nothing and records a human's observation of a ticket that
+  // was already at the POS before the bridge was switched off.
+  if (resolution === "retry") {
+    assertPetpoojaEnabled(`KOT reconciliation retry for order ${orderId}`);
+  }
+
   const idempotencyToken =
     typeof options?.idempotencyToken === "string" && options.idempotencyToken.trim()
       ? options.idempotencyToken.trim().slice(0, 100)
@@ -1838,6 +1850,16 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     );
     return false;
   }
+
+  // DISABLED BRIDGE: PETPOOJA_ENABLED=false must not POST. Placed AFTER the
+  // dedupe/reconciliation guards (so an already-accepted order stays deduped
+  // and a parked/ambiguous order keeps its flags) and BEFORE the claim
+  // transaction (so the refusal takes no lease, writes no status, burns no
+  // retry attempt and never consumes the courier quote). Throwing — rather
+  // than parking the order — is deliberate: a status write here would relabel
+  // a queued order into a state the retry worker or the alert lane owns, and
+  // re-enabling the flag must resume that exact queue untouched.
+  assertPetpoojaEnabled(`KOT push for order ${orderId}`);
 
   // Transactional claim (finding: duplicate-KOT race): the read above is
   // NOT a lock — `payment.captured` + `order.paid` webhooks, a KDS double

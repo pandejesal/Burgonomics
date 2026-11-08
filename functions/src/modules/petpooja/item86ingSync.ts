@@ -1,7 +1,7 @@
 import { db } from "../../core/firebase";
 import { captureErrorSnapshot } from "../../core/errors";
 import { config, assertLivePetpoojaContext } from "../../config/env";
-import { getPetpoojaConfig } from "./client";
+import { getPetpoojaConfig, assertPetpoojaEnabled } from "./client";
 import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
 import { isSafeDocId } from "../../core/security";
@@ -520,6 +520,18 @@ export async function pushItemStockToPetpooja(
     console.warn(`[Petpooja Stock Push] Unsafe normalized identifier: raw=${rawItemId}, prod=${productId}`);
     return false;
   }
+
+  // DISABLED BRIDGE: PETPOOJA_ENABLED=false must not reach the vendor NOR
+  // write a local stock stamp. Placed after identifier validation, the staff
+  // branch boundary and the zero-mock production gate (so an invalid id, a
+  // cross-branch caller or a production mock still get their existing answer
+  // first) and BEFORE the mock branch and every branch/product read — a
+  // disabled integration therefore costs no vendor POST and leaves the product
+  // doc's inStock/lastPetpoojaStockPush untouched. Throwing is deliberate: this
+  // is the outbound push, and a silent `false` would read as "rejected toggle"
+  // rather than "capability off". Authenticated INBOUND 86ing
+  // (handlePetpoojaStockWebhook) is a different entrypoint and is NOT gated.
+  assertPetpoojaEnabled(`stock push for branch ${branchId} item ${itemId}`);
 
   if (config.mock.petpoojaPos) {
     console.log(`[Mock Petpooja 86ing] Pushed branch=${branchId} item=${rawItemId} inStock=${inStock}`);

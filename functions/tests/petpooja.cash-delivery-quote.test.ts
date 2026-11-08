@@ -101,6 +101,7 @@ const FEE = 60;
 const CREATED_AT = Date.now() - 60 * 60_000; // one hour ago
 
 let prevMock: boolean;
+let prevEnabled: boolean;
 const fetchMock = vi.fn();
 
 function seedOrder(id: string, extra: Record<string, any> = {}) {
@@ -155,6 +156,12 @@ beforeEach(() => {
   for (const key of Object.keys(savedDocs)) delete savedDocs[key];
   prevMock = config.mock.petpoojaPos;
   config.mock.petpoojaPos = false;
+  // The test process runs with PETPOOJA_ENABLED unset, so the production
+  // default is TRUE. Pin it explicitly rather than relying on inheritance: the
+  // disabled suite below flips it, and a leaked `false` would silently turn
+  // every positive expectation in this file into a no-op that still passes.
+  prevEnabled = config.petpooja.enabled;
+  config.petpooja.enabled = true;
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({
     ok: true,
@@ -182,6 +189,7 @@ beforeEach(() => {
 
 afterEach(() => {
   config.mock.petpoojaPos = prevMock;
+  config.petpooja.enabled = prevEnabled;
   vi.unstubAllGlobals();
 });
 

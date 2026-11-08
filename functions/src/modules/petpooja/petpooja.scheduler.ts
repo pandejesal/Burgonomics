@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { syncPetpoojaMenu } from "./menuSyncWebhook";
 import { pushOrderToPetpooja, wasPushDeferredBusy } from "./orderPush";
+import { isPetpoojaEnabled } from "./client";
 import { dispatchFCM } from "../notifications/fcm.service";
 import {
   PETPOOJA_MAX_RETRY_ATTEMPTS,
@@ -21,6 +22,16 @@ import {
 export async function syncAllBranchesPetpoojaMenu(): Promise<{
   syncedBranches: number;
 }> {
+  // DISABLED BRIDGE: PETPOOJA_ENABLED=false must cost nothing — no branch scan,
+  // no per-branch fan-out, no Menu API pull. Reported as zero synced branches
+  // (never as a healthy sweep), and no run is recorded.
+  if (!isPetpoojaEnabled()) {
+    logger.info(
+      "[Petpooja Menu Scheduler] PETPOOJA_ENABLED=false — bridge disabled, skipping the menu sweep"
+    );
+    return { syncedBranches: 0 };
+  }
+
   const PAGE_SIZE = 100;
   const branchDocs: any[] = [];
   const baseQuery = db.collection("branches").where("active", "==", true) as any;
@@ -102,6 +113,19 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
   let retriedCount = 0;
   let failedCount = 0;
   const CLAIM_TTL_MS = 10 * 60 * 1000;
+
+  // DISABLED BRIDGE: PETPOOJA_ENABLED=false must not touch the queue at all.
+  // Returning before the crash scan / pending_retry scan is what guarantees no
+  // scan, no claim lease, no retry-count burn and no dead-letter alert — and it
+  // is why queued orders are still retried unchanged once the flag goes back to
+  // enabled. They are deliberately NOT relabelled: `pending_retry` is the lane
+  // both this worker and the pending-alert lane already understand.
+  if (!isPetpoojaEnabled()) {
+    logger.info(
+      "[Petpooja Retry Worker] PETPOOJA_ENABLED=false — bridge disabled, skipping the retry tick"
+    );
+    return { retriedCount, failedCount };
+  }
 
   // 1. Crash visibility scan (Finding 6): detect stale 'processing' orders where
   // a pusher may have crashed mid-flight or timed out during vendor POST.

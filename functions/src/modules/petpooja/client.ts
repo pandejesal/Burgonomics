@@ -12,6 +12,54 @@ export interface PetpoojaClientConfig {
   stockUrl: string;
 }
 
+/**
+ * PETPOOJA_ENABLED=false — the POS bridge is switched OFF.
+ *
+ * Until this guard existed the flag only decided whether staging readiness
+ * DEMANDED the PETPOOJA_* secrets (config/env.ts integrationEnabledForSecret);
+ * nothing on the outbound path read it, so a deliberately disabled integration
+ * still POSTed KOTs, pulled the Menu API, leased retry rows and burned a paid
+ * order's retry budget. The flag is now enforced at every OUTBOUND entrypoint.
+ *
+ * INBOUND is deliberately untouched: an authenticated menu PUSH still ingests
+ * (it costs the vendor nothing and is how the catalogue is corrected), and the
+ * stock/86ing policy is not gated here.
+ */
+export class PetpoojaDisabledError extends Error {
+  readonly code = "PETPOOJA_DISABLED";
+  /** Service-unavailable, not caller error: the capability is off, not broken. */
+  readonly statusCode = 503;
+
+  constructor(operation: string) {
+    super(petpoojaDisabledMessage(operation));
+    this.name = "PetpoojaDisabledError";
+  }
+}
+
+/**
+ * Explicit `=== false` on purpose. The canonical default is ENABLED
+ * (`PETPOOJA_ENABLED !== "false"`), so only a deliberate disable blocks work;
+ * an older partial config double that omits the property must not be read as a
+ * disable. Nothing here relaxes credential checks or the production mock guard
+ * — it is an additional, fail-safe gate.
+ */
+export function isPetpoojaEnabled(): boolean {
+  return config.petpooja.enabled !== false;
+}
+
+/** One truthful sentence for logs, error messages and deferred-order markers. */
+export function petpoojaDisabledMessage(operation: string): string {
+  return (
+    `Petpooja POS integration is disabled (PETPOOJA_ENABLED=false) — refusing ${operation}. ` +
+    `No request left this server; queued POS work resumes when the integration is re-enabled.`
+  );
+}
+
+/** Throws the typed refusal when the integration is explicitly disabled. */
+export function assertPetpoojaEnabled(operation: string): void {
+  if (!isPetpoojaEnabled()) throw new PetpoojaDisabledError(operation);
+}
+
 export function getPetpoojaConfig(): PetpoojaClientConfig {
   // Fail-closed (H-M2/C3): no mock literals. Unset secrets stay "" and every
   // verifier below denies on empty — never verify against a well-known value.

@@ -1,7 +1,7 @@
 import { db } from "../../core/firebase";
 import { config, assertLivePetpoojaContext } from "../../config/env";
 import { captureErrorSnapshot } from "../../core/errors";
-import { getPetpoojaConfig } from "./client";
+import { getPetpoojaConfig, assertPetpoojaEnabled } from "./client";
 import { interpretPackaging, itemPackingCharge } from "./packaging";
 import {
   addonGroupIndex,
@@ -288,6 +288,14 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // ZERO-MOCK runtime gate: the canned catalog below must never be written
   // into the live `products` collection a real app is ordering from.
   assertLivePetpoojaContext(`menu sync for branch ${branchId}`);
+  // DISABLED BRIDGE (OUTBOUND ONLY): PETPOOJA_ENABLED=false refuses the Menu API
+  // pull and the canned mock catalog — a disabled integration must never report
+  // a synced catalogue. The authenticated INBOUND push (`incomingMenu`, the
+  // vendor's own body) is deliberately NOT gated here: it costs no outbound
+  // call and is how an operator corrects the catalogue while the bridge is off.
+  if (!(incomingMenu && Array.isArray(incomingMenu.items))) {
+    assertPetpoojaEnabled(`menu pull for branch ${branchId}`);
+  }
   // Resolve the Petpooja restID for this branch (ops links outlets via
   // branches/{id}.petpoojaStoreId — Runbook §5). Loop 6: FAIL CLOSED on
   // unlinked branches or failed lookups — the old fallback sent our internal

@@ -399,4 +399,106 @@ describe("createPaymentOrder — PAY-13/PAY-15: the ORDER DOCUMENT is the cart",
     expect(ordersCreate).not.toHaveBeenCalled();
     expect(intentKeys()).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // A CLOSED ORDER IS NOT PAYABLE.
+  //
+  // `assertPayableOrderDoc` checked existence, paid-ness and ownership but not
+  // whether the order was already CLOSED. A stale "Pay now" retry on a
+  // cancelled/expired order therefore minted a brand-new payable gateway order
+  // and payment intent for food nobody will cook — and the customer's money
+  // would land on a dead order. The gate must refuse a TERMINAL order with a
+  // typed 409 ORDER_TERMINAL before any gateway order or intent write.
+  // -------------------------------------------------------------------------
+
+  const closedStatus = (code: string) => ({
+    code,
+    label: code,
+    kind: "completed" as const,
+    terminal: true,
+  });
+
+  it("refuses a stored CANCELLED order before any gateway order or payment intent (ORDER_TERMINAL)", async () => {
+    seedOrder("ord_term_cancelled", {
+      orderType: "takeaway",
+      status: closedStatus("CANCELLED"),
+      cancellationReason: "customer_cancelled",
+    });
+
+    await expect(
+      createPaymentOrder({
+        orderId: "ord_term_cancelled",
+        items: expensiveItems(),
+        branchId: BRANCH,
+        orderType: "takeaway",
+        customerId: "guest",
+        idempotencyKey: "k_term_cancelled",
+      })
+    ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_TERMINAL" });
+
+    // Nothing payable exists: no gateway order, no intent, no re-price.
+    expect(ordersCreate).not.toHaveBeenCalled();
+    expect(intentKeys()).toEqual([]);
+    expect(savedDocs["orders/ord_term_cancelled"].pricing).toBeUndefined();
+  });
+
+  it("refuses a legacy flat-string cancelled status (no status.code object)", async () => {
+    seedOrder("ord_term_legacy_cancel", { orderType: "takeaway", status: "cancelled" });
+
+    await expect(
+      createPaymentOrder({
+        orderId: "ord_term_legacy_cancel",
+        items: expensiveItems(),
+        branchId: BRANCH,
+        orderType: "takeaway",
+        customerId: "guest",
+        idempotencyKey: "k_term_legacy_cancel",
+      })
+    ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_TERMINAL" });
+
+    expect(ordersCreate).not.toHaveBeenCalled();
+    expect(intentKeys()).toEqual([]);
+  });
+
+  it.each(["DELIVERED", "PICKED_UP", "COMPLETED", "REFUNDED"])(
+    "refuses the other known terminal order status %s",
+    async (code) => {
+      const orderId = `ord_term_${code.toLowerCase()}`;
+      seedOrder(orderId, { orderType: "takeaway", status: closedStatus(code) });
+
+      await expect(
+        createPaymentOrder({
+          orderId,
+          items: expensiveItems(),
+          branchId: BRANCH,
+          orderType: "takeaway",
+          customerId: "guest",
+          idempotencyKey: `k_term_${code.toLowerCase()}`,
+        })
+      ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_TERMINAL" });
+
+      expect(ordersCreate).not.toHaveBeenCalled();
+      expect(intentKeys()).toEqual([]);
+    }
+  );
+
+  it("still mints for an ACTIVE non-terminal order (positive control)", async () => {
+    seedOrder("ord_term_active", {
+      orderType: "takeaway",
+      status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
+    });
+
+    const res = await createPaymentOrder({
+      orderId: "ord_term_active",
+      items: expensiveItems(),
+      branchId: BRANCH,
+      orderType: "takeaway",
+      customerId: "guest",
+      idempotencyKey: "k_term_active",
+    });
+
+    expect(res.amountPaise).toBeGreaterThan(0);
+    expect(ordersCreate).toHaveBeenCalledTimes(1);
+    expect(intentKeys()).toEqual(["payment_intents/k_term_active"]);
+  });
 });
