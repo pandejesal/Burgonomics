@@ -102,6 +102,31 @@ jobs:
             echo "EMULATOR_JAVA_HOME=${JAVA_HOME}"
           } >> "$GITHUB_ENV"
 
+      # run-lane.mjs builds the lane child env from an explicit allowlist, so
+      # NODE_PATH never reaches lane.mjs (its require.resolve of
+      # @playwright/test/cli failed on exactly that). The pinned packages must
+      # therefore be resolvable ON DISK from customer-harness/tests/emulator:
+      # this links them under the harness, never under the repo root.
+      - name: Link the pinned toolchain into the harness node_modules
+        run: |
+          set -euo pipefail
+          link_pinned() {
+            source_path="$1"
+            target_path="$2"
+            if [ ! -e "$source_path" ]; then
+              echo "::error::pinned toolchain missing at $source_path"
+              exit 1
+            fi
+            if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+              echo "::error::unexpected existing target $target_path - refusing to overwrite"
+              exit 1
+            fi
+            ln -s "$source_path" "$target_path"
+          }
+          mkdir -p "customer-harness/node_modules/@playwright"
+          link_pinned "$RUNNER_TEMP/ci-tool/node_modules/firebase-tools" "customer-harness/node_modules/firebase-tools"
+          link_pinned "$RUNNER_TEMP/ci-tool/node_modules/@playwright/test" "customer-harness/node_modules/@playwright/test"
+
       - name: Assert exact pinned tool versions (fail closed on drift)
         run: |
           node -e "const pathOf=(m)=>require.resolve(m+'/package.json');const versionOf=(m)=>require(pathOf(m)).version;const bad=[];if(versionOf('firebase-tools')!=='15.32.1')bad.push('firebase-tools '+versionOf('firebase-tools'));if(versionOf('@playwright/test')!=='1.63.0')bad.push('@playwright/test '+versionOf('@playwright/test'));require.resolve('firebase-tools/lib/bin/firebase.js');require.resolve('firebase-tools/lib/emulator/downloadableEmulatorInfo.json');require.resolve('@playwright/test/cli');if(bad.length){console.error('UNPINNED TOOLCHAIN: '+bad.join('; '));process.exit(1)}console.log('toolchain pinned: firebase-tools@15.32.1, @playwright/test@1.63.0')"
