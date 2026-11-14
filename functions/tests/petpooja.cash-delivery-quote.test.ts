@@ -203,13 +203,42 @@ describe("R6b cash delivery KOT — quote binding", () => {
   });
 
   it("does not flag a customer-app takeaway as an unverified delivery", async () => {
-    seedOrder("ord_takeaway", { fulfillmentType: undefined, fulfillment: "takeaway", paymentMethod: undefined, payment: { method: "cod", status: "PAY_AT_STORE" }, status: { code: "PICKED_UP", kind: "completed", terminal: true } });
+    // F3 (approved stimulus correction): this case is about the WIRE FINANCE for
+    // a pay-at-store takeaway — delivery_charges 0.00, total 250.00, and no
+    // unverified-delivery flag. Its order status must therefore be a live,
+    // sendable state; the former stimulus was a terminal PICKED_UP order, which
+    // F3 now correctly refuses (that refusal has its own control below). Every
+    // payment, fulfillment and pricing field is unchanged.
+    seedOrder("ord_takeaway", { fulfillmentType: undefined, fulfillment: "takeaway", paymentMethod: undefined, payment: { method: "cod", status: "PAY_AT_STORE" }, status: { code: "CONFIRMED", label: "Order confirmed", kind: "upcoming", terminal: false } });
     expect(await pushOrderToPetpooja("ord_takeaway")).toBe(true);
     const details = deliveredPayload().orderinfo.OrderInfo.Order.details;
     expect(details.delivery_charges).toBe("0.00");
     expect(details.total).toBe("250.00");
     expect(savedDocs["orders/ord_takeaway"].deliveryFeeUnverified).toBe(false);
     expect(savedDocs["orders/ord_takeaway"].deliveryFeeUnverifiedReason).toBeNull();
+  });
+
+  it("REFUSES the former terminal PICKED_UP takeaway stimulus — zero POST, no quote consumed", async () => {
+    // Negative control for the stimulus corrected above: a completed takeaway is
+    // a closed order, so no KOT may be sent for it. Nothing may be invented —
+    // no POS ack, no consumption of the quote, no unverified-delivery flag.
+    seedOrder("ord_takeaway_picked_up", { deliveryQuoteId: "dfq_picked_up", fulfillmentType: undefined, fulfillment: "takeaway", paymentMethod: undefined, payment: { method: "cod", status: "PAY_AT_STORE" }, status: { code: "PICKED_UP", kind: "completed", terminal: true } });
+    seedQuote("dfq_picked_up");
+
+    expect(await pushOrderToPetpooja("ord_takeaway_picked_up")).toBe(false);
+
+    // No provider call at all, so no payload was ever built or relayed.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls).toHaveLength(0);
+
+    const doc = savedDocs["orders/ord_takeaway_picked_up"];
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.petpoojaAcceptedNoId).toBeUndefined();
+    expect(doc.kotPrinted).toBeUndefined();
+    expect(doc.deliveryFeeUnverified).toBeUndefined();
+    expect(doc.petpoojaStatus).not.toBe("synced");
+    // The courier quote is untouched: money is not spent by a refused push.
+    expect(savedDocs["delivery_fee_quotes/dfq_picked_up"].usedByOrderId).toBeNull();
   });
 
   it("binds a valid quote and charges its fee", async () => {

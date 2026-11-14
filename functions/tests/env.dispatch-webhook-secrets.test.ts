@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /**
  * F2 (stress sweep 2026-10-24): a dispatch provider that can book a REAL rider
@@ -9,7 +9,100 @@ import { describe, it, expect, vi, afterEach } from "vitest";
  * the (empty-secret) verifier has to deny, leaving orders untracked forever.
  * These tests pin the fail-closed boot assertion AND the production runtime
  * eligibility guard. No provider is called.
+ *
+ * ── Ancillary Admin SDK I/O is controlled here ──────────────────────────────
+ * The adapters reach `src/core/firebase.ts` transitively (adapter → shared →
+ * dispatch/dropContact → core/dropContact → core/firebase), which imports the
+ * real `firebase-admin` and calls `initializeApp()` plus `firestore()` /
+ * `auth()` / `messaging()` at module load. This suite exercises NOTHING of that:
+ * `isEligible()` reads only `config.*` and `isDeclaredProduction()`. The stub
+ * below therefore replaces that ancillary external I/O boundary ONLY.
+ *
+ * It is NOT an SDK integration test and proves nothing about remote provider
+ * acceptance. Real `dotenv`/env parsing, real provider config, and the real
+ * `isEligible()` / `isDeclaredProduction()` logic stay UNMOCKED.
+ *
+ * The stub mirrors the actual export shape `src/core/firebase.ts` consumes:
+ * `apps` is NON-EMPTY, so `initializeApp()` is skipped (and asserted not to be
+ * called); `firestore`/`auth`/`messaging` return handles whose OPERATIONS throw
+ * a tripwire error — creating the handle is fine, using it is not.
  */
+const adminStub = vi.hoisted(() => {
+  /** Every attempted Firebase operation, for the per-case "no I/O" guard. */
+  const ioCalls: string[] = [];
+  const operations = (surface: string, names: readonly string[]) =>
+    Object.fromEntries(
+      names.map((name) => [
+        name,
+        () => {
+          ioCalls.push(`${surface}.${name}`);
+          throw new Error(
+            `[test boundary] ${surface}.${name}() refused — this suite must not perform Firebase I/O`
+          );
+        },
+      ])
+    );
+
+  return {
+    ioCalls,
+    initializeApp: vi.fn(),
+    credential: { cert: vi.fn(() => ({ projectId: "stub" })) },
+    // Non-empty: `core/firebase.ts` skips initializeApp entirely.
+    apps: [{ name: "[DEFAULT]" }],
+    firestore: vi.fn(() =>
+      operations("firestore", [
+        "doc",
+        "collection",
+        "collectionGroup",
+        "runTransaction",
+        "batch",
+        "getAll",
+        "settings",
+        "listCollections",
+        "recursiveDelete",
+      ])
+    ),
+    auth: vi.fn(() =>
+      operations("auth", [
+        "verifyIdToken",
+        "createCustomToken",
+        "getUser",
+        "updateUser",
+        "deleteUser",
+        "listUsers",
+        "generateEmailVerificationLink",
+      ])
+    ),
+    messaging: vi.fn(() =>
+      operations("messaging", [
+        "send",
+        "sendEach",
+        "sendEachForMulticast",
+        "sendMulticast",
+        "sendAll",
+        "subscribeToTopic",
+        "unsubscribeFromTopic",
+      ])
+    ),
+  };
+});
+
+vi.mock("firebase-admin", () => ({
+  initializeApp: adminStub.initializeApp,
+  apps: adminStub.apps,
+  credential: adminStub.credential,
+  firestore: adminStub.firestore,
+  auth: adminStub.auth,
+  messaging: adminStub.messaging,
+  default: {
+    initializeApp: adminStub.initializeApp,
+    apps: adminStub.apps,
+    credential: adminStub.credential,
+    firestore: adminStub.firestore,
+    auth: adminStub.auth,
+    messaging: adminStub.messaging,
+  },
+}));
 
 const CORE: Record<string, string> = {
   RAZORPAY_KEY_ID: "rzp_live_unit_only",
@@ -83,7 +176,22 @@ const KEYED_SHADOWFAX = {
   SHADOWFAX_WEBHOOK_SECRET: undefined,
 };
 
+beforeEach(() => {
+  // Reset observable calls WITHOUT removing the boundary: `clear` keeps the
+  // mock implementations (so a handle is still created and still refuses
+  // operations) and only clears recorded calls.
+  adminStub.initializeApp.mockClear();
+  adminStub.firestore.mockClear();
+  adminStub.auth.mockClear();
+  adminStub.messaging.mockClear();
+  adminStub.ioCalls.length = 0;
+});
+
 afterEach(() => {
+  // Boundary guard: this suite never initializes the real SDK and never
+  // performs a Firebase operation. Creating a handle is allowed.
+  expect(adminStub.initializeApp).not.toHaveBeenCalled();
+  expect(adminStub.ioCalls).toEqual([]);
   vi.resetModules();
 });
 

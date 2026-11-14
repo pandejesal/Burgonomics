@@ -211,14 +211,17 @@ function lineUnitPrice(item: any): number {
  * the POS cloud can hold a ticket we never saw acknowledged, and a re-POST
  * rings the kitchen twice. Only two shapes may be retried automatically:
  *
- *   - `rejected`   — the origin ANSWERED and refused (an HTTP failure status, or
- *                    an ack that explicitly says success:"0"/failure);
+ *   - `rejected`   — the origin ANSWERED and REFUSED IN-BAND: an ack that
+ *                    explicitly says success:"0"/0/false (the vendor's own
+ *                    documented refusal shape). An HTTP failure status alone is
+ *                    NOT a rejection — a gateway 5xx proves nothing;
  *   - `never_sent` — the failure is proof the bytes never left this process
  *                    (DNS, connection refused, TLS/connect timeout, invalid
  *                    URL) or one of our own pre-POST checks threw.
  *
- * Everything else — socket reset, socket hang-up, a body timeout, a truncated
- * or unparseable 200 — is `ambiguous` and must be reconciled by a human.
+ * Everything else — a 5xx, a non-2xx without an explicit refusal, an object
+ * without a recognised success, a socket reset, a body timeout, a truncated or
+ * unparseable 200 — is `ambiguous` and must be reconciled by a human.
  */
 export type KotFailureClass = "rejected" | "never_sent" | "ambiguous";
 
@@ -271,6 +274,110 @@ export function classifyKotFailure(err: any): KotFailureClass {
   if (name === "TypeError") return "ambiguous";
   // Anything else is one of our own checks, which run BEFORE the POST.
   return "never_sent";
+}
+
+/**
+ * Astra F1 — the only POST outcome that may be retried automatically is the
+ * vendor's documented IN-BAND refusal: a parseable OBJECT whose `success` is
+ * explicitly negative ("0", 0 or false), on an HTTP status below 500
+ * (`references/petpooja_save_order_api.md` §12, §16.1: HTTP 200 +
+ * `{"success":"0","message":…}`).
+ *
+ * Returns the vendor's own message (bounded to 200 chars) for
+ * `lastPetpoojaError`, or `null` when the body proves nothing about the POS's
+ * side effect — an absent `success`, a non-object, an HTML error page or a
+ * truncated body are all ambiguous, never retryable.
+ *
+ * Astra follow-up: a body that ALSO carries a recognised positive `status`
+ * ("success") contradicts itself. `status:"success"` is the same ACK the 2xx
+ * path accepts, so it cannot be read as proof the POS refused — one field would
+ * claim the order registered while the other says it did not. A contradictory
+ * body therefore proves nothing and must never authorise a re-POST.
+ */
+function kotInBandRefusalMessage(body: any): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  // A recognised positive status wins: treat the body as unproven, not refused.
+  if ((body as any).status === "success") return null;
+  const success = (body as any).success;
+  const refused = success === "0" || success === 0 || success === false;
+  if (!refused) return null;
+  const message = typeof (body as any).message === "string" ? (body as any).message.trim() : "";
+  return (message || "refused by POS server").slice(0, 200);
+}
+
+/**
+ * Astra Finding 2 — what a previously persisted SEND claim proves.
+ *
+ * `petpoojaPushClaimedAt` is the dedicated lease taken immediately before a KOT
+ * POST. Its TTL exists to stop two CONCURRENT senders; it is NOT evidence that
+ * an expired sender failed to deliver. A sender can die after the POS accepted
+ * the ticket and before the acceptance was recorded, so renewing an expired
+ * lease re-POSTs an order the kitchen may already have.
+ *
+ * Presence is tested with `!= null` on purpose: `0`, `NaN` and an unrepresentable
+ * string are all "a claim marker exists with no interpretable outcome", not
+ * "never claimed". Only `null`/`undefined` mean no prior send.
+ *
+ *  - `none`       — no prior send claim; a fresh claim may be taken.
+ *  - `busy`       — a live, interpretable lease: another sender owns it.
+ *  - `unresolved` — expired or uninterpretable: the prior outcome is unknown, so
+ *                   the row must be parked for reconciliation, never re-sent.
+ *
+ * The scheduler's `petpoojaClaimedAt` lease is deliberately NOT consulted here:
+ * it is taken BEFORE this function is called, so treating it as a send fence
+ * would deadlock every legitimate retry.
+ */
+export type PushClaimDecision = "none" | "busy" | "unresolved";
+
+export const PETPOOJA_PUSH_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+export function classifyPushClaim(
+  data: any,
+  nowMs: number,
+  ttlMs: number = PETPOOJA_PUSH_CLAIM_TTL_MS
+): PushClaimDecision {
+  const raw = data?.petpoojaPushClaimedAt;
+  if (raw === null || raw === undefined) return "none";
+  let claimedAt: number | null = null;
+  if (typeof raw === "number") {
+    claimedAt = Number.isFinite(raw) ? raw : null;
+  } else if (raw && typeof raw.toMillis === "function") {
+    const millis = Number(raw.toMillis());
+    claimedAt = Number.isFinite(millis) ? millis : null;
+  }
+  if (claimedAt === null || claimedAt <= 0) return "unresolved";
+  const ageMs = nowMs - claimedAt;
+  if (!Number.isFinite(ageMs)) return "unresolved";
+  return ageMs < ttlMs ? "busy" : "unresolved";
+}
+
+/** Static operator-facing reason for an unresolved prior send claim. */
+const UNRESOLVED_PRIOR_SEND_REASON =
+  "Prior Petpooja push claim expired or unreadable with no recorded acceptance — the POS may already hold this KOT; parked for manual reconciliation instead of a second POST";
+
+/**
+ * Astra F2: the quarantine patch for an unresolved prior send claim. Expired is
+ * not "did not send" — the POS may already hold this KOT — so the row joins the
+ * existing reconciliation quarantine (same fields as the scheduler's crash
+ * lane), releases both claims and records a static reason.
+ *
+ * It is a PURE patch so its write can only happen inside the commit that also
+ * decided `unresolved`, from the same fresh snapshot. It never touches
+ * `petpoojaRetryCount` (no budget burn) or `petpoojaNextRetryAtMs` (an existing
+ * value stays as inert metadata once the row leaves pending_retry), and it never
+ * marks anything accepted or printed.
+ */
+export function unresolvedPriorSendParkPatch(): Record<string, any> {
+  return {
+    petpoojaStatus: "reconciliation_required",
+    petpoojaSyncStatus: "reconciliation_required",
+    kotSyncFailed: true,
+    petpoojaAmbiguousProcessing: true,
+    lastPetpoojaError: UNRESOLVED_PRIOR_SEND_REASON,
+    petpoojaPushClaimedAt: null,
+    petpoojaClaimedAt: null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
 }
 
 export interface PosAddonRow {
@@ -1230,14 +1337,95 @@ export function isCashOrPayAtStoreOrder(order: any): boolean {
 function statusCodeOf(order: any): string {
   return String(
     typeof order?.status === "object" ? order?.status?.code ?? "" : order?.status ?? ""
-  ).toUpperCase();
+  )
+    .trim()
+    .toUpperCase();
 }
 
-function isCancelledOrTerminal(order: any): boolean {
-  const code = statusCodeOf(order);
-  if (code === "CANCELLED") return true;
+/** Canonical terminal codes (orderStatus.ts:54–60, plus the legacy families). */const TERMINAL_STATUS_CODES = new Set([
+  // CANCELLED: orderStatus.ts:60. CANCELED: the alias used at
+  // payments/routeTransfers.ts:234 and razorpay.service.ts:388.
+  "CANCELLED",
+  "CANCELED",
+  // DELIVERED: orderStatus.ts:59. COMPLETED: dine-in delivered at
+  // orderStatus.ts:201. PICKED_UP: takeaway delivered at orderStatus.ts:205.
+  "DELIVERED",
+  "COMPLETED",
+  "PICKED_UP",
+]);
+
+/** Kinds that mean the order is closed (never "in_progress"/"upcoming"). */
+const TERMINAL_STATUS_KINDS = new Set(["cancelled", "completed"]);
+
+/**
+ * Astra Finding 3 — is this order closed, so no KOT may ever be sent for it?
+ *
+ * Deliberately NOT a flag-only test: a structured status can arrive with the
+ * delivered/completed code and kind but no `terminal` flag, and the legacy
+ * vocabulary writes `{kind:"completed"}` alone. Non-terminal live states
+ * (READY_TO_SERVE, READY_FOR_PICKUP, OUT_FOR_DELIVERY, PREPARING) must stay
+ * sendable, so only the code/kind/flag facts below count.
+ */
+export function isCancelledOrTerminal(order: any): boolean {
+  if (TERMINAL_STATUS_CODES.has(statusCodeOf(order))) return true;
   if (order?.status?.terminal === true) return true;
-  return String(order?.status?.kind ?? "").toLowerCase() === "cancelled";
+  const kind = String(order?.status?.kind ?? "").trim().toLowerCase();
+  return TERMINAL_STATUS_KINDS.has(kind);
+}
+
+/** Static operator-facing reason for a terminal retry row that was retired. */
+const TERMINAL_ORDER_RETIRED_REASON =
+  "Order became terminal (cancelled/delivered) before its KOT was sent — retired as not_applicable instead of sending a ticket for a closed order";
+
+/**
+ * Astra F3: the retirement patch for an HONEST, never-sent terminal order.
+ *
+ * Callers must only apply this when nothing was ever sent for the order (no
+ * acceptance marker and no unknown prior send claim). It therefore never writes
+ * `synced` — that would assert a KOT exists — and it does not burn the retry
+ * budget or set `kotSyncFailed`, because a closed order owes no manual entry.
+ */
+export function terminalOrderRetirementPatch(): Record<string, any> {
+  return {
+    petpoojaStatus: "not_applicable",
+    petpoojaSyncStatus: "not_applicable",
+    lastPetpoojaError: TERMINAL_ORDER_RETIRED_REASON,
+    petpoojaClaimedAt: null,
+    petpoojaPushClaimedAt: null,
+    petpoojaNextRetryAtMs: null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+/**
+ * True when this row has PROVEN POS delivery recorded (an acceptance id, an
+ * id-less acceptance, `synced`, or an existing reconciliation park). These are
+ * facts about what the POS KNOWS, so they must be preserved exactly — never
+ * rewritten as `not_applicable`, `failed`, or a new quarantine.
+ */
+export function hasRecordedPosAcceptance(order: any): boolean {
+  if (order?.petpoojaOrderId || order?.petpoojaAcceptedNoId) return true;
+  if (order?.petpoojaStatus === "synced") return true;
+  if (order?.petpoojaStatus === "reconciliation_required") return true;
+  if (order?.petpoojaSyncStatus === "reconciliation_required") return true;
+  if (order?.petpoojaAmbiguousProcessing === true) return true;
+  return false;
+}
+
+/**
+ * True when this row must NOT be treated as "nothing was ever sent": recorded
+ * acceptance, OR a persisted send claim (whose outcome may be unknown and is
+ * therefore the F2 quarantine's business, never retirement).
+ *
+ * Kept as the coarse "leave this row alone" test used by retirement paths.
+ */
+export function hasUnresolvedOrAcceptedPosState(order: any): boolean {
+  if (hasRecordedPosAcceptance(order)) return true;
+  // `!= null` on purpose: 0/NaN/unreadable markers still name a prior send.
+  if (order?.petpoojaPushClaimedAt !== null && order?.petpoojaPushClaimedAt !== undefined) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -1861,6 +2049,12 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
   // re-enabling the flag must resume that exact queue untouched.
   assertPetpoojaEnabled(`KOT push for order ${orderId}`);
 
+  // Astra F3: a closed order owes no kitchen ticket — but a row with POS history
+  // (an acceptance marker, or an unknown prior SEND claim) must still reach the
+  // transactional F2 quarantine, never a blanket early return. The claim
+  // transaction below enforces the no-POST rule on the FRESH snapshot, so no
+  // cheap pre-read refusal is needed here.
+
   // Transactional claim (finding: duplicate-KOT race): the read above is
   // NOT a lock — `payment.captured` + `order.paid` webhooks, a KDS double
   // tap, and the retry worker can all pass the dedupe concurrently and each
@@ -1868,11 +2062,38 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
   // serializes them exactly like the scheduler's pending_retry lease, on a
   // DEDICATED field (petpoojaPushClaimedAt) so the scheduler's own
   // petpoojaClaimedAt lease (taken BEFORE it calls this function) is never
-  // mistaken for a competing push. Datastores without runTransaction keep
-  // the read-based dedupe above (best effort, same as the scheduler).
+  // mistaken for a competing push. Datastores without runTransaction fall back
+  // to the same fence over a fresh read below (Astra F2).
   const PUSH_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+  /**
+   * Refuse a prior send claim that cannot be shown to be inactive.
+   *
+   * Only the "busy" decision is handled here: "none" lets the caller proceed and
+   * "unresolved" is decided (and its quarantine committed) by the caller, so this
+   * helper never writes a park.
+   */
+  const fencePriorSendClaim = (decision: PushClaimDecision): boolean => {
+    if (decision === "none") return true;
+    // The in-flight owner either completes (KOT at the kitchen) or its catch
+    // parks pending_retry for the retry worker — either way this caller must not
+    // stack a second POST on top of it. Honest failure/deferred return: busy is
+    // NOT confirmed success.
+    if (recentBusyPushes.size > 500) {
+      const now = Date.now();
+      for (const [k, v] of recentBusyPushes.entries()) {
+        if (now - v > 60_000) recentBusyPushes.delete(k);
+      }
+    }
+    recentBusyPushes.set(orderId, Date.now());
+    console.warn(
+      `[Petpooja KOT Push] Order ${orderId} push already in flight — yielding to the owner`
+    );
+    return false;
+  };
+
   if (db && typeof (db as any).runTransaction === "function") {
-    let claim: "claimed" | "dup" | "busy" | "gone" | "blocked";
+    let claim: "claimed" | "dup" | "busy" | "gone" | "blocked" | "parked" | "retired" | "terminal";
     try {
       claim = await (db as any).runTransaction(async (tx: any) => {
         const fresh = await tx.get(orderDoc.ref);
@@ -1888,19 +2109,38 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         }
         // A racing caller finished the push while we were reading — reuse
         // its outcome, never POST a second KOT. Both accepted shapes count.
+        // Acceptance is PROVEN, so it outranks any stale send claim below.
         if (data.petpoojaOrderId || data.petpoojaAcceptedNoId) return "dup";
-        // Numeric-first lease read (same trap as the scheduler): a
-        // serverTimestamp sentinel has no toMillis and would read as 0,
-        // causing instant false takeover and a duplicate KOT POST.
-        const claimedRaw = data.petpoojaPushClaimedAt;
-        const claimedAt =
-          typeof claimedRaw === "number" && Number.isFinite(claimedRaw)
-            ? claimedRaw
-            : claimedRaw && typeof claimedRaw.toMillis === "function"
-              ? claimedRaw.toMillis()
-              : 0;
-        if (data.petpoojaPushClaimedAt && Date.now() - claimedAt < PUSH_CLAIM_TTL_MS) {
-          return "busy"; // another push is in flight right now — yield to it
+        // Astra F2: a prior send claim can only be honoured or parked — never
+        // silently renewed.
+        const decision = classifyPushClaim(data, Date.now(), PUSH_CLAIM_TTL_MS);
+        if (decision === "busy") return "busy";
+        if (decision === "unresolved") {
+          // RACE SAFETY: the quarantine is written by THIS transaction, from the
+          // snapshot it just read. All reads precede the write, so there is no
+          // read-after-write hazard. Writing it outside would let a sender's
+          // late ACK or an operator resolution commit in between, and the plain
+          // follow-up write would then relabel an ACCEPTED row as
+          // reconciliation_required and clear the newer claims.
+          tx.set(orderDoc.ref, unresolvedPriorSendParkPatch(), { merge: true });
+          return "parked";
+        }
+        // Astra F3: a closed order must never be sent a KOT. Checked on the FRESH
+        // snapshot, AFTER acceptance/ambiguity/F2 priority (those rows already
+        // have POS history and are never retired as "never sent").
+        //
+        // Only a row the retry machinery actually OWNS is retired atomically.
+        // A direct push of an order that was never queued (no pending_retry /
+        // processing state) is simply refused: writing a retirement there would
+        // add Petpooja bookkeeping metadata to an untouched order for no reason.
+        if (isCancelledOrTerminal(data)) {
+          const queuedWork =
+            data.petpoojaStatus === "pending_retry" || data.petpoojaStatus === "processing";
+          if (queuedWork) {
+            tx.set(orderDoc.ref, terminalOrderRetirementPatch(), { merge: true });
+            return "retired";
+          }
+          return "terminal";
         }
         tx.set(
           orderDoc.ref,
@@ -1930,6 +2170,29 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       );
       return false;
     }
+    if (claim === "parked") {
+      // The quarantine COMMITTED inside the transaction above. Nothing is
+      // written here: a second, plain set could only overwrite a newer state.
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} — ${UNRESOLVED_PRIOR_SEND_REASON}`
+      );
+      return false;
+    }
+    if (claim === "retired") {
+      // Terminal row retired inside the transaction; no POST, nothing to add.
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} — ${TERMINAL_ORDER_RETIRED_REASON}`
+      );
+      return false;
+    }
+    if (claim === "terminal") {
+      // Closed order that the retry machinery does not own: refuse, write
+      // nothing. The row keeps whatever state it already had.
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} is terminal (cancelled/delivered) — refusing to send a KOT`
+      );
+      return false;
+    }
     if (claim === "dup") {
       console.warn(
         `[Petpooja KOT Push] Order ${orderId} already pushed by a concurrent caller — deduped, no duplicate KOT`
@@ -1937,26 +2200,43 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       return true;
     }
     if (claim === "busy") {
-      // The in-flight owner either completes (KOT at the kitchen) or its
-      // catch below parks pending_retry for the retry worker — either way
-      // this caller must not stack a second POST on top of it.
-      // Honest failure/deferred return: busy is NOT confirmed success.
-      if (recentBusyPushes.size > 500) {
-        const now = Date.now();
-        for (const [k, v] of recentBusyPushes.entries()) {
-          if (now - v > 60_000) recentBusyPushes.delete(k);
-        }
-      }
-      recentBusyPushes.set(orderId, Date.now());
-      console.warn(
-        `[Petpooja KOT Push] Order ${orderId} push already in flight — yielding to the owner`
-      );
-      return false;
+      return fencePriorSendClaim("busy");
     }
     if (claim === "gone") {
       console.warn(`[Petpooja KOT Push] Order ${orderId} vanished before push — refusing`);
       return false;
     }
+  } else {
+    // No transaction support: re-read, then apply the SAME fence before any POST.
+    // A datastore capability gap must never become a duplicate-KOT bypass — but
+    // it also cannot justify a plain read-then-write quarantine: without an
+    // atomic recheck that write could clobber a concurrent acceptance. So an
+    // unresolved prior send is REFUSED here (no POST, no mutation) and left for
+    // the scheduler's transactional crash lane or an operator.
+    const freshSnap = await orderDoc.ref.get();
+    const freshData = (freshSnap?.exists ? freshSnap.data() : undefined) as any;
+    if (!freshData) {
+      console.warn(`[Petpooja KOT Push] Order ${orderId} vanished before push — refusing`);
+      return false;
+    }
+    // Acceptance still wins: never park an order the POS already holds.
+    if (freshData.petpoojaOrderId || freshData.petpoojaAcceptedNoId) return true;
+    // A terminal row needs no KOT. Without atomicity we cannot safely write the
+    // retirement, so refuse WITHOUT mutation (no POST, no clobber).
+    if (isCancelledOrTerminal(freshData)) {
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} is terminal — refusing to send a KOT (no transaction support: refused without mutation)`
+      );
+      return false;
+    }
+    const decision = classifyPushClaim(freshData, Date.now(), PUSH_CLAIM_TTL_MS);
+    if (decision === "unresolved") {
+      console.warn(
+        `[Petpooja KOT Push] Order ${orderId} — ${UNRESOLVED_PRIOR_SEND_REASON} (no transaction support: refused without mutation)`
+      );
+      return false;
+    }
+    if (!fencePriorSendClaim(decision)) return false;
   }
 
   // Mock Mode Return
@@ -2124,17 +2404,39 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
     // upstream - was accepted as a registered KOT. That is a fabricated success:
     // the order is marked synced, kotPrinted:true and the claim released, so the
     // retry worker never looks at it again. Fail closed instead and let the catch
-    // below park it as pending_retry, which is the state that is retried.
+    // below park it for reconciliation, which is NOT retried.
+    //
+    // Astra Finding 1 (High): an HTTP failure STATUS alone proves nothing. A
+    // gateway 502/504 can be returned after the POS already saved the order, and
+    // a relay/WAF refusal is not the vendor's own refusal — so only an in-band
+    // refusal below 500 may be retried automatically.
     if (!response.ok) {
-      // PROVEN REJECTION: the origin answered this request with a failure
-      // status. It is the one shape that may be retried automatically.
-      const httpErr: any = new Error(
-        `Petpooja KOT push HTTP ${response.status ?? "(no status)"}${
-          response.statusText ? ` ${response.statusText}` : ""
-        } - refusing to read an acceptance from a failed response`
-      );
-      httpErr.petpoojaKotProvenRejection = true;
-      throw httpErr;
+      const statusLabel = response.status ?? "(no status)";
+      // A 5xx never needs its body read: no gateway error status proves the POS
+      // performed no side effect.
+      if (typeof response.status === "number" && response.status < 500) {
+        let failureBody: any = null;
+        try {
+          failureBody = await response.json();
+        } catch {
+          // Unparseable / empty / HTML: proves no vendor refusal.
+          failureBody = null;
+        }
+        const vendorMessage = kotInBandRefusalMessage(failureBody);
+        if (vendorMessage) {
+          // PROVEN REJECTION: the POS ANSWERED and refused IN-BAND. This is the
+          // only POST outcome that may be retried automatically.
+          const rejected: any = new Error(
+            `Petpooja KOT push HTTP ${statusLabel} — ${vendorMessage}`.slice(0, 200)
+          );
+          rejected.petpoojaKotProvenRejection = true;
+          throw rejected;
+        }
+      }
+      // Ambiguous: the request was written and the outcome is unknown. Parking
+      // (not retrying) is what prevents a duplicate kitchen ticket.
+      const ambiguousDetail = `Petpooja KOT push HTTP ${statusLabel} — the POS may already hold this KOT`;
+      throw markKotAmbiguous(new Error(ambiguousDetail), ambiguousDetail);
     }
 
     // P1-K: a 200 whose body cannot be parsed is NOT a rejection — the POS may
@@ -2158,6 +2460,24 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
         ),
         "The POS answered with a non-ack body — the KOT may already be at the kitchen"
       );
+    }
+
+    // Astra F1 (round 7): a CONTRADICTORY ack. The acceptance predicate below
+    // accepts `status:"success"` on its own, so a body that ALSO says
+    // success:"0"/0/false would be recorded as an acceptance — with an order id
+    // as `synced` + `petpoojaOrderId`, without one as `accepted_unconfirmed`.
+    // Both are fabrications: the same body says the POS REFUSED the ticket.
+    //
+    // A genuine acceptance never carries an explicit negative success, so the
+    // contradiction wins and the row is parked. Checked HERE — after the object
+    // validation, before `ok`, `posAccepted` and any acceptance write — so no
+    // acceptance state can exist to defend.
+    const explicitNegativeSuccess =
+      result.success === "0" || result.success === 0 || result.success === false;
+    if (explicitNegativeSuccess && result.status === "success") {
+      const contradictoryDetail =
+        "The POS acknowledgement contradicted itself (explicit refusal with a success status) — the KOT may already be at the kitchen";
+      throw markKotAmbiguous(new Error(contradictoryDetail), contradictoryDetail);
     }
 
     // Official SaveOrderResponse signals success as success:"1" (variants seen:
@@ -2242,10 +2562,18 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
       );
       return true;
     }
-    // P1-K: the POS ANSWERED and refused. That is the only in-band shape that
-    // may be retried automatically, so mark it explicitly.
+    // Astra F1: a 2xx object without a recognised success is only a PROVEN
+    // rejection when it carries an explicit in-band refusal (success
+    // "0"/0/false). Anything else — {}, {status:"error"}, a bare {message} —
+    // does not prove the POS refused, so it is AMBIGUOUS: park for
+    // reconciliation instead of re-POSTing the same order.
+    const inBandRefusal = kotInBandRefusalMessage(result);
+    if (!inBandRefusal) {
+      const ambiguousDetail = `The POS answered HTTP ${response.status ?? 200} without a recognised or refused acknowledgement — the KOT may already be at the kitchen`;
+      throw markKotAmbiguous(new Error(ambiguousDetail), ambiguousDetail);
+    }
     const rejected: any = new Error(
-      result.message || "Petpooja KOT push rejected by POS server"
+      `Petpooja KOT push HTTP ${response.status ?? 200} — ${inBandRefusal}`.slice(0, 200)
     );
     rejected.petpoojaKotProvenRejection = true;
     throw rejected;

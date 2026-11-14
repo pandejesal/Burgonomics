@@ -267,7 +267,7 @@ describe("CASH-KOT push on staff acceptance", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("a POS failure resolves (false) and parks the order for the retry worker", async () => {
+  it("a POS failure resolves (false) and parks the order for reconciliation, not retry", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 502,
@@ -282,7 +282,13 @@ describe("CASH-KOT push on staff acceptance", () => {
     );
 
     expect(pushed).toBe(false);
-    expect(savedDocs["orders/ord_cash_1"].petpoojaStatus).toBe("pending_retry");
+    // CLASS A — this case used to assert `pending_retry` for a 502, which is the
+    // old, unsafe oracle. Astra Finding 1: a gateway 5xx does not prove the POS
+    // refused, so the order is parked for reconciliation instead of being
+    // re-POSTed by the retry worker. The case and every other assertion stay.
+    expect(savedDocs["orders/ord_cash_1"].petpoojaStatus).toBe("reconciliation_required");
+    expect(savedDocs["orders/ord_cash_1"].petpoojaAmbiguousProcessing).toBe(true);
+    expect(savedDocs["orders/ord_cash_1"].petpoojaRetryCount).toBeUndefined();
     expect(savedDocs["orders/ord_cash_1"].petpoojaOrderId).toBeUndefined();
   });
 });

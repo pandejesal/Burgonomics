@@ -133,7 +133,12 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     expect(pushed).toBe(false);
     expect(savedDocs["orders/kot_1"].petpoojaOrderId).toBeUndefined();
     expect(savedDocs["orders/kot_1"].petpoojaAcceptedNoId).toBeUndefined();
-    expect(savedDocs["orders/kot_1"].petpoojaStatus).toBe("pending_retry");
+    // CLASS A — was `pending_retry`. Astra Finding 1: an HTTP failure does not
+    // prove the POS refused, so this parks for reconciliation and is never
+    // re-POSTed. The no-fabricated-success assertions above are unchanged.
+    expect(savedDocs["orders/kot_1"].petpoojaStatus).toBe("reconciliation_required");
+    expect(savedDocs["orders/kot_1"].petpoojaAmbiguousProcessing).toBe(true);
+    // lastPetpoojaError keeps the status, never the raw body.
     expect(String(savedDocs["orders/kot_1"].lastPetpoojaError)).toContain("502");
   });
 
@@ -158,17 +163,34 @@ describe("Petpooja KOT push — duplicate-push race (finding 4)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("takes over a STALE claim (crashed pusher) and pushes once", async () => {
+  it("an EXPIRED unresolved claim is parked, not taken over — no second POST (Astra F2)", async () => {
+    // CLASS A — the old oracle here asserted a STALE claim was TAKEN OVER and
+    // pushed once ("takes over a STALE claim (crashed pusher) and pushes once").
+    // That is the unsafe contract Astra Finding 2 identified: an expired
+    // `petpoojaPushClaimedAt` proves only that the previous sender stopped
+    // WRITING, never that it stopped SENDING. The POS may already hold the KOT
+    // (accepted, process died before recording it), so renewing the lease and
+    // POSTing again duplicates the kitchen ticket. The case is kept and the
+    // no-duplicate-KOT intent is unchanged; the expectation now follows the safe
+    // contract — park for reconciliation and send nothing.
     savedDocs["orders/kot_1"].petpoojaPushClaimedAt = Date.now() - 11 * 60 * 1000;
     fetchMock.mockResolvedValueOnce(posAck());
 
     const pushed = await pushOrderToPetpooja("kot_1");
-    expect(pushed).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(savedDocs["orders/kot_1"].petpoojaOrderId).toBe("pp_ack_1");
-    expect(savedDocs["orders/kot_1"].petpoojaStatus).toBe("synced");
-    // Claim released on success.
-    expect(savedDocs["orders/kot_1"].petpoojaPushClaimedAt).toBeNull();
+    expect(pushed).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const doc = savedDocs["orders/kot_1"];
+    expect(doc.petpoojaStatus).toBe("reconciliation_required");
+    expect(doc.petpoojaSyncStatus).toBe("reconciliation_required");
+    expect(doc.petpoojaAmbiguousProcessing).toBe(true);
+    expect(doc.kotSyncFailed).toBe(true);
+    // No retry-budget burn: the outcome is unknown, not a failed attempt.
+    expect(doc.petpoojaRetryCount).toBeUndefined();
+    // No acceptance was invented from the expired lease.
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.petpoojaAcceptedNoId).toBeUndefined();
+    expect(doc.kotPrinted).toBeUndefined();
   });
 
   it("a racing winner's success survives OUR failure — no pending_retry regression", async () => {

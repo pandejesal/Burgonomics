@@ -235,13 +235,21 @@ function seedOrder(id: string, extra: Record<string, any> = {}) {
   };
 }
 
-/** A POS that ANSWERS and refuses: the only auto-retryable failure shape. */
-function posRejection(status = 502) {
+/**
+ * The POS ANSWERS and refuses IN-BAND: HTTP 200 + `{"success":"0"}` — the
+ * vendor's own documented refusal shape (references/petpooja_save_order_api.md
+ * §12 lines 192–203, §16.1 lines 550–575).
+ *
+ * CLASS B: this suite is about the BACKOFF SCHEDULE and outage survival, and it
+ * previously used a 5xx only as a convenient "retryable" stimulus. Since Astra
+ * Finding 1, a 5xx is AMBIGUOUS and is never auto-retried, so ONLY the stimulus
+ * changed — every assertion in this file is unchanged.
+ */
+function posRejection(message = "Gateway down") {
   return {
-    ok: false,
-    status,
-    statusText: "Bad Gateway",
-    json: async () => ({ success: "0", message: "Gateway down" }),
+    ok: true,
+    status: 200,
+    json: async () => ({ success: "0", message }),
   };
 }
 
@@ -333,8 +341,11 @@ describe("Petpooja KOT retry backoff", () => {
   it("survives a 30-minute POS outage without dead-lettering a paid order", async () => {
     seedOrder("ord_outage");
 
-    // The POS refuses for the whole outage. Every tick from T0 to T0+30m.
-    fetchMock.mockImplementation(async () => posRejection(503));
+    // The POS refuses IN-BAND for the whole outage (HTTP 200 + success:"0").
+    // CLASS B: the stimulus only — this case exists to prove the backoff and
+    // dead-letter behaviour, not the classification. A 5xx would now park for
+    // reconciliation (Astra F1) and this schedule would never be exercised.
+    fetchMock.mockImplementation(async () => posRejection("POS outage"));
 
     const snapshots: Array<{ at: number; retries: number; status: string }> = [];
     for (let minute = 0; minute <= 30; minute += 5) {

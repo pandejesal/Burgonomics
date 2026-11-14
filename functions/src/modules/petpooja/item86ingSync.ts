@@ -77,6 +77,31 @@ export function normalizePetpoojaStatus(rawStatus: any): string {
 }
 
 /**
+ * Forward-only rank of the canonical order lifecycle
+ * (`references/order_flow.md` §1; `PARTNER_TO_DELIVERY`/`ALIAS_TO_CANONICAL` in
+ * `modules/orders/orderStatus.ts`). READY_TO_SERVE is the dine-in fork of the
+ * READY rank, so a generic READY must not overwrite it. Terminal codes
+ * (DELIVERED/CANCELLED) and unknown/legacy literals are deliberately unranked:
+ * they keep their existing handling rather than acquiring an invented position.
+ */
+const CANONICAL_STATUS_RANK: Record<string, number> = {
+  PLACED: 0,
+  PENDING: 0,
+  CONFIRMED: 1,
+  PREPARING: 2,
+  READY_FOR_PICKUP: 3,
+  READY_TO_SERVE: 3,
+  OUT_FOR_DELIVERY: 4,
+};
+
+/** Rank of a canonical status code, or null when the vocabulary does not rank it. */
+function canonicalStatusRank(code: unknown): number | null {
+  if (typeof code !== "string") return null;
+  const rank = CANONICAL_STATUS_RANK[code.trim().toUpperCase()];
+  return typeof rank === "number" ? rank : null;
+}
+
+/**
  * Outcome of an inbound 86ing webhook.
  *
  * `retryable` is the ONLY signal the route uses to answer non-2XX: a
@@ -1550,8 +1575,19 @@ export async function handlePetpoojaWebhook(
       updateData.petpoojaWebhookReceivedAtMs = Date.now();
     }
 
+    // Stale vendor status is not applied (F4): an authenticated but delayed
+    // callback must not rewind the kitchen lifecycle. `currentCode` is read from
+    // the FRESH transactional snapshot above; when both codes are ranked, a
+    // same-or-lower incoming rank leaves `status` untouched (the raw kitchen
+    // status, event marker and POS binding above are still recorded). A code the
+    // vocabulary does not rank — legacy/unknown current, or an unranked vendor
+    // status — keeps the existing apply behaviour.
     if (canonicalStatus !== "unknown" && statusMeta[canonicalStatus]) {
-      updateData.status = statusMeta[canonicalStatus];
+      const incomingRank = canonicalStatusRank(statusMeta[canonicalStatus].code);
+      const currentRank = canonicalStatusRank(currentCode);
+      if (incomingRank === null || currentRank === null || incomingRank > currentRank) {
+        updateData.status = statusMeta[canonicalStatus];
+      }
     }
 
     let refundData: Record<string, any> | null = null;

@@ -65,6 +65,10 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
             },
           ref: {
             id: docId,
+            // Real DocumentReference exposes `get`. Delegate to the document
+            // mock's own read so every call returns a FRESH snapshot of
+            // `savedDocs` — never a stale captured object.
+            get: vi.fn(async () => mockDb.collection(colName).doc(docId).get()),
             update: vi.fn(async (data: any) => {
               savedDocs[`${colName}/${docId}`] = {
                 ...(savedDocs[`${colName}/${docId}`] || {}),

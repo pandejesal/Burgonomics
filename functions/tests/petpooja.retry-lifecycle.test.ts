@@ -203,11 +203,14 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       createdAt: baseTime - 60000,
     };
 
-    // First push attempt fails due to POS 502 error
+    // First push attempt is refused IN-BAND by the POS (HTTP 200 +
+    // {"success":"0"}). CLASS B: this case is about the scheduler's lease /
+    // sequential-retry mechanics, and it used a 502 purely as a convenient
+    // retryable stimulus. Since Astra Finding 1 a 5xx is AMBIGUOUS and no longer
+    // retryable, so ONLY the stimulus changed — every assertion is unchanged.
     fetchMock.mockResolvedValueOnce({
-      ok: false,
-      status: 502,
-      statusText: "Bad Gateway",
+      ok: true,
+      status: 200,
       json: async () => ({ success: "0", message: "Gateway down" }),
     });
 
@@ -223,11 +226,10 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
     // Stale scheduler claim check: advance time by 5 minutes
     vi.advanceTimersByTime(5 * 60 * 1000);
 
-    // POS push fails again on second attempt
+    // The POS refuses in-band again on the second attempt (same stimulus swap).
     fetchMock.mockResolvedValueOnce({
-      ok: false,
-      status: 502,
-      statusText: "Bad Gateway",
+      ok: true,
+      status: 200,
       json: async () => ({ success: "0", message: "Gateway still down" }),
     });
 
@@ -442,7 +444,24 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
     }
   });
 
-  it("crash visibility: non-tx datastore fallback parks stale processing order for manual reconciliation without provider POST", async () => {
+  it("crash visibility: without runTransaction the stale processing row is left untouched (fail closed, no quarantine write)", async () => {
+    // CONTRACT ORACLE CORRECTION (approved). This case previously REQUIRED the
+    // unsafe behaviour: a non-transactional datastore doing a fresh read and then
+    // a PLAIN `reconciliation_required` write — failedCount 1, kotSyncFailed,
+    // ambiguity flags set, and both claim fields cleared.
+    //
+    // That contract was superseded by the approved fail-closed rule (Astra F2,
+    // round 7): without `runTransaction` the fallback must NOT write a quarantine
+    // at all. The read cannot be made conditional on the state still being
+    // current, so a sender's late ACK — with a POS id or id-less — committing
+    // between the read and the write would be written over: the merge keeps the
+    // acceptance ID fields but replaces the acceptance STATE and clears the
+    // claims, telling operators an already-recorded send is unresolved.
+    //
+    // The retained RED receipt for this change proves it is a deliberate contract
+    // correction, not a weakened assertion: the expectation moved from
+    // "parks with a plain write" to "writes nothing". The row is left for the
+    // transactional lane or an operator.
     const baseTime = 1700000000000;
     vi.useFakeTimers();
     vi.setSystemTime(baseTime);
@@ -457,23 +476,47 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
       status: "pending",
       petpoojaStatus: "processing",
       petpoojaClaimedAt: baseTime - 15 * 60 * 1000, // 15 mins ago (stale lease)
+      petpoojaPushClaimedAt: baseTime - 15 * 60 * 1000, // stale prior send claim
       createdAt: baseTime - 20 * 60 * 1000,
     };
+    // Whole-row snapshot including the claim timestamps.
+    const before = { ...savedDocs["orders/ord_nontx_stale_processing"] };
 
     const origRunTx = mockDb.runTransaction;
     delete (mockDb as any).runTransaction;
 
     try {
       const tick = await retryPendingPetpoojaOrdersWorker();
-      expect(tick.failedCount).toBe(1);
+      // Nothing was quarantined: no failure to report, no retry, no POST.
+      expect(tick.failedCount).toBe(0);
+      expect(tick.retriedCount).toBe(0);
       expect(fetchMock).not.toHaveBeenCalled();
 
+      // No alert of either kind was emitted for this row.
+      const snapshots = Object.keys(savedDocs).filter((p) =>
+        p.startsWith("dev_error_snapshots/")
+      );
+      expect(snapshots).toHaveLength(0);
+
+      // Strongest form first: the whole row is byte-identical.
+      expect(savedDocs["orders/ord_nontx_stale_processing"]).toEqual(before);
+
       const doc = savedDocs["orders/ord_nontx_stale_processing"];
-      expect(doc.petpoojaStatus).toBe("reconciliation_required");
-      expect(doc.kotSyncFailed).toBe(true);
-      expect(doc.petpoojaAmbiguousProcessing).toBe(true);
-      expect(doc.petpoojaClaimedAt).toBeNull();
-      expect(doc.petpoojaPushClaimedAt).toBeNull();
+      expect(doc.petpoojaStatus).toBe("processing");
+      // No fabricated ambiguity or failure state.
+      expect(doc.petpoojaStatus).not.toBe("reconciliation_required");
+      expect(doc.petpoojaStatus).not.toBe("failed");
+      expect(doc.kotSyncFailed).not.toBe(true);
+      expect(doc.petpoojaAmbiguousProcessing).not.toBe(true);
+      // The original leases are preserved, NOT cleared.
+      expect(doc.petpoojaClaimedAt).toBe(before.petpoojaClaimedAt);
+      expect(doc.petpoojaPushClaimedAt).toBe(before.petpoojaPushClaimedAt);
+      expect(doc.petpoojaClaimedAt).not.toBeNull();
+      expect(doc.petpoojaPushClaimedAt).not.toBeNull();
+      // No acceptance or printing was invented.
+      expect(doc.petpoojaOrderId).toBeUndefined();
+      expect(doc.petpoojaAcceptedNoId).toBeUndefined();
+      expect(doc.kotPrinted).toBeUndefined();
     } finally {
       mockDb.runTransaction = origRunTx;
     }
@@ -552,5 +595,115 @@ describe("Petpooja Retry Lifecycle & Scheduler Lease Mismatch (Part A)", () => {
     expect(doc.petpoojaOrderId).toBe("pp_racer_won_123");
     expect(doc.petpoojaClaimedAt).toBeNull();
     expect(doc.petpoojaPushClaimedAt).toBeNull();
+  });
+
+  it("a cancellation between the scheduler SCAN and the fresh claim is retired, never claimed or POSTed", async () => {
+    // Astra Finding 3: the scan snapshot showed a live pending_retry row. Staff
+    // cancel it before the claim transaction's fresh read. The fresh state must
+    // retire the row instead of claiming and pushing it.
+    const baseTime = 1700000000000;
+    vi.useFakeTimers();
+    vi.setSystemTime(baseTime);
+
+    savedDocs["orders/ord_cancel_mid_scan"] = {
+      id: "ord_cancel_mid_scan",
+      fulfillment: "takeaway", payment: { method: "cod" },
+      branchId: "branch_ahmedabad_1",
+      customerName: "Mid-scan Cancel",
+      customerPhone: "+919825000015",
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
+      pricing: { grandTotal: 200, gst: 10 },
+      status: "pending",
+      petpoojaStatus: "pending_retry",
+      petpoojaRetryCount: 1,
+      petpoojaNextRetryAtMs: baseTime - 1,
+      createdAt: baseTime - 60000,
+    };
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: "1", orderID: "pp_should_not_exist" }),
+    });
+
+    // Flip to CANCELLED inside the scheduler's claim transaction: the scan has
+    // already happened, so the fresh read sees the terminal row.
+    const origRunTx = mockDb.runTransaction;
+    mockDb.runTransaction = vi.fn(async (fn: any) => {
+      savedDocs["orders/ord_cancel_mid_scan"].status = {
+        code: "CANCELLED",
+        label: "Cancelled",
+        kind: "cancelled",
+        terminal: true,
+      };
+      return origRunTx(fn);
+    });
+
+    try {
+      const tick = await retryPendingPetpoojaOrdersWorker();
+      expect(tick.retriedCount).toBe(0);
+    } finally {
+      mockDb.runTransaction = origRunTx;
+    }
+
+    // No provider call for a closed order.
+    expect(fetchMock).not.toHaveBeenCalled();
+    const doc = savedDocs["orders/ord_cancel_mid_scan"];
+    expect(doc.petpoojaStatus).not.toBe("processing");
+    expect(doc.petpoojaStatus).not.toBe("synced");
+    expect(doc.petpoojaOrderId).toBeUndefined();
+    expect(doc.petpoojaAcceptedNoId).toBeUndefined();
+    expect(doc.kotPrinted).toBeUndefined();
+  });
+
+  it("an EXHAUSTED non-terminal row with a live send claim is left untouched by the dead-letter pass", async () => {
+    // Scan sees a spent-budget row; by the fresh recheck a sender holds a live
+    // lease (status `processing`). A `failed` flip plus a manual-entry alert
+    // would contradict an acceptance that can still land.
+    const baseTime = 1700000000000;
+    vi.useFakeTimers();
+    vi.setSystemTime(baseTime);
+
+    savedDocs["orders/ord_exhausted_active"] = {
+      id: "ord_exhausted_active",
+      fulfillment: "takeaway", payment: { method: "cod" },
+      branchId: "branch_ahmedabad_1",
+      customerName: "Exhausted Active",
+      customerPhone: "+919825000016",
+      items: [{ id: "itm_1", productId: "prod_branch_ahmedabad_1_7765862", petpoojaItemId: "7765862", name: "Burger", price: 200, quantity: 1 }],
+      pricing: { grandTotal: 200, gst: 10 },
+      status: "pending",
+      petpoojaStatus: "pending_retry",
+      petpoojaRetryCount: 99,
+      petpoojaNextRetryAtMs: baseTime - 1,
+      createdAt: baseTime - 60000,
+    };
+
+    // The fresh recheck sees a sender actively in flight.
+    const origRunTx = mockDb.runTransaction;
+    mockDb.runTransaction = vi.fn(async (fn: any) => {
+      const doc = savedDocs["orders/ord_exhausted_active"];
+      if (doc.petpoojaStatus === "pending_retry") {
+        doc.petpoojaStatus = "processing";
+        doc.petpoojaPushClaimedAt = baseTime - 2 * 60 * 1000;
+      }
+      return origRunTx(fn);
+    });
+
+    let tick: any;
+    try {
+      tick = await retryPendingPetpoojaOrdersWorker();
+    } finally {
+      mockDb.runTransaction = origRunTx;
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(tick.failedCount).toBe(0);
+    const doc = savedDocs["orders/ord_exhausted_active"];
+    expect(doc.petpoojaStatus).not.toBe("failed");
+    expect(doc.kotSyncFailed).not.toBe(true);
+    expect(doc.petpoojaRetryCount).toBe(99);
+    // No manual-entry notification of any kind.
+    const alerts = Object.keys(savedDocs).filter((p) => p.startsWith("dev_error_snapshots/"));
+    expect(alerts).toHaveLength(0);
   });
 });

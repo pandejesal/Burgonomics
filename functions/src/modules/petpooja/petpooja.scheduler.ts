@@ -2,7 +2,16 @@
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { syncPetpoojaMenu } from "./menuSyncWebhook";
-import { pushOrderToPetpooja, wasPushDeferredBusy } from "./orderPush";
+import {
+  pushOrderToPetpooja,
+  wasPushDeferredBusy,
+  isCancelledOrTerminal,
+  terminalOrderRetirementPatch,
+  hasRecordedPosAcceptance,
+  classifyPushClaim,
+  unresolvedPriorSendParkPatch,
+  PETPOOJA_PUSH_CLAIM_TTL_MS,
+} from "./orderPush";
 import { isPetpoojaEnabled } from "./client";
 import { dispatchFCM } from "../notifications/fcm.service";
 import {
@@ -224,58 +233,25 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
           );
         }
       } else {
-        // Fallback for datastores without runTransaction: mark reconciliation_required directly so they are not silently stranded
-        try {
-          const freshSnap = await procDoc.ref.get();
-          const freshData = freshSnap && freshSnap.exists ? freshSnap.data() : data;
-          if (
-            freshData &&
-            !freshData.petpoojaOrderId &&
-            !freshData.petpoojaAcceptedNoId &&
-            freshData.petpoojaStatus !== "synced" &&
-            freshData.petpoojaStatus === "processing"
-          ) {
-            const freshClaimedRaw = freshData.petpoojaClaimedAt;
-            const freshClaimedAt =
-              typeof freshClaimedRaw === "number" && Number.isFinite(freshClaimedRaw)
-                ? freshClaimedRaw
-                : freshClaimedRaw && typeof freshClaimedRaw.toMillis === "function"
-                  ? freshClaimedRaw.toMillis()
-                  : 0;
-            const freshPushClaimedRaw = freshData.petpoojaPushClaimedAt;
-            const freshPushClaimedAt =
-              typeof freshPushClaimedRaw === "number" && Number.isFinite(freshPushClaimedRaw)
-                ? freshPushClaimedRaw
-                : freshPushClaimedRaw && typeof freshPushClaimedRaw.toMillis === "function"
-                  ? freshPushClaimedRaw.toMillis()
-                  : 0;
-            const isActive =
-              (freshData.petpoojaClaimedAt && Date.now() - freshClaimedAt < CLAIM_TTL_MS) ||
-              (freshData.petpoojaPushClaimedAt && Date.now() - freshPushClaimedAt < CLAIM_TTL_MS);
-            if (!isActive) {
-              await procDoc.ref.set(
-                {
-                  petpoojaStatus: "reconciliation_required",
-                  petpoojaSyncStatus: "reconciliation_required",
-                  kotSyncFailed: true,
-                  petpoojaAmbiguousProcessing: true,
-                  petpoojaClaimedAt: null,
-                  petpoojaPushClaimedAt: null,
-                  lastPetpoojaError:
-                    "Processing claim expired (potential crash during vendor POST) — parked for manual reconciliation to prevent duplicate KOT",
-                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                },
-                { merge: true }
-              );
-              parkResult = "parked";
-            }
-          }
-        } catch (fbErr: any) {
-          logger.warn(
-            `[Petpooja Retry Worker] Non-tx fallback failed for stale processing order ${procDoc.id}:`,
-            fbErr?.message || fbErr
-          );
-        }
+        // Astra F2 (round 7): NO TRANSACTION CAPABILITY MEANS NO QUARANTINE.
+        //
+        // This branch used to read the row and then write a `reconciliation_required`
+        // park with a PLAIN `set`. Nothing made that write conditional on the state
+        // it had read still being current, so a sender's late ACK committing in
+        // between was written over: the park's merge kept the acceptance ID fields
+        // but replaced the acceptance STATE (`synced`/`accepted_unconfirmed`) and
+        // cleared the claims, telling operators an already-recorded send was
+        // unresolved.
+        //
+        // A missing `runTransaction` cannot justify a read-then-write quarantine.
+        // Fail closed instead: no read, no write, no alert, no provider POST, and
+        // no `failedCount` increment (that counter is driven by `parkResult`, which
+        // stays "skipped"). The row is left for the transactional lane or an
+        // operator — the same fail-closed rule the dead-letter pass already uses
+        // when it has no atomic recheck.
+        logger.warn(
+          `[Petpooja Retry Worker] no transaction support — cannot atomically quarantine stale processing order ${procDoc.id}; leaving it untouched`
+        );
       }
 
       if (parkResult === "parked") {
@@ -332,6 +308,8 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
 
   const retryableDocs: any[] = [];
   const exhaustedDocs: any[] = [];
+  /** Astra F3: pending_retry rows whose order is already terminal. */
+  const terminalRetireDocs: any[] = [];
 
   try {
     let cursor: any = null;
@@ -351,6 +329,20 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
       const now = Date.now();
       for (const doc of docs) {
         const data = doc.data() || {};
+        // Astra F3: a terminal row must be retired regardless of its retry
+        // budget or schedule — a closed order is never sent and never
+        // dead-lettered, so it is collected BEFORE the due/budget filters.
+        // A recorded acceptance is left alone. A prior SEND claim is NOT skipped
+        // here: its outcome may be unknown, so it must reach the atomic F2
+        // quarantine rather than being silently drained or stranded.
+        if (isCancelledOrTerminal(data)) {
+          if (!hasRecordedPosAcceptance(data)) {
+            if (terminalRetireDocs.length < DEAD_LETTER_BATCH_LIMIT) {
+              terminalRetireDocs.push(doc);
+            }
+          }
+          continue;
+        }
         const retryCount = Number(data.petpoojaRetryCount || 0);
         if (retryCount > PETPOOJA_MAX_RETRY_ATTEMPTS) {
           // Spent budget: dead-lettered regardless of its timestamp — that
@@ -383,7 +375,7 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
   }
 
   // Skip empty ticks: nothing pending → no claim transaction, no writes.
-  if (retryableDocs.length === 0 && exhaustedDocs.length === 0) {
+  if (retryableDocs.length === 0 && exhaustedDocs.length === 0 && terminalRetireDocs.length === 0) {
     return { retriedCount, failedCount };
   }
 
@@ -394,6 +386,8 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
   // writing synced/pending_retry itself.
   const pendingDocs = retryableDocs;
   const claimedDocs: any[] = [];
+  /** Astra F3 retirements committed in the claim transaction (no POST). */
+  const retiredDocs: any[] = [];
   if (pendingDocs.length > 0 && db && typeof (db as any).runTransaction === "function") {
     try {
       const claimed: any[] = await (db as any).runTransaction(async (tx: any) => {
@@ -412,6 +406,24 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
           const data = (freshSnap.exists ? freshSnap.data() : undefined) as any;
           if (!data || data.petpoojaStatus !== "pending_retry") continue;
 
+          // Astra F3: a cancellation can land between the scan and this fresh
+          // read. Recorded acceptance wins. Otherwise a prior SEND claim decides:
+          // a live lease means a sender owns it (leave it completely alone), an
+          // expired/unreadable one means the POS may hold the ticket, so it is
+          // quarantined here — atomically — instead of being skipped and left
+          // stranded in pending_retry forever.
+          if (isCancelledOrTerminal(data)) {
+            if (hasRecordedPosAcceptance(data)) continue;
+            const decision = classifyPushClaim(data, now, PETPOOJA_PUSH_CLAIM_TTL_MS);
+            if (decision === "busy") continue;
+            if (decision === "unresolved") {
+              tx.set(doc.ref, unresolvedPriorSendParkPatch(), { merge: true });
+              continue;
+            }
+            tx.set(doc.ref, terminalOrderRetirementPatch(), { merge: true });
+            retiredDocs.push(doc);
+            continue;
+          }
           // Fresh claim owned elsewhere — skip. Stale (>TTL, crashed worker)
           // or never-claimed docs are take-over-able. Numeric-first lease
           // read: serverTimestamp sentinels have no toMillis and read as 0
@@ -454,6 +466,56 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
     }
   } else {
     claimedDocs.push(...pendingDocs);
+  }
+
+  // Astra F3: retire pending_retry rows whose order is already terminal. They
+  // were excluded from the claim/push path at scan time; this commits the
+  // retirement behind a FRESH transactional re-check (a racer may have accepted
+  // the KOT meanwhile), and it never pages the branch — a closed order owes no
+  // manual KOT entry.
+  if (terminalRetireDocs.length > 0) {
+    for (const doc of terminalRetireDocs) {
+      if (db && typeof (db as any).runTransaction === "function") {
+        try {
+          const outcome = await (db as any).runTransaction(async (tx: any) => {
+            const fresh = await tx.get(doc.ref);
+            const freshData = (fresh.exists ? fresh.data() : undefined) as any;
+            if (!freshData || freshData.petpoojaStatus !== "pending_retry") return "skipped";
+            // Recorded acceptance outranks retirement: preserve it exactly.
+            if (hasRecordedPosAcceptance(freshData)) return "skipped";
+            if (!isCancelledOrTerminal(freshData)) return "skipped";
+            const decision = classifyPushClaim(
+              freshData,
+              Date.now(),
+              PETPOOJA_PUSH_CLAIM_TTL_MS
+            );
+            // A live lease belongs to a sender: leave the row untouched.
+            if (decision === "busy") return "skipped";
+            // An unknown prior send may already be at the POS: quarantine
+            // atomically rather than asserting nothing was ever sent.
+            if (decision === "unresolved") {
+              tx.set(doc.ref, unresolvedPriorSendParkPatch(), { merge: true });
+              return "quarantined";
+            }
+            tx.set(doc.ref, terminalOrderRetirementPatch(), { merge: true });
+            return "retired";
+          });
+          if (outcome === "retired") retiredDocs.push(doc);
+        } catch (retireErr: any) {
+          logger.warn(
+            `[Petpooja Retry Worker] terminal retirement failed for order ${doc.id}:`,
+            retireErr?.message || retireErr
+          );
+        }
+      }
+      // No transaction support: refuse to write without an atomic recheck.
+      // The row simply stays pending_retry; it is never POSTed below.
+    }
+    if (retiredDocs.length > 0) {
+      logger.info(
+        `[Petpooja Retry Worker] retired ${retiredDocs.length} terminal order(s) as not_applicable without a POST`
+      );
+    }
   }
 
   // Bounded concurrency over CLAIMED docs only (see lease above): each push
@@ -563,21 +625,33 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
         // in-flight worker may have synced this order meanwhile, and a plain
         // `failed` merge over `synced` (plus its "enter manually" branch
         // alert) would mint a duplicate kitchen ticket.
-        let deadLetterOutcome: "wrote" | "skipped" = "skipped";
+        let deadLetterOutcome: "wrote" | "skipped" | "retired" | "quarantined" = "skipped";
         if (db && typeof (db as any).runTransaction === "function") {
           try {
             deadLetterOutcome = await (db as any).runTransaction(async (tx: any) => {
               const fresh = await tx.get(doc.ref);
               const freshData = (fresh.exists ? fresh.data() : undefined) as any;
-              if (
-                freshData?.petpoojaOrderId ||
-                freshData?.petpoojaAcceptedNoId ||
-                freshData?.petpoojaStatus === "synced" ||
-                freshData?.petpoojaStatus === "reconciliation_required" ||
-                freshData?.petpoojaSyncStatus === "reconciliation_required" ||
-                freshData?.petpoojaAmbiguousProcessing === true
-              ) {
+              // Recorded acceptance is a fact about the POS: preserve it exactly.
+              if (hasRecordedPosAcceptance(freshData)) {
                 return "skipped" as const;
+              }
+              // Astra F2/F3: a prior SEND claim decides what may be written.
+              // Live lease — a sender owns this attempt, so no mutation, no
+              // count, no alert. Expired/unreadable — the POS may already hold
+              // the ticket, so quarantine atomically; never claim it failed and
+              // never ask a human to type a KOT that might already be printed.
+              const decision = classifyPushClaim(freshData, Date.now(), PETPOOJA_PUSH_CLAIM_TTL_MS);
+              if (decision === "busy") return "skipped" as const;
+              if (decision === "unresolved") {
+                tx.set(doc.ref, unresolvedPriorSendParkPatch(), { merge: true });
+                return "quarantined" as const;
+              }
+              // Astra F3: the order closed between the scan and this recheck.
+              // Retire it — never dead-letter, never page the branch, because a
+              // closed order owes no manual KOT entry.
+              if (isCancelledOrTerminal(freshData)) {
+                tx.set(doc.ref, terminalOrderRetirementPatch(), { merge: true });
+                return "retired" as const;
               }
               // kotSyncFailed is the visible flag: partner KDS reads Firestore (not
               // the POS), so the kitchen still sees the order — what failed is the
@@ -601,23 +675,18 @@ export async function retryPendingPetpoojaOrdersWorker(): Promise<{
             continue;
           }
         } else {
-          // R2 reviewer fix: with no transaction-capable db, the old default
-          // ("wrote") never actually wrote — the order stayed pending_retry
-          // forever while ops was already told "manual KOT entry required".
-          // Best-effort plain merge flip so KDS sees kotSyncFailed; racers
-          // could theoretically clobber a win here, but without runTransaction
-          // there is no safe alternative, and fail-closed beats silent-skip.
-          await doc.ref.set(
-            {
-              petpoojaStatus: "failed",
-              kotSyncFailed: true,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
+          // No transaction-capable db: FAIL CLOSED with NO mutation. A plain
+          // `failed` merge could overwrite an acceptance or an unknown send
+          // claim that only an atomic recheck can see, and a wrong "enter
+          // manually" alert is worse than none. The row stays pending_retry for
+          // the transactional lane / an operator; a static warning is recorded.
+          logger.warn(
+            `[Petpooja Retry Worker] no transaction support — refusing to dead-letter order ${doc.id} without an atomic recheck`
           );
-          deadLetterOutcome = "wrote";
+          continue;
         }
-        if (deadLetterOutcome === "skipped") continue;
+        // A retired terminal row and a skipped-accepted row owe no alert.
+        if (deadLetterOutcome !== "wrote") continue;
         await captureErrorSnapshot({
           source: "petpooja",
           severity: "high",
