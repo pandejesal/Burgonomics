@@ -1413,22 +1413,6 @@ export function hasRecordedPosAcceptance(order: any): boolean {
 }
 
 /**
- * True when this row must NOT be treated as "nothing was ever sent": recorded
- * acceptance, OR a persisted send claim (whose outcome may be unknown and is
- * therefore the F2 quarantine's business, never retirement).
- *
- * Kept as the coarse "leave this row alone" test used by retirement paths.
- */
-export function hasUnresolvedOrAcceptedPosState(order: any): boolean {
-  if (hasRecordedPosAcceptance(order)) return true;
-  // `!= null` on purpose: 0/NaN/unreadable markers still name a prior send.
-  if (order?.petpoojaPushClaimedAt !== null && order?.petpoojaPushClaimedAt !== undefined) {
-    return true;
-  }
-  return false;
-}
-
-/**
  * The one transition that may push a cash KOT: the FIRST departure from PLACED
  * into any non-terminal, non-cancelled status (the KDS accept bump normally
  * lands on PREPARING; a direct PLACED → READY or CONFIRMED must not silently

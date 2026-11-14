@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Finding 4 (F4): authenticated Petpooja lifecycle callbacks could move the
 // canonical order status BACKWARDS. The replay defence only remembers the last
@@ -164,6 +164,28 @@ const statusCode = (id: string) => {
 };
 
 const refundDocs = () => Object.keys(savedDocs).filter((p) => p.startsWith("refunds/"));
+
+// Review Low-2 (phase42 POS send-safety, defense in depth — NOT a proven live
+// defect): `isCancelledOrTerminal` (orderPush.ts) treats codes COMPLETED and
+// PICKED_UP as terminal, while the webhook's `terminalNow` guard in
+// item86ingSync.ts only recognised DELIVERED/CANCELLED. Every known writer sets
+// `kind: "completed"` (orderStatus.ts:201/205), so a code-only row is not
+// produced in production today; this pins the vocabulary agreement so a future
+// writer that stops setting `kind` cannot let a late vendor callback rewind a
+// closed order.
+//
+// Contract: a TRUSTED late callback against a code-only terminal row
+// (COMPLETED / PICKED_UP, no `kind`, no `terminal` flag) is ignored whole —
+// no status rewind, no cancel, no refund parking, no acceptance fields, and no
+// outbound provider POST. Shapes the CURRENT guards already normalise are
+// covered (object code, lowercase object code, bare string code); no new
+// vocabulary policy is invented here.
+const TERMINAL_CODE_ONLY_SHAPES: Array<{ label: string; status: any }> = [
+  { label: "object code COMPLETED", status: { code: "COMPLETED" } },
+  { label: "object code PICKED_UP", status: { code: "PICKED_UP" } },
+  { label: "lowercase object code picked_up", status: { code: "picked_up" } },
+  { label: "bare string PICKED_UP", status: "PICKED_UP" },
+];
 
 describe("Petpooja status webhook — vendor lifecycle callbacks never move status backwards (F4)", () => {
   beforeEach(() => {
@@ -419,5 +441,123 @@ describe("Petpooja status webhook — vendor lifecycle callbacks never move stat
     expect(statusCode("ord_f4_untrusted_fwd")).toBe("PENDING");
     expect(statusCode("ord_f4_untrusted_back")).toBe("READY_FOR_PICKUP");
     expect(refundDocs()).toEqual([]);
+  });
+});
+
+describe("Petpooja status webhook — code-only terminal vocabulary is honoured (review Low-2)", () => {
+  const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+
+  beforeEach(() => {
+    for (const key of Object.keys(savedDocs)) delete savedDocs[key];
+    fetchSpy.mockClear();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Seed a row whose ONLY terminal evidence is the status CODE (no kind/flag). */
+  const seedCodeOnly = (id: string, status: any, extra: Record<string, any> = {}) => {
+    savedDocs[`orders/${id}`] = {
+      id,
+      branchId: "branch_f4",
+      status,
+      payment: { razorpayPaymentId: `pay_${id}`, amount: 49900 },
+      ...extra,
+    };
+    return JSON.parse(JSON.stringify(savedDocs[`orders/${id}`]));
+  };
+
+  it.each(TERMINAL_CODE_ONLY_SHAPES)(
+    "ignores a trusted late ACCEPT over a $label row, leaving the whole row untouched",
+    async ({ status }) => {
+      const orderId = "ord_l2_code_only";
+      const original = seedCodeOnly(orderId, status);
+
+      await handlePetpoojaWebhook(
+        { order_id: orderId, status: "Accept", id: "evt_l2_late_accept" },
+        trusted
+      );
+
+      // Nothing is applied at all: not the status, not the raw kitchen status,
+      // not the replay marker, and no fabricated acceptance facts.
+      expect(savedDocs[`orders/${orderId}`]).toEqual(original);
+      // A terminal ignore must never park a POS cancel refund.
+      expect(refundDocs()).toEqual([]);
+      // ... and never reach an outbound transport.
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(TERMINAL_CODE_ONLY_SHAPES)(
+    "ignores a trusted late CANCEL over a $label row without parking a refund",
+    async ({ status }) => {
+      const orderId = "ord_l2_code_only_cancel";
+      const original = seedCodeOnly(orderId, status);
+
+      // A refund-requesting cancellation is the destructive shape: if the
+      // terminal guard misses the code-only row, a refund row appears.
+      await handlePetpoojaWebhook(
+        { order_id: orderId, status: -1, cancel_reason: "late POS cancel", id: "evt_l2_late_cancel" },
+        trusted
+      );
+
+      expect(savedDocs[`orders/${orderId}`]).toEqual(original);
+      expect(refundDocs()).toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+  );
+
+  // Controls: the vocabulary addition must not widen into non-terminal or
+  // already-covered territory.
+
+  it("still applies an ordinary non-terminal CONFIRMED -> READY callback", async () => {
+    seedAt("ord_l2_forward", "CONFIRMED");
+
+    await handlePetpoojaWebhook(
+      { order_id: "ord_l2_forward", status: 5, id: "evt_l2_forward" },
+      trusted
+    );
+
+    expect(savedDocs["orders/ord_l2_forward"].status).toMatchObject({
+      code: "READY_FOR_PICKUP",
+      kind: "in_progress",
+      terminal: false,
+    });
+    expect(refundDocs()).toEqual([]);
+  });
+
+  it("still ignores callbacks over the existing DELIVERED/CANCELLED shapes", async () => {
+    seedAt("ord_l2_delivered", "DELIVERED");
+    seedAt("ord_l2_cancelled", "CANCELLED");
+
+    await handlePetpoojaWebhook(
+      { order_id: "ord_l2_delivered", status: "Accept", id: "evt_l2_delivered" },
+      trusted
+    );
+    await handlePetpoojaWebhook(
+      { order_id: "ord_l2_cancelled", status: "Accept", id: "evt_l2_cancelled" },
+      trusted
+    );
+
+    expect(statusCode("ord_l2_delivered")).toBe("DELIVERED");
+    expect(statusCode("ord_l2_cancelled")).toBe("CANCELLED");
+    expect(savedDocs["orders/ord_l2_delivered"].petpoojaKitchenStatus).toBeUndefined();
+    expect(savedDocs["orders/ord_l2_cancelled"].petpoojaKitchenStatus).toBeUndefined();
+    expect(refundDocs()).toEqual([]);
+  });
+
+  it("still applies a live non-terminal PICKED-style vocabulary code that is not terminal", async () => {
+    // Guard against over-broad vocabulary: a live kitchen state sharing the
+    // word "PICK" (READY_FOR_PICKUP) must remain applicable.
+    seedAt("ord_l2_ready_from_placed", "PLACED");
+
+    await handlePetpoojaWebhook(
+      { order_id: "ord_l2_ready_from_placed", status: 5, id: "evt_l2_ready" },
+      trusted
+    );
+
+    expect(statusCode("ord_l2_ready_from_placed")).toBe("READY_FOR_PICKUP");
   });
 });

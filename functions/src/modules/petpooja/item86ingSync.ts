@@ -1489,8 +1489,17 @@ export async function handlePetpoojaWebhook(
       (typeof currentStatus === "object" && currentStatus?.terminal === true) ||
       currentKind === "completed" ||
       currentKind === "cancelled" ||
+      // COMPLETED (dine-in delivered, orderStatus.ts:201) and PICKED_UP
+      // (takeaway delivered, orderStatus.ts:205) are the other two terminal
+      // codes in this repository; keep this list in step with
+      // `isCancelledOrTerminal` (orderPush.ts) so a row carrying only the code —
+      // no `kind`, no `terminal` flag — still cannot be rewound by a late
+      // vendor callback. Known writers do set `kind:"completed"`, so this
+      // closes a vocabulary gap rather than a reachable live path.
       (typeof currentCode === "string" &&
-        ["DELIVERED", "CANCELLED"].includes(currentCode.toUpperCase())) ||
+        ["DELIVERED", "CANCELLED", "COMPLETED", "PICKED_UP"].includes(
+          currentCode.toUpperCase()
+        )) ||
       freshOrderData.deliveryStatus === "delivered";
 
     if (terminalNow) {
