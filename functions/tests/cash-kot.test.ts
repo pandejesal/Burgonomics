@@ -129,11 +129,37 @@ describe("CASH-KOT gate", () => {
     const body = rules.slice(start, start + 400);
     expect(body).toContain("request.resource.data.status.code == 'PLACED'");
     expect(body).toContain("request.resource.data.status.terminal != true");
-    // BOTH customer and walk-in create arms require it.
+    // The sentinel walk-in lane is server-created only: the rules deny every
+    // direct client create whose customerId is 'cust_walkin'. So the orders
+    // create arm holds a SINGLE client branch — the customer lane — which must
+    // still be pinned to the PLACED birth meta. Assert both invariants
+    // directly instead of counting a stale two-arm occurrence total.
     const createStart = rules.lastIndexOf("match /orders/{orderId}");
     const createEnd = rules.indexOf("allow update: if (", createStart);
     const createArm = rules.slice(createStart, createEnd);
-    expect(createArm.match(/orderCreateInitialStatus\(\)/g)).toHaveLength(2);
+
+    const placedPinnedAndSentinelDenied = (arm: string) =>
+      arm.includes("orderCreateInitialStatus()") &&
+      /request\.resource\.data\.customerId\s*!=\s*'cust_walkin'/.test(arm);
+
+    // Invariant 1: the one client create arm pins status via
+    // orderCreateInitialStatus(). Invariant 2: it denies the sentinel walk-in
+    // customerId outright, and no second create branch re-admits it.
+    expect(createArm.match(/allow create:/g)).toHaveLength(1);
+    expect(createArm).toContain("orderCreateInitialStatus()");
+    expect(createArm).not.toMatch(/customerId\s*==\s*'cust_walkin'/);
+    expect(placedPinnedAndSentinelDenied(createArm)).toBe(true);
+
+    // Static mutation probes: stripping either guard must break the invariant,
+    // so neither check can silently pass on a weakened arm.
+    expect(
+      placedPinnedAndSentinelDenied(createArm.replace("orderCreateInitialStatus()", ""))
+    ).toBe(false);
+    expect(
+      placedPinnedAndSentinelDenied(
+        createArm.replace("request.resource.data.customerId != 'cust_walkin' &&", "")
+      )
+    ).toBe(false);
   });
 });
 

@@ -182,6 +182,9 @@ service cloud.firestore {
     function orderServerOwnedKeys() {
       return [
         'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
+        // Walk-in retries trust this original server receipt and request binding.
+        // No client, including brand/developer, may plant, edit or remove them.
+        'walkInRequestHash', 'walkInReceipt',
         'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount',
         'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
         'refundActiveClaim', 'refundClaimedAt', 'refundClaimedRequestId',
@@ -231,8 +234,7 @@ service cloud.firestore {
 
     // Nested payment display marker at birth. The customer lane is
     // pending-only: a client cannot mint a paid/completed settlement marker.
-    // The walk-in lane may be born completed because cash is tendered at the
-    // counter. Absent payment is fine (older clients/walk-in writes).
+    // Walk-in creation is server-only. Absent payment is fine for older clients.
     //
     // ALLOWLIST the map itself, both lanes: `payment.routeTransfer` (the Route
     // receipt) and the capture/refund bookkeeping are server-written after
@@ -256,17 +258,6 @@ service cloud.firestore {
           (
             !('status' in request.resource.data.payment) ||
             request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
-          )
-        )
-      );
-    }
-    function orderCreatePaymentSettledWalkin() {
-      return orderCreatePaymentClientFieldsOnly() && (
-        !('payment' in request.resource.data) || (
-          request.resource.data.payment is map &&
-          (
-            !('status' in request.resource.data.payment) ||
-            request.resource.data.payment.status in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE', 'completed']
           )
         )
       );
@@ -387,8 +378,21 @@ service cloud.firestore {
     // SALES: ORDERS (Branch-scoped, customer own-only)
     // =========================================================================
 
+    // Regional scope is derived solely from the authoritative registry, never
+    // a stale token or a client-selected outlet. This helper is orders-only.
+    function regionalOrderRead(branchId) {
+      let admin = get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
+      return admin.role == 'regional_manager'
+        && admin.branchIds is list
+        && admin.branchIds.size() > 0
+        && branchId is string && branchId.size() > 0
+        && branchId in admin.branchIds;
+    }
+
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (
+        hasRole(['support']) ||
+        regionalOrderRead(resource.data.branchId) ||
         resource.data.customerId == request.auth.uid ||
         resource.data.userId == request.auth.uid ||
         ownsBranch(resource.data.branchId)
@@ -402,19 +406,11 @@ service cloud.firestore {
       //  1) Customer app (core ordersService.createOrder, src/features/
       //     orders/services/ordersService.ts:331-351) stamps BOTH customerId
       //     AND userId to request.auth.uid.
-      //  2) Partner POS walk-in (partner ManualOrderCreateModal.tsx:144-181)
-      //     stamps the literal 'cust_walkin' customerId; the POS lane stamps
-      //     userId to the staff operator uid. Walk-in creates are gated to
-      //     the operator's own outlet (isBranchOwner + ownsBranch) and never
-      //     carry privileged server-owned keys at birth. Both lanes are
-      //     pinned to the initial PLACED status shape; customer-lane
-      //     paymentStatus stays pending-only (core writes no top-level
-      //     paymentStatus at all — the paid state lives nested in
-      //     `payment.status`, set after server-side gateway verification),
-      //     while the walk-in lane may be born 'completed' (cash tendered at
-      //     the counter) — 'failed' is never a birth state.
+      // Sentinel walk-ins are created only by the server, including when an
+      // authenticated UID happens to equal the sentinel.
       allow create: if isAuthenticated() && (
         (
+          request.resource.data.customerId != 'cust_walkin' &&
           request.resource.data.customerId == request.auth.uid &&
           request.resource.data.userId == request.auth.uid &&
           orderCreateInitialStatus() &&
@@ -423,20 +419,6 @@ service cloud.firestore {
           (
             !('paymentStatus' in request.resource.data) ||
             request.resource.data.paymentStatus in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
-          )
-        ) || (
-          request.resource.data.customerId == 'cust_walkin' &&
-          request.resource.data.userId == request.auth.uid &&
-          request.resource.data.branchId is string &&
-          request.resource.data.branchId.size() > 0 &&
-          isBranchOwner() &&
-          ownsBranch(request.resource.data.branchId) &&
-          orderCreateInitialStatus() &&
-          orderCreateKeysAllowlisted() &&
-          orderCreatePaymentSettledWalkin() &&
-          (
-            !('paymentStatus' in request.resource.data) ||
-            request.resource.data.paymentStatus in ['pending', 'completed']
           )
         )
       );
