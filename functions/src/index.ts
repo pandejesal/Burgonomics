@@ -87,6 +87,8 @@ import {
   retryPendingShadowfaxReadySignals,
 } from "./modules/dispatch/shadowfax.reconcile";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
+import { createWalkInSchema } from "./modules/orders/createWalkIn";
+import { handleCreateWalkIn } from "./modules/orders/createWalkInRoute";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { recoverStuckCaptureFulfilments } from "./modules/payments/captureRecovery";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
@@ -343,6 +345,7 @@ app.use(
     "/dispatch/porter-manual",
     "/dispatch/cancel",
     "/dispatch/cancel/confirm",
+    "/orders/createWalkIn",
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
@@ -1136,6 +1139,13 @@ app.post("/dispatch/webhooks/shadowfax", async (req, res) => {
     res.status(err?.statusCode || staffErrorStatus(err, 500)).json({ error: err.message || "Shadowfax webhook failed" });
   }
 });
+
+app.post(
+  "/orders/createWalkIn",
+  requireAuth,
+  validateBody(createWalkInSchema),
+  handleCreateWalkIn
+);
 
 app.post(
   "/orders/bumpStatus",

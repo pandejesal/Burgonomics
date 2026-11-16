@@ -293,8 +293,13 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     }
     // CUS-16: an online order becomes kitchen-eligible only once a server
     // capture wrote `paymentChannel: "razorpay"`. PLACED (a no-op re-bump) and
-    // cancelled are always allowed; cash/COD/walk-in are not gated.
+    // cancelled are always allowed; cash/COD remains kitchen-eligible. Pending
+    // walk-in UPI is an exception because it has no verified settlement.
     if (canonical !== "pending" && canonical !== "cancelled") {
+      if (freshOrder.customerId === "cust_walkin" &&
+          freshOrder.paymentMethod === "upi" && freshOrder.paymentStatus === "pending") {
+        throw serviceError("ORDER_NOT_PAID", "Walk-in UPI payment is pending; settlement is unavailable", 409);
+      }
       assertOnlineOrderPaid(freshOrder);
     }
     // P1-G: never promise a delivery nobody is making.

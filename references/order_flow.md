@@ -58,6 +58,7 @@ not customer-facing state codes.
   - The **`payment.captured` webhook is the authoritative confirmation**: it writes the `CONFIRMED` literal (never `accepted`) and pushes KOT once. Client `verifyPayment` is a guarded, idempotent shim for the same path.
 - **Cash / Pay at Counter**:
   - Order confirmed directly with `payment.status: 'pending'`, settled at counter or doorstep.
+  - Direct client creation of `customerId: 'cust_walkin'` is denied for every role and payment state; walk-ins must use the server-priced `POST /orders/createWalkIn` path. Its R1 contract creates pending payment only; settlement is not provided. Ordinary customer creation and COD flow remain unchanged.
 - **Refunds are parked, not automatic**:
   - A Petpooja cancel/86ing after payment writes a `PENDING` refund request (`refunds/refund_pos_cancel_<orderId>`) plus `payment.refundStatus: PENDING_APPROVAL` for staff approval — per the recorded 2026-09-23 decision there is no human-less refund.
   - The inbound cancel webhook never calls `autoRefund`; ticket/staff refunds use the authorised refund service (captured-state, cumulative and idempotency guards apply).
