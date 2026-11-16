@@ -1,8 +1,8 @@
 import { db } from "../../core/firebase";
 import {
-  DEFAULT_PACKAGING_FEE,
   computePackagingFee,
   resolveBranchPricingConfig,
+  resolvePackagingFeeSnapshot,
   type BranchPricingConfig,
 } from "./branchPricing";
 
@@ -390,23 +390,75 @@ export async function assertCatalogLinesSellable(items: any[]): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * Snapshot pricing seam (walk-in create transaction, R1 scope)
+ * ------------------------------------------------------------------------- */
+
 /**
- * Authoritative Server-Side Pricing Engine (Check 15 & Check 57)
- * Validates product prices against Firestore catalog, calculates 5% GST, packaging, delivery,
- * coupon rules, loyalty caps (max 20%), and Razorpay Route royalty split.
+ * A product document as read INSIDE the caller's Firestore transaction.
+ *
+ * The caller owns the read so the total it writes is computed from the SAME
+ * snapshot it verified — no cache, no second read, no drift between "what we
+ * checked" and "what we charged".
  */
-export async function calculateOrderPricing(
-  input: CalculateOrderPricingInput
-): Promise<PricingBreakdown> {
-  // Defense in depth behind the zod schema (direct callers bypass routes):
-  // reject unpriceable items instead of coercing them (qty 0 → phantom +1,
-  // price "abc" → free item — both real over/under-charge vectors).
-  if (!Array.isArray(input.items) || input.items.length === 0 || input.items.length > 100) {
+export interface SnapshotProduct {
+  /** Catalogue price in rupees, GST-inclusive. Must be finite and >= 0. */
+  price: number;
+  /** Sellable ONLY when explicitly `true` — the engine's fail-closed rule. */
+  inStock: unknown;
+  /** The product's own option groups, when the doc carries them (PAY-16). */
+  customizations?: any[];
+}
+
+export interface SnapshotPricingInput {
+  items: PricingLineItem[];
+  orderType: "delivery" | "takeaway" | "dinein";
+  /** Products read in the caller's transaction, keyed by product id. */
+  products: ReadonlyMap<string, SnapshotProduct>;
+  /** Branch pricing config read in the SAME transaction. Required. */
+  branchConfig: BranchPricingConfig | null;
+  /** Branch id — coupon eligibility only. Membership is the route's check. */
+  branchId?: string;
+  /** Coupon document read in the same transaction, when the order carries one. */
+  coupon?: any | null;
+  loyaltyPointsToRedeem?: number;
+  /** R7: a server-locked packaging fee (repricing an agreed total). */
+  packagingFeeOverride?: number;
+  /** SERVER-ONLY: the persisted courier quote for a delivery. */
+  serverDeliveryFee?: number;
+  /** Clock for coupon expiry; no I/O either way. Defaults to Date.now(). */
+  nowMs?: number;
+}
+
+export interface SnapshotPricingResult extends PricingBreakdown {
+  /**
+   * True when the branch's Petpooja packaging was not understood and a
+   * fallback fee was used. This seam never writes, so a caller that wants the
+   * warning records it AFTER its transaction commits.
+   */
+  packagingUsedFallback: boolean;
+}
+
+function pricingInputError(statusCode: number, code: string, message: string): Error {
+  const err: any = new Error(message);
+  err.statusCode = statusCode;
+  err.code = code;
+  return err;
+}
+
+/**
+ * Defense in depth behind the zod schema (direct callers bypass routes):
+ * reject unpriceable items instead of coercing them (qty 0 → phantom +1,
+ * price "abc" → free item — both real over/under-charge vectors).
+ * Shared by the live engine and the snapshot seam so both refuse identically.
+ */
+function assertPriceableItems(items: PricingLineItem[]): void {
+  if (!Array.isArray(items) || items.length === 0 || items.length > 100) {
     const err: any = new Error("Order must contain 1–100 items.");
     err.statusCode = 400;
     throw err;
   }
-  for (const item of input.items) {
+  for (const item of items) {
     const price = Number((item as any)?.price);
     const qty = Number((item as any)?.quantity);
     if (!Number.isFinite(price) || price < 0 || price > 100000 || !Number.isInteger(qty) || qty < 1 || qty > 99) {
@@ -415,7 +467,275 @@ export async function calculateOrderPricing(
       throw err;
     }
   }
+}
+
+/**
+ * Coupon discount from a document the caller already read. Pure: the clock is
+ * passed in. Same clamps as before — active, unexpired, branch-eligible and
+ * above the minimum; percent bounded to 0–100; `maxDiscount` honoured; floor 0;
+ * ceiling at the food subtotal so a corrupt coupon can never inflate the bill.
+ */
+function computeCouponDiscount(
+  couponDoc: any,
+  foodSubtotal: number,
+  branchId: string,
+  nowMs: number
+): number {
+  if (!couponDoc) return 0;
+  const c = couponDoc as any;
+  const looksLikeCoupon =
+    c &&
+    (typeof c.discount === "number" ||
+      typeof c.value === "number" ||
+      typeof c.amount === "number" ||
+      c.type === "percent" ||
+      c.discountType === "percent");
+  if (!looksLikeCoupon) return 0;
+
+  const isActive = c.active !== false;
+  const notExpired =
+    !c.expiresAt ||
+    (c.expiresAt.toMillis
+      ? c.expiresAt.toMillis() > nowMs
+      : new Date(c.expiresAt).getTime() > nowMs);
+  const branchAllowed = !c.branchId || c.branchId === branchId;
+  const minOk = foodSubtotal >= (c.minOrder ?? c.min_order ?? 0);
+  if (!(isActive && notExpired && branchAllowed && minOk)) return 0;
+
+  // Percent coupons are bounded (0,100] — a corrupt >100% value must not zero
+  // out (or negate) the bill.
+  const pct = c.discount ?? c.value ?? 0;
+  const raw =
+    c.type === "percent" || c.discountType === "percent"
+      ? Math.round((foodSubtotal * Math.min(100, Math.max(0, pct))) / 100)
+      : (c.discount ?? c.value ?? c.amount ?? 0);
+  const capped = c.maxDiscount ? Math.min(raw, c.maxDiscount) : raw;
+  return Math.max(0, Math.min(capped, foodSubtotal));
+}
+
+/**
+ * PURE pricing from a caller-supplied snapshot. No Firestore, no cache, no
+ * logging, no provider call — safe to invoke inside a Firestore transaction
+ * after it has read `products`, `branches` and (optionally) `coupons`.
+ *
+ * `calculateOrderPricing` delegates here after doing the reads, so there is
+ * exactly ONE money formula: inclusive GST (reported, never added), packaging,
+ * coupon and loyalty clamps, paise-exact CGST/SGST split, grand total and the
+ * F3 branch/courier split.
+ *
+ * Fail closed on anything unverifiable: a missing or non-finite catalogue
+ * price, a line that is not explicitly `inStock: true`, a missing/invalid
+ * branch snapshot, or a delivery without its server courier quote.
+ *
+ * NOTE for callers building lines from a POS/cart: `items` still pass the
+ * shared request-shape guard (a finite `price` 0–100000 and an integer
+ * quantity 1–99), but the line's `price` VALUE is never charged — the
+ * snapshot's catalogue price is authoritative. Set it to the snapshot price
+ * (or any valid number) so the shape guard accepts the line.
+ */
+export function computeSnapshotPricing(
+  input: SnapshotPricingInput
+): SnapshotPricingResult {
+  assertPriceableItems(input.items);
+
+  if (
+    input.orderType !== "delivery" &&
+    input.orderType !== "takeaway" &&
+    input.orderType !== "dinein"
+  ) {
+    throw pricingInputError(
+      422,
+      "ORDER_TYPE_UNSUPPORTED",
+      "Unknown order type — cannot price this order."
+    );
+  }
+
+  // 1. Authoritative line prices come ONLY from the supplied snapshot.
   let foodSubtotal = 0;
+  for (const item of input.items) {
+    const itemKey = String(item.productId || item.id || "");
+    const itemName = String((item as any)?.name || "An item");
+    const product = input.products.get(itemKey);
+
+    // An unverifiable price is a refusal, never the client's number.
+    if (!product) {
+      throw pricingInputError(
+        409,
+        "ITEM_PRICE_UNVERIFIED",
+        `${itemName} could not be verified against the menu — please refresh your cart and try again.`
+      );
+    }
+    // Money-time ELIGIBILITY: only an explicit boolean true is sellable, so a
+    // doc that predates the availability field cannot be sold on an assumption.
+    if (product.inStock !== true) {
+      throw pricingInputError(
+        409,
+        "ITEM_UNAVAILABLE",
+        `${itemName} is no longer available — please review your cart.`
+      );
+    }
+    const catalogPrice = Number(product.price);
+    if (!Number.isFinite(catalogPrice) || catalogPrice < 0) {
+      throw pricingInputError(
+        409,
+        "ITEM_PRICE_UNVERIFIED",
+        `${itemName} could not be verified against the menu — please refresh your cart and try again.`
+      );
+    }
+
+    // PAY-16: option deltas come from the product's own catalogue data too.
+    const unitPrice = applyCatalogBasePrice(
+      item,
+      catalogPrice,
+      product.customizations
+    );
+    const qty = Math.max(1, Math.floor(Number(item.quantity) || 1));
+    foodSubtotal += unitPrice * qty;
+  }
+
+  // 2. Branch config is mandatory: a walk-in total is never priced off defaults.
+  const config = input.branchConfig;
+  if (!config || typeof config !== "object") {
+    throw pricingInputError(
+      422,
+      "BRANCH_CONFIG_REQUIRED",
+      "Walk-in pricing requires a branch pricing snapshot."
+    );
+  }
+  const configPackagingFee = Number((config as any).packagingFee);
+  const rawBranchFee = (config as any).branchPackagingFee;
+  const branchFeeInvalid =
+    rawBranchFee !== undefined &&
+    (!Number.isFinite(Number(rawBranchFee)) || Number(rawBranchFee) < 0);
+  if (
+    !Number.isFinite(configPackagingFee) ||
+    configPackagingFee < 0 ||
+    branchFeeInvalid
+  ) {
+    throw pricingInputError(
+      422,
+      "BRANCH_CONFIG_INVALID",
+      "Branch pricing snapshot is invalid — cannot price this order."
+    );
+  }
+
+  // 3. Packaging: an R7 locked fee wins; otherwise the ONE P2 rule, purely.
+  let packagingFee: number;
+  let packagingUsedFallback = false;
+  if (input.packagingFeeOverride !== undefined) {
+    const locked = Number(input.packagingFeeOverride);
+    if (!Number.isFinite(locked) || locked < 0) {
+      throw pricingInputError(
+        422,
+        "PACKAGING_FEE_INVALID",
+        "Stored packaging fee is invalid — cannot reprice this order."
+      );
+    }
+    packagingFee = round2(locked);
+  } else {
+    const decision = resolvePackagingFeeSnapshot({
+      packaging: config.packaging ?? null,
+      branchFee: (config as any).branchPackagingFee,
+      orderType: input.orderType,
+      branchId: input.branchId,
+    });
+    packagingFee = decision.fee;
+    packagingUsedFallback = decision.usedFallback;
+  }
+
+  // 4. Delivery fee: the persisted courier quote is the ONLY source.
+  let deliveryFee = 0;
+  if (input.orderType === "delivery") {
+    const quoted = Number(input.serverDeliveryFee);
+    if (
+      input.serverDeliveryFee === undefined ||
+      !Number.isFinite(quoted) ||
+      quoted < 0
+    ) {
+      throw pricingInputError(
+        422,
+        "DELIVERY_FEE_REQUIRED",
+        "Delivery pricing requires a server courier quote — re-quote the delivery fee and retry checkout."
+      );
+    }
+    deliveryFee = round2(quoted);
+  }
+
+  // 5. Discount from the supplied coupon document (already read by the caller).
+  const discount = computeCouponDiscount(
+    input.coupon ?? null,
+    foodSubtotal,
+    String(input.branchId ?? ""),
+    input.nowMs ?? Date.now()
+  );
+
+  // 6. Loyalty points deduction (1 pt = ₹1, strictly capped at 20% of subtotal).
+  let loyaltyDiscount = 0;
+  if (input.loyaltyPointsToRedeem && input.loyaltyPointsToRedeem > 0) {
+    const maxLoyalty = Math.round(foodSubtotal * 0.2);
+    loyaltyDiscount = Math.min(
+      input.loyaltyPointsToRedeem,
+      maxLoyalty,
+      Math.max(0, foodSubtotal - discount)
+    );
+  }
+
+  // 7. GST is INCLUDED in the menu price (owner decision 2026-10-31, R1).
+  // The inclusive share of `netFood` at 5% is netFood·5/105; reporting it must
+  // never change the amount the customer pays. Packaging and delivery sit
+  // outside the base (unchanged).
+  const netFood = round2(Math.max(0, foodSubtotal - discount - loyaltyDiscount));
+  const gst = round2((netFood * GST_RATE) / (1 + GST_RATE));
+  const gstPaise = Math.round(gst * 100);
+  // Split in paise so CGST + SGST always equals GST exactly.
+  const cgstPaise = Math.round(gstPaise / 2);
+  const sgstPaise = gstPaise - cgstPaise;
+
+  // 8. Grand Total (R2): net food + packaging + delivery, rounded to paise —
+  // no whole-rupee rounding and no tax added on top.
+  const grandTotal = round2(Math.max(0, netFood + packagingFee + deliveryFee));
+  const grandPaise = Math.round(grandTotal * 100);
+
+  // 9. Branch earnings (F3, owner decision 2026-11-01): NO per-order royalty.
+  // The courier fee the customer paid stays with the brand; everything else is
+  // the branch's earnings for this order, before the fixed monthly fee.
+  const courierFeePaise = Math.round(deliveryFee * 100);
+  const branchTransferPaise = Math.max(0, grandPaise - courierFeePaise);
+
+  return {
+    foodSubtotal,
+    packagingFee,
+    deliveryFee,
+    gst,
+    cgst: cgstPaise / 100,
+    sgst: sgstPaise / 100,
+    discount,
+    loyaltyDiscount,
+    grandTotal,
+    pricingDegraded: false,
+    split: {
+      courierFeePaise,
+      branchTransferPaise,
+      totalAmountPaise: grandPaise,
+    },
+    packagingUsedFallback,
+  };
+}
+
+/**
+ * Authoritative Server-Side Pricing Engine (Check 15 & Check 57)
+ * Validates product prices against Firestore catalog, calculates 5% GST, packaging, delivery,
+ * coupon rules, loyalty caps (max 20%), and Razorpay Route royalty split.
+ *
+ * The reads happen here; every rupee of the bill is computed by the pure
+ * `computeSnapshotPricing` seam, so the live path and the walk-in transaction
+ * share one formula.
+ */
+export async function calculateOrderPricing(
+  input: CalculateOrderPricingInput
+): Promise<PricingBreakdown> {
+  // Fail fast on malformed input before any catalog read.
+  assertPriceableItems(input.items);
 
   // 1. Authoritative Item Price Resolution — ONE batched catalog read
   // (db.getAll) instead of N sequential gets; degrades to sequential on
@@ -522,35 +842,15 @@ export async function calculateOrderPricing(
     throw err;
   }
 
+  // A per-line catalog read that THREW is an outage for the basket, not a
+  // price: refuse it with the same retryable 503 the catalog layer returns.
+  // Charging `item.price` here would let a Firestore blip turn the
+  // client-supplied amount into the authoritative charge. A genuinely missing
+  // doc is a different outcome — the snapshot seam refuses it 409
+  // ITEM_PRICE_UNVERIFIED.
   for (const item of input.items) {
-    let unitPrice = computeItemUnitPrice(item);
     const itemKey = item.productId || item.id;
-    const catalogPrice = catalogPrices.get(itemKey);
-    if (catalogPrice !== undefined) {
-      // Money-time ELIGIBILITY. Fail CLOSED: only an explicit boolean true is
-      // sellable, so a doc that predates the availability field cannot be sold
-      // on an assumption. Without this, a line that went 86 after it entered
-      // the cart was still priced and charged, because the cart is a
-      // client-side gate and the server never looked.
-      if (catalogAvailability.get(itemKey) !== true) {
-        const unavailable: any = new Error(
-          `${String((item as any)?.name || "An item")} is no longer available — please review your cart.`
-        );
-        unavailable.statusCode = 409;
-        unavailable.code = "ITEM_UNAVAILABLE";
-        throw unavailable;
-      }
-      unitPrice = applyCatalogBasePrice(
-        item,
-        catalogPrice,
-        catalogCustomizations.get(itemKey)
-      );
-    } else if (catalogReadErrors.has(itemKey)) {
-      // The read for THIS line threw while the catalog as a whole answered:
-      // refuse the basket with the same retryable outage as a catalog-layer
-      // failure. Charging `item.price` here would let a Firestore blip turn
-      // the client-supplied amount into the authoritative charge — the old
-      // fallback reported that as "degraded" and still completed the sale.
+    if (catalogReadErrors.has(itemKey)) {
       const { captureErrorSnapshot } = await import("../../core/errors").catch(() => ({
         captureErrorSnapshot: async () => {},
       }));
@@ -565,23 +865,19 @@ export async function calculateOrderPricing(
       );
       outage.statusCode = 503;
       throw outage;
-    } else {
-      // FAIL CLOSED on an unverifiable price. The catalog is the only
-      // authoritative price source, so charging the price the CLIENT sent for a
-      // product we cannot look up lets an arbitrary request value set the
-      // amount. A deleted, foreign or mistyped product is refused instead of
-      // silently priced, because "we could not verify it" is not a licence to
-      // charge it.
-      const unverified: any = new Error(
-        `${String((item as any)?.name || "An item")} could not be verified against the menu — please refresh your cart and try again.`
-      );
-      unverified.statusCode = 409;
-      unverified.code = "ITEM_PRICE_UNVERIFIED";
-      throw unverified;
     }
+  }
 
-    const qty = Math.max(1, Math.floor(Number(item.quantity) || 1));
-    foodSubtotal += unitPrice * qty;
+  // The exact documents just read, handed to the pure seam. From here every
+  // rupee of the bill is computed by `computeSnapshotPricing`, so this path and
+  // the walk-in transaction cannot drift apart.
+  const snapshotProducts = new Map<string, SnapshotProduct>();
+  for (const [id, price] of catalogPrices) {
+    snapshotProducts.set(id, {
+      price,
+      inStock: catalogAvailability.get(id),
+      customizations: catalogCustomizations.get(id),
+    });
   }
 
   // 2+3. Branch config and coupon are INDEPENDENT reads — fire them together
@@ -589,7 +885,6 @@ export async function calculateOrderPricing(
   // is the SOLE source of packaging/royalty, shared with POST /checkout/fees
   // through resolveBranchPricingConfig; client-supplied fees are untrusted.
   // Coupons collection is the SOLE discount authority (no hardcoded fallback).
-  let packagingFee = DEFAULT_PACKAGING_FEE;
   const branchState: { config: BranchPricingConfig | null } = { config: null };
   let couponDoc: any = null;
 
@@ -630,24 +925,9 @@ export async function calculateOrderPricing(
     pricingDegraded = true;
   }
 
-  // Customer-facing delivery fee (R5/R6). The ONLY source is the persisted
-  // courier quote handed in by the server through `serverDeliveryFee`. A
-  // delivery order without one is UNPRICEABLE: no ₹35 default (the old static
-  // quote), no zero, no client value. The courier quote is the provider fare
-  // itself — there is no markup and no free-delivery threshold.
-  let deliveryFee = 0;
-  if (input.orderType === "delivery") {
-    const quoted = Number(input.serverDeliveryFee);
-    if (input.serverDeliveryFee === undefined || !Number.isFinite(quoted) || quoted < 0) {
-      const err: any = new Error(
-        "Delivery pricing requires a server courier quote — re-quote the delivery fee and retry checkout."
-      );
-      err.statusCode = 422;
-      err.code = "DELIVERY_FEE_REQUIRED";
-      throw err;
-    }
-    deliveryFee = round2(quoted);
-  }
+  // The delivery fee is validated inside the seam: a delivery without its
+  // persisted courier quote is refused 422 DELIVERY_FEE_REQUIRED (R5/R6), with
+  // no ₹35 default, no zero and no client value.
 
   // R7: a server-written packaging snapshot wins over live branch config, so
   // repricing an agreed total cannot be moved by a later config edit. Outside
@@ -661,11 +941,8 @@ export async function calculateOrderPricing(
       err.code = "PACKAGING_FEE_INVALID";
       throw err;
     }
-    packagingFee = round2(locked);
-  } else if (input.orderType === "dinein") {
-    packagingFee = 0;
-  } else {
-    packagingFee = await computePackagingFee({
+  } else if (input.orderType !== "dinein") {
+    await computePackagingFee({
       packaging: branchState.config?.packaging ?? null,
       branchFee: branchState.config?.branchPackagingFee,
       orderType: input.orderType,
@@ -673,98 +950,28 @@ export async function calculateOrderPricing(
     });
   }
 
-  // 3. Discount calculation from the concurrently-fetched coupon doc
-  let discount = 0;
-  if (couponDoc) {
-    {
-      const c = couponDoc as any;
-          // Validate the document is actually a coupon (has a discount field or percent type)
-          const looksLikeCoupon =
-            c &&
-            (typeof c.discount === "number" ||
-              typeof c.value === "number" ||
-              typeof c.amount === "number" ||
-              c.type === "percent" ||
-              c.discountType === "percent");
-          if (looksLikeCoupon) {
-            const isActive = c.active !== false;
-            const notExpired =
-              !c.expiresAt ||
-              (c.expiresAt.toMillis
-                ? c.expiresAt.toMillis() > Date.now()
-                : new Date(c.expiresAt) > new Date());
-            const branchAllowed = !c.branchId || c.branchId === input.branchId;
-            const minOk = foodSubtotal >= (c.minOrder ?? c.min_order ?? 0);
-            if (isActive && notExpired && branchAllowed && minOk) {
-              // Percent coupons are bounded (0,100] — a corrupt >100% value
-              // must not zero out (or negate) the bill.
-              const pct = c.discount ?? c.value ?? 0;
-              const raw =
-                c.type === "percent" || c.discountType === "percent"
-                  ? Math.round((foodSubtotal * Math.min(100, Math.max(0, pct))) / 100)
-                  : (c.discount ?? c.value ?? c.amount ?? 0);
-              // respect coupon maxDiscount cap if set
-              const capped = c.maxDiscount ? Math.min(raw, c.maxDiscount) : raw;
-              // P2 clamp: a corrupt negative discount (console edit / bad
-              // import) must never INFLATE the bill — discount floors at 0
-              // and ceilings at the food subtotal.
-              discount = Math.max(0, Math.min(capped, foodSubtotal));
-            }
-          }
-    }
-  }
+  // 3–9. Every rupee of the bill is computed by the pure seam from the exact
+  // documents read above. Only a genuinely locked fee is passed as an override;
+  // the live resolution above preserves warning behaviour for branch fees.
+  const snapshot = computeSnapshotPricing({
+    items: input.items,
+    orderType: input.orderType,
+    products: snapshotProducts,
+    branchConfig: branchState.config,
+    branchId: input.branchId,
+    coupon: couponDoc,
+    loyaltyPointsToRedeem: input.loyaltyPointsToRedeem,
+    packagingFeeOverride: input.serverPackagingFee,
+    serverDeliveryFee: input.serverDeliveryFee,
+  });
 
-  // 4. Loyalty points deduction (1 pt = ₹1, strictly capped at max 20% of subtotal)
-  let loyaltyDiscount = 0;
-  if (input.loyaltyPointsToRedeem && input.loyaltyPointsToRedeem > 0) {
-    const maxLoyalty = Math.round(foodSubtotal * 0.2);
-    loyaltyDiscount = Math.min(
-      input.loyaltyPointsToRedeem,
-      maxLoyalty,
-      Math.max(0, foodSubtotal - discount)
-    );
-  }
+  // `packagingUsedFallback` is the seam's post-commit signal for callers that
+  // cannot write. The live engine already warned above, so it is not exposed on
+  // the public `PricingBreakdown`.
+  const { packagingUsedFallback: _unusedFallback, ...breakdown } = snapshot;
+  void _unusedFallback;
 
-  // 5. GST is INCLUDED in the menu price (owner decision 2026-10-31, R1).
-  // The inclusive share of `netFood` at 5% is netFood·5/105; reporting it must
-  // never change the amount the customer pays. Packaging and delivery sit
-  // outside the base (unchanged).
-  const netFood = round2(Math.max(0, foodSubtotal - discount - loyaltyDiscount));
-  const gst = round2((netFood * GST_RATE) / (1 + GST_RATE));
-  const gstPaise = Math.round(gst * 100);
-  // Split in paise so CGST + SGST always equals GST exactly.
-  const cgstPaise = Math.round(gstPaise / 2);
-  const sgstPaise = gstPaise - cgstPaise;
-
-  // 6. Grand Total (R2): net food + packaging + delivery, rounded to paise —
-  // no whole-rupee rounding and no tax added on top.
-  const grandTotal = round2(Math.max(0, netFood + packagingFee + deliveryFee));
-  const grandPaise = Math.round(grandTotal * 100);
-
-  // 7. Branch earnings (F3, owner decision 2026-11-01): NO per-order royalty.
-  // The courier fee the customer paid stays with the brand (one Borzo account
-  // pays every courier, D6); everything else is the branch's earnings for this
-  // order, before the fixed monthly fee is applied at capture (F5).
-  const courierFeePaise = Math.round(deliveryFee * 100);
-  const branchTransferPaise = Math.max(0, grandPaise - courierFeePaise);
-
-  return {
-    foodSubtotal,
-    packagingFee,
-    deliveryFee,
-    gst,
-    cgst: cgstPaise / 100,
-    sgst: sgstPaise / 100,
-    discount,
-    loyaltyDiscount,
-    grandTotal,
-    pricingDegraded,
-    split: {
-      courierFeePaise,
-      branchTransferPaise,
-      totalAmountPaise: grandPaise,
-    },
-  };
+  return { ...breakdown, pricingDegraded };
 }
 
 export interface RepriceVerification {

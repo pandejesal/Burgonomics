@@ -78,7 +78,11 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { computePackagingFee, clearBranchPricingCache } from "../src/modules/payments/branchPricing";
+import {
+  computePackagingFee,
+  clearBranchPricingCache,
+  resolvePackagingFeeSnapshot,
+} from "../src/modules/payments/branchPricing";
 import { calculateOrderPricing } from "../src/modules/payments/pricing.engine";
 import { resolveCheckoutFees } from "../src/modules/payments/checkoutFees";
 import { config } from "../src/config/env";
@@ -253,5 +257,77 @@ describe("P2 one documented packaging rule", () => {
         branchId: BRANCH,
       })
     ).toBe(0);
+  });
+});
+
+/**
+ * `resolvePackagingFeeSnapshot` is the PURE half of `computePackagingFee`: the
+ * same documented P2 decision with no logging, no Firestore and no cache.
+ * `computePackagingFee` delegates to it, so these cases pin BOTH to one rule —
+ * a future edit cannot make the transactional seam and the checkout engine
+ * disagree about packaging.
+ */
+describe("P2 packaging decision — pure snapshot parity", () => {
+  const chargeContract = (overrides: Record<string, any> = {}) => ({
+    source: "petpooja",
+    applicableOn: "ORDER",
+    charge: 20,
+    chargeType: "",
+    taxOnPacking: 1,
+    pcTaxIds: "11213,20375",
+    understood: true,
+    ...overrides,
+  });
+
+  const CASES: Array<{ name: string; input: any }> = [
+    { name: "dine-in is always 0", input: { orderType: "dinein", packaging: chargeContract(), branchFee: 12 } },
+    { name: "understood ORDER charge", input: { orderType: "takeaway", packaging: chargeContract(), branchFee: 12 } },
+    { name: "understood ORDER zero charge", input: { orderType: "takeaway", packaging: chargeContract({ charge: 0 }), branchFee: 12 } },
+    { name: "understood NONE disables packing", input: { orderType: "takeaway", packaging: chargeContract({ applicableOn: "NONE", charge: 0 }), branchFee: 12 } },
+    { name: "string charge is coerced, not guessed", input: { orderType: "takeaway", packaging: chargeContract({ charge: "20" }), branchFee: 12 } },
+    { name: "malformed ITEM falls back to the branch fee", input: { orderType: "takeaway", packaging: chargeContract({ applicableOn: "ITEM", understood: false }), branchFee: 12 } },
+    { name: "malformed ITEM with no branch fee falls back to 15", input: { orderType: "takeaway", packaging: chargeContract({ applicableOn: "ITEM", understood: false }) } },
+    { name: "percentage type falls back", input: { orderType: "takeaway", packaging: chargeContract({ applicableOn: "CART", chargeType: "P", understood: false }), branchFee: 12 } },
+    { name: "non-finite charge falls back", input: { orderType: "takeaway", packaging: chargeContract({ charge: NaN }), branchFee: 12 } },
+    { name: "negative charge falls back", input: { orderType: "takeaway", packaging: chargeContract({ charge: -5 }), branchFee: 12 } },
+    { name: "missing metadata uses the branch fee", input: { orderType: "takeaway", packaging: null, branchFee: 12 } },
+    { name: "missing metadata with no branch fee uses 15", input: { orderType: "takeaway", packaging: null } },
+    { name: "non-finite branch fee uses 15", input: { orderType: "takeaway", packaging: null, branchFee: NaN } },
+    { name: "negative branch fee uses 15", input: { orderType: "takeaway", packaging: null, branchFee: -1 } },
+  ];
+
+  it.each(CASES.map((c) => [c.name, c.input] as const))("%s", async (_name, input) => {
+    const pure = resolvePackagingFeeSnapshot(input);
+    const live = await computePackagingFee(input);
+    expect(pure.fee).toBe(live);
+    expect(Number.isFinite(pure.fee)).toBe(true);
+    expect(pure.fee).toBeGreaterThanOrEqual(0);
+  });
+
+  it("flags usedFallback ONLY for an unusable Petpooja contract", () => {
+    expect(resolvePackagingFeeSnapshot({ orderType: "dinein", packaging: chargeContract(), branchFee: 12 }).usedFallback).toBe(false);
+    expect(resolvePackagingFeeSnapshot({ orderType: "takeaway", packaging: chargeContract(), branchFee: 12 }).usedFallback).toBe(false);
+    expect(resolvePackagingFeeSnapshot({ orderType: "takeaway", packaging: chargeContract({ applicableOn: "NONE", charge: 0 }), branchFee: 12 }).usedFallback).toBe(false);
+    expect(resolvePackagingFeeSnapshot({ orderType: "takeaway", packaging: null, branchFee: 12 }).usedFallback).toBe(false);
+    expect(resolvePackagingFeeSnapshot({ orderType: "takeaway", packaging: chargeContract({ applicableOn: "ITEM", understood: false }), branchFee: 12 }).usedFallback).toBe(true);
+    expect(resolvePackagingFeeSnapshot({ orderType: "takeaway", packaging: chargeContract({ charge: NaN }), branchFee: 12 }).usedFallback).toBe(true);
+  });
+
+  it("performs no write and no warning", () => {
+    const before = logs().length;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const decision = resolvePackagingFeeSnapshot({
+        orderType: "takeaway",
+        packaging: chargeContract({ applicableOn: "ITEM", understood: false }),
+        branchFee: 12,
+        branchId: BRANCH,
+      });
+      expect(decision).toEqual({ fee: 12, usedFallback: true });
+      expect(logs()).toHaveLength(before);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

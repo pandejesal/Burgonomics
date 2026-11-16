@@ -215,21 +215,44 @@ async function warnUnusablePackaging(input: ComputePackagingFeeInput): Promise<v
   }
 }
 
+export interface PackagingFeeDecision {
+  /** The fee to charge. Always finite and >= 0. */
+  fee: number;
+  /**
+   * True ONLY when a Petpooja contract was present but not understood, so a
+   * fallback fee was used. `computePackagingFee` warns on it; a transactional
+   * caller records it after commit instead.
+   */
+  usedFallback: boolean;
+}
+
+/** Branch fee when usable, else the documented default (D8). */
+function fallbackPackagingFee(branchFee: number | undefined): number {
+  const fee = Number(branchFee);
+  if (Number.isFinite(fee) && fee >= 0) return fee;
+  return DEFAULT_PACKAGING_FEE;
+}
+
 /**
- * P2 (corrected 2026-11-01): ONE documented rule.
+ * P2 (corrected 2026-11-01): ONE documented rule, as a PURE decision.
  *
  *   dine-in                      → 0
  *   applicableOn "ORDER" with a blank chargeType and a finite charge → charge
  *                                   (a 0 charge is honoured, never defaulted)
+ *   applicableOn "NONE" with a blank chargeType and a 0 charge → 0
  *   anything else (ITEM, F, FIXED, percentages, unknown values, no consistent
  *   charge)                      → understood:false: branch fee, then the ₹15
- *                                   default, plus a warning. Never a guess.
+ *                                   default, plus usedFallback:true. Never a guess.
  *   no Petpooja data at all      → branch fee, then the default (D8)
+ *
+ * No logging, no Firestore, no cache: this is the half a Firestore transaction
+ * can call. `computePackagingFee` delegates here and warns when usedFallback,
+ * so the checkout engine and the transactional seam share one rule.
  */
-export async function computePackagingFee(
+export function resolvePackagingFeeSnapshot(
   input: ComputePackagingFeeInput
-): Promise<number> {
-  if (input.orderType === "dinein") return 0;
+): PackagingFeeDecision {
+  if (input.orderType === "dinein") return { fee: 0, usedFallback: false };
 
   const packaging = input.packaging;
   if (packaging) {
@@ -238,16 +261,28 @@ export async function computePackagingFee(
     const charge = Number(packaging.charge);
     const chargeOk = Number.isFinite(charge) && charge >= 0;
 
-    if (packaging.understood === true && applicableOn === "NONE" && chargeType === "" && packaging.charge === 0) return 0;
-
-    if (packaging.understood === true && applicableOn === "ORDER" && chargeType === "" && chargeOk) {
-      return Math.round(charge * 100) / 100;
+    if (packaging.understood === true && applicableOn === "NONE" && chargeType === "" && packaging.charge === 0) {
+      return { fee: 0, usedFallback: false };
     }
 
-    await warnUnusablePackaging(input);
+    if (packaging.understood === true && applicableOn === "ORDER" && chargeType === "" && chargeOk) {
+      return { fee: Math.round(charge * 100) / 100, usedFallback: false };
+    }
+
+    return { fee: fallbackPackagingFee(input.branchFee), usedFallback: true };
   }
 
-  const branchFee = Number(input.branchFee);
-  if (Number.isFinite(branchFee) && branchFee >= 0) return branchFee;
-  return DEFAULT_PACKAGING_FEE;
+  return { fee: fallbackPackagingFee(input.branchFee), usedFallback: false };
+}
+
+/**
+ * Live wrapper: same decision, plus the non-blocking misconfiguration warning
+ * (raw values on `petpooja_sync_logs` + a medium snapshot) and its dedupe.
+ */
+export async function computePackagingFee(
+  input: ComputePackagingFeeInput
+): Promise<number> {
+  const decision = resolvePackagingFeeSnapshot(input);
+  if (decision.usedFallback) await warnUnusablePackaging(input);
+  return decision.fee;
 }
