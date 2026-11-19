@@ -117,3 +117,44 @@ Owner decided: menu prices are GST-inclusive, and the delivery fee comes from Bo
 - Lines with unverified POS ids are parked, never sent with invented ids. Petpooja has rejected addon, variation, and group ids until they match the pushed menu.
 - Borzo returns a fee plus a phone warning at quote time. The adapter accepts that warning for quotes only. Booking needs a real store phone, and 9 of 17 stores, including DEMO, do not have one.
 - Windows Storage Sense on the dev machine deletes from Temp under low disk. Do not work from Temp.
+
+### Update, audit remediation deployed to staging, 19 November 2026
+
+Seven audit findings were fixed, validated and deployed to staging `burgonomics-7faa8`
+(production untouched). Each entry replaces the behaviour described above where it
+overlaps.
+
+- **F06 staff suspension (live)**: `users/{uid}.active` is now an authorization input.
+  A missing field means not-active, so staff without the field lose staff access. Rules
+  (`staffActive()` as the last conjunct of both `hasRole` arms, plus the Storage
+  `privilegedAndActive()` gate), the server `requireRole` gate and `POST /auth/suspendStaff`
+  all enforce it; `active`/`suspendedAt`/`suspendedBy` are no longer client-writable.
+  Staging was provisioned before enforcement: 4 staff profiles missing `active` were set
+  `true` by the deploy driver, which writes only where the field is absent. The `admins`
+  registry UIDs with a non-staff claim role (`0ziP…`, `4Kfv…`, `kY2B…`, `tmgV…`) stay
+  unprovisioned by design — they were recorded as skips, not errors. Any future staff
+  profile created outside `staffInvite` must set `active: true` explicitly.
+- **F24 customer cancellation (live)**: cancellation is server-owned via
+  `POST /orders/customerCancel`, allowed only up to `PREPARING` and only before a rider is
+  assigned; direct client cancellation is denied by rules in every mirror.
+- **F08 uncertain dispatch create (live)**: a book whose outcome is uncertain parks as
+  `PROVIDER_BOOK_AMBIGUOUS` instead of failing over, so one order can no longer produce two
+  paid courier bookings. Only proven pre-send codes (`ENOTFOUND`/`EAI_AGAIN`/`ECONNREFUSED`)
+  and 4xx rejections fail over.
+- **F17 private-key resend (live)**: a brand owner re-sending an unchanged legacy private
+  key into the world-readable `admin_stores` document is now denied; the shape test requires
+  the private key set to be affected before it can pass.
+- **F23 refund-gateway 409 (live)**: a gateway HTTP 409 on refunds is treated as
+  reconciliation-required uncertainty, not a rejection.
+- **F04 kitchen admission (live)**: kitchen admission requires the server capture marker,
+  not merely `method === 'online'`.
+- **F10 dependency-setup test**: the diagnostic run is 19/19 inside the unchanged 5000 ms
+  timeout (case 9 at 46 ms vs 2,419 ms); no timeout was raised.
+- **App Check remains OFF** (`APP_CHECK_ENFORCEMENT=false`): the new routes follow that;
+  `POST /orders/customerCancel` is deliberately outside the App Check allowlist. Route
+  enrolment is a follow-up before enforcement is switched on.
+- **Rollback**: pre-deploy state is recorded in
+  `staging-deploy-r3/execute-r3-P0-20261118T233304305Z/ROLLBACK.json` (rulesets
+  `5e09da7e…` Firestore / `b3e55f69…` Storage, hosting `8cefd8b74d254b40` Customer /
+  `5025176a15ba88f1` Partner, 18 functions). Redeploy the previous source and re-release
+  those version names; no data restore is needed.

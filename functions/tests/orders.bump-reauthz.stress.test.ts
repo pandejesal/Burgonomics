@@ -105,7 +105,16 @@ describe("bumpOrderStatus transactional re-authorization (stress sweep)", () => 
 
   beforeEach(() => {
     control.reset();
-    savedDocs["orders/ord_1"] = { branchId: "b1", status: { code: "PLACED", terminal: false } };
+    savedDocs["orders/ord_1"] = {
+      branchId: "b1",
+      status: { code: "PLACED", terminal: false },
+      // F04: this sweep re-authorizes the TRANSACTIONAL snapshot; the payment
+      // lane is incidental here, so the seed states the admissible counter
+      // cash/COD lane explicitly. It never fabricates `paymentChannel`.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
+    };
   });
 
   it("re-authorizes against the TRANSACTIONAL snapshot, not the stale pre-read", async () => {

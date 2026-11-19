@@ -172,6 +172,49 @@ export function assertOnlineOrderPaid(order: any): void {
 }
 
 /**
+ * F04 — the KITCHEN admission question, which is NOT the same question as
+ * `isOnlineCustomerOrder`.
+ *
+ * An ordinary customer order is created before Razorpay opens and may carry
+ * `payment.method: "upi" | "card" | "wallet" | "netbanking"`, or no method at
+ * all. None of those say "online", so the old kitchen gate (which only compared
+ * against "online") admitted orders whose money never arrived.
+ *
+ * Rule: anything that is NOT the walk-in counter stream needs the EXISTING
+ * server-owned `paymentChannel: "razorpay"` marker. Explicit cash/COD is the
+ * only exemption. A missing, empty, non-string or unknown method is NOT proof
+ * of cash — it fails closed.
+ */
+const CASH_METHODS = new Set(["cod", "cash"]);
+
+export function requiresServerCaptureForKitchen(order: any): boolean {
+  // The walk-in counter stream is tendered at the counter and has its own gate
+  // (orderStatus.ts refuses pending walk-in UPI); it is never gated here.
+  if (order?.customerId === "cust_walkin") return false;
+  const method = order?.payment?.method ?? order?.paymentMethod ?? order?.orderPaymentMethod;
+  if (typeof method === "string" && CASH_METHODS.has(method.trim().toLowerCase())) return false;
+  return true;
+}
+
+/**
+ * F04 kitchen admission: refuse any forward kitchen move without the server
+ * capture marker. Deliberately separate from `assertOnlineOrderPaid`, whose
+ * narrower "online" semantics stay binding for dispatch booking and Porter.
+ *
+ * Client-writable `payment.status` / `paymentStatus` / `capturedAmountPaise`
+ * are NOT proof: only the server-written `paymentChannel` marker is.
+ */
+export function assertKitchenAdmissionPaid(order: any): void {
+  if (!requiresServerCaptureForKitchen(order)) return;
+  if (hasServerPaymentChannel(order)) return;
+  throw serviceError(
+    "ORDER_NOT_PAID",
+    "This order has no server-confirmed payment, so the kitchen cannot start it. The customer must complete payment first.",
+    409
+  );
+}
+
+/**
  * True only for the abandoned state the expiry worker may cancel: an online
  * customer order still PLACED with a pending payment, no capture marker, no
  * recorded capture and no paid status. Re-evaluated INSIDE the cancel

@@ -355,4 +355,51 @@ describe("Auth Module — Claims Manager & Privilege Escalation Prevention", () 
       expect(customClaimsRecord["usr_rm_03"].cityIds).toEqual([]);
     });
   });
+
+  // F06 — `active` is the SERVER-OWNED suspension state. A role grant,
+  // re-invite or revocation must never resurrect a suspended operator; only
+  // POST /auth/suspendStaff may flip it. This is a retained guard: it pins the
+  // absence of an `active` write in the claims setter, so a future edit that
+  // "helpfully" re-activates on assignment turns this red.
+  describe("7. F06 — role assignment never reactivates an account", () => {
+    const caller = { uid: "brand_1", role: "brand_owner", isBrandAdmin: true } as any;
+
+    it("assigning a role keeps an existing suspended profile suspended", async () => {
+      savedDocs["users/usr_suspended_01"] = {
+        role: "customer",
+        active: false,
+        suspendedAt: "2026-11-17T00:00:00Z",
+        suspendedBy: "brand_1",
+      };
+      const result = await setUserCustomClaims(
+        {
+          targetUid: "usr_suspended_01",
+          role: "branch_staff",
+          branchIds: ["b1"],
+          cityIds: [],
+        },
+        caller
+      );
+      expect(result.success).toBe(true);
+      expect(savedDocs["users/usr_suspended_01"].role).toBe("branch_staff");
+      // The suspension survives the role change untouched.
+      expect(savedDocs["users/usr_suspended_01"].active).toBe(false);
+      expect(savedDocs["users/usr_suspended_01"].suspendedBy).toBe("brand_1");
+    });
+
+    it("the profile write never names `active` (server-owned field)", async () => {
+      await setUserCustomClaims(
+        { targetUid: "usr_active_01", role: "support", branchIds: [], cityIds: [] },
+        caller
+      );
+      expect(savedDocs["users/usr_active_01"]).not.toHaveProperty("active");
+    });
+
+    it("revoking a role never writes `active` either", async () => {
+      savedDocs["users/usr_suspended_02"] = { role: "branch_staff", active: false };
+      await revokeUserRole(caller, "usr_suspended_02");
+      expect(savedDocs["users/usr_suspended_02"].role).toBe("customer");
+      expect(savedDocs["users/usr_suspended_02"].active).toBe(false);
+    });
+  });
 });

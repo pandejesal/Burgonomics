@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 import https from "https";
 import { EventEmitter } from "events";
 
@@ -78,6 +78,14 @@ describe("Backend F10: Stable refund request identity & lifecycle", () => {
   let prevMock: boolean;
   let prevKeyId: string;
   let prevKeySecret: string;
+
+  // Dependency initialisation only: load the real Razorpay CJS package once
+  // through Node's own require cache in setup, so the first live refund case
+  // measures refund identity rather than package parse cost. This asserts no
+  // refund behaviour and constructs no client.
+  beforeAll(() => {
+    require("razorpay");
+  });
 
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];

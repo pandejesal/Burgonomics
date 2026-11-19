@@ -104,6 +104,10 @@ let server: Server;
 let baseUrl: string;
 
 function seed(overrides: Record<string, unknown> = {}) {
+  // F06: requireRole fail-closes on `users/{uid}.active`; the staff token below
+  // drives /orders/verifyDeliveryOtp, so its profile must be ACTIVE.
+  h.write("users/staff_a", { role: "branch_staff", active: true });
+  h.write("users/brand_a", { role: "brand_owner", active: true });
   const minted = mintDeliveryOtp({ orderType: "delivery" }, ORDER_ID)!;
   h.write(`orders/${ORDER_ID}`, {
     id: "untrusted_copied_id", customerId: owner.uid, userId: owner.uid, branchId: "branch_a", orderType: "delivery",

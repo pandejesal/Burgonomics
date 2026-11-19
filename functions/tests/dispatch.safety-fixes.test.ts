@@ -381,10 +381,16 @@ describe("F1 — Porter uncertain acceptance never books a second carrier", () =
     expect(isProviderDispatchError(adapterErr)).toBe(false);
   });
 
-  it("CONTROL: a genuine Porter 5xx still walks to the next provider", async () => {
+  it("CONTROL: a DEFINITE Porter rejection (4xx) still walks to the next provider", async () => {
+    // F08: a 5xx is UNCERTAINTY (the order may already exist at Porter) and
+    // parks for reconciliation — see the ambiguity test below. A 4xx the
+    // provider actually returned is a definite rejection and DR6 failover must
+    // keep working for it. `httpStatus` is what porter.service now attaches.
     useKeyedPorter();
     borzoWire("BZ-REAL-BOOK");
-    vi.mocked(bookPorterRider).mockRejectedValue(new Error("Porter order dispatch rejected (HTTP 503)"));
+    const rejected: any = new Error("Porter order dispatch rejected (HTTP 422)");
+    rejected.httpStatus = 422;
+    vi.mocked(bookPorterRider).mockRejectedValue(rejected);
     seedOrder("ord_f1_control");
 
     const res = await dispatchBook({ orderId: "ord_f1_control", preferredProvider: "porter" });
@@ -392,6 +398,25 @@ describe("F1 — Porter uncertain acceptance never books a second carrier", () =
     expect(res.providerOrderId).toBe("BZ-REAL-BOOK");
     expect(res.failover).toMatchObject({ from: "porter", to: "borzo" });
     expect(docOf("ord_f1_control").dispatchStatus).toBe("dispatched");
+  });
+
+  it("CONTROL: a genuine Porter 5xx PARKS instead of booking a second carrier (F08)", async () => {
+    useKeyedPorter();
+    borzoWire("BZ-SHOULD-NOT-BOOK");
+    const upstream: any = new Error("Porter order dispatch rejected (HTTP 503)");
+    upstream.httpStatus = 503;
+    vi.mocked(bookPorterRider).mockRejectedValue(upstream);
+    seedOrder("ord_f08_porter_5xx");
+
+    await expect(
+      dispatchBook({ orderId: "ord_f08_porter_5xx", preferredProvider: "porter" })
+    ).rejects.toMatchObject({ statusCode: 502, code: "PROVIDER_BOOK_AMBIGUOUS" });
+
+    expect(createOrderCalls()).toBe(0);
+    const doc = docOf("ord_f08_porter_5xx");
+    expect(doc.dispatchStatus).toBe("needs_reconciliation");
+    expect(doc.needsRebook).toBe(false);
+    expect(doc.dispatchPendingCorrelation).toMatchObject({ provider: "porter" });
   });
 });
 

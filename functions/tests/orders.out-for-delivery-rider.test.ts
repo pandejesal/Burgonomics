@@ -104,6 +104,13 @@ describe("P1-G: OUT_FOR_DELIVERY needs a real rider on a delivery order", () => 
       orderType: "delivery",
       fulfillment: "delivery",
       status: { code: "READY_FOR_PICKUP", label: "Ready for pickup", kind: "in_progress", terminal: false },
+      // F04: P1-G asserts the COURIER-admission rule on an already-cooking
+      // delivery order, so the payment lane must be explicit. COD (collected at
+      // the door) is the admissible non-gateway lane; the server-only
+      // `paymentChannel: "razorpay"` capture marker is never fabricated.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
       ...extra,
     };
   }
@@ -181,6 +188,10 @@ describe("P1-G: OUT_FOR_DELIVERY needs a real rider on a delivery order", () => 
       branchId: "b1",
       orderType: "takeaway",
       status: { code: "READY_FOR_PICKUP", terminal: false },
+      // F04: no-courier fixture, explicit counter cash lane.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
     };
     const away: any = await bumpOrderStatus({
       orderId: "ord_p1g_away",
@@ -193,6 +204,10 @@ describe("P1-G: OUT_FOR_DELIVERY needs a real rider on a delivery order", () => 
       branchId: "b1",
       orderType: "dinein",
       status: { code: "READY_TO_SERVE", terminal: false },
+      // F04: no-courier fixture, explicit counter cash lane.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
     };
     const dine: any = await bumpOrderStatus({
       orderId: "ord_p1g_dine",

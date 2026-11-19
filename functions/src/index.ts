@@ -87,6 +87,7 @@ import {
   retryPendingShadowfaxReadySignals,
 } from "./modules/dispatch/shadowfax.reconcile";
 import { bumpOrderStatus } from "./modules/orders/orderStatus";
+import { cancelOrderAsCustomer } from "./modules/orders/customerCancel";
 import { createWalkInSchema } from "./modules/orders/createWalkIn";
 import { handleCreateWalkIn } from "./modules/orders/createWalkInRoute";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
@@ -132,6 +133,8 @@ import {
   setUserCustomClaims,
   assignUserRole,
   revokeUserRole,
+  setStaffActive,
+  staffSuspensionSchema,
   migrateGuestAccount,
   verifyBonusEligibility,
   cleanupExpiredGuestSessionsWorker,
@@ -166,6 +169,7 @@ import {
   deliveryOtpSchema,
   manualDispatchSchema,
   orderBumpSchema,
+  customerCancelSchema,
   adjustCoinsSchema,
   createTicketSchema,
   ticketMessageSchema,
@@ -321,6 +325,21 @@ const REGION = "asia-south1";
 // App Check attestation on app-originated routes only (monitor by default,
 // enforced with APP_CHECK_ENFORCEMENT=true). Webhooks and /health are
 // third-party/public and intentionally excluded.
+//
+// A path may only be enrolled here if EVERY client that calls it actually
+// sends `X-Firebase-AppCheck`; otherwise enforcement returns 403 before auth
+// and breaks the flow. The customer routes in this list (`/checkout/fees`,
+// `/orders/deliveryOtp`) attach the token through
+// `buildCheckoutFeesHeaders()` in the customer app.
+//
+// DELIBERATELY NOT ENROLLED: `/orders/customerCancel` (F24). Its only client
+// (`ordersService.cancelOrder`) posts through `httpClient` with the bearer
+// token from `authSetup` and no attestation header, so enrolling it now would
+// fail every cancellation the day enforcement is switched on. Enrol it in the
+// same commit that starts sending the App Check header from `cancelOrder`
+// (import `buildCheckoutFeesHeaders` from the checkout delivery-quote service),
+// and add the matching header assertion to
+// customer-privacy/tests/order-cancel-server-first.test.ts.
 app.use(
   [
     "/payments/createPaymentOrder",
@@ -349,6 +368,9 @@ app.use(
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
+    // Read-only owner endpoint; its client (`retrieveDeliveryCode`) already
+    // sends X-Firebase-AppCheck via buildCheckoutFeesHeaders().
+    "/orders/deliveryOtp",
     "/tickets/create",
     "/tickets/message",
     "/tickets/resolve",
@@ -364,6 +386,8 @@ app.use(
     "/auth/setClaims",
     "/auth/assignRole",
     "/auth/revokeRole",
+    // F06: server-owned staff suspension ("Suspend" is no longer a client write).
+    "/auth/suspendStaff",
     "/auth/migrateGuest",
     "/auth/verifyBonusEligibility",
     "/auth/deleteAccount",
@@ -1172,6 +1196,35 @@ app.post(
   }
 );
 
+// F24: the customer-owned cancellation path.
+//
+// `requireAuth` ONLY. This is deliberately NOT `requireRole(...)`: adding a
+// customer role to the staff list would expose the staff status API
+// (`/orders/bumpStatus`) — branch scope, staff audit trail, DELIVERY_OTP gate —
+// to customers. Ownership and the cancellable window are proved inside
+// `cancelOrderAsCustomer`'s transaction instead.
+app.post(
+  "/orders/customerCancel",
+  requireAuth,
+  validateBody(customerCancelSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await cancelOrderAsCustomer({
+        orderId: req.body.orderId,
+        // The verified token identity — never the body.
+        uid: req.user!.uid,
+        reason: req.body.reason,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      // Same scoped mapping as the staff bump: documented 400/403/404/409
+      // refusals keep their status and machine-readable code.
+      const { status, body } = bumpStatusErrorResponse(err);
+      res.status(status).json(body);
+    }
+  }
+);
+
 app.post("/porter/webhook", async (req, res) => {
   try {
     const signature = req.headers["x-porter-signature"] as string;
@@ -1783,6 +1836,31 @@ app.post(
     } catch (err: any) {
       const status = err.message?.includes("Permission denied") ? 403 : 400;
       res.status(status).json({ error: err.message || "Failed to revoke user role" });
+    }
+  }
+);
+
+// F06: the authoritative, audited staff suspension control.
+// Brand-only, exactly like /auth/assignRole and /auth/revokeRole; the service
+// re-asserts the caller AND its activation inside the write transaction.
+app.post(
+  "/auth/suspendStaff",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  validateBody(staffSuspensionSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await setStaffActive(req.body, req.user);
+      res.status(200).json(result);
+    } catch (err: any) {
+      // Typed refusals keep their status + code; anything else stays a
+      // fail-closed 500 without leaking internals.
+      const typed =
+        typeof err?.statusCode === "number" && err.statusCode >= 400 && err.statusCode < 500;
+      res.status(typed ? err.statusCode : 500).json({
+        error: err?.message || "Failed to change staff access",
+        ...(typeof err?.code === "string" ? { code: err.code } : {}),
+      });
     }
   }
 );

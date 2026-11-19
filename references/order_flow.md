@@ -63,6 +63,30 @@ not customer-facing state codes.
   - A Petpooja cancel/86ing after payment writes a `PENDING` refund request (`refunds/refund_pos_cancel_<orderId>`) plus `payment.refundStatus: PENDING_APPROVAL` for staff approval — per the recorded 2026-09-23 decision there is no human-less refund.
   - The inbound cancel webhook never calls `autoRefund`; ticket/staff refunds use the authorised refund service (captured-state, cumulative and idempotency guards apply).
 
+### 3.1 Customer cancellation (F24) — owner window, server-owned (deployed 2026-11-19)
+
+The customer can cancel only through the server route `POST /orders/customerCancel`
+(`requireAuth` only, deliberately NOT in the App Check allowlist so the customer flow
+needs no App Check token).
+
+- **Window**: cancellable only while the order is non-terminal and its status rank is
+  ≤ `PREPARING`, **and** no rider is assigned. `CUSTOMER_CANCEL_MAX_RANK = 2` over
+  `STATUS_RANK` (PLACED/ORDER_PLACED/PENDING 0, CONFIRMED/ACCEPTED 1, PREPARING 2,
+  READY/READY_FOR_PICKUP 3, PICKED_UP 4, OUT_FOR_DELIVERY 5; an unranked status refuses).
+  Once a rider is assigned, or the order is ready/picked-up/out-for-delivery, the route
+  answers 409. The rider guard is `riderName`/`riderPhone` present OR `deliveryStatus in
+  (dispatched, driver_allocated, rider_assigned, in_transit)`.
+- **Server-first**: the customer client calls the server FIRST and releases local state
+  only after confirmation (UID guards kept). Rules deny direct client cancellation in
+  every mirror — the customer order-write arm accepts only `whatsappOptIn`+`updatedAt`.
+  A client that still mocks only `firebase/firestore` therefore fails: cancel is no
+  longer a local write.
+- **Atomicity**: ownership and state are rechecked on the fresh order inside the same
+  transaction; retries are idempotent (coin restore is a no-op at launch) and a
+  rider-bearing booking records durable provider-cancel intent through the shared
+  `applyCancelSideEffects` helper (writes `dispatchPendingCancel` before the wire call,
+  excludes delivered bookings).
+
 ---
 
 ## 4. 📦 Delivery Handover & Customer OTP (Approved Contract, 3 Nov 2026)

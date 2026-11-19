@@ -26,11 +26,17 @@ describe("SEC-04 orders update: branch staff cannot write status directly", () =
     );
   });
 
-  it("keeps the customer cancellation arm (explicit CANCELLED status) intact", () => {
-    const start = source.indexOf("// Customers may cancel their own pre-terminal orders");
-    expect(start).toBeGreaterThan(-1);
-    const arm = source.slice(start, start + 800);
-    expect(arm).toContain("hasOnly(['status', 'completedAt', 'updatedAt'])");
-    expect(arm).toContain("request.resource.data.status.code == 'CANCELLED'");
+  it("DENIES the direct customer cancellation arm (F24: the server path owns cancel side effects)", () => {
+    // F24: a client `{status: CANCELLED}` write skipped the server-owned
+    // obligations (durable rider-cancel intent + idempotent Grill-Coins
+    // restore). The arm is gone; POST /orders/customerCancel owns it.
+    expect(source).not.toContain("// Customers may cancel their own pre-terminal orders");
+    const ordersBlock = source.slice(
+      source.indexOf("match /orders/{orderId}"),
+      source.indexOf("match /branches/{branchId}")
+    );
+    expect(ordersBlock).not.toContain("request.resource.data.status.code == 'CANCELLED'");
+    // The customer whatsapp opt-in arm must SURVIVE the removal.
+    expect(ordersBlock).toContain("hasOnly(['whatsappOptIn', 'updatedAt'])");
   });
 });

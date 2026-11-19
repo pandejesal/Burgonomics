@@ -13,15 +13,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * elsewhere cannot masquerade as a pass.
  *
  * Only the datastore boundary is stubbed. The admins/{uid} fallback is the
- * single Firestore read requireRole performs, and it is stubbed per test so the
+ * Firestore read the ROLE decision performs, and it is stubbed per test so the
  * stale-claim path is exercised rather than mocked away.
+ *
+ * F06 adds a SECOND read: `users/{uid}.active` is the server-owned suspension
+ * state, and a caller whose role test passes is only admitted when that profile
+ * exists AND is active (fail closed). The activation read is lazy — it runs
+ * exactly once, and only on a path that would otherwise have been admitted — so
+ * a denied role test still costs no extra read, and no customer route is
+ * affected. Each test pins the exact read sequence it caused.
  */
 
 const h = vi.hoisted(() => {
   const state = {
     // What admins/{uid}.get() returns; null means "document does not exist".
     adminDoc: null as { exists: boolean; role?: string } | null,
+    // What users/{uid}.get() returns (F06 activation profile); null = missing.
+    userDoc: null as { exists: boolean; active?: boolean } | null,
     throwOnRead: false,
+    throwOnUserRead: false,
     reads: [] as string[],
   };
 
@@ -30,6 +40,15 @@ const h = vi.hoisted(() => {
       doc: (docId: string) => ({
         get: async () => {
           state.reads.push(`${collectionName}/${docId}`);
+          if (collectionName === "users") {
+            if (state.throwOnUserRead) throw new Error("firestore unavailable");
+            const profile = state.userDoc;
+            return {
+              exists: Boolean(profile?.exists),
+              id: docId,
+              data: () => (profile?.exists ? { active: profile.active } : undefined),
+            };
+          }
           if (state.throwOnRead) throw new Error("firestore unavailable");
           const doc = state.adminDoc;
           return {
@@ -92,7 +111,12 @@ function expectAdmitted(res: any, next: any) {
 describe("requireRole — real middleware, role-mutation guard", () => {
   beforeEach(() => {
     h.state.adminDoc = null;
+    // F06 default: the staff profile exists and is ACTIVE, so the pre-existing
+    // positive controls keep their meaning. Tests that care about the gate set
+    // it explicitly.
+    h.state.userDoc = { exists: true, active: true };
     h.state.throwOnRead = false;
+    h.state.throwOnUserRead = false;
     h.state.reads = [];
   });
 
@@ -140,8 +164,9 @@ describe("requireRole — real middleware, role-mutation guard", () => {
     );
 
     expectAdmitted(res, next);
-    // Allowed by the claim: the fallback read is unnecessary.
-    expect(h.state.reads).toEqual([]);
+    // Allowed by the claim: the admins fallback read is unnecessary. F06 adds
+    // exactly the one activation read — and it now proves the gate ran.
+    expect(h.state.reads).toEqual(["users/staff_1"]);
   });
 
   it("admits branch_owner when it is an allowed role (positive control)", async () => {
@@ -154,8 +179,8 @@ describe("requireRole — real middleware, role-mutation guard", () => {
     );
 
     expectAdmitted(res, next);
-    // Allowed by the claim: no admins fallback read.
-    expect(h.state.reads).toEqual([]);
+    // Allowed by the claim: no admins fallback read; only the F06 activation read.
+    expect(h.state.reads).toEqual(["users/owner_1"]);
   });
 
   it("403s branch_owner when the allowed list omits it and no admins doc grants it", async () => {
@@ -203,8 +228,9 @@ describe("requireRole — real middleware, role-mutation guard", () => {
     const { res, next } = await invoke({ uid: "stale_1" }, ["branch_staff"]);
 
     expectAdmitted(res, next);
-    // Proves the positive result came from the admins fallback.
-    expect(h.state.reads).toEqual(["admins/stale_1"]);
+    // Proves the positive result came from the admins fallback, then the F06
+    // activation read (one profile read, on an otherwise-admitted path).
+    expect(h.state.reads).toEqual(["admins/stale_1", "users/stale_1"]);
   });
 
   it("403s when the admins doc role is not allowed", async () => {
@@ -225,5 +251,88 @@ describe("requireRole — real middleware, role-mutation guard", () => {
     expectDenied(res, next, 403);
     expect(res.body.error).toMatch(/Insufficient privileges/);
     expect(h.state.reads).toEqual(["admins/stale_3"]);
+  });
+
+  // -------------------------------------------------------------------------
+  // F06 — suspension is an authorization input, not a roster label.
+  //
+  // Before this gate: `requireRole` admitted on the token claim ALONE (zero
+  // reads), and the admins fallback ignored `users/{uid}.active` entirely. A
+  // suspended operator therefore kept every role-gated route for the life of
+  // their ID token. These cases pin the fail-closed profile gate.
+  // -------------------------------------------------------------------------
+  describe("F06 — account activation gate", () => {
+    it("403s a SUSPENDED staff claim even though the role is allowed", async () => {
+      h.state.userDoc = { exists: true, active: false };
+      const { res, next } = await invoke({ uid: "staff_1", role: "branch_staff" }, ["branch_staff"]);
+
+      expectDenied(res, next, 403);
+      expect(res.body.error).toMatch(/suspended/i);
+      expect(res.body.code).toBe("ACCOUNT_SUSPENDED");
+      // Exactly one activation read; no admins fallback was needed.
+      expect(h.state.reads).toEqual(["users/staff_1"]);
+    });
+
+    it("403s a staff claim whose profile document is MISSING (fail closed)", async () => {
+      h.state.userDoc = null;
+      const { res, next } = await invoke({ uid: "staff_1", role: "branch_staff" }, ["branch_staff"]);
+
+      expectDenied(res, next, 403);
+      expect(res.body.code).toBe("ACCOUNT_SUSPENDED");
+    });
+
+    it("403s a staff claim whose profile carries no active flag (legacy provisioning)", async () => {
+      h.state.userDoc = { exists: true };
+      const { res, next } = await invoke({ uid: "staff_1", role: "branch_staff" }, ["branch_staff"]);
+
+      expectDenied(res, next, 403);
+      expect(res.body.code).toBe("ACCOUNT_SUSPENDED");
+    });
+
+    it("403s a staff claim when the profile read throws (fail closed)", async () => {
+      h.state.throwOnUserRead = true;
+      const { res, next } = await invoke({ uid: "staff_1", role: "branch_staff" }, ["branch_staff"]);
+
+      expectDenied(res, next, 403);
+      expect(res.body.code).toBe("ACCOUNT_SUSPENDED");
+    });
+
+    it("admits an ACTIVE staff claim and performs exactly one extra read", async () => {
+      h.state.userDoc = { exists: true, active: true };
+      const { res, next } = await invoke({ uid: "staff_1", role: "branch_staff" }, ["branch_staff"]);
+
+      expectAdmitted(res, next);
+      expect(h.state.reads).toEqual(["users/staff_1"]);
+    });
+
+    it("brand bypass also requires an active profile", async () => {
+      h.state.userDoc = { exists: true, active: false };
+      const { res, next } = await invoke(
+        { uid: "brand_1", role: "brand_owner", isBrandAdmin: true },
+        ["branch_staff"]
+      );
+
+      expectDenied(res, next, 403);
+      expect(res.body.code).toBe("ACCOUNT_SUSPENDED");
+      expect(h.state.reads).toEqual(["users/brand_1"]);
+    });
+
+    it("the admins-doc fallback cannot override suspension", async () => {
+      h.state.adminDoc = { exists: true, role: "branch_staff" };
+      h.state.userDoc = { exists: true, active: false };
+      const { res, next } = await invoke({ uid: "norole_1" }, ["branch_staff"]);
+
+      expectDenied(res, next, 403);
+      expect(res.body.code).toBe("ACCOUNT_SUSPENDED");
+    });
+
+    it("a denied role test performs NO activation read (no extra cost on refusals)", async () => {
+      const { res, next } = await invoke({ uid: "cust_1", role: "customer" }, ["branch_staff"]);
+
+      expectDenied(res, next, 403);
+      // Only the admins fallback ran; the gate is reached only when a role arm
+      // would otherwise have admitted.
+      expect(h.state.reads).toEqual(["admins/cust_1"]);
+    });
   });
 });

@@ -248,7 +248,9 @@ function postRefundWithIdempotency(
  * Did this refund failure PROVE that no money moved?
  *
  * Only two outcomes do:
- *  - a definite gateway 4xx (the gateway answered and refused the request), and
+ *  - a definite gateway 4xx (the gateway answered and refused the request),
+ *    EXCEPT HTTP 409 — see the in-function note; it is an unresolved in-flight/
+ *    already-processed conflict, never a refusal, and
  *  - an error that provably never left this process (DNS/connect failures and
  *    a refused connection happen before the request is written).
  *
@@ -263,6 +265,18 @@ export function classifyRefundFailure(err: any): {
   reason: string;
 } {
   const status = Number(err?.statusCode ?? err?.status ?? err?.response?.status);
+  // (F23) HTTP 409 is NOT a rejection. Razorpay's idempotent-refund contract
+  // (docs/api/refunds/normal-refunds-idempotent, lines 20-23 and 254-257) answers
+  // 409 while a refund made with the same idempotency key is STILL IN PROGRESS,
+  // and requires retrying with the ORIGINAL key and body; lines 246-249 answer
+  // 409 for "different params, already processed". Both mean an uncertain,
+  // unresolved outcome on this payout lane — the gateway may already hold the
+  // refund — so the outstanding claim and original key must be KEPT. Releasing
+  // it was the F23 defect: a second operator with a NEW request id could then
+  // POST another partial refund inside the same capture.
+  if (Number.isFinite(status) && status === 409) {
+    return { claimReleased: false, reason: "gateway_conflict_unresolved_409" };
+  }
   if (Number.isFinite(status) && status >= 400 && status < 500) {
     // A 4xx with a retryable-signal body (rate limit / lock) is still a
     // rejection: the gateway did not create a refund. 408/429 included.

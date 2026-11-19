@@ -1,16 +1,17 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
-import { serviceError, captureErrorSnapshot } from "../../core/errors";
+import { serviceError } from "../../core/errors";
 import {
   assertOrderBranchAccess,
   isBrandAdminClaim,
   type StaffCaller,
 } from "../../core/middleware";
 import {
-  assertOnlineOrderPaid,
+  assertKitchenAdmissionPaid,
   isAbandonedUnpaidOnlineOrder,
   isUnsafeToExpire,
 } from "./paymentGate";
+import { applyCancelSideEffects } from "./cancelSideEffects";
 
 /**
  * Server-side KDS order-status bump. Mirrors the partner
@@ -291,16 +292,19 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
         409,
       );
     }
-    // CUS-16: an online order becomes kitchen-eligible only once a server
+    // CUS-16 / F04: an order becomes kitchen-eligible only once a server
     // capture wrote `paymentChannel: "razorpay"`. PLACED (a no-op re-bump) and
-    // cancelled are always allowed; cash/COD remains kitchen-eligible. Pending
-    // walk-in UPI is an exception because it has no verified settlement.
+    // cancelled are always allowed. F04: the gate is NOT "is this literally
+    // 'online'" — an ordinary customer order whose pending method is upi/card/
+    // wallet/netbanking, or missing/garbage, needs the marker too; only the
+    // explicit cash/COD exemption and the walk-in counter stream are excluded.
+    // Pending walk-in UPI is still refused because it has no verified settlement.
     if (canonical !== "pending" && canonical !== "cancelled") {
       if (freshOrder.customerId === "cust_walkin" &&
           freshOrder.paymentMethod === "upi" && freshOrder.paymentStatus === "pending") {
         throw serviceError("ORDER_NOT_PAID", "Walk-in UPI payment is pending; settlement is unavailable", 409);
       }
-      assertOnlineOrderPaid(freshOrder);
+      assertKitchenAdmissionPaid(freshOrder);
     }
     // P1-G: never promise a delivery nobody is making.
     assertRiderForOutForDelivery(freshOrder, fulfillment, canonical);
@@ -348,71 +352,17 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     }
   }
 
-  // PAY-03: a cancelled order gives back the Grill Coins its payment debited.
-  // Partial refunds never reach here — only a cancel (or a full refund in
-  // autoRefund) restores. A restore failure must never fail the cancel, and
-  // the deterministic restore ledger makes cancel-after-refund idempotent.
+  // PAY-03 / P1-E: the cancellation's obligations (a durable rider-cancel
+  // intent recorded before the wire call + the idempotent Grill-Coins restore)
+  // live in ONE shared helper so the staff path and the customer path (F24,
+  // customerCancel.ts) cannot diverge. Still strictly post-commit and never
+  // rethrown: the kitchen cancel must succeed even when the provider is down.
   if (canonical === "cancelled") {
-    // P1-E: the order is terminal now, so the delivery queue's cancel route
-    // will refuse it forever. The RIDER is cancelled here instead, durably:
-    // the intent is recorded on the order before the call, a provider fault
-    // leaves it retryable on the 5-minute tick, and a provider we cannot call
-    // (Borzo/Porter) raises a staff-visible dashboard alert rather than a
-    // rider silently continuing to a cancelled order.
-    // Strictly post-commit and never rethrown: the kitchen cancel and the coin
-    // restore below must succeed even when the provider is down.
-    try {
-      const fresh = await orderRef.get();
-      const live = fresh.exists ? ((fresh.data() || {}) as any) : {};
-      const { recordAndAttemptProviderCancel } = await import("../dispatch/shadowfax.reconcile");
-      const provider = (live.dispatchProvider || null) as
-        | "borzo"
-        | "shadowfax"
-        | "porter"
-        | null;
-      const providerOrderId =
-        live.dispatchOrderId ??
-        live.shadowfaxOrderId ??
-        live.borzoOrderId ??
-        live.porterOrderId ??
-        null;
-      // Only a LIVE binding is worth a remote cancel; a delivered booking is a
-      // real fulfilment and must never be cancelled from a late order flip.
-      const liveBooking = provider && providerOrderId && live.deliveryStatus !== "delivered";
-      if (liveBooking) {
-        await recordAndAttemptProviderCancel({
-          orderId,
-          provider,
-          providerOrderId: String(providerOrderId),
-          reason: "order_cancelled",
-          requestedBy: staffNameForCancel(),
-        });
-      }
-    } catch (err: any) {
-      // recordAndAttemptProviderCancel does not throw; a failed import/read is
-      // still never allowed to surface as a kitchen error.
-      console.warn(
-        `[OrderStatus] provider cancellation skipped for cancelled order ${orderId}:`,
-        err?.message || err
-      );
-    }
-
-    try {
-      const { restoreRedeemedCoins } = await import("../customers/customerCoins");
-      await restoreRedeemedCoins({ orderId });
-    } catch (err: any) {
-      console.warn(
-        `[OrderStatus] Grill-Coins restore failed for cancelled order ${orderId}:`,
-        err?.message || err
-      );
-      await captureErrorSnapshot({
-        source: "payments",
-        severity: "high",
-        message: `Grill-Coins restore failed for cancelled order ${orderId} — remediate via adjustCustomerCoins`,
-        orderId,
-        errorStack: err?.stack,
-      }).catch(() => undefined);
-    }
+    await applyCancelSideEffects({
+      orderId,
+      requestedBy: staffNameForCancel(),
+      reason: "order_cancelled",
+    });
   }
 
   // Return the meta we actually WROTE (fulfillment-specific), not the generic

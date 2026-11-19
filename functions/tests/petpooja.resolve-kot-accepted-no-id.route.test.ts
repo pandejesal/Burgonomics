@@ -251,6 +251,9 @@ beforeEach(() => {
   h.verifyIdToken.mockClear();
   posFetch.mockClear();
   posMode = "accepted_no_id";
+  // F06: requireRole fail-closes on `users/{uid}.active`, so the staff identity
+  // driving these routes needs an ACTIVE profile document.
+  h.savedDocs["users/staff_kot_1"] = { role: "branch_staff", active: true };
   seedBranch();
 });
 

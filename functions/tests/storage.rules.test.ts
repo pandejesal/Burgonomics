@@ -163,6 +163,25 @@ describe("storage.rules source is wired to firebase.json", () => {
     // SVG is an executable document; it must not pass the image arm.
     expect(rules).toContain("!request.resource.contentType.matches('image/svg.*')");
   });
+
+  // F06 — a SUSPENDED privileged operator must not keep evidence access just
+  // because their ID token still carries a staff role claim. The gate is ONE
+  // cross-service read and is short-circuited away for customers (see below).
+  it("F06: gates privileged tokens on users/{uid}.active with at most one firestore.get", () => {
+    const rules = readFileSync(resolve(__dirname, "../../storage.rules"), "utf8");
+    expect(rules).toContain("function privilegedStaffToken()");
+    expect(rules).toContain("function staffActive()");
+    expect(rules).toContain("function privilegedAndActive()");
+    expect(rules).toContain(
+      "firestore.get(/databases/(default)/documents/users/$(request.auth.uid))",
+    );
+    // At most ONE cross-service read in the whole file (the brief allows two).
+    expect((rules.match(/firestore\.get\(/g) ?? []).length).toBe(1);
+    // Customers short-circuit BEFORE the read: `!privileged || active`.
+    expect(rules).toContain("!privilegedStaffToken() || staffActive()");
+    // Both client arms carry the gate.
+    expect((rules.match(/privilegedAndActive\(\)/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
 });
 
 describe("support-evidence uploads", () => {
@@ -278,5 +297,46 @@ describe("paths outside support-evidence", () => {
       const res = await upload(path, mockToken(OWNER), { contentType: "image/png" });
       expect(res.status, `path ${path} must be refused`).toBe(403);
     }
+  });
+});
+
+/**
+ * F06 — the activation gate on privileged uploads.
+ *
+ * `privilegedStaffToken()` is a token-claim test with ZERO document reads and
+ * `privilegedAndActive()` is `!privileged || staffActive()`, so a CUSTOMER
+ * token short-circuits before any Firestore access. That is the property these
+ * cases assert, and it is the reason no `users/{uid}` document is seeded for
+ * the customer: if the gate were written without the short-circuit, the
+ * `firestore.get` would have to resolve and the upload would fail.
+ *
+ * The suspended-with-profile variant (seed `users/{uid}.active = false`, then
+ * expect 403) needs the FIRESTORE emulator running alongside the Storage one,
+ * so it is recorded as UNEXECUTED unless that lane is available.
+ */
+describe("F06 privileged-token activation gate (zero reads for customers)", () => {
+  function roleToken(uid: string, role: string): string {
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    return `${b64({ alg: "none", typ: "JWT" })}.${b64({
+      sub: uid,
+      user_id: uid,
+      auth_time: 0,
+      iat: 0,
+      exp: 9_999_999_999,
+      firebase: { sign_in_provider: "password" },
+      role,
+    })}.`;
+  }
+
+  it("F06-a. a CUSTOMER token uploads with NO users/{uid} document (short-circuit, zero reads)", async () => {
+    const path = evidencePath(OWNER, "f06_customer.png");
+    const res = await upload(path, roleToken(OWNER, "customer"), { contentType: "image/png" });
+    expect(res.status).toBe(200);
+  });
+
+  it("F06-b. a PRIVILEGED token with no active profile is denied (fail closed)", async () => {
+    const path = evidencePath(OWNER, "f06_staff_noprofile.png");
+    const res = await upload(path, roleToken(OWNER, "support"), { contentType: "image/png" });
+    expect(res.status).toBe(403);
   });
 });

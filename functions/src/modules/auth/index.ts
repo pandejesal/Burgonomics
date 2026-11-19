@@ -14,6 +14,11 @@ export {
   ROLE_ALIASES,
 } from "./claimsManager";
 export type { AppUserRole, AssignRoleInput, CustomClaimsPayload, CustomClaimsInput } from "./claimsManager";
+export { setStaffActive } from "./staffSuspension";
+export type { SetStaffActiveResult } from "./staffSuspension";
+export { staffSuspensionSchema } from "./staffSuspension.schema";
+export type { StaffSuspensionInput } from "./staffSuspension.schema";
+
 export {
   migrateGuestAccount,
   verifyBonusEligibility,

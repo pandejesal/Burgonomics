@@ -171,7 +171,12 @@ vi.mock("../src/core/errors", async (io) => ({
   captureErrorSnapshot: vi.fn(async () => "snap_1"),
 }));
 
-import { autoRefund, __setRefundPostForTests } from "../src/modules/payments/razorpay.service";
+import {
+  autoRefund,
+  __setRefundPostForTests,
+  computeGatewayRefundKey,
+  refundRequestDocId,
+} from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
 
 const ORDER = "ord_p1m";
@@ -319,3 +324,257 @@ describe("P1-M — a 2xx refund with no usable id must not roll back", () => {
     expect(order.refundUncertain).toBeUndefined();
   });
 });
+
+/**
+ * F23 — a gateway HTTP 409 on the refund POST is NOT a rejection.
+ *
+ * Razorpay's idempotent-refund contract (docs/api/refunds/normal-refunds-idempotent,
+ * lines 20-23 and 254-257): a POST reusing an idempotency key for a refund that is
+ * STILL IN PROGRESS answers 409, and the caller must retry with the ORIGINAL key
+ * and body. Lines 246-249 return 409 for "different params, already processed" —
+ * also an unresolved (not safe-to-walk) outcome.
+ *
+ * Defect: `classifyRefundFailure` treated every 4xx as a definite rejection, so a
+ * 409 released `refundActiveClaim` / `refundClaimedAt`. A second operator with a
+ * NEW request id could then take a fresh claim and POST a second partial refund
+ * while the first one was still in flight at the gateway.
+ *
+ * Required: 409 keeps the outstanding claim and the original gateway key, and
+ * reports REFUND_RECONCILIATION_REQUIRED. A same-key retry replays the identical
+ * key/body (one ledger row); a different-id request is refused with zero POSTs
+ * until the first identity settles.
+ */
+describe("F23 — a gateway 409 in-flight is uncertainty, not a rejection", () => {
+  const prevMock = config.mock.paymentGateway;
+  const A = "f23_req_alpha";
+  const B = "f23_req_bravo";
+  const D = "f23_req_delta";
+  const C = "f23_req_charlie";
+
+  beforeEach(() => {
+    docs.clear();
+    control.refundPosts = [];
+    config.mock.paymentGateway = false;
+    seed();
+  });
+  afterEach(() => {
+    config.mock.paymentGateway = prevMock;
+    __setRefundPostForTests(null);
+  });
+
+  const clone = (v: any) => JSON.parse(JSON.stringify(v));
+
+  /** 20 000pa of a 25 000pa capture: a PARTIAL, so a remainder stays possible. */
+  const PARTIAL_RUPEES = 200;
+
+  it("RED/GREEN core: A hits 409 → B (new id) must be refused with ZERO extra POST; A's claim survives", async () => {
+    const seen: Array<{ paymentId: string; body: any; key: string }> = [];
+    let mode: "inflight409" | "accept" = "inflight409";
+    __setRefundPostForTests(async (paymentId, body, key) => {
+      seen.push({ paymentId, body: clone(body), key });
+      if (mode === "inflight409") {
+        const err: any = new Error(
+          "A refund with the same idempotency key is already in progress"
+        );
+        err.statusCode = 409;
+        err.gatewayStatus = 409;
+        throw err;
+      }
+      return { id: "rfnd_f23_settled", payment_id: PAY, amount: 20000, status: "processed" };
+    });
+
+    // 1. A attempts: the gateway answers 409 (its own in-flight refund).
+    const aErr: any = await autoRefund({
+      orderId: ORDER,
+      razorpayPaymentId: PAY,
+      amountRupees: PARTIAL_RUPEES,
+      reason: "F23 partial A",
+      refundRequestId: A,
+    }).then((r) => ({ unexpected: r }), (e) => e);
+    expect(aErr.unexpected).toBeUndefined();
+    expect(aErr.code).toBe("REFUND_RECONCILIATION_REQUIRED");
+    expect(aErr.statusCode).toBe(409);
+    expect(seen).toHaveLength(1);
+    const aKey = seen[0].key;
+    const aBody = clone(seen[0].body);
+
+    // The unresolved claim + original gateway key are STILL on the order:
+    // that identity is the only thing stopping a different operator.
+    const afterA = docs.get(`orders/${ORDER}`);
+    expect(afterA.refundActiveClaim).toMatchObject({
+      requestId: A,
+      gatewayKey: aKey,
+      requestedPaise: 20000,
+    });
+    expect(afterA.refundClaimedAt).toBeGreaterThan(0);
+    expect(afterA.refundClaimedKey).toBe(aKey);
+    // No money was claimed as returned.
+    expect(afterA.refundLedger ?? {}).toEqual({});
+    expect(afterA.refundedTotalPaise).toBeUndefined();
+
+    // 2. Operator B, DIFFERENT request id, same amount: must be refused
+    //    locally with zero additional POSTs while A is unresolved.
+    const bErr: any = await autoRefund({
+      orderId: ORDER,
+      razorpayPaymentId: PAY,
+      amountRupees: PARTIAL_RUPEES,
+      reason: "F23 partial B",
+      refundRequestId: B,
+    }).then((r) => ({ unexpected: r }), (e) => e);
+    expect(bErr.unexpected).toBeUndefined();
+    expect(bErr.statusCode).toBe(409);
+    expect(["REFUND_IN_PROGRESS", "REFUND_RECONCILIATION_REQUIRED"]).toContain(bErr.code);
+    expect(seen).toHaveLength(1); // ZERO second refund POST
+
+    // The claim is still A's.
+    const afterB = docs.get(`orders/${ORDER}`);
+    expect(afterB.refundActiveClaim.requestId).toBe(A);
+    expect(afterB.refundActiveClaim.gatewayKey).toBe(aKey);
+
+    // 3. A's same-key retry: the gateway now accepts. It MUST send the identical
+    //    idempotency key and body (Razorpay replays the original refund).
+    mode = "accept";
+    const ok: any = await autoRefund({
+      orderId: ORDER,
+      razorpayPaymentId: PAY,
+      amountRupees: PARTIAL_RUPEES,
+      reason: "F23 partial A",
+      refundRequestId: A,
+    });
+    expect(ok.id).toBe("rfnd_f23_settled");
+    const retry = seen[seen.length - 1];
+    expect(seen).toHaveLength(2);
+    expect(retry.key).toBe(aKey);
+    expect(retry.body).toEqual(aBody);
+
+    // ONE ledger row for one refund; the total matches that row.
+    const settled = docs.get(`orders/${ORDER}`);
+    expect(Object.keys(settled.refundLedger)).toEqual(["rfnd_f23_settled"]);
+    expect(settled.refundLedger["rfnd_f23_settled"]).toBe(20000);
+    expect(settled.refundedTotalPaise).toBe(20000);
+    // The claim is retired (the harness sees FieldValue.delete() as a sentinel,
+    // exactly as the existing suites do — assert the absence of an active lease,
+    // not a literal undefined).
+    expect(settled.refundActiveClaim).not.toMatchObject({ requestId: A });
+  });
+
+  it("a legitimate remainder refund proceeds once the first identity settles", async () => {
+    __setRefundPostForTests(async () => {
+      const err: any = new Error("A refund with the same idempotency key is already in progress");
+      err.statusCode = 409;
+      throw err;
+    });
+
+    await autoRefund({
+      orderId: ORDER,
+      razorpayPaymentId: PAY,
+      amountRupees: PARTIAL_RUPEES,
+      reason: "F23 partial A",
+      refundRequestId: A,
+    }).catch((e) => e);
+
+    // Authoritative settlement (what the refund.processed webhook writes):
+    // the first identity's money is now in the ledger and its lane is free.
+    const doc = docs.get(`orders/${ORDER}`);
+    docs.set(`orders/${ORDER}`, {
+      ...doc,
+      refundStatus: "partially_refunded",
+      refundLedger: { rfnd_f23_first: 20000 },
+      refundedTotalPaise: 20000,
+      refundActiveClaim: null,
+      refundClaimedAt: null,
+    });
+
+    __setRefundPostForTests(async () => ({
+      id: "rfnd_f23_remainder",
+      payment_id: PAY,
+      amount: 5000,
+      status: "processed",
+    }));
+    const rem: any = await autoRefund({
+      orderId: ORDER,
+      razorpayPaymentId: PAY,
+      amountRupees: 50,
+      reason: "F23 remainder",
+      refundRequestId: D,
+    });
+    expect(rem.id).toBe("rfnd_f23_remainder");
+    const after = docs.get(`orders/${ORDER}`);
+    expect(after.refundLedger["rfnd_f23_remainder"]).toBe(5000);
+    expect(after.refundedTotalPaise).toBe(25000);
+  });
+
+  it("a genuine 400 validation rejection still releases the claim for a later distinct intent", async () => {
+    const seen: string[] = [];
+    let mode: "bad400" | "accept" = "bad400";
+    __setRefundPostForTests(async (_p, _b, key) => {
+      seen.push(key);
+      if (mode === "bad400") {
+        const err: any = new Error("The amount must be at least 1");
+        err.statusCode = 400;
+        throw err;
+      }
+      return { id: "rfnd_f23_after400", payment_id: PAY, amount: 10000, status: "processed" };
+    });
+
+    const aErr: any = await autoRefund({
+      orderId: ORDER,
+      razorpayPaymentId: PAY,
+      amountRupees: 100,
+      reason: "F23 400 A",
+      refundRequestId: A,
+    }).then((r) => ({ unexpected: r }), (e) => e);
+    expect(aErr.unexpected).toBeUndefined();
+    expect(aErr.code).toBe("REFUND_GATEWAY_FAILED");
+    expect(aErr.statusCode).toBe(502);
+    // A refusal PROVED no money moved: the lease is released (the harness models
+    // FieldValue.delete() as a sentinel, so assert "no active lease remains").
+    const afterA = docs.get(`orders/${ORDER}`);
+    expect(afterA.refundActiveClaim).not.toMatchObject({ requestId: A });
+    expect(afterA.refundClaimedAt == null || typeof afterA.refundClaimedAt !== "number").toBe(true);
+
+    mode = "accept";
+    const ok: any = await autoRefund({
+      orderId: ORDER,
+      razorpayPaymentId: PAY,
+      amountRupees: 100,
+      reason: "F23 400 B",
+      refundRequestId: B,
+    });
+    expect(ok.id).toBe("rfnd_f23_after400");
+    expect(seen).toHaveLength(2);
+  });
+
+  it("a KNOWN accepted refund id still replays locally with zero POSTs (unchanged)", async () => {
+    const seen: number[] = [];
+    __setRefundPostForTests(async () => {
+      seen.push(1);
+      throw new Error("must not post");
+    });
+
+    // An accepted-but-unsettled identity already recorded for request C.
+    docs.set(`payment_refund_requests/${refundRequestDocId(ORDER, PAY, C)}`, {
+      orderId: ORDER,
+      paymentId: PAY,
+      refundRequestId: C,
+      requestedPaise: 12000,
+      reason: "F23 known pending",
+      status: "pending",
+      refundId: "rfnd_f23_known",
+      gatewayKey: computeGatewayRefundKey(ORDER, PAY, C),
+      claimedAt: Date.now(),
+    });
+
+    const res: any = await autoRefund({
+      orderId: ORDER,
+      razorpayPaymentId: PAY,
+      amountRupees: 120,
+      reason: "F23 known pending",
+      refundRequestId: C,
+    });
+    expect(res).toMatchObject({ id: "rfnd_f23_known", status: "pending", reused: true });
+    expect(seen).toHaveLength(0);
+  });
+});
+
+

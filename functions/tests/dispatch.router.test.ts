@@ -459,7 +459,7 @@ describe("dispatchBook (§3 lifecycle)", () => {
     expect(ok.status).toBe("dispatched");
   });
 
-  it("fails over to the next provider when the cheapest one 500s at book time (DR6)", async () => {
+  it("fails over to the next provider on a DEFINITE book-time rejection (DR6)", async () => {
     // Borzo live-keyed (so its create-order actually hits the wire), shadowfax
     // mocked, porter off. Cheapest quote: borzo 60 < shadowfax 71.
     config.borzo.apiKey = "test_borzo_key";
@@ -471,7 +471,11 @@ describe("dispatchBook (§3 lifecycle)", () => {
         return okJson({ is_successful: true, order: { payment_amount: "60.00" } });
       }
       if (url.includes("/create-order")) {
-        return new Response("upstream exploded", { status: 500 });
+        // F08: a 5xx create-order is now UNCERTAINTY (it parks for
+        // reconciliation — see tests/dispatch.book-ambiguity.f08.test.ts).
+        // A provider-REFUSED order (not_serviced code) is still a definite
+        // rejection, so bounded failover must keep working for it.
+        return okJson({ is_successful: false, errors: ["invalid_region"] }, 400);
       }
       return okJson({ message: "not found" }, 404);
     };
@@ -482,7 +486,7 @@ describe("dispatchBook (§3 lifecycle)", () => {
     expect(res.provider).toBe("shadowfax");
     expect(res.failover).toEqual({ from: "borzo", to: "shadowfax", cheapestProvider: "borzo" });
     expect(res.attempts).toEqual([
-      expect.objectContaining({ provider: "borzo", outcome: "transient_failure" }),
+      expect.objectContaining({ provider: "borzo", outcome: "not_serviced" }),
       expect.objectContaining({ provider: "shadowfax", outcome: "booked" }),
     ]);
     expect(res.riderName).toContain("[TEST]");

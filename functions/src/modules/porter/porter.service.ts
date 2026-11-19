@@ -760,6 +760,12 @@ export async function bookPorterRider(
               method: "POST",
               // Loop: hung gateway held the function until platform timeout.
               signal: AbortSignal.timeout(15_000),
+        // (F08 proof) A CREATE must never auto-follow a redirect: a native
+        // follow could deliver the POST, get 307/308, then fail DNS at the
+        // redirect target — which would look like a pre-send DNS failure
+        // although the order was already submitted. A redirect is now a
+        // transport error that the adapter parks as uncertainty.
+        redirect: "error",
         headers: {
           "Content-Type": "application/json",
           "x-api-key": config.porter.apiKey,
@@ -775,7 +781,13 @@ export async function bookPorterRider(
         } catch {
           // Non-JSON error body (e.g. 502/504 gateway response)
         }
-        throw new Error(errMessage);
+        // (F08) Attach the HTTP status so the dispatch adapter can tell a
+        // DEFINITE rejection (a 4xx the provider returned + refused) from an
+        // UNCERTAIN 5xx/gateway fault where the order may already exist. The
+        // error shape stays a plain Error with the same message.
+        const rejected: any = new Error(errMessage);
+        rejected.httpStatus = response.status;
+        throw rejected;
       }
 
       const data = await response.json();

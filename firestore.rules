@@ -27,6 +27,26 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
+    // F06 — staff/operator activation. `users/{uid}.active` is the SINGLE
+    // authoritative suspension state (server-owned; no claim mirror).
+    //
+    // Read budget: one `exists` + one `get` on the same document (rules cache
+    // the document, so this is effectively ONE additional document access) on
+    // top of the `admins/{uid}` access `hasRole` already performs. Well inside
+    // the per-evaluation limit.
+    //
+    // FAIL CLOSED for privileged callers: a missing profile, or a profile
+    // without `active == true`, denies. Customer arms never call this helper,
+    // so ordinary customer flows gain no staff-profile prerequisite.
+    function staffProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function staffActive() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && staffProfile().get('active', false) == true;
+    }
+
     function brandRoles() {
       return ['brand_owner', 'developer'];
     }
@@ -37,8 +57,21 @@ service cloud.firestore {
 
     function hasRole(roles) {
       return isAuthenticated() && (
-        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && getAdminDoc().data.role in roles) ||
-        (request.auth.token != null && (request.auth.token.role in roles))
+        // F06: a role is no longer sufficient — the account must be active.
+        // Both branches are gated, so neither a stale token claim nor a
+        // registry doc can override a suspension. `staffActive()` is the LAST
+        // conjunct in each branch: a caller whose role test already fails
+        // performs no extra document read (customers included).
+        (
+          exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+          && getAdminDoc().data.role in roles
+          && staffActive()
+        ) ||
+        (
+          request.auth.token != null
+          && (request.auth.token.role in roles)
+          && staffActive()
+        )
       );
     }
 
@@ -342,7 +375,11 @@ service cloud.firestore {
       // attaching a token is server-only for every role, so no client path
       // (owner or brand) can re-create a foreign-token binding the
       // registerToken gate refuses. Role/tenant fields stay brand-writable.
-      allow update: if (isBrandOwner() && fcmTokensRemovalOnly()) || (
+      // F06: `active` (and the suspension/deletion markers) are SERVER-OWNED.
+      // The previous brand arm admitted ANY non-fcmTokens key, which is how the
+      // partner "Suspend" button wrote `active` directly while authorization
+      // ignored it. Suspension now only happens through POST /auth/suspendStaff.
+      allow update: if (isBrandOwner() && fcmTokensRemovalOnly() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['active', 'suspendedAt', 'suspendedBy', 'isDeleted', 'deletedAt'])) || (
         isUser(userId)
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isStaff', 'isBrandAdmin', 'isSuperAdmin', 'grillCoins', 'loyaltyPoints', 'branchIds', 'cityIds', 'active', 'isDeleted', 'deletedAt'])
         && fcmTokensRemovalOnly()
@@ -380,13 +417,16 @@ service cloud.firestore {
 
     // Regional scope is derived solely from the authoritative registry, never
     // a stale token or a client-selected outlet. This helper is orders-only.
+    // F06: a regional operator is privileged, so the registry row alone is no
+    // longer enough — the account must also be active.
     function regionalOrderRead(branchId) {
       let admin = get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
       return admin.role == 'regional_manager'
         && admin.branchIds is list
         && admin.branchIds.size() > 0
         && branchId is string && branchId.size() > 0
-        && branchId in admin.branchIds;
+        && branchId in admin.branchIds
+        && staffActive();
     }
 
     match /orders/{orderId} {
@@ -441,21 +481,11 @@ service cloud.firestore {
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
       ) || (
-        // Customers may cancel their own pre-terminal orders only — canonical
-        // cancelled literal-shape plus timestamps, nothing else. Terminal
-        // orders are immutable to them. Key set pinned to statusMeta
-        // (item86ingSync.ts:199-204): code/label/kind/terminal.
-        isAuthenticated() &&
-        (resource.data.customerId == request.auth.uid || resource.data.userId == request.auth.uid) &&
-        !(resource.data.status.terminal == true) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completedAt', 'updatedAt']) &&
-        request.resource.data.status.code == 'CANCELLED' &&
-        request.resource.data.status.kind == 'cancelled' &&
-        request.resource.data.status.terminal == true &&
-        request.resource.data.status.keys().hasOnly(['code', 'label', 'kind', 'terminal'])
-      ) || (
-        // Customer-owned notification preference: boolean opt-in only,
-        // pinned to whatsappOptIn + updatedAt (order-confirmation toggle).
+        // F24: customers may NOT write order status at all. A direct
+        // `{status: CANCELLED}` client write skipped the server-owned
+        // cancellation obligations (durable rider-cancel intent + idempotent
+        // Grill-Coins restore) that only POST /orders/customerCancel performs.
+        // The whatsapp opt-in toggle below is the only customer order write.
         isAuthenticated() &&
         (resource.data.customerId == request.auth.uid || resource.data.userId == request.auth.uid) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whatsappOptIn', 'updatedAt']) &&
@@ -591,18 +621,177 @@ service cloud.firestore {
     // world-readable. Nothing in the product writes here from a client - the
     // Admin SDK bypasses rules - so create is brand-only and key-masked, and
     // updates stay restricted to the operator's own branch.
+    //
+    // F17 (audit-remediation-20261117-r1): this collection is the ANONYMOUS
+    // DISCOVERY half of an outlet record. It used to hold the kitchen roster
+    // (staff names/phones/personal emails), compliance documents, the manager's
+    // contacts, Petpooja webhook/sync metadata, queue counters, financial
+    // analytics and store settings - all world-readable. Those now live in
+    // `admin_stores_private/{storeId}` (brand-only, below). The brand arms
+    // therefore require a FULL, shape-validated public document
+    // (`hasOnly(public keys)` + per-key type checks + nested map shape), not a
+    // changed-key mask: a full replacement is exactly how legacy PII gets
+    // REMOVED from an already-public document. The branch arm keeps its narrow
+    // metadata allowlist so an outlet operator can still flip its own phone/
+    // isActive on an already-clean public document.
+    function adminStorePublicKeys() {
+      return [
+        'title', 'branchId', 'name', 'address', 'city', 'area', 'state',
+        'pincode', 'country', 'lat', 'lng', 'latitude', 'longitude', 'phone',
+        'imageUrl', 'hours', 'supports', 'pricing', 'isOpen', 'isBusy',
+        'isRecentlyOpened', 'isActive', 'status', 'etaMinutes',
+        'pickupEtaMinutes', 'minPrepMinutes', 'deliveryFee', 'petpoojaRestId',
+        'partnerBranchId', 'deliveryRadiusKm', 'turnOnAt', 'distanceKm',
+        'createdAt', 'updatedAt'
+      ];
+    }
+
+    // "absent OR a string OR an explicit null": `.get(key, null)` keeps an
+    // absent key from erroring, and a smuggled map (`name: { staff: [...] }`)
+    // still fails the type check.
+    function adminStorePublicText(key) {
+      return request.resource.data.get(key, null) is string
+        || request.resource.data.get(key, null) == null;
+    }
+
+    function adminStorePublicNumber(key) {
+      return request.resource.data.get(key, null) is number
+        || request.resource.data.get(key, null) == null;
+    }
+
+    function adminStorePublicBool(key) {
+      return request.resource.data.get(key, false) is bool;
+    }
+
+    function adminStorePublicHours() {
+      return request.resource.data.get('hours', null) == null
+        || (request.resource.data.hours is map
+            && request.resource.data.hours.keys().hasOnly(['open', 'close'])
+            && request.resource.data.hours.get('open', 0) is string
+            && request.resource.data.hours.get('close', 0) is string);
+    }
+
+    function adminStorePublicSupports() {
+      return request.resource.data.get('supports', null) == null
+        || (request.resource.data.supports is map
+            && request.resource.data.supports.keys().hasOnly([
+              'delivery', 'takeaway', 'dineIn'
+            ])
+            && request.resource.data.supports.get('delivery', 0) is bool
+            && request.resource.data.supports.get('takeaway', 0) is bool
+            && request.resource.data.supports.get('dineIn', 0) is bool);
+    }
+
+    function adminStorePublicPricing() {
+      return request.resource.data.get('pricing', null) == null
+        || (request.resource.data.pricing is map
+            && request.resource.data.pricing.keys().hasOnly([
+              'gstRate', 'packingChargePerItem', 'deliveryFeeFlat',
+              'freeDeliveryThreshold', 'minOrderAmount'
+            ])
+            && request.resource.data.pricing.get('gstRate', 0) is number
+            && request.resource.data.pricing.get('packingChargePerItem', 0) is number
+            && request.resource.data.pricing.get('deliveryFeeFlat', 0) is number
+            && request.resource.data.pricing.get('freeDeliveryThreshold', 0) is number
+            && request.resource.data.pricing.get('minOrderAmount', 0) is number);
+    }
+
+    function adminStorePublicDocShape() {
+      return request.resource.data.keys().hasOnly(adminStorePublicKeys())
+        && adminStorePublicText('title')
+        && adminStorePublicText('branchId')
+        && adminStorePublicText('name')
+        && adminStorePublicText('address')
+        && adminStorePublicText('city')
+        && adminStorePublicText('area')
+        && adminStorePublicText('state')
+        && adminStorePublicText('pincode')
+        && adminStorePublicText('country')
+        && adminStorePublicText('phone')
+        && adminStorePublicText('imageUrl')
+        && adminStorePublicText('status')
+        && adminStorePublicText('petpoojaRestId')
+        && adminStorePublicText('partnerBranchId')
+        && adminStorePublicText('turnOnAt')
+        && adminStorePublicText('createdAt')
+        && adminStorePublicText('updatedAt')
+        && adminStorePublicNumber('lat')
+        && adminStorePublicNumber('lng')
+        && adminStorePublicNumber('latitude')
+        && adminStorePublicNumber('longitude')
+        && adminStorePublicNumber('etaMinutes')
+        && adminStorePublicNumber('pickupEtaMinutes')
+        && adminStorePublicNumber('minPrepMinutes')
+        && adminStorePublicNumber('deliveryFee')
+        && adminStorePublicNumber('deliveryRadiusKm')
+        && adminStorePublicNumber('distanceKm')
+        && adminStorePublicBool('isOpen')
+        && adminStorePublicBool('isBusy')
+        && adminStorePublicBool('isRecentlyOpened')
+        && adminStorePublicBool('isActive')
+        && adminStorePublicHours()
+        && adminStorePublicSupports()
+        && adminStorePublicPricing();
+    }
+
+    // F17 review round 2: the branch arm keeps its EXACT original 8-key mask and
+    // ownership check, but the CHANGED values are now typed. Without this,
+    // `phone: { staff: [...] }` or `name: { … }` from an outlet operator would
+    // still write an anonymous document containing a nested PII map.
+    // `updatedAt` accepts a timestamp OR a string so a legacy client write is not
+    // broken (the shipped branch callers use `Timestamp.now()`; older importers
+    // wrote ISO strings). Missing keys never error, and this does NOT require a
+    // legacy document to lose the private fields only a brand cleanup can remove.
+    //
+    // F17 leak fix: the mask must also be NON-EMPTY. A merge that re-sends an
+    // already-stored PRIVATE value (same bytes) produced an empty changed-key
+    // set, and `hasOnly([])` is vacuously true - so a no-op merge of a
+    // non-public key was admitted. `hasAny(same allowlist)` forces at least one
+    // allowed key to actually change; combined with `hasOnly` it can never be
+    // satisfiable by a non-public-only diff.
+    function adminStoreBranchUpdateShape() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'title', 'name', 'address', 'city', 'area', 'phone', 'isActive', 'updatedAt'
+        ])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'name', 'address', 'city', 'area', 'phone', 'isActive', 'updatedAt'
+        ])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['title'])
+            || request.resource.data.title is string)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['name'])
+            || request.resource.data.name is string)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['address'])
+            || request.resource.data.address is string)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['city'])
+            || request.resource.data.city is string)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['area'])
+            || request.resource.data.area is string)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['phone'])
+            || request.resource.data.phone is string)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isActive'])
+            || request.resource.data.isActive is bool)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['updatedAt'])
+            || request.resource.data.updatedAt is timestamp
+            || request.resource.data.updatedAt is string);
+    }
+
     match /admin_stores/{storeId} {
       allow read: if true;
       allow create: if isBrandOwner()
-        && request.resource.data.keys().hasOnly([
-          'title', 'branchId', 'name', 'address', 'city', 'area', 'phone',
-          'isActive', 'createdAt', 'updatedAt'
-        ]);
-      allow update: if isBrandOwner() || (ownsBranch(storeId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'title', 'name', 'address', 'city', 'area', 'phone', 'isActive', 'updatedAt'
-        ]));
+        && adminStorePublicDocShape();
+      allow update: if (isBrandOwner()
+        && adminStorePublicDocShape()) || (ownsBranch(storeId)
+        && adminStoreBranchUpdateShape());
       allow delete: if isBrandOwner();
+    }
+
+    // F17: the brand-only half of a store record. Staff/compliance/personal
+    // contacts, webhook + queue metadata, financial analytics and settings live
+    // here so the anonymous `admin_stores` document can stay discovery-only.
+    // Nothing outside the brand roles may read OR write it: guests, customers
+    // and branch operators have no product path to this data.
+    match /admin_stores_private/{storeId} {
+      allow read, write: if isBrandOwner();
     }
 
     // Petpooja catalog — public read, server-side writes via Admin SDK

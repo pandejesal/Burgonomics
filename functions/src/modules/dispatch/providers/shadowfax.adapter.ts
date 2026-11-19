@@ -11,9 +11,12 @@ import { normalizePhone } from "../dropContact";
 import {
   QUOTE_TTL_MS,
   assertProviderOk,
+  bookAmbiguous,
+  createOrderResponseUncertain,
   dropAddressBlock,
   dropContact,
   fetchProviderJson,
+  isProvenPreSendFailure,
   mockRateFare,
   mockRider,
   pickFiniteNumber,
@@ -587,12 +590,11 @@ export const shadowfaxAdapter: ProviderAdapter = {
         }))
       : [{ id: "order", name: "Food order", price: orderValueInr(ctx), quantity: 1 }];
 
-    let res: any;
-    try {
-      res = await fetchProviderJson("shadowfax", `${shadowfaxBase}/api/v2/orders/`, {
-        method: "POST",
-        headers: shadowfaxHeaders(),
-        body: JSON.stringify({
+    // (F08 R4) Payload/contact/header construction happens OUTSIDE the wire try
+    // so a typed LOCAL gate keeps its exact classification and zero-fetch
+    // guarantee, and a wire throw can never be mistaken for local evidence.
+    const createHeaders = shadowfaxHeaders();
+    const createPayload = {
           client_code: clientCode,
           order_details: {
             order_value: orderValueInr(ctx),
@@ -630,19 +632,58 @@ export const shadowfaxAdapter: ProviderAdapter = {
             longitude: ctx.drop.lng,
           },
           order_items: orderItems,
-        }),
+        };
+    let res: any;
+    try {
+      res = await fetchProviderJson("shadowfax", `${shadowfaxBase}/api/v2/orders/`, {
+        method: "POST",
+        // (F08 proof) never auto-follow a redirect on a CREATE (see Borzo).
+        redirect: "error",
+        headers: createHeaders,
+        body: JSON.stringify(createPayload),
       });
     } catch (err: any) {
-      const message = String(err?.message || "");
-      if (/timed?\s?out|abort/i.test(message)) {
-        const ambiguous: any = new Error(
-          "Shadowfax create-order timed out with no response: the request may already have created an order - do not book another courier; reconcile by client_order_id before any rebook"
+      // (F08) Same split as Borzo: only a PROVEN pre-send transport failure
+      // (DNS / refused connection) may fail over. A timeout, abort, reset or
+      // opaque "fetch failed" means the request may already have created an
+      // order, so it parks for reconciliation instead of booking a second rider.
+      if (!isProvenPreSendFailure(err)) {
+        throw bookAmbiguous(
+          "shadowfax",
+          "Shadowfax create-order failed without a usable response: the request may already have created an order - do not book another courier; reconcile by client_order_id before any rebook",
+          err
         );
-        ambiguous.statusCode = 502;
-        ambiguous.code = "PROVIDER_BOOK_AMBIGUOUS";
-        throw ambiguous;
       }
       throw err;
+    }
+    // (F08 R1) Parse id evidence BEFORE the uncertainty branch so a 5xx that
+    // still names an order keeps it in the parked error, as DIAGNOSTIC text only
+    // (never bound: no dispatchOrderId / deliveryStatus / alias is written).
+    const earlyBody = res.data;
+    const earlyPayload =
+      earlyBody && typeof earlyBody === "object" && earlyBody.data && typeof earlyBody.data === "object"
+        ? earlyBody.data
+        : earlyBody;
+    const rawNamedId = earlyPayload?.sfx_order_id ?? earlyPayload?.order_id ?? null;
+    const namedId =
+      typeof rawNamedId === "string" && rawNamedId.trim() !== ""
+        ? rawNamedId
+        : typeof rawNamedId === "number" && Number.isFinite(rawNamedId)
+          ? String(rawNamedId)
+          : null;
+
+    // (F08) A 5xx or an unreadable body is uncertainty, not rejection: the
+    // provider may already hold the order. Kept BEFORE assertProviderOk so the
+    // status cannot be turned into a walkable ProviderDispatchError.
+    if (createOrderResponseUncertain(res)) {
+      throw bookAmbiguous(
+        "shadowfax",
+        `Shadowfax create-order returned HTTP ${res.status}${
+          res.textReadError ? " with an unreadable body" : ""
+          }: the order may already exist - do not book another courier; reconcile by client_order_id before any rebook`,
+        res.textReadError ? res.textReadErrorMessage : undefined,
+        namedId ?? undefined
+      );
     }
     assertProviderOk(res, "shadowfax");
 
@@ -668,14 +709,15 @@ export const shadowfaxAdapter: ProviderAdapter = {
       // The provider ACCEPTED the request (2xx) but returned no usable id. The
       // delivery may already exist, so this is AMBIGUOUS, never transient:
       // walking to the next provider could book a SECOND real rider for the same
-      // order (Borzo parity, dbd1626). A PLAIN Error keeps the property that
-      // matters — dispatch.router.ts only walks on for ProviderDispatchError, so
-      // anything else releases the claim and throws instead of failing over.
+      // order (Borzo parity). A PLAIN Error keeps the property that matters —
+      // dispatch.router.ts only walks on for ProviderDispatchError, so anything
+      // else releases the claim and throws instead of failing over.
       const err: any = new Error(
         "Shadowfax create-order returned no order id (response shape differs from spec) - do not retry blindly; reconcile with the provider"
       );
       err.statusCode = 502;
       err.code = "PROVIDER_BOOK_AMBIGUOUS";
+      err.provider = "shadowfax";
       throw err;
     }
 

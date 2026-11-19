@@ -7,7 +7,7 @@ import {
   type ProviderBookResult,
   type ProviderQuoteOk,
 } from "../types";
-import { QUOTE_TTL_MS } from "./shared";
+import { QUOTE_TTL_MS, isProvenPreSendFailure, bookAmbiguous } from "./shared";
 
 /**
  * Porter adapter — reuses the existing, heavily-tested porter.service path
@@ -32,28 +32,33 @@ function porterApiReady(): boolean {
 }
 
 /**
- * Uncertain-acceptance classifier — the F1 double-rider guard.
+ * Uncertain-acceptance classifier — the F08/F1 double-rider guard.
  *
- * `porter.service.bookPorterRider` throws a PLAIN error (never a
- * ProviderDispatchError) for two shapes that mean "we cannot prove whether
- * Porter accepted":
+ * Only a PROVEN non-creation may fail over. Everything else about a create-
+ * order failure is uncertainty (the request may already have reached Porter):
  *   - `PROVIDER_BOOK_AMBIGUOUS` (2xx without an order id — the delivery may
- *     already exist), and
- *   - an abort/timeout while the create-order request was in flight (the
- *     request may already have reached Porter).
- * Both must stay plain errors so dispatch.router.ts does NOT walk the ranked
- * list and book a second carrier. Mirrors borzo.adapter/shadowfax.adapter.
+ *     already exist),
+ *   - a timeout/abort while the request was in flight,
+ *   - an HTTP 5xx / gateway fault (`httpStatus` >= 500), and
+ *   - an unknown throw with no HTTP status and no pre-send transport code.
+ * All of these park for reconciliation instead of walking to another paid courier.
  */
 function isUncertainPorterBooking(err: any): boolean {
   if (err?.code === "PROVIDER_BOOK_AMBIGUOUS") return true;
-  return /timed?\s?out|abort/i.test(String(err?.message || ""));
+  // Proven pre-send failures (DNS / refused connection) never reached Porter.
+  if (isProvenPreSendFailure(err)) return false;
+  if (/timed?\s?out|abort/i.test(String(err?.message || ""))) return true;
+  // A 4xx the provider actually returned is a DEFINITE rejection (auth, rate
+  // limit, bad payload): safe to walk, exactly as before. 5xx is a gateway/
+  // provider fault after the request was accepted -> uncertainty.
+  const httpStatus = err?.httpStatus ?? err?.statusCode;
+  if (typeof httpStatus === "number") return httpStatus >= 500;
+  // No status at all: conservative default is uncertainty (F08).
+  return true;
 }
 
-function porterBookAmbiguous(message: string): Error {
-  const err: any = new Error(message);
-  err.statusCode = 502;
-  err.code = "PROVIDER_BOOK_AMBIGUOUS";
-  return err;
+function porterBookAmbiguous(message: string, cause?: unknown): Error {
+  return bookAmbiguous("porter", message, cause);
 }
 
 export const porterAdapter: ProviderAdapter = {
@@ -154,17 +159,21 @@ export const porterAdapter: ProviderAdapter = {
         // they are NOT provider failures and must not be walked past.
         throw err;
       }
-      // F1 (double-rider guard): a timeout/abort during create-order or a
-      // PROVIDER_BOOK_AMBIGUOUS reply means Porter may ALREADY hold this
-      // booking. Failing over here would book a second real rider for one
-      // delivery, so re-throw the SAME shape the router treats as
-      // "release the claim, park needs_reconciliation, zero further POSTs"
-      // (parity with borzo.adapter/shadowfax.adapter).
+      // F08 (double-rider guard): an unknown create-order outcome means Porter
+      // may ALREADY hold this booking — a 5xx/gateway fault, a reset, a timeout
+      // or any throw we cannot prove was pre-send. Failing over here would book
+      // a second real rider for one delivery, so re-throw the SAME shape the
+      // router treats as "release the claim, park needs_reconciliation, zero
+      // further POSTs" (parity with borzo.adapter/shadowfax.adapter). The
+      // service-level message is kept verbatim when it already explains the
+      // acceptance state; the original cause rides along.
       if (isUncertainPorterBooking(err)) {
         throw porterBookAmbiguous(
           err?.code === "PROVIDER_BOOK_AMBIGUOUS"
             ? String(err?.message || "Porter booking hit an ambiguous acceptance state")
-            : "Porter create-order timed out/aborted with no response: the request may already have created an order - do not book another courier; reconcile the Porter booking before any rebook"
+            : String(err?.message || "") ||
+              "Porter create-order failed without a usable response: the request may already have created an order - do not book another courier; reconcile the Porter booking before any rebook",
+          err
         );
       }
       // Everything else from the porter book path is a provider/booking

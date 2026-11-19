@@ -85,14 +85,23 @@ export async function inviteStaffMember(
     invited = true;
   }
 
+  // F06: NEVER silently reactivate. The old write stamped `active: true` with
+  // `{merge:true}` on every invite/re-role, resurrecting a suspended account.
+  // Existence must be sampled BEFORE setUserCustomClaims, which mirrors role
+  // fields into `users/{uid}` (merge) and would otherwise make a brand-new
+  // account look "existing" and leave it without an `active` value.
+  const userProfileRef = db.collection("users").doc(uid);
+  const userProfileSnap = await userProfileRef.get();
+  const profileExisted = userProfileSnap.exists;
+
   await setUserCustomClaims(
     { targetUid: uid, role, branchIds: input.branchIds, cityIds: input.cityIds },
     caller ?? null
   );
 
-  await db
-    .collection("users")
-    .doc(uid)
+  // `active` is initialised ONLY on first provision; an existing (possibly
+  // suspended) profile keeps its stored value.
+  await userProfileRef
     .set(
       {
         name: input.name,
@@ -101,7 +110,7 @@ export async function inviteStaffMember(
         role,
         branchIds: input.branchIds,
         cityIds: input.cityIds,
-        active: true,
+        ...(profileExisted ? {} : { active: true }),
         invitedBy: (caller as any)?.uid || null,
         invitedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

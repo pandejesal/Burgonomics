@@ -141,6 +141,9 @@ let baseUrl: string;
 let fetchSpy: any;
 
 function seedLiveBorzoOrder(over: Record<string, any> = {}) {
+  // F06: requireRole now fail-closes on `users/{uid}.active`, so the staff
+  // identity this suite drives must have an ACTIVE profile.
+  h.savedDocs["users/staff_guard_1"] = { role: "branch_staff", active: true };
   h.savedDocs[`orders/${ORDER_ID}`] = {
     id: ORDER_ID,
     branchId: "branch_guard_1",

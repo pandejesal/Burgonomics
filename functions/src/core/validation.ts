@@ -297,6 +297,17 @@ export const manualDispatchSchema = z.object({
   notes: z.string().max(500).optional(),
 });
 
+// F24: the customer-owned cancellation body. The customer identity comes from
+// the verified ID token (`req.user.uid`), never from this body — there is
+// deliberately no customerId/uid field to spoof.
+export const customerCancelSchema = z
+  .object({
+    orderId: nonEmptyString,
+    /** Optional free-text reason recorded on the order's audit trail. */
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
 export const orderBumpSchema = z.object({
   orderId: nonEmptyString,
   status: z.enum([

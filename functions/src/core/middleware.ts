@@ -5,6 +5,33 @@ import { timingSafeEqual } from "./security";
 import { verifyPetpoojaSignature } from "../modules/petpooja/client";
 import * as admin from "firebase-admin";
 
+/**
+ * F06 — the SERVER-OWNED staff suspension flag.
+ *
+ * `users/{uid}.active` is the single authoritative activation state (no claim
+ * mirror, no `suspended` field, no Auth-`disabled` shadow). Before this gate,
+ * `requireRole` admitted on the token claim alone (zero reads), so a suspended
+ * operator kept every role-gated API route until their token aged out.
+ * Reading the profile here is the only way to deny an ALREADY-ISSUED token.
+ *
+ * Fail closed for privileged callers: a missing document, a missing `active`
+ * flag, or an unreadable profile denies. Customers never reach this helper —
+ * every route that uses it is staff-gated; customer routes authenticate with
+ * `requireAuth` alone and are therefore unaffected.
+ */
+export async function isAccountActive(uid: string): Promise<boolean> {
+  if (!uid) return false;
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    if (!snap.exists) return false;
+    const data = (snap.data() || {}) as Record<string, unknown>;
+    return data.active === true;
+  } catch (err: any) {
+    console.warn("[Auth] activation lookup failed:", err?.message || err);
+    return false;
+  }
+}
+
 export interface AuthenticatedRequest extends Request {
   user?: admin.auth.DecodedIdToken;
 }
@@ -64,6 +91,13 @@ export async function optionalAuth(
 /**
  * Role-Based Access Control (RBAC) middleware.
  * Checks if authenticated caller has one of the allowed roles in custom claims or admins collection.
+ *
+ * F06: "which role" is not sufficient — the account must also be ACTIVE. Every
+ * admission path (claim, brand bypass, admins fallback) passes through the same
+ * activation gate, so a stale claim and a registry doc are equally unable to
+ * override a suspension. The gate runs LAZILY: it is only reached on a path that
+ * would otherwise have admitted, so a caller whose role test already fails pays
+ * no extra document read (and customer routes never call this middleware).
  */
 export function requireRole(allowedRoles: string[]) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -78,13 +112,27 @@ export function requireRole(allowedRoles: string[]) {
       userRole === "brand_owner" ||
       userRole === "developer";
 
-    if (isBrandAdmin) {
+    // One profile read per staff request; a suspension is denied far more often
+    // than it is wasted, and this is the only way to stop an ALREADY-ISSUED token.
+    const admitIfActive = async (): Promise<void> => {
+      if (!(await isAccountActive(req.user!.uid))) {
+        res.status(403).json({
+          code: "ACCOUNT_SUSPENDED",
+          error:
+            "Forbidden: this account is suspended. Contact a brand owner to restore access.",
+        });
+        return;
+      }
       next();
+    };
+
+    if (isBrandAdmin) {
+      await admitIfActive();
       return;
     }
 
     if (userRole && allowedRoles.includes(userRole)) {
-      next();
+      await admitIfActive();
       return;
     }
 
@@ -100,7 +148,7 @@ export function requireRole(allowedRoles: string[]) {
             role === "brand_owner" ||
             role === "developer")
         ) {
-          next();
+          await admitIfActive();
           return;
         }
       }

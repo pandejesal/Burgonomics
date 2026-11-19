@@ -62,6 +62,10 @@ vi.mock("../src/modules/auth", () => ({
   setUserCustomClaims: vi.fn(),
   assignUserRole: vi.fn(),
   revokeUserRole: vi.fn(),
+  // F06: index.ts imports these two from the auth barrel, so the partial mock
+  // must expose them (the route itself is not exercised here).
+  setStaffActive: vi.fn(),
+  staffSuspensionSchema: { parse: (v: unknown) => v },
   verifyBonusEligibility: vi.fn(),
   cleanupExpiredGuestSessionsWorker: vi.fn(),
   onUserDeletedCleanup: vi.fn(),

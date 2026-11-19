@@ -25,6 +25,42 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
+    // F06 — privileged (staff/operator) callers must also be ACTIVE.
+    //
+    // The token test performs ZERO document reads and short-circuits away for
+    // every customer token, so ordinary customer uploads/downloads perform no
+    // Firestore access at all.
+    // Every claim read here is NULL-SAFE. In the Storage rules runtime an absent
+    // map key is an EVALUATION ERROR ("Property role is undefined on object"),
+    // not `false`, which would abort the evaluation and turn the customer
+    // short-circuit into an unconditional 403. So the role is read through the
+    // map accessor with an empty-string default (an empty role is never in the
+    // privileged set).
+    function privilegedStaffToken() {
+      return request.auth != null
+        && request.auth.token != null
+        && request.auth.token.get('role', '') in [
+          'brand_owner', 'developer', 'support', 'regional_manager',
+          'branch_owner', 'branch_staff'
+        ];
+    }
+
+    // Exactly ONE cross-service read (default database, as documented for
+    // firestore.get in Storage rules) and NO existence probe: two exchanges
+    // against the Firestore emulator exceeded the per-case budget. Only
+    // evaluated when the token is privileged, so the total is at most one
+    // document access per evaluation and ZERO for customers. Fail closed: a
+    // missing profile makes the read fail evaluation and the caller is denied,
+    // exactly as for a profile without `active == true`.
+    function staffActive() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid))
+        .data.get('active', false) == true;
+    }
+
+    function privilegedAndActive() {
+      return !privilegedStaffToken() || staffActive();
+    }
+
     // Explicit default deny. Firebase already denies unmatched paths; stating it
     // keeps a future refactor from silently opening the bucket.
     match /{allPaths=**} {
@@ -46,6 +82,7 @@ service firebase.storage {
       // the partner console. Raster formats only.
       allow create: if request.auth != null
         && request.auth.uid == uid
+        && privilegedAndActive()
         && resource == null
         && request.resource.contentType.matches('image/.*')
         && !request.resource.contentType.matches('image/svg.*')
@@ -54,7 +91,8 @@ service firebase.storage {
       // Owner-only read. No update, no delete — evidence is immutable once
       // written, and removal is an administrative act (Admin SDK / console).
       allow read: if request.auth != null
-        && request.auth.uid == uid;
+        && request.auth.uid == uid
+        && privilegedAndActive();
 
       allow update, delete: if false;
     }

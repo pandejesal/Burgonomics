@@ -12,10 +12,13 @@ import { ProviderDispatchError } from "../types";
 import { normalizePhone } from "../dropContact";
 import {
   QUOTE_TTL_MS,
+  bookAmbiguous,
   classifyHttpStatus,
+  createOrderResponseUncertain,
   dropAddressBlock,
   dropContact,
   fetchProviderJson,
+  isProvenPreSendFailure,
   mockRateFare,
   mockRider,
   pickFiniteNumber,
@@ -287,15 +290,14 @@ function assertBorzoResponse(res: ProviderHttpResponse): void {
 
 /**
  * Book-time acceptance ambiguity: the order MAY exist at Borzo. Deliberately a
- * PLAIN error (no `kind`), so dispatch.router.ts cannot treat it as a walkable
- * provider fault and book a second real courier. The router releases the claim
- * and surfaces it for reconciliation by `client_order_id`.
+ * PLAIN error (`PROVIDER_BOOK_AMBIGUOUS`, no `kind`), so dispatch.router.ts
+ * cannot treat it as a walkable provider fault and book a second real courier.
+ * The router releases the claim and surfaces it for reconciliation by
+ * `client_order_id`. Delegates to the shared helper so every provider parks in
+ * exactly the same shape (audit F08).
  */
-function borzoBookAmbiguous(message: string): Error {
-  const err: any = new Error(message);
-  err.statusCode = 502;
-  err.code = "PROVIDER_BOOK_AMBIGUOUS";
-  return err;
+function borzoBookAmbiguous(message: string, cause?: unknown, providerOrderId?: string): Error {
+  return bookAmbiguous("borzo", message, cause, providerOrderId);
 }
 
 function buildPoints(ctx: DispatchQuoteContext, forBooking: boolean): any[] {
@@ -476,33 +478,49 @@ export const borzoAdapter: ProviderAdapter = {
         geoSource: "live_gps",
       };
     }
+    // (F08 R4) Payload/contact/header construction happens OUTSIDE the wire
+    // try: a typed LOCAL gate there keeps its exact classification AND its
+    // zero-fetch guarantee, and can never be confused with a wire outcome.
+    const headers = borzoHeaders();
+    const payload = buildOrderPayload(ctx, true);
+    let body: string;
+    try {
+      body = JSON.stringify(payload);
+    } catch (err) {
+      throw unparseable("borzo", "create-order payload");
+    }
     let res: ProviderHttpResponse;
     try {
       res = await fetchProviderJson("borzo", `${borzoApiBase()}/create-order`, {
         method: "POST",
-        headers: borzoHeaders(),
-        body: JSON.stringify(buildOrderPayload(ctx, true)),
+        // (F08 proof) never auto-follow a redirect on a CREATE: a followed POST
+        // could be delivered, answered 307/308, then fail DNS at the redirect
+        // target — which must be UNCERTAINTY, not a walkable pre-send DNS proof.
+        redirect: "error",
+        headers,
+        body,
       });
     } catch (err: any) {
-      // A create-order that produced no response is NOT safely retryable: the
-      // request may already have reached Borzo, and an abort/timeout fires
-      // AFTER the request is in flight (the canonical "we may have booked it"
-      // case this whole guard exists for). Re-classify that class as acceptance
-      // ambiguity so the ranked walk cannot book a second real courier.
-      // The test is on the ABORT CLASS, not on transmission state: we cannot
-      // observe whether bytes reached Borzo (a stalled DNS/TLS handshake aborts
-      // the same way and is reported as ambiguous too — safe direction, at the
-      // cost of a reconciliation ticket). Fast pre-send failures (DNS,
-      // connection refused) do not match and stay transient/walkable.
-      const message = String(err?.message || "");
-      if (/timed?\s?out|abort/i.test(message)) {
+      // ANY throw from the wire is not local evidence. fetchProviderJson wraps
+      // every wire throw (cause + thrownFromWire), so even a typed error raised
+      // inside fetch falls through to the ambiguity default below.
+      //   - PROVEN pre-send transport failure (DNS / connection refused): no
+      //     bytes could have reached Borzo, so the walk may safely fail over.
+      //   - anything else (timeout, abort, connection reset, unknown "fetch
+      //     failed"): uncertainty -> park for reconciliation, never rebook.
+      if (!isProvenPreSendFailure(err)) {
         throw borzoBookAmbiguous(
-          "Borzo create-order timed out with no response: the request may already have created an order - do not book another courier; reconcile by client_order_id before any rebook"
+          "Borzo create-order failed without a usable response: the request may already have created an order - do not book another courier; reconcile by client_order_id before any rebook",
+          err
         );
       }
       throw err;
     }
 
+    // (F08 R1) Parse order-scoped id evidence BEFORE the uncertainty branch so a
+    // 5xx that still names an order can retain that evidence in the parked
+    // error. It stays DIAGNOSTIC: never bound as a booking (no dispatchOrderId /
+    // deliveryStatus / provider alias is written from it).
     const order = res.data?.order || {};
     const rawProviderOrderId =
       order.order_id ?? res.data?.order_id ?? res.data?.id ?? null;
@@ -522,6 +540,20 @@ export const borzoAdapter: ProviderAdapter = {
         : typeof rawNamedOrderId === "number" && Number.isFinite(rawNamedOrderId)
           ? String(rawNamedOrderId)
           : null;
+
+    // (F08) A 5xx or an unreadable body is NOT a rejection: the wire accepted
+    // the request and Borzo may hold the order. Checked BEFORE every existing
+    // duplicate/named-id/accepted-no-id guard, which keep their exact order.
+    if (createOrderResponseUncertain(res)) {
+      throw borzoBookAmbiguous(
+        `Borzo create-order returned HTTP ${res.status}${
+          res.textReadError ? " with an unreadable body" : ""
+          }: the order may already exist - do not book another courier; reconcile by client_order_id before any rebook`,
+        res.textReadError ? res.textReadErrorMessage : undefined,
+        namedOrderId ?? undefined
+      );
+    }
+
     const accepted = res.ok && res.data?.is_successful !== false;
     // DUPLICATE-ORDER AMBIGUITY (book-time only). A duplicate signal is
     // provider evidence that an order for OUR client_order_id may already

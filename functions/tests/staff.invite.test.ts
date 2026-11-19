@@ -137,4 +137,28 @@ describe("Readiness-6: server staff invite", () => {
     await expect(invite({ role: "ceo_of_everything" })).rejects.toThrow(/Invalid role/);
     expect(mockAuth.createUser).not.toHaveBeenCalled();
   });
+
+  // F06 — the invite path used to stamp `active: true` with `{merge:true}` on
+  // EVERY invite/re-invite, silently resurrecting a suspended operator. The
+  // profile now initialises `active` only when the document does not exist yet.
+  it("F06: re-inviting an EXISTING suspended profile keeps active === false", async () => {
+    mockAuth.getUserByEmail.mockResolvedValueOnce({ uid: "uid_old_9" });
+    savedDocs["users/uid_old_9"] = { role: "branch_staff", active: false };
+
+    const res = await invite({ email: "veteran@burgonomics.in" });
+
+    expect(res.uid).toBe("uid_old_9");
+    expect(savedDocs["users/uid_old_9"].active).toBe(false);
+    expect(savedDocs["users/uid_old_9"].role).toBe("branch_staff");
+  });
+
+  it("F06: inviting a brand-new account initialises active === true", async () => {
+    mockAuth.getUserByEmail.mockRejectedValueOnce({ code: "auth/user-not-found" });
+    mockAuth.createUser.mockResolvedValueOnce({ uid: "uid_new_active" });
+
+    const res = await invite({ email: "fresh@burgonomics.in" });
+
+    expect(res.invited).toBe(true);
+    expect(savedDocs["users/uid_new_active"].active).toBe(true);
+  });
 });

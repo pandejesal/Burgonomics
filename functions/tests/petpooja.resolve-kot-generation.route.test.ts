@@ -287,6 +287,9 @@ beforeEach(() => {
   posFetch.mockClear();
   h.hooks.failNextAcceptanceWrite = false;
   nextPos = "accepted_no_id";
+  // F06: requireRole fail-closes on `users/{uid}.active`, so the staff identity
+  // driving these routes needs an ACTIVE profile document.
+  h.savedDocs["users/staff_kot_gen"] = { role: "branch_staff", active: true };
 });
 
 describe("resolveKot retry is bound to the acceptance generation", () => {

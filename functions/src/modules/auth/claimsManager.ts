@@ -188,6 +188,10 @@ export async function setUserCustomClaims(
   }
 
   // 3. Synchronize with Firestore `users/{uid}` collection
+  // F06: `active` is a SERVER-OWNED suspension state and is deliberately
+  // absent from this write. A role assignment or re-invite must never
+  // reactivate a suspended operator — only POST /auth/suspendStaff may. The
+  // Firestore rules also deny client writes of `active`.
   await db
     .collection("users")
     .doc(targetUid)

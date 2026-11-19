@@ -79,7 +79,17 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
 
   beforeEach(() => {
     for (const key of Object.keys(savedDocs)) delete savedDocs[key];
-    savedDocs["orders/ord_1"] = { branchId: "b1", status: { code: "PLACED" } };
+    // F04: these cases exercise the BUMP mechanics, not gateway capture, so the
+    // seed states the admissible non-gateway lane explicitly (counter cash/COD,
+    // exempt from the kitchen admission gate). It never fabricates the
+    // server-only `paymentChannel: "razorpay"` capture marker.
+    savedDocs["orders/ord_1"] = {
+      branchId: "b1",
+      status: { code: "PLACED" },
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
+    };
   });
 
   it("writes the Delivery-compatible object form for a forward bump", async () => {
@@ -204,7 +214,15 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
     // leaves it READY_TO_SERVE. THEN the client re-refs with expectedStatus
     // "ready" and the screen's stored state must still count as the same state
     // (the fork, not the generic READY_FOR_PICKUP).
-    savedDocs["orders/ord_dinein"] = { branchId: "b1", fulfillmentType: "dinein", status: { code: "CONFIRMED" } };
+    savedDocs["orders/ord_dinein"] = {
+      branchId: "b1",
+      fulfillmentType: "dinein",
+      status: { code: "CONFIRMED" },
+      // F04: bump-mechanics fixture, explicit counter cash lane (see beforeEach).
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
+    };
     await bumpOrderStatus({ orderId: "ord_dinein", status: "ready", caller: ownBranchCaller });
     expect(savedDocs["orders/ord_dinein"].status).toMatchObject({ code: "READY_TO_SERVE", terminal: false });
     // the fork-for-back match:
@@ -218,7 +236,15 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
   });
 
   it("responds with the meta actually written (dinein READY_TO_SERVE, not generic READY_FOR_PICKUP)", async () => {
-    savedDocs["orders/ord_dinein2"] = { branchId: "b1", fulfillmentType: "dinein", status: { code: "CONFIRMED" } };
+    savedDocs["orders/ord_dinein2"] = {
+      branchId: "b1",
+      fulfillmentType: "dinein",
+      status: { code: "CONFIRMED" },
+      // F04: bump-mechanics fixture, explicit counter cash lane.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
+    };
     const res: any = await bumpOrderStatus({
       orderId: "ord_dinein2",
       status: "ready",
@@ -229,7 +255,15 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
   });
 
   it("responds with takeaway PICKED_UP on delivered", async () => {
-    savedDocs["orders/ord_away"] = { branchId: "b1", fulfillmentType: "takeaway", status: { code: "READY_FOR_PICKUP" } };
+    savedDocs["orders/ord_away"] = {
+      branchId: "b1",
+      fulfillmentType: "takeaway",
+      status: { code: "READY_FOR_PICKUP" },
+      // F04: bump-mechanics fixture, explicit counter cash lane.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
+    };
     const res: any = await bumpOrderStatus({
       orderId: "ord_away",
       status: "delivered",
@@ -239,7 +273,14 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
   });
 
   it("accepts canonical Delivery codes and case-insensitive spellings in expectedStatus", async () => {
-    savedDocs["orders/ord_ofd"] = { branchId: "b1", status: { code: "OUT_FOR_DELIVERY" } };
+    savedDocs["orders/ord_ofd"] = {
+      branchId: "b1",
+      status: { code: "OUT_FOR_DELIVERY" },
+      // F04: bump-mechanics fixture, explicit counter cash lane.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
+    };
     await bumpOrderStatus({
       orderId: "ord_ofd",
       status: "delivered",
@@ -278,6 +319,11 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       branchId: "b1",
       orderType: "delivery",
       status: { code: "OUT_FOR_DELIVERY", terminal: false },
+      // F04: brand-override handover fixture, explicit COD lane (cash collected
+      // at the door); no fabricated gateway capture marker.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
     };
     await bumpOrderStatus({
       orderId: "ord_otp_brand",
@@ -305,6 +351,10 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       branchId: "b1",
       orderType: "takeaway",
       status: { code: "READY_FOR_PICKUP", terminal: false },
+      // F04: completion-vocabulary fixture, explicit counter cash lane.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
     };
     const away: any = await bumpOrderStatus({
       orderId: "ord_otp_away",
@@ -317,6 +367,10 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       branchId: "b1",
       orderType: "dinein",
       status: { code: "READY_TO_SERVE", terminal: false },
+      // F04: completion-vocabulary fixture, explicit counter cash lane.
+      paymentMethod: "cod",
+      paymentStatus: "CASH_PENDING",
+      payment: { method: "cod", status: "CASH_PENDING" },
     };
     const dine: any = await bumpOrderStatus({
       orderId: "ord_otp_dine",

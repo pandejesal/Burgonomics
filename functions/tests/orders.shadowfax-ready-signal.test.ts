@@ -157,6 +157,13 @@ function seedPreparing(id: string, extra: Record<string, any> = {}) {
     branchId: "b1",
     fulfillmentType: "delivery",
     status: { code: "PREPARING", label: "Preparing", kind: "in_progress", terminal: false },
+    // F04: these cases assert the Shadowfax dispatch-ready SIGNAL on an
+    // already-cooking order, so the payment lane must be explicit. COD
+    // (collected at the door) is the admissible non-gateway lane; the
+    // server-only `paymentChannel: "razorpay"` capture marker is never fabricated.
+    paymentMethod: "cod",
+    paymentStatus: "CASH_PENDING",
+    payment: { method: "cod", status: "CASH_PENDING" },
     deliveryStatus: "dispatched",
     dispatchStatus: "dispatched",
     dispatchProvider: "shadowfax",

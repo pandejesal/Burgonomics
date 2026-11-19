@@ -10,6 +10,20 @@
 
 ---
 
+## [Unreleased] — 2026-11-19 (Audit remediation deployed to staging)
+
+### Fixed & Deployed (staging `burgonomics-7faa8`, production untouched)
+- **F06 staff suspension**: `users/{uid}.active` now gates every privileged path — Firestore `staffActive()` as the last conjunct of both `hasRole` arms plus the Storage `privilegedAndActive()` single-read gate, the server `requireRole` gate (`403 ACCOUNT_SUSPENDED`), and `POST /auth/suspendStaff` (one transaction, denies self-suspension, audited, `revokeRefreshTokens` secondary). Clients can no longer write `active`/`suspendedAt`/`suspendedBy`. Missing field = suspended, so staff profiles were inventoried and backfilled on staging before enforcement.
+- **F24 customer cancellation**: `POST /orders/customerCancel` (server-first, non-terminal and rank ≤ `PREPARING`, no rider assigned; 409 otherwise). Rules deny direct client cancellation in all mirrors; idempotent retries; durable provider-cancel intent on rider-bearing bookings.
+- **F08 uncertain dispatch create**: transport classification from the cause chain (bounded, non-enumerable `cause`, no body/credential leakage); only proven pre-send codes fail over; 5xx and unreadable bodies park as `PROVIDER_BOOK_AMBIGUOUS` before the id guards, so an uncertain booking can no longer produce a second paid courier booking. Same error shape across Borzo, Shadowfax and Porter.
+- **F17 private-key resend**: an unchanged legacy private key re-sent into the public `admin_stores` document is denied — the empty `affectedKeys()` diff can no longer satisfy the public-shape test (canonical `70e620ea…9713`, byte-identical in the customer mirror; Partner's own drift preserved with the blocks LF-equal).
+- **F23 refund-gateway 409**: treated as reconciliation-required uncertainty, not a rejection.
+- **F04 kitchen admission**: requires the server capture marker, not `method === 'online'`; legacy fixtures were moved to an explicit non-gateway lane rather than the gate being relaxed.
+- **F10 dependency-setup test**: verified 19/19 inside the unchanged 5000 ms timeout (case 9 at 46 ms); test-only import hook, no timeout or threshold changed.
+
+### Changed
+- Deployment: functions (18), hosting (both sites), Firestore and Storage rules released to staging through the reviewed rollback-aware driver in six phases; pre-deploy rollback state recorded. No commit, push or production change.
+
 ## [Unreleased] — 2026-10-02 (Spec v2.1 — Multi-Provider Dispatch Requirements & Phase 7 Plan)
 
 ### Added
