@@ -104,6 +104,8 @@ import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import { cancelOrderAsCustomer } from "./modules/orders/customerCancel";
 import { createWalkInSchema } from "./modules/orders/createWalkIn";
 import { handleCreateWalkIn } from "./modules/orders/createWalkInRoute";
+import { createCashOrderSchema } from "./modules/orders/createCashOrder";
+import { handleCreateCashOrder } from "./modules/orders/createCashOrderRoute";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { recoverStuckCaptureFulfilments } from "./modules/payments/captureRecovery";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
@@ -379,6 +381,7 @@ app.use(
     "/dispatch/cancel",
     "/dispatch/cancel/confirm",
     "/orders/createWalkIn",
+    "/orders/createCashOrder",
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
@@ -1214,6 +1217,17 @@ app.post(
   requireAuth,
   validateBody(createWalkInSchema),
   handleCreateWalkIn
+);
+
+// COD / pay-at-counter. `requireAuth` ONLY: this is the CUSTOMER lane (a
+// customer placing a cash order), and the service owns ownership, branch
+// resolution, catalog pricing and the branch's COD switch/ceiling. Staff
+// counter orders stay on /orders/createWalkIn above.
+app.post(
+  "/orders/createCashOrder",
+  requireAuth,
+  validateBody(createCashOrderSchema),
+  handleCreateCashOrder
 );
 
 app.post(

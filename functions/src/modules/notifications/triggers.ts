@@ -4,7 +4,8 @@ import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlert
 import { sendFcmMessage, sendMulticastFcm } from "./fcmClient";
 import { TRUSTED_SERVER_ACTOR } from "./sendGate";
 import { captureErrorSnapshot } from "../../core/errors";
-import { pushKotForCashOrderOnAccept } from "../petpooja/orderPush";
+import { pushKotForCashOrderOnAccept, pushKotForServerCashOrderOnCreate } from "../petpooja/orderPush";
+import { PetpoojaDisabledError } from "../petpooja/client";
 import {
   ensureCancelledPaidRefundObligation,
   claimRefundReviewAlert,
@@ -162,6 +163,40 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
         customerId,
         errorStack: err?.stack,
       });
+    }
+
+    // Owner decision 2026-11-20: a COD order the SERVER created goes to the
+    // kitchen NOW. Strictly last and in its own try/catch, exactly like the
+    // staff-acceptance cash KOT below: a POS rejection or timeout can never
+    // fail the create event (which would replay the whole trigger).
+    try {
+      const pushed = await pushKotForServerCashOrderOnCreate(orderId, order);
+      if (pushed === false) {
+        await captureErrorSnapshot({
+          source: "petpooja",
+          severity: "high",
+          message: `COD order ${orderId} was not accepted by the POS — kitchen may not have the ticket`,
+          orderId,
+          branchId,
+        });
+      }
+    } catch (err: any) {
+      // An intentionally disabled POS bridge is not a kitchen failure: the
+      // order still reached the KDS, and the bridge resumes when re-enabled.
+      // Every OTHER fault is a real "the kitchen may be blind" alert.
+      if (err instanceof PetpoojaDisabledError) {
+        console.log(`[onOrderCreatedTrigger] COD KOT deferred — POS bridge disabled for ${orderId}`);
+      } else {
+        console.error("[onOrderCreatedTrigger] COD KOT push failed:", err?.message || err);
+        await captureErrorSnapshot({
+          source: "petpooja",
+          severity: "high",
+          message: `COD KOT push failed for order ${orderId} — kitchen may be blind`,
+          orderId,
+          branchId,
+          errorStack: err?.stack,
+        });
+      }
     }
   }
 );

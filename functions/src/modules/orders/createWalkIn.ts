@@ -27,6 +27,9 @@ export interface WalkInReceipt {
   paymentStatus: "pending";
   totals: PricingBreakdown;
   settlementAvailable: false;
+  /** The REAL outlet this order belongs to (never a client guess). */
+  branchId: string;
+  branchName: string;
 }
 export class WalkInError extends Error {
   constructor(public readonly statusCode: number, public readonly code: string, message: string, public readonly totals?: PricingBreakdown) {
@@ -92,9 +95,19 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
       const config: BranchPricingConfig = { packagingFee: branchFee ?? DEFAULT_PACKAGING_FEE, monthlyFeePaise: DEFAULT_MONTHLY_FEE_RUPEES * 100, ...(branchFee !== undefined ? { branchPackagingFee: branchFee } : {}), packaging: branch.packaging ?? null };
       const { packagingUsedFallback: _fallback, ...totals } = computeSnapshotPricing({ items: lines, products, branchConfig: config, branchId: input.branchId, orderType });
       if (totals.split.totalAmountPaise !== input.expectedTotalPaise) throw new WalkInError(409, "PRICE_CHANGED", "The order price changed; please reconfirm.", totals);
-      const receipt: WalkInReceipt = { orderId, replayed: false, status: placed, paymentStatus: "pending", totals, settlementAvailable: false };
+      const receipt: WalkInReceipt = { orderId, replayed: false, status: placed, paymentStatus: "pending", totals, settlementAvailable: false, branchId: input.branchId, branchName: "" };
       const timestamp = admin.firestore.FieldValue.serverTimestamp();
-      tx.create(orderRef, { customerId: "cust_walkin", userId: actorUid, branchId: input.branchId, orderType, fulfillmentType: orderType, items: lines, status: placed, paymentMethod: input.tender === "cash" ? "cod" : "upi", paymentStatus: "pending", payment: { method: input.tender === "cash" ? "cod" : "upi", status: "pending" }, pricing: totals, totals, ...(input.tableNumber !== undefined ? { tableNumber: input.tableNumber } : {}), ...(input.notes !== undefined ? { notes: input.notes } : {}), ...(input.customerName !== undefined ? { customerName: input.customerName } : {}), ...(input.customerPhone !== undefined ? { customerPhone: input.customerPhone } : {}), walkInRequestHash: requestHash, walkInReceipt: receipt, createdAt: timestamp, updatedAt: timestamp });
+      // The REAL outlet identity, read from the branch document that was just
+      // authorised. The Partner modal used to guess it from a two-value
+      // ternary on the branch id, so 15 of 17 outlets recorded counter revenue
+      // under the wrong store name. Never fall back to a guess: an unnamed
+      // branch keeps its id and an empty name, which is visibly wrong instead
+      // of plausibly wrong.
+      const branchName = typeof branch.name === "string" && branch.name.trim() ? branch.name.trim() : "";
+      const city = typeof branch.city === "string" && branch.city.trim() ? branch.city.trim() : "";
+      const tenderMethod = input.tender === "cash" ? "cod" : "upi";
+      receipt.branchName = branchName;
+      tx.create(orderRef, { customerId: "cust_walkin", userId: actorUid, branchId: input.branchId, branchName, city, shortCode: `BG-${orderId.slice(-6).toUpperCase()}`, orderType, fulfillment: orderType, fulfillmentType: orderType, items: lines, status: placed, paymentMethod: tenderMethod, paymentStatus: "pending", payment: { method: tenderMethod, status: "pending" }, pricing: totals, totals, subtotal: totals.foodSubtotal, tax: totals.gst, deliveryFee: totals.deliveryFee, total: totals.grandTotal, ...(input.tableNumber !== undefined ? { tableNumber: input.tableNumber } : {}), ...(input.notes !== undefined ? { notes: input.notes } : {}), ...(input.customerName !== undefined ? { customerName: input.customerName } : {}), ...(input.customerPhone !== undefined ? { customerPhone: input.customerPhone } : {}), walkInRequestHash: requestHash, walkInReceipt: receipt, createdAt: timestamp, updatedAt: timestamp, placedAt: timestamp });
       tx.create(auditRef, { actorUid, actorEmail: null, action: "walkin_created", targetType: "order", targetId: orderId, metadata: { branchId: input.branchId, tender: input.tender }, createdAt: timestamp });
       return receipt;
     });
