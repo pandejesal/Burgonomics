@@ -49,7 +49,15 @@ import {
 import { resolvePetpoojaKotAmbiguity } from "./modules/petpooja/orderPush";
 // Direct module import (not via the barrel): the /petpooja/menu-sync route's
 // 503-vs-400 mapping is a pure helper kept testable without booting this app.
-import { menuSyncFailureStatus } from "./modules/petpooja/menuSyncWebhook";
+import { menuSyncFailureStatus, menuPushAck } from "./modules/petpooja/menuSyncWebhook";
+// Direct module import: the documented Item On/Off reply body is a pure helper,
+// unit-testable without booting this app.
+import {
+  stockWebhookReply,
+  stockAuditOutcome,
+  stockAuditPartialCount,
+  summariseStockItemRef,
+} from "./modules/petpooja/item86ingSync";
 import { auditPetpoojaWebhook } from "./modules/petpooja/webhookAudit";
 import {
   syncAllBranchesPetpoojaMenu,
@@ -671,24 +679,37 @@ app.post("/petpooja/stockWebhook", verifyPetpoojaAuth, async (req, res) => {
       authenticated: (req as any).petpoojaAuthenticated === true,
     });
     const retryable = result?.retryable === true;
+    const reply = stockWebhookReply(result);
+    // THE BATCH IS NOT A STRING FIELD. `itemID` is a caller-controlled array
+    // (documented as an array) and used to be stored whole, so one 5,000-id push
+    // wrote a payload-sized value into this row. Summarise it.
+    //
+    // A batch that only PARTLY applied must not read as a clean success in the
+    // trail either: `outcome` stays `ok | error` (the schema), and a partial is
+    // surfaced as `error` plus an explicit `partial: n/m` detail.
+    const partial = result?.outcome === "partial";
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/stockWebhook",
-      outcome: retryable ? "error" : "ok",
+      outcome: stockAuditOutcome(result),
       restId: p.rest_id ?? p.restID ?? p.restId ?? null,
-      itemId: p.item_id ?? p.itemID ?? p.itemId ?? null,
-      detail: retryable ? `not applied (${result.reason || "retry"}) — answered 503 for redelivery` : undefined,
+      itemId: summariseStockItemRef(p.item_id ?? p.itemID ?? p.itemId ?? null),
+      partial: stockAuditPartialCount(result),
+      detail: retryable
+        ? `not applied (${result.reason || "retry"}) — answered 503 for redelivery`
+        : partial
+          ? `partial batch — ${result.reason || "some ids not applied"}`
+          : undefined,
     });
-    if (retryable) {
-      res.status(503).json({ status: "retry", reason: "stock toggle not applied — redeliver" });
-      return;
-    }
-    res.status(200).json({ status: "success" });
+    // The body is the vendor's documented Item On/Off reply in both cases; only
+    // the status differs, so a redelivery is still fail-closed (503) while a
+    // merchant reading the body sees the documented shape.
+    res.status(reply.httpStatus).json(reply.body);
   } catch (err: any) {
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/stockWebhook",
       outcome: "error",
       restId: p.rest_id ?? p.restID ?? p.restId ?? null,
-      itemId: p.item_id ?? p.itemID ?? p.itemId ?? null,
+      itemId: summariseStockItemRef(p.item_id ?? p.itemID ?? p.itemId ?? null),
       detail: err?.message,
     });
     res.status(500).json({ error: err.message || "Stock webhook failed" });
@@ -720,9 +741,13 @@ app.post("/petpooja/menu-sync", verifyPetpoojaAuth, async (req, res) => {
     // there is nothing for Petpooja to retry; the skip was logged loudly. The
     // reason is included so the dashboard/bus shows WHY it was refused instead
     // of a bare failure.
+    //
+    // A push we actually ingested is acknowledged with the vendor's DOCUMENTED
+    // body (`{"success":"1","message":"Menu items are successfully listed."}`):
+    // our internal itemCount is diagnostic, not part of the documented reply.
     res.status(200).json(
       result.success
-        ? result
+        ? menuPushAck()
         : {
             ...result,
             reason: `outlet ${restId || "(unidentified)"} is not linked — no branch carries it as petpoojaStoreId (Runbook §5)`,
@@ -753,9 +778,23 @@ app.post("/petpooja/webhook", verifyPetpoojaAuth, async (req, res) => {
     // the credential-less callback admitted by SHAPE. The handler is
     // default-deny, so pass a strict boolean — an absent flag must never read
     // as trusted.
-    await handlePetpoojaWebhook(p, {
+    //
+    // The handler answers the documented Get/Update Store Status callbacks
+    // itself and hands back that reply, so this route sends the vendor's
+    // documented body instead of a bare {"status":"success"}.
+    const storeReply = await handlePetpoojaWebhook(p, {
       authenticated: (req as any).petpoojaAuthenticated === true,
     });
+    if (storeReply) {
+      await auditPetpoojaWebhook({
+        endpoint: "/petpooja/webhook",
+        outcome: storeReply.body?.status === "success" ? "ok" : "error",
+        payload: p,
+        detail: `store-status ${storeReply.kind}`,
+      });
+      res.status(storeReply.httpStatus).json(storeReply.body);
+      return;
+    }
     await auditPetpoojaWebhook({
       endpoint: "/petpooja/webhook",
       outcome: "ok",

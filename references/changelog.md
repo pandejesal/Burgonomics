@@ -10,6 +10,31 @@
 
 ---
 
+## [Unreleased] — 2026-11-20 (Petpooja inbound callback replies matched to the docs)
+
+### Fixed
+- **Item On/Off webhook (`/petpooja/stockWebhook`)**: the documented `itemID` is an array; the handler read one scalar, so a multi-id callback failed the doc-id guard and every id was dropped. Both shapes now normalise to a bounded id list (≤200), each id is applied through the same identity/ownership/version-precondition rules, and the batch reports one outcome (all applied / retry when any failure is retryable / `partial: n/m applied` when a permanent park blocks the rest). A replay of an already-applied toggle no longer rewrites the product; the idempotence check runs on the fresh transaction read so a concurrent staff write stays a version conflict.
+- **Stock webhook reply**: now the documented `{"code":200,"status":"success","message":"Stock status updated successfully"}` (failure body `{"code":400,"status":"failed","message":"Stock status not updated successfully"}`), replacing `{"status":"success"}`. A redelivery keeps its fail-closed 503.
+- **Get Store Status (`/petpooja/webhook`)**: answers the documented `{"http_code":200,"status":"success","store_status":"1","message":"Store Delivery Status fetched successfully"}` with `store_status` derived from the branch's real state (`active:false` or `acceptingOrdersStatus:"closed"` → `"0"`).
+- **Update Store Status (`/petpooja/webhook`)**: applies the documented `store_status` `0`/`1` encoding to `branches/{id}.acceptingOrdersStatus` (+ `turnOnAt`, `storeStatusReason`) and answers the documented body. Idempotent; the legacy `{restID, status}` ping is still recorded and never applied; an uncredentialed shape-admitted update is recorded and refused; an unlinked `restID` or undocumented value answers `http_code:400` / `store_status:""` and changes nothing.
+- **Push Menu (`/petpooja/menu-sync`)**: an ingested push now answers the documented `{"success":"1","message":"Menu items are successfully listed."}` instead of `{"success":true,"itemCount":N}`. Menu processing is unchanged; a refused unlinked outlet keeps its diagnostic body.
+
+### Verified
+- Order callback: no change needed — the documented `{restID, orderID, status, …}` shape already resolves, maps and answers 200.
+- Not ours, still open: Rider Information (`rider_status_update`) returns Petpooja's SQS passthrough instead of the documented 200 body.
+- Regression suite `functions/tests/petpooja.callback-replies.test.ts` (24 tests) pins the documented bodies; full Petpooja set 575/575 and functions typecheck clean.
+
+## [Unreleased] — 2026-11-20 (Petpooja callback follow-ups, r2)
+
+### Fixed
+- **Get Store Status reachable without a credential.** The documented request is a bare `{"restID"}`; the shape allowance required a status key, so genuine vendor calls 401'd at the middleware. `verifyPetpoojaAuth` now also admits exactly that shape on `/petpooja/webhook` (`looksLikePetpoojaStoreStatusRead`: a restID, no `status`/`store_status` key, no order reference). The GET path stays read-only, an unknown `restID` gets the documented failure, and `petpooja_store_status_events.trusted` now records the real verdict (`isTrustedPetpoojaAuth`) instead of `true`. `/petpooja/stockWebhook` and `/petpooja/menu-sync` still 401 a credential-less body; every write path remains credential-only.
+- **Update Store Status now actually stops and restarts customer ordering.** r1 wrote only `branches/{id}.acceptingOrdersStatus`, which no ordering path reads. The update now writes the live gate `stores/{id}.isOpen` (the field `storesService.mapStoreDoc` surfaces and `PaymentRepository` refuses to open the gateway for), keeps the branch flag in step, and mirrors into an **existing** `admin_stores` doc only. Storefront resolution is `partnerBranchId`/`petpoojaRestId`, with the customer directory's `admin_stores` fallback honoured; an unlinked or ambiguous outlet is refused with the documented failure body and nothing written. Repeated identical updates are idempotent. Precedence on this branch: the POS owns open/closed while the outlet is linked (rule A); an operator override (rule C) is the documented target. Known gap deferred to the Partner app fix wave: the Partner toggle writes only `admin_stores` and never the customer gate.
+- **Item On/Off no longer answers success after truncating at the 200-id cap.** `normalizeStockItemIds` reports `{ids,total,truncated}`; an over-cap batch is refused wholesale with the real total named (nothing applied), a permanent partial is `outcome: "partial"` with `n/m applied` and the documented failure body, and `pos_webhook_audits` records `partial` plus an explicit `partial: "n/m"` field. The audit `itemId` is a capped summary (`summariseStockItemRef`, ≤96 chars) rather than the raw unbounded `itemID` array.
+- **Small corrections.** `storeStatusFailure(message, kind)` — GET failures now report `kind: "get"` (they were labelled `update`). `turn_on_time` is capped at `MAX_TURN_ON_TIME_CHARS` (64) by `normalizeTurnOnTime` before it is persisted. Get Store Status answers closed when either the storefront gate or the branch flags say closed.
+
+### Verified
+- RED-first suite `functions/tests/petpooja.callback-replies.r2.test.ts` (21 tests, 13 red against r1) plus the r1 suite (24 tests) pin the new behaviour. Full Petpooja set 596/596, functions typecheck and build clean.
+
 ## [Unreleased] — 2026-11-19 (Audit remediation deployed to staging)
 
 ### Fixed & Deployed (staging `burgonomics-7faa8`, production untouched)

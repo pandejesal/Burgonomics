@@ -1577,3 +1577,22 @@ export async function handlePetpoojaMenuWebhook(payload: any): Promise<{
     itemCount: result.itemCount,
   };
 }
+
+/**
+ * The documented HTTP 200 body for a menu push reply:
+ * `{"success":"1","message":"Menu items are successfully listed."}`
+ * (`success` is the vendor's STRING flag, not a boolean).
+ *
+ * Only the ACK changes; how the menu is processed — classification, branch
+ * resolution, ingest and the sync-log row — is untouched. A refused push (an
+ * outlet that is not linked) still answers with the handler's diagnostic body,
+ * because Petpooja's success body would claim a listing that did not happen.
+ */
+export const PETPOOJA_MENU_PUSH_ACK = {
+  success: "1",
+  message: "Menu items are successfully listed.",
+} as const;
+
+export function menuPushAck(): typeof PETPOOJA_MENU_PUSH_ACK {
+  return { ...PETPOOJA_MENU_PUSH_ACK };
+}

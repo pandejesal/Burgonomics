@@ -158,3 +158,68 @@ overlaps.
   `5e09da7e…` Firestore / `b3e55f69…` Storage, hosting `8cefd8b74d254b40` Customer /
   `5025176a15ba88f1` Partner, 18 functions). Redeploy the previous source and re-release
   those version names; no data restore is needed.
+
+### Update, Petpooja callback replies matched to the docs, 20 November 2026
+
+Closed from the 2026-11-20 sandbox run (`Burgonomics-comms/petpooja-sandbox-20261120/RESULTS.md`):
+
+- **Item On/Off `itemID` arrays**: a multi-id callback used to fail the doc-id guard and
+  drop every id. Arrays (and a single scalar) are now normalised and applied per id,
+  idempotently, with one aggregate outcome. Multi-id payloads are no longer silently lost.
+- **Stock webhook reply**: `{"status":"success"}` → the documented
+  `{"code":200,"status":"success","message":"Stock status updated successfully"}`; the
+  failure body is the documented `{"code":400,"status":"failed",…}`. A redelivery keeps
+  its fail-closed 503.
+- **Get Store Status** now answers the documented body with `store_status` derived from
+  the branch's real state (`"1"` open, `"0"` closed) instead of a bare `{"status":"success"}`.
+- **Update Store Status** applies the documented 0/1 encoding to
+  `branches/{id}.acceptingOrdersStatus` and answers the documented body. The legacy
+  `{restID, status}` ping is still recorded, never applied, and an uncredentialed
+  (shape-admitted) update is recorded and refused.
+- **Menu push reply** is the documented `{"success":"1","message":"Menu items are
+  successfully listed."}`. Menu processing is unchanged; a refused unlinked outlet keeps
+  its diagnostic body.
+
+Not closed, and not ours: Rider Information (`rider_status_update`) still returns the
+vendor's SQS passthrough instead of the documented 200 body — that is Petpooja's own
+outbound response, awaiting a vendor answer.
+
+### Update, Petpooja callback follow-ups (r2), 20 November 2026
+
+Four gaps the r1 reply fix left open, found in review because they break in real life:
+
+- **Get Store Status was unreachable without a credential.** The documented request is a
+  bare `{"restID"}`; the shape allowance required a status key, so genuine vendor calls
+  401'd. **Closed**: `verifyPetpoojaAuth` now also admits exactly that shape on
+  `/petpooja/webhook` (`looksLikePetpoojaStoreStatusRead` — no status key, no order
+  reference), the read path is read-only, and `trusted` is now the real auth verdict
+  instead of a hardcoded `true`. The sibling write routes (`/petpooja/stockWebhook`,
+  `/petpooja/menu-sync`) still 401 a credential-less body; every write path stays
+  credential-only. Safe because open/closed is already world-readable (`stores/*` public
+  read; the customer app renders the same flag).
+- **Update Store Status did not stop ordering.** It wrote only
+  `branches/{id}.acceptingOrdersStatus`, which no ordering path reads; the live gate is
+  `stores/{id}.isOpen` (PaymentRepository `closed_store`; cart/checkout disabled states).
+  **Closed**: the update now writes that gate (plus the branch flag and a mirror into an
+  existing `admin_stores` doc), is idempotent, and refuses an unlinked or ambiguous
+  storefront with the documented failure body and no partial write — answering "success"
+  while customers keep ordering was the bug.
+  - **Rule in force (A)**: while an outlet is linked to Petpooja the POS owns open/closed;
+    a POS "closed" stops ordering immediately and only a POS "open" restarts it.
+  - **Target rule (C, not implemented)**: an explicit staff "closed" in the Partner app
+    should win until staff reopen. Needs the Partner toggle to write the gate plus an
+    override field.
+  - **Known gap, deferred to the Partner app fix wave**: the Partner toggle
+    (`AdminStoresPage.handleConfirmToggleStoreState` → `adminStoresService.bulkUpsert`)
+    writes only `admin_stores` and never `stores/{id}.isOpen`, so an operator "closed"
+    does not gate ordering where the directory is served from `stores`, and a later
+    operator save can overwrite the mirrored copy. Both apps are gitignored here, so that
+    fix is not in this branch.
+- **Item On/Off answered success after truncating at the 200-id cap.** A 250-id batch
+  applied 200 and replied success — 50 toggles silently lost. **Closed**: an over-cap
+  batch is now refused wholesale (reason names the real total, nothing applied), a
+  permanent partial is `outcome: "partial"` (never `applied`) with `n/m applied`, and
+  `pos_webhook_audits` records `partial` with an explicit `partial: "n/m"` field.
+- **Low items.** `storeStatusFailure` now carries the right `kind` (GET failures were
+  labelled `update`), and `turn_on_time` is capped at 64 chars before it is persisted.
+  The audit `itemId` is a capped summary instead of the raw unbounded `itemID` array.

@@ -256,29 +256,50 @@ describe("fail-closed boot on empty env", () => {
     // The allowance is SCOPED to the order route: the sibling routes share this
     // middleware and do NOT implement the handler-side integrity checks, so the
     // same shape must still 401 there (otherwise an uncredentialed caller could
-    // 86 menu items or trigger catalog-pull fan-out).
+    // 86 menu items or trigger catalog-pull fan-out). The bare `{restID}` GET
+    // is admitted on /petpooja/webhook ONLY — see the loop below.
     for (const path of ["/petpooja/stockWebhook", "/petpooja/menu-sync"]) {
-      const r: any = { status: vi.fn(() => ({ json: vi.fn() })) };
-      const n = vi.fn();
-      verifyPetpoojaAuth(
-        { path, headers: {}, body: { restID: "31z58ciw0h", status: "1" } } as any,
-        r,
-        n
-      );
-      expect(r.status).toHaveBeenCalledWith(401);
-      expect(n).not.toHaveBeenCalled();
+      for (const body of [
+        { restID: "31z58ciw0h", status: "1" },
+        { restID: "31z58ciw0h" },
+      ]) {
+        const r: any = { status: vi.fn(() => ({ json: vi.fn() })) };
+        const n = vi.fn();
+        verifyPetpoojaAuth({ path, headers: {}, body } as any, r, n);
+        expect(r.status).toHaveBeenCalledWith(401);
+        expect(n).not.toHaveBeenCalled();
+      }
     }
+
+    // The documented Get Store Status request is a bare `{"restID"}` with no
+    // credential (vendor 200 OK section). Demanding a header for it 401'd every
+    // genuine call, so Petpooja could never read our state. It is read-only and
+    // reports open/closed, which `stores/*` already exposes publicly.
+    const rGet: any = { status: vi.fn(() => ({ json: vi.fn() })) };
+    const nGet = vi.fn();
+    const getReq: any = {
+      path: "/petpooja/webhook",
+      headers: {},
+      body: { restID: "31z58ciw0h" },
+    };
+    verifyPetpoojaAuth(getReq, rGet, nGet);
+    expect(nGet).toHaveBeenCalledTimes(1);
+    expect(rGet.status).not.toHaveBeenCalled();
+    // …and the admission claims no integrity: the request is marked untrusted, so
+    // every handler write path still refuses it.
+    expect(getReq.petpoojaAuthenticated).toBe(false);
 
     // The allowance is a narrow shape test: everything else keeps the 401.
     for (const body of [
       {},
       { status: "Accept" },
-      { restID: "31z58ciw0h" },
       { app_key: "test_pp_app_key" },
       { restID: "31z58ciw0h", status: "" },
       // `order_status` is NOT one of the accepted status keys — it must agree
       // with isStoreStatusPayload downstream, or the handler would 500 on it.
       { restID: "31z58ciw0h", order_status: "Accept" },
+      // An order reference keeps the order path: it is NOT a store read.
+      { restID: "31z58ciw0h", orderID: "PP-1" },
     ]) {
       const r: any = { status: vi.fn(() => ({ json: vi.fn() })) };
       const n = vi.fn();

@@ -9,7 +9,13 @@ export type PetpoojaWebhookEndpoint =
 
 export interface PetpoojaWebhookAuditEntry {
   endpoint: PetpoojaWebhookEndpoint;
-  outcome: "ok" | "error";
+  /**
+   * `partial` is its own verdict, not an `error` alias: the handler landed PART
+   * of an Item On/Off batch (n/m applied) and answered the documented failure.
+   * Recording it as `error` would lose the distinction between "nothing worked"
+   * and "some SKUs are now wrong", which is the row ops actually has to act on.
+   */
+  outcome: "ok" | "error" | "partial";
   /** Petpooja's outlet id (rest_id) — never a customer field. */
   restId?: string | null;
   /**
@@ -24,6 +30,12 @@ export interface PetpoojaWebhookAuditEntry {
   itemId?: string | null;
   /** Menu webhook: how many SKUs were re-ingested. */
   itemCount?: number;
+  /**
+   * Stock webhook: the `n/m` count of a batch that only PARTLY applied. Set
+   * with `outcome: "partial"` so the row says how much of the kitchen's update
+   * landed instead of leaving ops to reconstruct it from a message.
+   */
+  partial?: string | null;
   /** Handler error text (already a system message, capped defensively). */
   detail?: string;
 }
@@ -80,6 +92,7 @@ export async function auditPetpoojaWebhook(entry: PetpoojaWebhookAuditEntry): Pr
       orderId: entry.orderId ?? null,
       itemId: entry.itemId ?? null,
       ...(entry.itemCount !== undefined ? { itemCount: entry.itemCount } : {}),
+      ...(entry.partial ? { partial: String(entry.partial).slice(0, 32) } : {}),
       detail: entry.detail ? String(entry.detail).slice(0, 500) : null,
       receivedAt: admin.firestore.FieldValue.serverTimestamp(),
     });

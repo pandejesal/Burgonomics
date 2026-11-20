@@ -112,7 +112,13 @@ function canonicalStatusRank(code: unknown): number | null {
  * is out.
  */
 export interface PetpoojaStockWebhookResult {
-  outcome: "applied" | "ignored" | "retry";
+  /**
+   * `partial` means some ids in the batch landed and some were parked
+   * permanently. It is NOT a success: the reply is the documented failure body
+   * and the audit row records `partial` with the n/m count, because a caller
+   * told "success" would never learn that part of the batch was dropped.
+   */
+  outcome: "applied" | "ignored" | "retry" | "partial";
   retryable: boolean;
   reason?: string;
 }
@@ -128,6 +134,119 @@ const stockRetry = (reason: string): PetpoojaStockWebhookResult => ({
   retryable: true,
   reason,
 });
+
+/**
+ * Documented Item On/Off success and failure bodies (vendor 200 OK section).
+ * The vendor's own example pairs the failure body with HTTP 400, so the route
+ * answers 200 + success only when the toggle actually landed.
+ */
+export const PETPOOJA_STOCK_OK = {
+  code: 200,
+  status: "success",
+  message: "Stock status updated successfully",
+} as const;
+
+export const PETPOOJA_STOCK_FAILED = {
+  code: 400,
+  status: "failed",
+  message: "Stock status not updated successfully",
+} as const;
+
+/**
+ * Maps a handler outcome onto the documented reply. A redelivery request keeps
+ * the fail-closed non-2XX (503) it has always had — the vendor must resend —
+ * but the body is the documented failure body rather than an internal marker.
+ */
+export function stockWebhookReply(result: PetpoojaStockWebhookResult): {
+  httpStatus: number;
+  body: typeof PETPOOJA_STOCK_OK | typeof PETPOOJA_STOCK_FAILED;
+} {
+  if (result?.retryable === true) {
+    return { httpStatus: 503, body: PETPOOJA_STOCK_FAILED };
+  }
+  if (result?.outcome === "applied") {
+    return { httpStatus: 200, body: PETPOOJA_STOCK_OK };
+  }
+  return { httpStatus: 200, body: PETPOOJA_STOCK_FAILED };
+}
+
+/**
+ * The documented `itemID` is an ARRAY of ids ("itemID": ["7532306", "7865402"]).
+ * Older payloads and our own route contract used a single scalar. Normalise
+ * both to a bounded list of trimmed strings; anything else is "no reference".
+ * A non-string entry is dropped rather than stringified into a fake id.
+ *
+ * `total` counts every usable id the caller sent, so a caller that exceeds the
+ * cap can be TOLD so. Truncating and still answering success would silently
+ * leave part of the kitchen's update unapplied.
+ */
+export const MAX_STOCK_BATCH = 200;
+
+export interface NormalizedStockIds {
+  ids: string[];
+  /** Every usable id the caller sent (may exceed `ids.length`). */
+  total: number;
+  /** True when `ids` was capped below `total`. */
+  truncated: boolean;
+}
+
+export function normalizeStockItemIds(raw: unknown): NormalizedStockIds {
+  const asArray = Array.isArray(raw) ? raw : raw === undefined || raw === null ? [] : [raw];
+  const ids: string[] = [];
+  let total = 0;
+  for (const entry of asArray) {
+    let value: string | null = null;
+    if (typeof entry === "string") {
+      const trimmed = entry.trim();
+      if (trimmed) value = trimmed;
+    } else if (typeof entry === "number" && Number.isFinite(entry)) {
+      value = String(entry);
+    }
+    if (value === null) continue;
+    total++;
+    if (ids.length < MAX_STOCK_BATCH) ids.push(value);
+  }
+  return { ids, total, truncated: total > ids.length };
+}
+
+/**
+ * A bounded, human-readable reference for the audit row. The raw `itemID` is
+ * caller-controlled and unbounded, so it must NEVER be stored whole: a 5,000-id
+ * array would be a payload-sized write into `pos_webhook_audits`. One id passes
+ * through (truncated); several are summarised as `first…+N more`.
+ */
+export function summariseStockItemRef(raw: unknown): string | null {
+  const { ids, total } = normalizeStockItemIds(raw);
+  if (ids.length === 0) return null;
+  if (ids.length === 1) return ids[0].slice(0, 64);
+  const extra = total - 1;
+  return `${ids[0].slice(0, 48)}…+${extra} more`.slice(0, 96);
+}
+
+/**
+ * The `pos_webhook_audits.outcome` for a stock toggle. A batch that only PARTLY
+ * applied is recorded as `partial` (not `ok`, which would hide the dropped ids,
+ * and not plain `error`, which would hide that some SKUs DID change) so the row
+ * carries both the verdict and the `n/m` count.
+ */
+export function stockAuditOutcome(
+  result: PetpoojaStockWebhookResult
+): "ok" | "error" | "partial" {
+  if (result?.outcome === "applied") return "ok";
+  if (result?.outcome === "partial") return "partial";
+  return "error";
+}
+
+/**
+ * The `n/m` slice of a partial batch's reason (`"3/5 applied (...)"` → `"3/5"`),
+ * for the audit row. Null when the result is not partial.
+ */
+export function stockAuditPartialCount(result: PetpoojaStockWebhookResult): string | null {
+  if (result?.outcome !== "partial") return null;
+  const match = /(\d+)\/(\d+)/.exec(result.reason || "");
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
 
 /**
  * True ONLY when the verified webhook context proves the caller presented a
@@ -161,48 +280,55 @@ export async function handlePetpoojaStockWebhook(
   // toggle (the payload still has to authenticate through verifyPetpoojaAuth).
   const p = payload || {};
   const rest_id = p.rest_id ?? p.restID ?? p.restId;
-  const item_id = p.item_id ?? p.itemID ?? p.itemId;
+  const rawItemRef = p.item_id ?? p.itemID ?? p.itemId;
   const in_stock = p.in_stock ?? p.inStock;
+
+  // The documented Item On/Off payload carries `itemID` as an ARRAY of ids.
+  // Older callers sent one scalar. Both are accepted; every listed id is
+  // applied, and a caller cannot smuggle a batch past the doc-id guard because
+  // each id is validated individually below.
+  const batch = normalizeStockItemIds(rawItemRef);
+  const itemIds = batch.ids;
 
   if (!isTrustedPetpoojaAuth(auth)) {
     // Hint row only. An unverified caller must not 86 (or un-86) a live item:
     // a wrong "available" sells food the kitchen cannot make, and a wrong
     // "86" hides sellable inventory. `isSafeDocId` is enforced because the id
     // comes straight from the payload; an unsafe id gets a fixed marker.
-    const hintItemId =
-      item_id !== null && item_id !== undefined && isSafeDocId(String(item_id))
-        ? String(item_id)
-        : null;
-    try {
-      await db
-        .collection("petpooja_stock_hints")
-        .doc(`sh_${hintItemId ?? "unidentified"}`)
-        .set(
-          {
-            restId: boundedParkedString(rest_id ?? null, PARKED_REF_MAX_CHARS),
-            itemId: boundedParkedString(hintItemId, PARKED_REF_MAX_CHARS),
-            rawInStock: typeof in_stock === "object" ? null : in_stock ?? null,
-            trusted: false,
-            reason: "unauthenticated Petpooja 86ing webhook — stock not applied",
-            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
+    const hinted = itemIds.filter((id) => isSafeDocId(id));
+    const hintKeys = hinted.length > 0 ? hinted : [null];
+    for (const hintItemId of hintKeys) {
+      try {
+        await db
+          .collection("petpooja_stock_hints")
+          .doc(`sh_${hintItemId ?? "unidentified"}`)
+          .set(
+            {
+              restId: boundedParkedString(rest_id ?? null, PARKED_REF_MAX_CHARS),
+              itemId: boundedParkedString(hintItemId, PARKED_REF_MAX_CHARS),
+              rawInStock: typeof in_stock === "object" ? null : in_stock ?? null,
+              trusted: false,
+              reason: "unauthenticated Petpooja 86ing webhook — stock not applied",
+              receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+      } catch (err: any) {
+        console.warn(
+          "[Petpooja 86ing] failed to record unauthenticated hint:",
+          err?.message || err
         );
-    } catch (err: any) {
-      console.warn(
-        "[Petpooja 86ing] failed to record unauthenticated hint:",
-        err?.message || err
-      );
+      }
     }
     console.warn(
       `[Petpooja 86ing] REFUSED unauthenticated stock toggle item=${
-        hintItemId ?? "unknown"
+        hinted.join(",") || "unknown"
       } rest=${rest_id ?? "unknown"} — hint recorded, stock unchanged`
     );
     return stockIgnored("unauthenticated");
   }
 
-  if (!item_id) {
+  if (itemIds.length === 0) {
     // Loop 6: a malformed 86ing payload (no item_id) used to log-and-drop —
     // silent stock-toggle loss. Snapshot loud so ops sees it; return (no
     // throw — the payload will never become valid on retry).
@@ -213,8 +339,70 @@ export async function handlePetpoojaStockWebhook(
     });
     return stockIgnored("missing item_id");
   }
+
+  if (batch.truncated) {
+    // NEVER answer success for a batch we did not fully process. Applying the
+    // first MAX_STOCK_BATCH ids and replying `success` would leave the rest of
+    // the kitchen's update silently unapplied — the exact "mock-as-live" class
+    // of lie this integration is supposed to avoid. Refuse the whole batch
+    // with the documented failure body; the vendor splits it, and nothing is
+    // half-applied.
+    console.error(
+      `[Petpooja 86ing] REFUSED a ${batch.total}-id batch (cap ${MAX_STOCK_BATCH}) — no id applied, documented failure answered`
+    );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "medium",
+      message: `Petpooja 86ing webhook carried ${batch.total} item ids, over the ${MAX_STOCK_BATCH} cap — batch refused, nothing applied`,
+    });
+    return stockIgnored(
+      `batch of ${batch.total} item ids exceeds the ${MAX_STOCK_BATCH} cap — nothing applied`
+    );
+  }
+
   const inStockBool = in_stock === 1 || in_stock === "1" || in_stock === true;
 
+  // Every listed id is applied independently: one unknown SKU must not discard
+  // the rest of the batch, and one failing SKU must not turn a landed toggle
+  // into a silent success. The caller sees one aggregate outcome.
+  const outcomes: PetpoojaStockWebhookResult[] = [];
+  for (const item_id of itemIds) {
+    outcomes.push(
+      await applyStockToggleForItem(rest_id, item_id, in_stock, inStockBool)
+    );
+  }
+
+  const retry = outcomes.find((o) => o.retryable);
+  if (retry) return retry;
+  const applied = outcomes.filter((o) => o.outcome === "applied").length;
+  if (applied === outcomes.length) return { outcome: "applied", retryable: false };
+  if (applied > 0) {
+    // Partial: at least one id landed, at least one was parked/failed
+    // permanently. Redelivery cannot fix the parked one, so this is not
+    // retryable — but it is also NOT a clean success, and it is not reported as
+    // one (`partial` in the audit, documented failure body to the caller).
+    return {
+      outcome: "partial",
+      retryable: false,
+      reason: `${applied}/${outcomes.length} applied (${outcomes
+        .map((o) => o.reason || o.outcome)
+        .join("; ")})`,
+    };
+  }
+  return outcomes[0] ?? stockIgnored("stock toggle not applied");
+}
+
+/**
+ * Applies one documented stock toggle to one branch-scoped product.
+ * Split out of the batch handler so every id goes through the SAME identity,
+ * ownership, version-precondition and parking rules.
+ */
+async function applyStockToggleForItem(
+  rest_id: any,
+  item_id: string,
+  in_stock: any,
+  inStockBool: boolean
+): Promise<PetpoojaStockWebhookResult> {
   // Fail-closed id shape: item_id comes from the POS vendor — slashes or
   // empties would throw/path-escape the doc write below and 500-retry.
   if (!isSafeDocId(String(item_id))) {
@@ -315,6 +503,7 @@ export async function handlePetpoojaStockWebhook(
 
   const initialUpdateTime = prodSnap.updateTime;
   let committed = false;
+  let unchangedOnCommit = false;
   let conflictReason: string | null = null;
 
   if (db && typeof (db as any).runTransaction === "function") {
@@ -354,6 +543,17 @@ export async function handlePetpoojaStockWebhook(
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
 
+        // Idempotence: the value ALREADY held by the canonical doc is the
+        // requested one, so there is nothing to commit. Checked on the FRESH
+        // read (not the outer snapshot) so a concurrent staff write is still
+        // seen as a version conflict above, never silently "already applied".
+        // A replayed toggle must not bump updatedAt/lastPetpoojaSync, which
+        // would invalidate concurrent readers' version preconditions and
+        // re-drive downstream listeners for a state change that did not happen.
+        if (freshData.inStock === inStockBool) {
+          return "unchanged";
+        }
+
         // F6: the version precondition is the whole point of this commit. The
         // old code caught a rejected precondition and re-issued an UNCONDITIONAL
         // tx.update, which silently overwrote the fresher local toggle the check
@@ -369,6 +569,8 @@ export async function handlePetpoojaStockWebhook(
 
       if (txOutcome === "committed") {
         committed = true;
+      } else if (txOutcome === "unchanged") {
+        unchangedOnCommit = true;
       } else {
         conflictReason = txOutcome;
       }
@@ -401,6 +603,10 @@ export async function handlePetpoojaStockWebhook(
 
           if (!versionMatches) {
             conflictReason = "stale_conflict";
+          } else if (freshData.inStock === inStockBool) {
+            // Idempotent: the canonical value already matches (same fresh-read
+            // reasoning as the transactional path above).
+            unchangedOnCommit = true;
           } else {
             const updateData = {
               petpoojaItemId: String(item_id),
@@ -427,6 +633,14 @@ export async function handlePetpoojaStockWebhook(
 
   if (committed) {
     console.log(`[Petpooja 86ing] Item ${item_id} at branch ${rest_id} set inStock=${inStockBool}`);
+    return { outcome: "applied", retryable: false };
+  }
+
+  if (unchangedOnCommit) {
+    // Already in the requested state: a successful no-op, not a rewrite.
+    console.log(
+      `[Petpooja 86ing] Item ${item_id} at branch ${rest_id} already inStock=${inStockBool} — nothing to write`
+    );
     return { outcome: "applied", retryable: false };
   }
 
@@ -906,6 +1120,527 @@ export async function resolveBranchIdForRestId(restId: string): Promise<string |
   return null;
 }
 
+/** Documented 200 body for Get Store Status (vendor 200 OK section). */
+export const PETPOOJA_STORE_STATUS_FETCHED_MESSAGE =
+  "Store Delivery Status fetched successfully";
+
+/**
+ * Cap on the caller-controlled `turn_on_time` we persist. The vendor sends a
+ * datetime; anything longer is not a datetime, it is payload padding that would
+ * otherwise be written whole into the branch document.
+ */
+export const MAX_TURN_ON_TIME_CHARS = 64;
+
+export interface PetpoojaStoreStatusReply {
+  kind: "get" | "update";
+  httpStatus: number;
+  body: Record<string, any>;
+}
+
+/**
+ * The storefront document the CUSTOMER app gates ordering on.
+ *
+ * `branches/{id}.acceptingOrdersStatus` is the Partner-app flag, and NO
+ * customer ordering path reads it — the live gate is `stores/{id}.isOpen`
+ * (`storesService.mapStoreDoc` → `PaymentRepository` closed-store gate →
+ * checkout/cart `kitchen.isOpen` disabled states). Writing only the branch flag
+ * left customers able to order from an outlet the POS had closed, so the POS
+ * update has to land HERE.
+ *
+ * Resolution: the same authoritative mapping the rest of the integration uses —
+ * `stores/{id}.partnerBranchId == branchId`, or the storefront's own
+ * `petpoojaRestId == restID`. Ambiguity (two stores claiming the branch) is
+ * refused rather than guessed: closing the wrong outlet is worse than a failed
+ * callback.
+ */
+interface StorefrontMatch {
+  storeId: string;
+  /** Which collection the doc lives in: that is the doc the customers read. */
+  collection: "stores" | "admin_stores";
+  data: Record<string, any>;
+}
+
+/**
+ * Finds the storefront document(s) for an outlet.
+ *
+ * TWO collections can carry it: `stores/*` is authoritative, and the customer
+ * directory falls back to `admin_stores/*` when `stores` is empty
+ * (`storesService.fetchFirestoreStores`). So an outlet whose directory entry is
+ * `admin_stores`-only is NOT "unlinked" — refusing it would break every
+ * store-status update on such a deployment. `stores` wins when both exist.
+ *
+ * Ambiguity (two docs in the same collection claiming the branch) is reported,
+ * never guessed: closing the wrong outlet is worse than a failed callback.
+ */
+async function resolveStorefrontForBranch(
+  branchId: string,
+  restId: string
+): Promise<{ match: StorefrontMatch | null; ambiguous: boolean }> {
+  for (const collection of ["stores", "admin_stores"] as const) {
+    const col = db.collection(collection) as any;
+    if (!col || typeof col.where !== "function") continue;
+
+    const seen = new Map<string, StorefrontMatch>();
+    let lookupFailed = false;
+    for (const [field, value] of [
+      ["partnerBranchId", branchId],
+      ["petpoojaRestId", restId],
+    ] as Array<[string, string]>) {
+      if (!value) continue;
+      try {
+        const snap = await col.where(field, "==", value).limit(5).get();
+        for (const doc of snap?.docs || []) {
+          if (!doc?.id) continue;
+          seen.set(String(doc.id), {
+            storeId: String(doc.id),
+            collection,
+            data: doc.data() || {},
+          });
+        }
+      } catch (err: any) {
+        console.warn(
+          `[Petpooja Store Status] storefront lookup in ${collection} by ${field} failed:`,
+          err?.message || err
+        );
+        lookupFailed = true;
+        break;
+      }
+    }
+    if (lookupFailed) continue;
+    if (seen.size > 1) return { match: null, ambiguous: true };
+    if (seen.size === 1) return { match: [...seen.values()][0], ambiguous: false };
+  }
+  return { match: null, ambiguous: false };
+}
+
+/**
+ * The vendor's documented store-status encoding: `"1"` is open/accepting,
+ * `"0"` is closed. Derived from the storefront the customer app reads (falling
+ * back to the branch flags when no storefront is linked) — never from the
+ * request — so a merchant reading us back sees what we would actually serve.
+ */
+/**
+ * The vendor's documented store-status encoding: `"1"` open, `"0"` closed.
+ * Derived from stored state — never from the request.
+ *
+ * CLOSED WINS. Two independent signals can say "closed": the branch lifecycle /
+ * Partner flag (`branches/*`) and the storefront gate the customer app reads
+ * (`stores/*.isOpen`). If either says closed we answer `0`, because an outlet
+ * that any authoritative signal has closed must never be advertised to the POS
+ * as open — a wrong "1" invites orders we would then have to reject.
+ */
+function storeStatusFromState(storefront: any, branch: any): "1" | "0" {
+  if (branch && typeof branch === "object") {
+    if (branch.active === false) return "0";
+    const lifecycle =
+      typeof branch.status === "string" ? branch.status.trim().toLowerCase() : "";
+    if (lifecycle === "paused" || lifecycle === "inactive") return "0";
+    const accepting =
+      typeof branch.acceptingOrdersStatus === "string"
+        ? branch.acceptingOrdersStatus.trim().toLowerCase()
+        : "";
+    if (accepting === "closed") return "0";
+  }
+
+  // The storefront doc is the gate the customer app actually reads.
+  if (storefront && typeof storefront === "object" && typeof storefront.isOpen === "boolean") {
+    if (storefront.isOpen === false) return "0";
+  }
+  return "1";
+}
+
+/** `"0"`/`"1"` as sent by the vendor, or null when the value is undocumented. */
+function normalizeStoreStatusValue(raw: unknown): "0" | "1" | null {
+  if (raw === 0 || raw === "0") return "0";
+  if (raw === 1 || raw === "1") return "1";
+  return null;
+}
+
+function storeStatusFailure(
+  message: string,
+  kind: "get" | "update",
+  reason?: string
+): PetpoojaStoreStatusReply {
+  return {
+    kind,
+    httpStatus: 200,
+    body: {
+      http_code: 400,
+      status: "failed",
+      store_status: "",
+      message,
+      ...(reason ? { reason } : {}),
+    },
+  };
+}
+
+/** The capped `turn_on_time`, or null when absent/unusable. */
+export function normalizeTurnOnTime(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MAX_TURN_ON_TIME_CHARS);
+}
+
+/**
+ * Get / Update Store Status callbacks (vendor documents them as
+ * `{ restID }` and `{ restID, store_status, turn_on_time, reason }`).
+ *
+ * Returns `null` when the payload is NOT one of those two shapes — an order
+ * callback (it carries an order reference), a bare legacy `{ restID, status }`
+ * ping, or anything without a restID — so the caller keeps its existing path:
+ * the legacy ping stays "recorded, not applied" (its encoding was never
+ * confirmed) and an order event still reaches the order-lifecycle handler.
+ *
+ * Default-deny is preserved: an update is APPLIED only with a verified auth
+ * context. Without one the callback is recorded (so real traffic is visible)
+ * and answered with the failure body, and no branch is touched.
+ */
+export async function handlePetpoojaStoreStatus(
+  payload: any,
+  auth: unknown = {}
+): Promise<PetpoojaStoreStatusReply | null> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+
+  // An order event also carries restID (+ status) — it is never a store ping.
+  const orderRef =
+    payload.orderID ??
+    payload.order_id ??
+    payload.clientOrderID ??
+    payload.client_order_id ??
+    payload.petpooja_order_id;
+  if (orderRef !== undefined && orderRef !== null && orderRef !== "") return null;
+
+  const restIdClaim =
+    payload.restID ?? payload.rest_id ?? payload.restId ?? payload.restaurantid;
+  if (restIdClaim === undefined || restIdClaim === null) return null;
+  const restIdText = String(restIdClaim).trim();
+  if (!restIdText) return null;
+
+  const hasStoreStatus =
+    Object.prototype.hasOwnProperty.call(payload, "store_status") ||
+    Object.prototype.hasOwnProperty.call(payload, "storeStatus");
+  const hasLegacyStatus = Object.prototype.hasOwnProperty.call(payload, "status");
+
+  // Legacy `{ restID, status }` ping — handed back to the caller's
+  // record-only path on purpose.
+  if (!hasStoreStatus && hasLegacyStatus) return null;
+
+  // A bare `{ restID }` is the documented Get Store Status request.
+  if (!hasStoreStatus) {
+    // Read-only by construction: this branch answers from stored state and
+    // never writes a branch/store/product. `trusted` is the REAL auth verdict —
+    // the documented request arrives without a credential, so a hardcoded
+    // `true` would forge trust in the evidence row.
+    const trustedRead = isTrustedPetpoojaAuth(auth);
+    const branchId = await resolveBranchIdForRestId(restIdText);
+    if (!branchId) {
+      console.warn(
+        `[Petpooja Store Status] GET for unlinked outlet ${boundedParkedString(
+          restIdText,
+          PARKED_REF_MAX_CHARS
+        )} — answering the failure body, no state claimed`
+      );
+      await recordStoreStatusEvent(restIdText, null, null, trustedRead);
+      return storeStatusFailure(
+        `Store ${boundedParkedString(restIdText, PARKED_REF_MAX_CHARS)} is not linked to a branch`,
+        "get"
+      );
+    }
+    let branchData: any = null;
+    try {
+      const snap = await db.collection("branches").doc(branchId).get();
+      branchData = snap?.exists ? snap.data() : null;
+    } catch (err: any) {
+      console.warn(
+        `[Petpooja Store Status] GET could not read branch ${branchId}:`,
+        err?.message || err
+      );
+      await recordStoreStatusEvent(restIdText, branchId, null, trustedRead);
+      return storeStatusFailure("Store status could not be read", "get");
+    }
+    // Report the state the CUSTOMER is actually served: the storefront gate
+    // first, the branch flags only as a fallback when no storefront is linked.
+    let storefrontData: any = null;
+    try {
+      const resolved = await resolveStorefrontForBranch(branchId, restIdText);
+      storefrontData = resolved.match?.data ?? null;
+    } catch (err: any) {
+      // A lookup failure must not be reported as "closed" — fall through to the
+      // branch flags, which are readable state, and let the branch answer.
+      console.warn(
+        `[Petpooja Store Status] GET storefront lookup failed for branch ${branchId}:`,
+        err?.message || err
+      );
+    }
+    const storeStatus = storeStatusFromState(storefrontData, branchData);
+    await recordStoreStatusEvent(restIdText, branchId, storeStatus, trustedRead);
+    return {
+      kind: "get",
+      httpStatus: 200,
+      body: {
+        http_code: 200,
+        status: "success",
+        store_status: storeStatus,
+        message: PETPOOJA_STORE_STATUS_FETCHED_MESSAGE,
+      },
+    };
+  }
+
+  const rawStatus = payload.store_status ?? payload.storeStatus;
+  const requested = normalizeStoreStatusValue(rawStatus);
+  const trusted = isTrustedPetpoojaAuth(auth);
+
+  if (requested === null) {
+    await recordStoreStatusEvent(restIdText, null, boundedParkedString(rawStatus ?? null, PARKED_STATUS_MAX_CHARS), trusted);
+    return storeStatusFailure(
+      `Unsupported store_status ${JSON.stringify(
+        boundedParkedString(rawStatus ?? null, PARKED_STATUS_MAX_CHARS)
+      )} — documented values are 0 (closed) and 1 (open)`,
+      "update"
+    );
+  }
+
+  const branchId = await resolveBranchIdForRestId(restIdText);
+  if (!branchId) {
+    await recordStoreStatusEvent(restIdText, null, requested, trusted);
+    return storeStatusFailure(
+      `Store ${boundedParkedString(restIdText, PARKED_REF_MAX_CHARS)} is not linked to a branch`,
+      "update"
+    );
+  }
+
+  if (!trusted) {
+    // Recorded, not applied: closing a live outlet is a canonical write and
+    // only a verified credential may make it.
+    console.warn(
+      `[Petpooja Store Status] REFUSED unauthenticated update rest=${boundedParkedString(
+        restIdText,
+        PARKED_REF_MAX_CHARS
+      )} requested=${requested} — recorded for review, branch unchanged`
+    );
+    await recordStoreStatusEvent(restIdText, branchId, requested, false);
+    return storeStatusFailure(
+      "Store status update requires a verified Petpooja credential",
+      "update"
+    );
+  }
+
+  const acceptingOrdersStatus = requested === "1" ? "open" : "closed";
+  const turnOnAt = normalizeTurnOnTime(payload.turn_on_time);
+  const reason =
+    typeof payload.reason === "string" && payload.reason.trim()
+      ? payload.reason.trim().slice(0, 500)
+      : null;
+
+  // Which document actually stops ordering? The storefront (`stores/{id}.isOpen`).
+  // Resolve it BEFORE any write so an unlinked or ambiguous outlet fails cleanly
+  // instead of half-applying the branch flag.
+  let storefront: StorefrontMatch | null = null;
+  let ambiguous = false;
+  try {
+    const resolved = await resolveStorefrontForBranch(branchId, restIdText);
+    storefront = resolved.match;
+    ambiguous = resolved.ambiguous;
+  } catch (err: any) {
+    console.warn(
+      `[Petpooja Store Status] storefront lookup failed for branch ${branchId}:`,
+      err?.message || err
+    );
+    await recordStoreStatusEvent(restIdText, branchId, requested, true);
+    return storeStatusFailure("Store status could not be updated", "update");
+  }
+
+  if (ambiguous) {
+    // Two storefronts claim this outlet/branch. Closing the wrong outlet is a
+    // worse outcome than a failed callback, so refuse and leave both untouched.
+    console.error(
+      `[Petpooja Store Status] AMBIGUOUS storefront for branch ${branchId} / rest ${boundedParkedString(
+        restIdText,
+        PARKED_REF_MAX_CHARS
+      )} — update refused, nothing written`
+    );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Petpooja store-status update refused: more than one store doc claims branch ${branchId} / rest ${restIdText}`,
+      branchId,
+    });
+    await recordStoreStatusEvent(restIdText, branchId, requested, true);
+    return storeStatusFailure(
+      `Store ${boundedParkedString(restIdText, PARKED_REF_MAX_CHARS)} resolves to more than one storefront — update refused`,
+      "update"
+    );
+  }
+
+  if (!storefront) {
+    // "Success" here would be the exact bug this follow-up fixes: the POS thinks
+    // it closed the outlet while customers keep ordering. Answer the documented
+    // failure and leave the branch flag alone so nothing is half-applied.
+    console.error(
+      `[Petpooja Store Status] no storefront linked to branch ${branchId} (rest ${boundedParkedString(
+        restIdText,
+        PARKED_REF_MAX_CHARS
+      )}) — update refused, nothing written`
+    );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Petpooja store-status update refused: no stores/* doc carries branch ${branchId} or rest ${restIdText}; customers would still be able to order`,
+      branchId,
+    });
+    await recordStoreStatusEvent(restIdText, branchId, requested, true);
+    return storeStatusFailure(
+      `Store ${boundedParkedString(restIdText, PARKED_REF_MAX_CHARS)} is not linked to a storefront — update refused`,
+      "update"
+    );
+  }
+
+  const desiredOpen = requested === "1";
+
+  try {
+    // (1) The customer gate. `isOpen` is the single field the customer app reads
+    //     (`storesService.mapStoreDoc` → `PaymentRepository` closed-store gate →
+    //     cart/checkout disabled states), so this write is what actually stops
+    //     and restarts ordering. It goes to the SAME collection the storefront
+    //     was resolved from: `stores` is authoritative, but the customer
+    //     directory falls back to `admin_stores` when `stores` is empty
+    //     (`storesService.fetchFirestoreStores`), and in that deployment
+    //     `admin_stores` IS the gate.
+    const storeRef = db.collection(storefront.collection).doc(storefront.storeId);
+    const storeSnap = await storeRef.get();
+    const storeCurrent = storeSnap?.exists ? storeSnap.data() || {} : null;
+    const storeUnchanged =
+      storeCurrent !== null &&
+      storeCurrent.isOpen === desiredOpen &&
+      storeCurrent.storeStatusSource === "petpooja" &&
+      (turnOnAt === null ? true : (storeCurrent.storeTurnOnAt ?? null) === turnOnAt) &&
+      (reason === null ? true : (storeCurrent.storeStatusReason ?? null) === reason);
+    if (!storeUnchanged) {
+      await storeRef.set(
+        {
+          isOpen: desiredOpen,
+          storeStatusSource: "petpooja",
+          storeStatusReason: reason,
+          storeTurnOnAt: turnOnAt,
+          storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+
+    // (2) The Partner-app flag. Kept in step because operators read it in the
+    //     branch screens, and because a stale "open" there is what a human would
+    //     trust over the POS.
+    const branchRef = db.collection("branches").doc(branchId);
+    const snap = await branchRef.get();
+    const current = snap?.exists ? snap.data() || {} : {};
+    // Idempotent: a repeated identical update must not rewrite the branch (a
+    // rewrite would invalidate every concurrent reader's version and re-drive
+    // listeners for no state change).
+    const unchanged =
+      current.acceptingOrdersStatus === acceptingOrdersStatus &&
+      (turnOnAt === null ? true : (current.turnOnAt ?? null) === turnOnAt) &&
+      (reason === null ? true : (current.storeStatusReason ?? null) === reason);
+    if (!unchanged) {
+      await branchRef.set(
+        {
+          acceptingOrdersStatus,
+          turnOnAt,
+          storeStatusReason: reason,
+          storeStatusSource: "petpooja",
+          storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+
+    // (3) The Partner directory copy, when one exists. Only an EXISTING doc is
+    //     touched: creating a partial `admin_stores` record from a POS callback
+    //     would fabricate a directory entry the operator never created.
+    try {
+      const adminRef = db.collection("admin_stores").doc(storefront.storeId);
+      const adminSnap = await adminRef.get();
+      if (adminSnap?.exists) {
+        const adminCurrent = adminSnap.data() || {};
+        if (adminCurrent.isOpen !== desiredOpen) {
+          await adminRef.set(
+            {
+              isOpen: desiredOpen,
+              storeStatusSource: "petpooja",
+              storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      }
+    } catch (err: any) {
+      // The Partner directory is a mirror, not the gate: a failure here must not
+      // turn a successful close into a failure reply.
+      console.warn(
+        `[Petpooja Store Status] admin_stores mirror update failed for ${storefront.storeId}:`,
+        err?.message || err
+      );
+    }
+  } catch (err: any) {
+    console.warn(
+      `[Petpooja Store Status] update failed for branch ${branchId}:`,
+      err?.message || err
+    );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Petpooja store-status update for branch ${branchId} could not be applied`,
+      branchId,
+    });
+    await recordStoreStatusEvent(restIdText, branchId, requested, true);
+    return storeStatusFailure("Store status could not be updated", "update");
+  }
+
+  await recordStoreStatusEvent(restIdText, branchId, requested, true);
+  return {
+    kind: "update",
+    httpStatus: 200,
+    body: {
+      http_code: 200,
+      status: "success",
+      message: `Store Status updated successfully for store ${boundedParkedString(
+        restIdText,
+        PARKED_REF_MAX_CHARS
+      )}`,
+    },
+  };
+}
+
+/** Non-blocking evidence row; a recording failure must never fail the reply. */
+async function recordStoreStatusEvent(
+  restIdClaim: string,
+  branchId: string | null,
+  storeStatus: string | null,
+  trusted: boolean
+): Promise<void> {
+  try {
+    await db
+      .collection("petpooja_store_status_events")
+      .doc(parkedDocId("ss_", restIdClaim))
+      .set(
+        {
+          restId: boundedParkedString(restIdClaim, PARKED_REF_MAX_CHARS),
+          branchId,
+          storeStatus,
+          trusted,
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+  } catch (err: any) {
+    console.warn(
+      "[Petpooja Store Status] failed to record event:",
+      err?.message || err
+    );
+  }
+}
+
 /**
  * Petpooja's Configuration page points BOTH "Get Store Status" and "Update
  * Store Status" at this same webhook, and those payloads carry no order id —
@@ -990,13 +1725,18 @@ export interface PetpoojaWebhookAuth {
 export async function handlePetpoojaWebhook(
   payload: any,
   auth: unknown = {}
-): Promise<void> {
+): Promise<PetpoojaStoreStatusReply | void> {
   // Default-deny. This used to read `auth.authenticated === false`, so an
   // omitted/empty/malformed auth context fell through to the trusted path and
   // could rewrite canonical order status, POS acceptance, refunds and payment
   // facts. Only the boolean `true` set after verification is trusted.
   const trusted = isTrustedPetpoojaAuth(auth);
   const untrusted = !trusted;
+  // Documented Get / Update Store Status callbacks share this route. The
+  // handler returns their documented reply (or null when the payload is not
+  // one of those shapes), so the route can answer with the vendor's body.
+  const storeStatusReply = await handlePetpoojaStoreStatus(payload, auth);
+  if (storeStatusReply) return storeStatusReply;
   // Our own order references. `order_id` / `clientOrderID` are the legacy
   // client fields. The documented order-status callback instead carries
   // `orderID` = "Unique client order id which is used to update order status at

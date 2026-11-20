@@ -372,6 +372,39 @@ function looksLikePetpoojaStatusCallback(body: any): boolean {
   return Boolean(restId) && status !== undefined && status !== null && status !== "";
 }
 
+/**
+ * Shape test for the DOCUMENTED Get Store Status request: a bare
+ * `{"restID":"xxxx"}` with no status key and no order reference.
+ *
+ * The vendor's 200 OK section documents exactly that body, and the handler
+ * answers it read-only (outlet open/closed, which is already public: `stores/*`
+ * is world-readable, and the customer app renders the same flag). Demanding a
+ * credential for a public read made every genuine Get Store Status call 401, so
+ * Petpooja could never read our state.
+ *
+ * Deliberately EXCLUDES anything carrying an order reference: an order callback
+ * with no status key is still an order event, and it must keep its own path.
+ */
+function looksLikePetpoojaStoreStatusRead(body: any): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const restId = body.rest_id ?? body.restId ?? body.restID ?? body.restaurantid;
+  if (!restId) return false;
+  // ANY status-ish key disqualifies it. `order_status` is included on purpose:
+  // it is an ORDER event key, and admitting it as a store read would let an
+  // uncredentialed order callback take the read path (where its order id is
+  // never processed) instead of the order path that owns it.
+  const hasStatusKey =
+    body.status !== undefined ||
+    body.store_status !== undefined ||
+    body.storeStatus !== undefined ||
+    body.order_status !== undefined ||
+    body.orderStatus !== undefined;
+  if (hasStatusKey) return false;
+  const orderRef =
+    body.orderID ?? body.order_id ?? body.clientOrderID ?? body.client_order_id ?? body.petpooja_order_id;
+  return orderRef === undefined || orderRef === null || orderRef === "";
+}
+
 export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFunction): void {
   const inboundSecret = config.petpooja.appKey;
   if (!inboundSecret) {
@@ -425,11 +458,18 @@ export function verifyPetpoojaAuth(req: Request, res: Response, next: NextFuncti
     const routePath = String(req.path || req.originalUrl || "").split("?")[0];
     if (
       routePath.endsWith("/petpooja/webhook") &&
-      looksLikePetpoojaStatusCallback(req.body)
+      (looksLikePetpoojaStatusCallback(req.body) ||
+        looksLikePetpoojaStoreStatusRead(req.body))
     ) {
       // Marked untrusted: the handler must not let an unauthenticated request
       // write sync state (the POS id / "synced") that the retry worker and the
       // push dedupe key off.
+      //
+      // The store-status READ is the documented bare `{"restID"}`: it is
+      // read-only by construction (the handler applies nothing without
+      // `authenticated: true`, and never writes canonical state on a GET), and
+      // what it reports — open/closed — is already public through `stores/*`.
+      // Every WRITE path still requires the credential.
       (req as any).petpoojaAuthenticated = false;
       console.warn(
         "[Petpooja Auth] accepted an unauthenticated status callback by shape on /petpooja/webhook (vendor sends no credential header) — treated as untrusted; handler integrity checks apply"
