@@ -32,6 +32,18 @@ import {
 } from "./modules/payments/razorpay.service";
 import { handleRazorpayWebhook } from "./modules/payments/webhookHandler";
 import { resolveCheckoutFees } from "./modules/payments/checkoutFees";
+// The coupon authority's HTTP surface (one server-side source of truth for
+// codes, discounts and redemptions).
+import {
+  handleCouponQuote,
+  handleCouponUsage,
+  handleCreateCoupon,
+  handleIssueCoupon,
+  handleListAvailableCoupons,
+  handleListCoupons,
+  handleSetCouponActive,
+  couponQuoteSchema,
+} from "./modules/coupons";
 import { disposeRefundRequest } from "./modules/payments/refundRequests";
 import { resolveDiscrepancy } from "./modules/payments/discrepancies";
 import {
@@ -486,6 +498,43 @@ app.post("/checkout/fees", requireAuth, validateBody(checkoutFeesSchema), async 
     });
   }
 });
+
+// ==========================================
+// 1b. COUPON ROUTES (one server-side authority)
+// ==========================================
+// The customer app's ONLY way to learn a discount. Prices come from the
+// catalogue server-side; the client never sends a subtotal or a discount.
+app.post(
+  "/coupons/quote",
+  optionalAuth,
+  validateBody(couponQuoteSchema),
+  handleCouponQuote
+);
+app.get("/coupons/available", optionalAuth, handleListAvailableCoupons);
+
+// Staff management: owner / brand roles only. Branch staff cannot create or
+// disable a brand-wide promotion.
+const COUPON_ADMIN_ROLES = ["brand_owner", "developer", "regional_manager"] as const;
+app.get("/coupons/list", requireAuth, requireRole([...COUPON_ADMIN_ROLES]), handleListCoupons);
+app.get("/coupons/usage", requireAuth, requireRole([...COUPON_ADMIN_ROLES]), handleCouponUsage);
+app.post(
+  "/coupons/create",
+  requireAuth,
+  requireRole([...COUPON_ADMIN_ROLES]),
+  handleCreateCoupon
+);
+app.post(
+  "/coupons/active",
+  requireAuth,
+  requireRole([...COUPON_ADMIN_ROLES]),
+  handleSetCouponActive
+);
+app.post(
+  "/coupons/issue",
+  requireAuth,
+  requireRole([...COUPON_ADMIN_ROLES]),
+  handleIssueCoupon
+);
 
 app.post("/payments/verifyPayment", optionalAuth, validateBody(verifyPaymentSchema), async (req: AuthenticatedRequest, res) => {
   try {

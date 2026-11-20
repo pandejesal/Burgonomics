@@ -23,6 +23,7 @@ export interface CancelSideEffectsResult {
   providerCancelAttempted: boolean;
   providerCancelSkipped?: string;
   coinsRestored: "restored" | "noop" | "failed";
+  couponReleased: "released" | "noop" | "failed";
 }
 
 /**
@@ -41,6 +42,7 @@ export async function applyCancelSideEffects(input: {
       providerCancelAttempted: false,
       providerCancelSkipped: "missing_order_id",
       coinsRestored: "noop",
+      couponReleased: "noop",
     };
   }
   const reason = input.reason ?? "order_cancelled";
@@ -48,6 +50,7 @@ export async function applyCancelSideEffects(input: {
   const result: CancelSideEffectsResult = {
     providerCancelAttempted: false,
     coinsRestored: "noop",
+    couponReleased: "noop",
   };
 
   const orderRef = db.collection("orders").doc(orderId);
@@ -106,6 +109,30 @@ export async function applyCancelSideEffects(input: {
       source: "payments",
       severity: "high",
       message: `Grill-Coins restore failed for cancelled order ${orderId} — remediate via adjustCustomerCoins`,
+      orderId,
+      errorStack: err?.stack,
+    }).catch(() => undefined);
+  }
+
+  // --- 3. Coupon: return the held slot -------------------------------------
+  // A redemption is reserved when the payment intent becomes payable, so a
+  // cancelled order must hand it back or the cap leaks. Idempotent: releasing
+  // twice, or releasing an order that never had a coupon, is a no-op. Never
+  // throws — a failed release is alerted, not surfaced as a cancel error.
+  try {
+    const { releaseCouponRedemption } = await import("../coupons/couponAuthority");
+    const released = await releaseCouponRedemption({ orderId, reason });
+    result.couponReleased = released.released ? "released" : "noop";
+  } catch (err: any) {
+    result.couponReleased = "failed";
+    console.warn(
+      `[CancelSideEffects] coupon release failed for cancelled order ${orderId}:`,
+      err?.message || err
+    );
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Coupon redemption release failed for cancelled order ${orderId} — release it manually`,
       orderId,
       errorStack: err?.stack,
     }).catch(() => undefined);
