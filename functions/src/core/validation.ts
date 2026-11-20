@@ -555,6 +555,20 @@ export const franchiseLeadSchema = z.object({
   message: z.string().trim().max(2000).optional(),
 });
 
+// Staff open/close for an outlet (owner rule C, fix wave 2026-11-20).
+//
+// `status` is deliberately a closed enum: "busy" is a Partner surge control,
+// not a customer gate, and it stays on the branch flag. `reason` is optional
+// free text (a gas leak, a power cut) capped so it cannot become a payload
+// dumping ground in `stores/*`.
+export const storeOperatingStatusSchema = z
+  .object({
+    branchId: z.string().trim().min(1).max(128),
+    status: z.enum(["open", "closed"]),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
 export function validateBody<T>(schema: z.ZodType<T>) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const parsed = schema.safeParse(req.body);
