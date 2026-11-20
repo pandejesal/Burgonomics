@@ -6,23 +6,33 @@ import { db } from "../../core/firebase";
  *
  * Extracted behaviour-identically from orderStatus.ts so that BOTH the staff
  * KDS bump (`POST /orders/bumpStatus`) and the customer-owned cancel
- * (`POST /orders/customerCancel`) converge on the same two helpers:
+ * (`POST /orders/customerCancel`) converge on the same three helpers:
  *
  *   1. a DURABLE provider-cancel intent recorded on the order BEFORE the wire
- *      call (retried by the existing 5-minute reconciler tick), and
+ *      call (retried by the existing 5-minute reconciler tick),
  *   2. the idempotent Grill-Coins restore (deterministic ledger id
- *      `coin_redemption_restore_{orderId}`).
+ *      `coin_redemption_restore_{orderId}`), and
+ *   3. the POS cancel (Petpooja "Update Order Status", status "-1") for an
+ *      order the POS actually received — see modules/petpooja/orderCancel.ts.
+ *      Fix wave 2026-11-20: the vendor API was sandbox-proven but unwired, so a
+ *      cancelled order stayed live in the kitchen queue. Every cancellation
+ *      source (customer F24, staff KDS cancel, and the payment-not-completed
+ *      expiry, which calls the same bumpOrderStatus) lands here, so this is the
+ *      one place that has to hold.
  *
  * Contract: NEVER throws. The status write is already durable when this runs,
- * and a provider/coin fault must surface as an alert, not as a failed cancel.
- * Retrying the cancel is safe: the provider intent is read from the order (a
- * second attempt reuses the recorded intent) and the coin restore is keyed by
- * the order id, so a replay converges on one restore.
+ * and a provider/coin/POS fault must surface as an alert, not as a failed
+ * cancel. Retrying the cancel is safe: the provider intent is read from the
+ * order (a second attempt reuses the recorded intent), the coin restore is keyed
+ * by the order id, and the POS cancel is leased and idempotent (a second
+ * "cancel" for the same order is a no-op at the vendor).
  */
 export interface CancelSideEffectsResult {
   providerCancelAttempted: boolean;
   providerCancelSkipped?: string;
   coinsRestored: "restored" | "noop" | "failed";
+  /** Petpooja cancel outcome — absent when the POS never received the order. */
+  posCancel?: string;
 }
 
 /**
@@ -89,7 +99,30 @@ export async function applyCancelSideEffects(input: {
     );
   }
 
-  // --- 2. Grill Coins: deterministic, idempotent restore --------------------
+  // --- 2. POS: cancel the order at Petpooja, exactly once --------------------
+  // Placed after the rider intent (a courier on the road is the more urgent
+  // cleanup) and before the coin restore. `requestPetpoojaOrderCancel` is
+  // contracted never to throw, and it refuses outright when the POS never
+  // received the order — so a locally-cancelled order costs no vendor call.
+  try {
+    const { requestPetpoojaOrderCancel } = await import("../petpooja/orderCancel");
+    result.posCancel = await requestPetpoojaOrderCancel({
+      orderId,
+      reason,
+      requestedBy,
+    });
+  } catch (err: any) {
+    // A failed import or an unexpected fault must not fail the cancel; the
+    // order doc keeps whatever cancel state it had, and the 5-minute worker
+    // owns any recorded intent.
+    result.posCancel = "helper_fault";
+    console.warn(
+      `[CancelSideEffects] POS cancel skipped for cancelled order ${orderId}:`,
+      err?.message || err
+    );
+  }
+
+  // --- 3. Grill Coins: deterministic, idempotent restore --------------------
   // No-op while `config.loyalty.redemptionEnabled` is false (no debit row can
   // exist), but wired so enabling redemption cannot silently strand coins.
   try {

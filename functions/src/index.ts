@@ -64,6 +64,12 @@ import {
   retryPendingPetpoojaOrdersWorker,
 } from "./modules/petpooja/petpooja.scheduler";
 import { posPendingAlertsWorker } from "./modules/petpooja/posPendingAlerts";
+// POS cancellation: the Petpooja "Update Order Status" (status "-1") lane. The
+// funnel records the intent; this worker retries it on the shared backoff.
+import { retryPendingPetpoojaOrderCancelsWorker } from "./modules/petpooja/orderCancel";
+// Sold-out timer: the missing reader for `products.disabledUntil` (the Partner
+// app's "86 for 2 hours / rest of day" deadline).
+import { restoreDueSoldOutItems } from "./modules/menu/soldOutTimer.scheduler";
 import {
   getDeliveryQuote,
   bookPorterRider,
@@ -2072,6 +2078,55 @@ export const alertPendingPetpoojaOrders = onSchedule(
     }
     console.log(
       `[POS Pending Alerts] 2m=${result!.alerts2m} 5m=${result!.escalations5m}`
+    );
+  }
+);
+
+export const retryPetpoojaOrderCancels = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+    // Same reasoning as the KOT retry worker: up to 100 claimed rows, each with
+    // a 15s abort budget, would overrun the 60s v2 default and die mid-claim.
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "retry-petpooja-order-cancels",
+      4 * 60 * 1000,
+      () => retryPendingPetpoojaOrderCancelsWorker()
+    );
+    if (!ran) {
+      console.log("[POS Cancel Worker] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[POS Cancel Worker] cancelled=${result!.cancelledCount} failed=${result!.failedCount} deferred=${result!.deferredCount}`
+    );
+  }
+);
+
+export const restoreSoldOutItems = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *", // Every 5 minutes
+    timeZone: "Asia/Kolkata",
+    // A batch of 40 restores, 4 at a time, each possibly holding a POS POST.
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "restore-sold-out-items",
+      4 * 60 * 1000,
+      () => restoreDueSoldOutItems()
+    );
+    if (!ran) {
+      console.log("[SoldOutTimer] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[SoldOutTimer] restored=${result!.restoredCount} skipped=${result!.skippedCount} posSynced=${result!.posSynced} posFailed=${result!.posFailed}`
     );
   }
 );

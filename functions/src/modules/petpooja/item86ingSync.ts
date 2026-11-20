@@ -264,6 +264,37 @@ export function isTrustedPetpoojaAuth(auth: unknown): boolean {
 }
 
 /**
+ * A POS-originated stock toggle SUPERSEDES any app-side sold-out timer.
+ *
+ * The Partner app's 86 drawer stores a deadline in `disabledUntil` and the
+ * 5-minute `restoreDueSoldOutItems` scheduler (modules/menu/soldOutTimer.scheduler.ts)
+ * restores the item when it arrives. If the POS itself takes the item off sale
+ * (or puts it back), the POS owns that decision while the outlet is linked —
+ * leaving the old deadline behind would let the timer resurrect an item the
+ * kitchen just 86'd at the till, i.e. sell food that does not exist.
+ *
+ * Cleared in the SAME merge as `inStock`, so the two can never disagree.
+ */
+const POS_STOCK_SUPERSEDES_TIMER = {
+  disabledUntil: null,
+  eightSixDuration: null,
+  eightSixReason: null,
+} as const;
+
+/**
+ * True when an app-side sold-out timer is still on the product doc.
+ *
+ * Checked on the FRESH read inside the toggle transaction: a POS 86 that
+ * arrives while the item is ALREADY `inStock:false` takes the idempotent
+ * "unchanged" path, and skipping the timer clear there would leave a deadline
+ * behind for `restoreDueSoldOutItems` to act on — resurrecting an item the till
+ * just took off sale.
+ */
+function hasAppSoldOutTimer(product: any): boolean {
+  return product?.disabledUntil != null || product?.eightSixDuration != null;
+}
+
+/**
  * Instant stock-out (86ing) webhook handler from Petpooja physical POS.
  *
  * Default-deny: `auth` is the verified context from `verifyPetpoojaAuth`.
@@ -539,6 +570,9 @@ async function applyStockToggleForItem(
           branchId,
           restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id ?? null,
           inStock: inStockBool,
+          // The POS owns stock while the outlet is linked: an app-side
+          // sold-out timer must not resurrect what the till just 86'd.
+          ...POS_STOCK_SUPERSEDES_TIMER,
           lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
@@ -551,6 +585,24 @@ async function applyStockToggleForItem(
         // would invalidate concurrent readers' version preconditions and
         // re-drive downstream listeners for a state change that did not happen.
         if (freshData.inStock === inStockBool) {
+          // Idempotent replay — EXCEPT for a lingering app-side timer. The POS
+          // owns stock now, so `disabledUntil` must go even when `inStock`
+          // already matches; otherwise the sold-out worker would later
+          // resurrect an item the till just 86'd. Clearing the timer IS a
+          // state change, so it is committed under the same precondition; a
+          // replay with no timer still writes nothing.
+          if (hasAppSoldOutTimer(freshData)) {
+            const timerPatch = {
+              ...POS_STOCK_SUPERSEDES_TIMER,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+            if (initialUpdateTime) {
+              tx.update(productRef, timerPatch, { lastUpdateTime: initialUpdateTime });
+            } else {
+              tx.update(productRef, timerPatch);
+            }
+            return "committed";
+          }
           return "unchanged";
         }
 
@@ -604,15 +656,31 @@ async function applyStockToggleForItem(
           if (!versionMatches) {
             conflictReason = "stale_conflict";
           } else if (freshData.inStock === inStockBool) {
-            // Idempotent: the canonical value already matches (same fresh-read
-            // reasoning as the transactional path above).
-            unchangedOnCommit = true;
+            // Same rule as the transactional path above: an idempotent toggle
+            // still clears a lingering app-side timer.
+            if (hasAppSoldOutTimer(freshData)) {
+              const timerPatch = {
+                ...POS_STOCK_SUPERSEDES_TIMER,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              };
+              if (initialUpdateTime) {
+                await productRef.update(timerPatch, { lastUpdateTime: initialUpdateTime });
+              } else {
+                await productRef.update(timerPatch);
+              }
+              committed = true;
+            } else {
+              unchangedOnCommit = true;
+            }
           } else {
             const updateData = {
               petpoojaItemId: String(item_id),
               branchId,
               restId: typeof rest_id === "string" ? rest_id.slice(0, 128) : rest_id ?? null,
               inStock: inStockBool,
+              // Same rule as the transactional path above: the POS toggle
+              // cancels any app-side sold-out timer.
+              ...POS_STOCK_SUPERSEDES_TIMER,
               lastPetpoojaSync: admin.firestore.FieldValue.serverTimestamp(),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             };

@@ -75,6 +75,14 @@ export const config = {
     stockUrl:
       process.env.PETPOOJA_STOCK_URL ||
       "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_item_stock",
+    // Update Order Status (cancel only). Proven against the sandbox on
+    // 2026-11-20: this host + path answered HTTP 200 with success:"1" and
+    // status:"-1" echoed (`petpooja-sandbox-20261120/logs/02-update-order-status.json`).
+    // Note it is NOT the save_order host — the two APIs live on different
+    // gateways, so it gets its own setting rather than a derived URL.
+    cancelUrl:
+      process.env.PETPOOJA_CANCEL_URL ||
+      "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_order_status",
     // The Push Menu `in_stock` encoding is undocumented. A real 166-item push
     // carried only "2", and the old whitelist (1 / "1" / true) turned the whole
     // storefront Sold Out. Keep fail-closed as the default; an operator who has

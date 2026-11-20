@@ -10,6 +10,8 @@ export interface PetpoojaClientConfig {
   menuUrl: string;
   orderUrl: string;
   stockUrl: string;
+  /** Update Order Status (cancel only) — proven against the sandbox 2026-11-20. */
+  cancelUrl: string;
 }
 
 /**
@@ -80,6 +82,9 @@ export function getPetpoojaConfig(): PetpoojaClientConfig {
     stockUrl:
       config.petpooja.stockUrl ||
       "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_item_stock",
+    cancelUrl:
+      config.petpooja.cancelUrl ||
+      "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_order_status",
   };
 }
 

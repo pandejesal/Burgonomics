@@ -37,8 +37,14 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
           if (!savedDocs[ref.__path]) throw new Error(`No document to update: ${ref.__path}`);
           savedDocs[ref.__path] = { ...savedDocs[ref.__path], ...data };
         },
-        set: async (ref: any, data: any) => {
-          savedDocs[ref.__path] = data;
+        set: async (ref: any, data: any, opts?: any) => {
+          // Honor Firestore's `{merge:true}`. The POS-cancel funnel records its
+          // decision as a merge patch; an unconditional overwrite here would
+          // wipe the rest of the order (cancellationReason, payment, …) — a lie
+          // about what production does, since real Firestore merges.
+          savedDocs[ref.__path] = opts?.merge
+            ? { ...(savedDocs[ref.__path] || {}), ...data }
+            : data;
         },
       }),
   };

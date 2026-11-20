@@ -167,6 +167,24 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "branchReminderSent",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "support_tickets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "branchId",
           "order": "ASCENDING"
         },
