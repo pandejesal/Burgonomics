@@ -1303,6 +1303,22 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Franchise settlement (owner decision 2026-11-20): month-end statements.
+    // Server-only writes (a regeneration is a NEW docs id, so nothing is ever
+    // overwritten); a brand owner reads every branch, a branch owner only its
+    // own. Client reads of the statements are optional (the Partner screen goes
+    // through the authenticated API), so this stays read-only and denies every
+    // other identity by default.
+    match /branch_settlements/{docId} {
+      allow read: if isBrandOwner() || ownsBranch(resource.data.branchId);
+      allow write: if false;
+    }
+
+    match /settlement_versions/{docId} {
+      allow read: if isBrandOwner();
+      allow write: if false;
+    }
+
     match /coupons/{couponCode} {
       allow read: if true; // public coupon validation at checkout — unauth guest checkout needs read
       allow write: if isBrandOwner();
