@@ -21,11 +21,12 @@ import { db } from "../../core/firebase";
  *      one place that has to hold.
  *
  * Contract: NEVER throws. The status write is already durable when this runs,
- * and a provider/coin/POS fault must surface as an alert, not as a failed
+ * and a provider/coin/POS/coupon fault must surface as an alert, not as a failed
  * cancel. Retrying the cancel is safe: the provider intent is read from the
  * order (a second attempt reuses the recorded intent), the coin restore is keyed
- * by the order id, and the POS cancel is leased and idempotent (a second
- * "cancel" for the same order is a no-op at the vendor).
+ * by the order id, the POS cancel is leased and idempotent (a second
+ * "cancel" for the same order is a no-op at the vendor), and the coupon release
+ * is a no-op when the slot was never held.
  */
 export interface CancelSideEffectsResult {
   providerCancelAttempted: boolean;
@@ -33,10 +34,11 @@ export interface CancelSideEffectsResult {
   coinsRestored: "restored" | "noop" | "failed";
   /** Petpooja cancel outcome — absent when the POS never received the order. */
   posCancel?: string;
+  couponReleased: "released" | "noop" | "failed";
 }
 
 /**
- * Applies both cancellation obligations in order. `requestedBy` is only used
+ * Applies every cancellation obligation in order. `requestedBy` is only used
  * for the audit trail on the provider-cancel record (staff name or
  * `customer:{uid}` — never a client-supplied string).
  */
@@ -51,6 +53,7 @@ export async function applyCancelSideEffects(input: {
       providerCancelAttempted: false,
       providerCancelSkipped: "missing_order_id",
       coinsRestored: "noop",
+      couponReleased: "noop",
     };
   }
   const reason = input.reason ?? "order_cancelled";
@@ -58,6 +61,7 @@ export async function applyCancelSideEffects(input: {
   const result: CancelSideEffectsResult = {
     providerCancelAttempted: false,
     coinsRestored: "noop",
+    couponReleased: "noop",
   };
 
   const orderRef = db.collection("orders").doc(orderId);
@@ -139,6 +143,30 @@ export async function applyCancelSideEffects(input: {
       source: "payments",
       severity: "high",
       message: `Grill-Coins restore failed for cancelled order ${orderId} — remediate via adjustCustomerCoins`,
+      orderId,
+      errorStack: err?.stack,
+    }).catch(() => undefined);
+  }
+
+  // --- 4. Coupon: return the held slot -------------------------------------
+  // A redemption is reserved when the payment intent becomes payable, so a
+  // cancelled order must hand it back or the cap leaks. Idempotent: releasing
+  // twice, or releasing an order that never had a coupon, is a no-op. Never
+  // throws — a failed release is alerted, not surfaced as a cancel error.
+  try {
+    const { releaseCouponRedemption } = await import("../coupons/couponAuthority");
+    const released = await releaseCouponRedemption({ orderId, reason });
+    result.couponReleased = released.released ? "released" : "noop";
+  } catch (err: any) {
+    result.couponReleased = "failed";
+    console.warn(
+      `[CancelSideEffects] coupon release failed for cancelled order ${orderId}:`,
+      err?.message || err
+    );
+    await captureErrorSnapshot({
+      source: "payments",
+      severity: "high",
+      message: `Coupon redemption release failed for cancelled order ${orderId} — release it manually`,
       orderId,
       errorStack: err?.stack,
     }).catch(() => undefined);

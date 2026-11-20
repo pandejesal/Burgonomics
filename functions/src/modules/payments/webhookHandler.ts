@@ -981,6 +981,18 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           );
         }
 
+        // The order is paid on this channel too: the coupon slot it held becomes
+        // a permanent use. Idempotent, and non-fatal — money is already captured.
+        try {
+          const { commitCouponRedemption } = await import("../coupons/couponAuthority");
+          await commitCouponRedemption(orderId);
+        } catch (err: any) {
+          console.warn(
+            `[Razorpay Webhook] coupon commit failed for order ${orderId}:`,
+            err?.message || err
+          );
+        }
+
         // Grill-Coins capture for this channel already ran BEFORE the confirm
         // (see the P1-H funding gate above), so nothing is left to debit here —
         // the deterministic ledger id makes a verify-channel debit converge.
@@ -1191,6 +1203,21 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           await parkFailed("failed_unknown_order");
         } else if (txnOutcome.outcome === "failed") {
           const orderData = txnOutcome.orderData;
+          // The payment attempt failed: return the coupon slot this intent held
+          // so the customer can retry with the same code. Idempotent and
+          // non-fatal — a later successful retry reserves a fresh slot.
+          try {
+            const { releaseCouponRedemption } = await import("../coupons/couponAuthority");
+            await releaseCouponRedemption({
+              orderId: String(orderId),
+              reason: "payment_failed",
+            });
+          } catch (err: any) {
+            console.warn(
+              `[Razorpay Webhook] coupon release failed for order ${orderId}:`,
+              err?.message || err
+            );
+          }
           // B5 interaction: if this order still carries a reconciliation
           // marker, an earlier capture was parked and its money may genuinely
           // have moved. The gateway's word about THIS attempt stands (the

@@ -24,6 +24,14 @@ export const COIN_RESERVATION_SLACK_MS = 60 * 60 * 1000;
 export const COIN_RESERVATION_TTL_MS = PAYMENT_INTENT_TTL_MS + COIN_RESERVATION_SLACK_MS;
 
 /**
+ * A coupon redemption holds its slot for the whole payable life of the intent
+ * it priced, for the same reason: a slot that expired before the gateway order
+ * did would let the customer pay a discounted total after the cap had already
+ * been handed to somebody else.
+ */
+export const COUPON_RESERVATION_TTL_MS = PAYMENT_INTENT_TTL_MS + COIN_RESERVATION_SLACK_MS;
+
+/**
  * The app's real Grill-Coins value: 1 coin = ₹1 of discount (the pricing engine
  * caps a redemption at 20% of the food subtotal). Every future reserve/debit
  * calculation must go through this, never the pre-capping request count.
