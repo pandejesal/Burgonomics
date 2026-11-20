@@ -22,23 +22,53 @@
 
 ## 🔐 2. App Reviewer Demo Credentials (Mandatory for Store Approval)
 
-> [!IMPORTANT]
-> Both Apple and Google review teams are located internationally. Provide these exact credentials in the **App Review Information / Sign-in required** section of App Store Connect & Google Play Console to ensure immediate approval without SMS delays.
+> [!WARNING]
+> **No reviewer phone number, fixed code or password is written in this repository.** They are credentials:
+> they live in the team's secure store — `_secrets\` on the release workstation (see
+> `staging-review-20261030\_secrets\qa-credentials.json` for the partner accounts) and the Burgonomics
+> password manager — and are typed straight into App Store Connect / Google Play Console at submission
+> time. Never paste them into a document, ticket, chat or commit.
 
-### Customer App Reviewer Login
-- **Authentication Method**: Phone Number OTP
-- **Phone Number**: `+91 99999 99999` (or `9999999999`)
-- **Fixed Verification Code / OTP**: `123456`
-- **Reviewer Instructions**:
-  > "Please log in using the test phone number and OTP above. A sandbox delivery address and test branch ('Ahmedabad Central') will be pre-selected. Placing an order triggers our automated sandbox checkout where payment completes instantly and transitions to live order tracking."
+### Customer App Reviewer Login — current state
 
-### Partner App Reviewer Login
-- **Authentication Method**: Email & Password
-- **Email**: `reviewer@burgonomics.com`
-- **Password**: `Burgonomics@2026`
-- **Assigned Role**: `branch_owner` (Demo Branch)
-- **Reviewer Instructions**:
-  > "Burgonomics Partner is an internal operations management application for authorized franchise store managers and kitchen staff. Log in with the credentials above to test live Kitchen Order Tickets (KDS), menu item 86ing, ticket management, and analytics."
+Read from the live Firebase Auth config on 20 November 2026 (names and counts only):
+
+| Project | Phone sign-in | Test phone numbers | Authorized domains |
+|---|---|---|---|
+| Staging `burgonomics-7faa8` | enabled | **1** | 3 (`localhost`, `burgonomics-7faa8.firebaseapp.com`, `burgonomics-7faa8.web.app`) |
+| Production `burgonomics-prod` | enabled | **0** | 4 (the production hosts) |
+
+**The number this guide used to print is configured in neither project.** A reviewer who typed it would get
+"invalid number", so it must not be submitted. The one number that does work is a staging test number and is
+a different number.
+
+**All three of these must be true before either store is submitted:**
+1. One test phone number exists in the project the submitted build points at. Today that is staging only;
+   production has none. Owner picks the number, engineering configures it (console changes are listed in
+   `fix-wave-20261120-r1\otp-signin\FIREBASE-AUTH-CHANGES.md`).
+2. That number and its fixed code are recorded in the secure store, not here.
+3. The reviewer note below is filled in from the secure store at submission time.
+
+**Reviewer note to paste (fill the two blanks from the secure store):**
+> "Enter phone number `<from secure store>` and tap Continue. When the code screen appears, enter
+> `<fixed code from secure store>`. No SMS is sent to this number; the code is fixed for review. This build
+> is connected to our rehearsal environment, so outlet and menu data may be limited. You can browse the menu,
+> build a cart and reach checkout; payments run in the payment provider's test mode and no money moves."
+
+Do **not** claim a pre-selected sandbox address, a demo branch called "Ahmedabad Central", or an instant
+sandbox payment: none of those exist in the app.
+
+### Partner App Reviewer Login — current state
+
+- **Authentication Method**: Email & Password, role `branch_owner`.
+- **Email, password and assigned branch**: in the secure store (`_secrets\qa-credentials.json`), never here.
+- **Not verified:** no successful sign-in with a `reviewer@...` account is recorded anywhere, so the account's
+  existence must be confirmed by an Auth user lookup before submission. Do not describe it as working until
+  that check is done.
+- **Reviewer note to paste:**
+  > "Burgonomics Partner is an internal operations app for authorised franchise store managers and kitchen
+  > staff. Sign in with the email and password provided in App Review Information. The account is a branch
+  > owner, so you can open the kitchen display, change item availability, and view tickets and reports."
 
 ---
 
@@ -179,7 +209,8 @@ chmod +x mac-build.sh
 ## 🚀 6. 15-Day Submission Checklist & Sign-Off
 
 - [x] iOS Native projects generated for both Customer and Partner apps.
-- [x] Reviewer Sandbox mode configured for zero-error store approval.
+- [ ] Reviewer sign-in configured for store approval — **not done.** Production has zero test phone numbers
+  and no deployed backend; the number this checklist used to assume is configured in neither project. See §2.
 - [x] Store App Icons (1024x1024) and Feature Graphics (1024x500) generated.
 - [x] App Privacy, Data Safety, and Reviewer copy prepared.
 - [x] Mac automated build scripts created and verified.
@@ -194,7 +225,7 @@ chmod +x mac-build.sh
 - **Customer app**: `com.glassdoorsstudio.burgonomics` → **`com.burgonomics`**
 - **Partner app**: `com.glassdoorsstudio.burgonomics.partner` → **`com.burgonomics.partner`**
 - 22 source files edited across both apps: `capacitor.config.ts`, `android/app/build.gradle` (namespace + applicationId), `proguard-rules.pro`, `res/values/strings.xml`, `google-services.json`, `project.pbxproj`, `Info.plist`, `capacitor.config.json`, `apple-app-site-association` (source + iOS/Android asset copies), `assetlinks.json`, `README.md`, `scripts/smoke.{sh,mjs}`
-- `MainActivity.java` package declarations rewritten **and files moved** to `com/burgonomics/…`; old `com/glassdoorsstudio/…` package directories removed
+- `MainActivity.java` package declarations rewritten **and files moved** to `com/burgonomics/...`; old `com/glassdoorsstudio/...` package directories removed
 - `GLASSDOORS.` team placeholder in AASA → `TEAMID.` (real Team ID pending Apple enrollment)
 - `src/` + `tests/` confirmed **zero** old-ID occurrences (no UI/zone files touched — reported, not edited)
 - Old IDs remain only in regenerated artifacts (`android/**/build/`, stale `dist/`) — refreshed by the verified builds below
@@ -269,7 +300,7 @@ chmod +x mac-build.sh
 | QA review (Firebase registration task) | ✅ APPROVED (5/5) |
 
 ### 8.6 Carried forward (Phase 2 remainder → Phase 3)
-- **E2E proof sequence** (pending trio creds): direct-POST probe → functions+firestore+auth emulators → seed `branches/{id}.petpoojaStoreId` → auth-emulator ID token → `POST /petpooja/pushOrder` → then live deploy + live proof → evidence JSON at `references/verification/*-petpooja-save-order.json` (`{generatedAt, verdict, …}` convention).
+- **E2E proof sequence** (pending trio creds): direct-POST probe → functions+firestore+auth emulators → seed `branches/{id}.petpoojaStoreId` → auth-emulator ID token → `POST /petpooja/pushOrder` → then live deploy + live proof → evidence JSON at `references/verification/*-petpooja-save-order.json` (`{generatedAt, verdict, ...}` convention).
 - Android SDK: `emulator` + `system-images;android-34;google_apis;x86_64` install in progress (sdkmanager requires `JAVA_HOME=Android Studio\jbr` — system Java 8 fails with UnsupportedClassVersionError).
 - Blocked-on-user: Petpooja trio, `RAZORPAY_WEBHOOK_SECRET`, Porter triple (see §8.1) — E2E + `BURGONOMICS_ENV=production` flip wait on these.
 
@@ -329,11 +360,11 @@ chmod +x mac-build.sh
 |---|---|
 | actionlint ×3 workflows | ✅ RC=0, zero findings |
 | YAML parse ×3 | ✅ OK |
-| Forbidden sweep ×5 files (`Glassdoors\|erowan\|Slack\|123456\|Burgonomics@2026`) | ✅ 0 hits |
+| Forbidden sweep ×5 files (`Glassdoors\|erowan\|Slack\|<reviewer OTP>\|<partner password>`) | ✅ 0 hits |
 | QA review | 1 revision (fail-closed guard for partner `release-aab`) → applied + verified in place |
 | partner `gradlew bundleRelease` | ✅ BUILD SUCCESSFUL (run with hash-verified temporary cruncher-disable — see 10.4 — `build.gradle` restored byte-exact afterward) |
 | core `gradlew bundleRelease` | ✅ AAB 15,464,943 B |
-| AAB signer vs release keystore (keytool) | ✅ fingerprints match both apps (`CN=Burgonomics`; partner `25:C9:63:BC…`, core `15:3F:30:0D…`) — no debug / Glassdoors identity |
+| AAB signer vs release keystore (keytool) | ✅ fingerprints match both apps (`CN=Burgonomics`; partner `25:C9:63:BC...`, core `15:3F:30:0D...`) — no debug / Glassdoors identity |
 | Temp-patch leak check | ✅ `cruncherEnabled` absent from `build.gradle`; byte-exact restore |
 
 ### 10.4 New defects found (relayed to orchestrator)
@@ -348,7 +379,7 @@ chmod +x mac-build.sh
 
 ### 10.6 CI run evidence (2026-10-09, throwaway branches pushed with orchestrator approval)
 - Branches: partner `release/ci-verify` `10f4feb` (base `origin/feat/partner-device-smoke` + my `ci.yml` only); core `release/ci-verify` `f0bb197` (base `origin/main` + my `android-build.yml`/`ios-build.yml`); **core PR #1** opened (`pandejesal/Burgonomics-App#1`). Worktrees `Temp\opencode\wt-{partner,core}-ci` kept for follow-ups. Local trees untouched. (Info.plists excluded from branches — zero CI effect; core's carries sibling edits.)
-- ✅ **Core `Android Build (Capacitor)` = SUCCESS** (run `37866985230`, 3m46s): fixed signing job decoded `RELEASE_KEYSTORE_BASE64`, sed-guard passed, AAB+APK artifacts uploaded (249/249 MB). **Downloaded CI AAB → keytool signer SHA256 `15:3F:30:0D…` = exact Phase 1 core release-keystore cert** → full secret→runner→signed-AAB chain proven.
+- ✅ **Core `Android Build (Capacitor)` = SUCCESS** (run `37866985230`, 3m46s): fixed signing job decoded `RELEASE_KEYSTORE_BASE64`, sed-guard passed, AAB+APK artifacts uploaded (249/249 MB). **Downloaded CI AAB → keytool signer SHA256 `15:3F:30:0D...` = exact Phase 1 core release-keystore cert** → full secret→runner→signed-AAB chain proven.
 - Pre-existing reds (identical on `main` since Sep 20 — NOT mine, listed for orchestrator): core `CI` job (web typecheck, Firestore-rules suite, android-debug), core `iOS Build` (Xcode 15.4 vs Capacitor 8 SPM — documented in 10.1). Partner run `37866942131`: gitleaks ✅; web ❌ = **TS errors in `src/admin/*` on the remote base** (sibling domain — local ui-sweep likely has newer fixes); android-debug ❌ = `./gradlew: Permission denied` (exec bit lost in repo); iOS-sim ❌ = job runs `cap sync` without a web build. My new jobs already guard all three (chmod + build-before-sync) and correctly **SKIP on push** (dispatch-only) — they cannot run until the workflow files land on default branches (`workflow_dispatch` requires default-branch presence).
 - 🟠 **Size defect (relay)**: AAB = 249 MB uncompressed 260 MB — dominated by `base/assets/public/images/menu/*.jpg` (single photos up to **14 MB**; menu images ≈ 210 MB total). Risks Play's base-AAB upload cap (~200 MB initial) and blows past Apple's 200 MB cellular threshold. Fix = squash menu JPGs (target <500 KB each → AAB ≈ 20-30 MB). Web assets = sibling/orchestrator content lane — reported, not edited.
 - **Petpooja E2E prep (from the two PDFs, 2026-10-09)**: public IP to whitelist = **103.250.137.67** (laptop egress; dashboard + sandbox API IP-locked). Tokens trio = sandbox dashboard **Configuration** tab (email-sent dashboard login = the creds already in `functions/.env`). `restID` = `PETPOOJA_SANDBOX_MAPPING_CODE=31z58ciw0h`. **Sandbox save_order endpoint differs**: `https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/save_order` (guide) vs our `PETPOOJA_ORDER_URL=developerapi.petpooja.com/V1/save_order` — probe both in §8.6 step 1. ⚠️ Open question for Petpooja: are API calls IP-locked too (only laptop whitelisted)? Live calls egress from **GCP Cloud Functions**, not this laptop — need GCP egress whitelisted (or Cloud NAT static IP) before live E2E passes.

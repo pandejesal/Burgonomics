@@ -170,7 +170,8 @@ What to ask Shadowfax for:
 - Live-wire probe suite `functions/tests/dispatch.wire.test.ts` (Borzo test-env quote + book through the production adapter)
 - Borzo cabinet items on our test login: Callback Secret Key, callback URL, callback types
 - `RAZORPAY_WEBHOOK_SECRET` (I choose the value when registering the webhook)
-- Reviewer logins for Apple/Google: `+91 99999 99999 / 123456` + `reviewer@burgonomics.com`
+- Reviewer logins for Apple/Google: **not in this document** — they are held in the secure store and entered
+  straight into App Store Connect / Play Console. Staging has one test phone number; production has none yet.
 - Smoke test: test order → KOT print → menu sync → Porter dispatch → OTP delivery
 
 ## Where to send

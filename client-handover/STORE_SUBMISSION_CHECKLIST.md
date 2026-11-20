@@ -60,10 +60,13 @@ Register these URLs in your third-party developer consoles to receive live updat
    - **Free or paid**: `Free`
 3. Under **App Content**:
    - **Privacy Policy**: `https://burgonomics.com/privacy`
-   - **App Access / Reviewer Credentials**: Select "All or some functionality is restricted" -> Add credentials:
-     - Phone: `+91 99999 99999`
-     - OTP: `123456`
-     - Instructions: "Login with test phone and OTP. Ahmedabad test branch and sandbox address are pre-selected. Checkout executes instant sandbox payment."
+   - **App Access / Reviewer Credentials**: Select "All or some functionality is restricted" and add the
+     credentials from the secure store (never from this file):
+     - Phone: `<from secure store>`
+     - OTP: `<fixed code from secure store>`
+     - Instructions: "Enter the phone number above and tap Continue, then the fixed code above; no SMS is
+       sent. This build uses our rehearsal environment, so outlet and menu data may be limited. Payments run
+       in the provider's test mode and no money moves."
    - **Data Safety**: Consult Section 4 of `STORE_SUBMISSION_GUIDE.md` (Location, Name, Phone, Address, Purchase history collected for order fulfillment).
 4. Under **Main Store Listing**:
    - **Short description**: `Order 100% Pure Veg Gourmet Burgers, Combos & Shakes with live order tracking!`
@@ -84,9 +87,10 @@ Register these URLs in your third-party developer consoles to receive live updat
 2. Under **App Content**:
    - **Privacy Policy**: `https://burgonomics.com/privacy`
    - **App Access / Reviewer Credentials**:
-     - Email: `reviewer@burgonomics.com`
-     - Password: `Burgonomics@2026`
-     - Instructions: "Internal operations app for store managers. Login to test live KDS Kitchen Order Tickets, item 86ing, ticket management, and analytics."
+     - Email: `<from secure store>`
+     - Password: `<from secure store>`
+     - Instructions: "Internal operations app for store managers. Sign in with the email and password above
+       to open the kitchen display, change item availability, and view tickets and reports."
 3. Under **Main Store Listing**:
    - **Short description**: `Franchise operations, live KDS kitchen display, POS billing & Porter dispatch.`
    - **Full description**: Paste full description from Section 3.B of `STORE_SUBMISSION_GUIDE.md`.
@@ -116,5 +120,6 @@ Register these URLs in your third-party developer consoles to receive live updat
    - Target **Any iOS Device (arm64)** -> **Product** -> **Archive** -> **Distribute App** -> **App Store Connect**.
 5. In [App Store Connect](https://appstoreconnect.apple.com):
    - Fill in Privacy Nutrition Labels (from Section 4 of `STORE_SUBMISSION_GUIDE.md`).
-   - Add Reviewer Credentials (Customer: `+91 99999 99999` / `123456`, Partner: `reviewer@burgonomics.com` / `Burgonomics@2026`).
+   - Add Reviewer Credentials from the secure store (customer phone number + fixed code, partner email +
+     password). Nothing is written in this repository.
    - Submit for Review.

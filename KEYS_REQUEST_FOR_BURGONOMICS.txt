@@ -82,7 +82,8 @@ What I will handle myself (no action needed from you)
 ----------------------------------------------------------------
 - Firebase Hosting / Functions deploy (burgonomics-7faa8), Firestore rules + indexes
 - OTP_HMAC_SECRET, BURGONOMICS_ENV, MOCK_* flags, google-services.json, GoogleService-Info.plist, VITE_FCM_VAPID_KEY, VITE_RECAPTCHA_SITE_KEY, VITE_MAPS_API_KEY, VITE_FIREBASE_*
-- Reviewer logins for Apple/Google: +91 99999 99999 / 123456 + reviewer@burgonomics.com
+- Reviewer logins for Apple/Google: not in this document. They are held in the secure store and entered
+  straight into App Store Connect / Play Console. Staging has one test phone number; production has none yet.
 - Smoke test: test order -> KOT print -> menu sync -> Porter dispatch -> OTP delivery
 
 ----------------------------------------------------------------
