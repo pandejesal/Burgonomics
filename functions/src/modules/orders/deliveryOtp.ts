@@ -46,23 +46,62 @@ export function assertDeliveryOtpOrderActive(order: OrderRecord, handover = fals
   }
 
   const payment = record(order.payment);
-  const amounts = [payment.capturedAmountPaise, order["payment.capturedAmountPaise"]].filter((value) => value != null);
-  const paymentIds = [payment.razorpayPaymentId, order["payment.razorpayPaymentId"], order.razorpayPaymentId,
-    order.capturedPaymentId].filter((value) => value != null);
-  const paymentStatuses = [payment.status, order["payment.status"], order.paymentStatus].filter((value) => value != null);
-  if (order.paymentChannel !== "razorpay" || amounts.length === 0 ||
-      amounts.some((value) => typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value !== amounts[0]) ||
-      paymentIds.length === 0 || paymentIds.some((value) => !isSafeDocId(value) || value !== paymentIds[0]) ||
-      paymentStatuses.length === 0 || paymentStatuses.some((value) => !["completed", "captured", "paid"].includes(normalized(value)))) {
-    throw new DeliveryOtpError("ORDER_NOT_PAID", "A verified captured payment is required for delivery handover");
+  // Owner decision 2026-11-20: cash on delivery is a launch lane. A COD order
+  // has NO gateway receipt by design, so the razorpay proof below cannot apply
+  // to it. The equivalent server proof is the `paymentChannel: "cash"` marker
+  // written by `orders/createCashOrder` (never by a client) plus the
+  // server-computed collectible amount it stamped. Everything else — the
+  // method, the pending status, the refund markers — is checked exactly as
+  // strictly as the gateway lane.
+  const isCashOrder = order.paymentChannel === "cash";
+  const method = normalized(
+    payment.method ?? order.paymentMethod ?? order.orderPaymentMethod
+  );
+  let paymentBasisPaise: number;
+  let capturePaymentId: unknown = null;
+  if (isCashOrder) {
+    const due = order.cashDuePaise;
+    const paymentStatuses = [payment.status, order["payment.status"], order.paymentStatus].filter(
+      (value) => value != null
+    );
+    if (
+      (method !== "cod" && method !== "cash") ||
+      typeof due !== "number" ||
+      !Number.isSafeInteger(due) ||
+      due <= 0 ||
+      paymentStatuses.some((value) =>
+        ["completed", "captured", "paid"].includes(normalized(value))
+      ) ||
+      order.cashCollectedAt != null ||
+      order.cashCollectedPaise != null
+    ) {
+      throw new DeliveryOtpError(
+        "ORDER_NOT_PAID",
+        "This cash order has no server-recorded amount to collect — the hand-over cannot be confirmed"
+      );
+    }
+    paymentBasisPaise = due;
+  } else {
+    const amounts = [payment.capturedAmountPaise, order["payment.capturedAmountPaise"]].filter((value) => value != null);
+    const paymentIds = [payment.razorpayPaymentId, order["payment.razorpayPaymentId"], order.razorpayPaymentId,
+      order.capturedPaymentId].filter((value) => value != null);
+    const paymentStatuses = [payment.status, order["payment.status"], order.paymentStatus].filter((value) => value != null);
+    if (order.paymentChannel !== "razorpay" || amounts.length === 0 ||
+        amounts.some((value) => typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value !== amounts[0]) ||
+        paymentIds.length === 0 || paymentIds.some((value) => !isSafeDocId(value) || value !== paymentIds[0]) ||
+        paymentStatuses.length === 0 || paymentStatuses.some((value) => !["completed", "captured", "paid"].includes(normalized(value)))) {
+      throw new DeliveryOtpError("ORDER_NOT_PAID", "A verified captured payment is required for delivery handover");
+    }
+    paymentBasisPaise = Number(amounts[0]);
+    capturePaymentId = paymentIds[0];
   }
   const capture = record(order.captureFulfillment);
   const refundStatuses = [order.refundStatus, payment.refundStatus, order["payment.refundStatus"]].filter((value) => value != null);
   const refunded = order.refundedTotalPaise;
   if (refundStatuses.some((value) => !["", "none", "partially_refunded"].includes(normalized(value))) ||
       order.refundActiveClaim != null || order.refundClaimedAt != null ||
-      (refunded != null && (typeof refunded !== "number" || !Number.isSafeInteger(refunded) || refunded < 0 || refunded >= Number(amounts[0]))) ||
-      (order.captureFulfillment != null && (capture.state !== "fulfillable" || capture.paymentId !== paymentIds[0])) ||
+      (refunded != null && (typeof refunded !== "number" || !Number.isSafeInteger(refunded) || refunded < 0 || refunded >= paymentBasisPaise)) ||
+      (order.captureFulfillment != null && (capture.state !== "fulfillable" || capture.paymentId !== capturePaymentId)) ||
       (order.captureFulfillmentState != null && !["confirmed", "fulfillable"].includes(normalized(order.captureFulfillmentState))) ||
       order.reconciliation != null) {
     throw new DeliveryOtpError("DELIVERY_OTP_UNAVAILABLE", "Delivery handover is unavailable while payment requires review");

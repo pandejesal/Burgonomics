@@ -170,6 +170,9 @@ describe("POST /checkout/fees (R5)", () => {
       serviceable: true,
       packagingFee: 15,
       deliveryFee: 0,
+      // Owner decision 2026-11-20: the same response now carries the branch's
+      // cash-on-delivery switch + ceiling (default: on, ₹5,000 per order).
+      cashOnDelivery: { enabled: true, maxOrderValuePaise: 500000 },
     });
     expect(quoteDocs()).toHaveLength(0);
   });
