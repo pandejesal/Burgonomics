@@ -34,6 +34,19 @@ import { handleRazorpayWebhook } from "./modules/payments/webhookHandler";
 import { resolveCheckoutFees } from "./modules/payments/checkoutFees";
 import { disposeRefundRequest } from "./modules/payments/refundRequests";
 import { resolveDiscrepancy } from "./modules/payments/discrepancies";
+// Franchise settlement (owner decision 2026-11-20): month-end statements.
+import {
+  exportSettlementsCsv,
+  generateSettlementStatement,
+  listSettlements,
+  markSettlementPaid,
+  runMonthlySettlementScheduler,
+} from "./modules/settlements/exported";
+import {
+  sendCsvDownload,
+  settlementCaller,
+  settlementErrorResponse,
+} from "./modules/settlements/settlementRoutes";
 import {
   syncPetpoojaMenu,
   handlePetpoojaMenuWebhook,
@@ -205,6 +218,10 @@ import {
   verifyBonusSchema,
   deleteAccountSchema,
   storeOperatingStatusSchema,
+  settlementGenerateSchema,
+  settlementListSchema,
+  settlementCsvSchema,
+  settlementMarkPaidSchema,
 } from "./core/validation";
 
 // Live production-key enforcement.
@@ -410,6 +427,12 @@ app.use(
     "/auth/migrateGuest",
     "/auth/verifyBonusEligibility",
     "/auth/deleteAccount",
+    // Franchise settlement routes: the only client is the Partner app's
+    // partnerFunctionsApi, which attaches X-Firebase-AppCheck on every call.
+    "/settlements/generate",
+    "/settlements/list",
+    "/settlements/csv",
+    "/settlements/markPaid",
   ],
   requireAppCheck
 );
@@ -1405,6 +1428,100 @@ app.post(
 );
 
 // ==========================================
+// 3c. FRANCHISE SETTLEMENT ROUTES (owner decision 2026-11-20)
+// ==========================================
+//
+// Month-end statements per branch: online money collected centrally, cash the
+// branch already holds, and ONE flat platform fee per branch per active month.
+// The app moves NO money: "mark as paid" records a reference + date only.
+//
+// Read scope is enforced in the service (rules can only see one document's own
+// fields): a brand role sees every branch, a branch owner only its own branch.
+// Generation and the paid state are brand-only.
+
+app.post(
+  "/settlements/generate",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  validateBody(settlementGenerateSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const statement = await generateSettlementStatement({
+        branchId: req.body.branchId,
+        monthKey: req.body.monthKey,
+        caller: settlementCaller(req.user),
+        source: "on_demand",
+      });
+      res.status(201).json(statement);
+    } catch (err: any) {
+      const { status, body } = settlementErrorResponse(err);
+      res.status(status).json(body);
+    }
+  }
+);
+
+app.post(
+  "/settlements/list",
+  requireAuth,
+  validateBody(settlementListSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const statements = await listSettlements({
+        caller: settlementCaller(req.user),
+        monthKey: req.body.monthKey,
+        branchId: req.body.branchId,
+        allVersions: req.body.allVersions === true,
+      });
+      res.status(200).json({ monthKey: req.body.monthKey, statements });
+    } catch (err: any) {
+      const { status, body } = settlementErrorResponse(err);
+      res.status(status).json(body);
+    }
+  }
+);
+
+app.post(
+  "/settlements/csv",
+  requireAuth,
+  validateBody(settlementCsvSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { filename, csv } = await exportSettlementsCsv({
+        caller: settlementCaller(req.user),
+        monthKey: req.body.monthKey,
+        branchId: req.body.branchId,
+      });
+      sendCsvDownload(res, filename, csv);
+    } catch (err: any) {
+      const { status, body } = settlementErrorResponse(err);
+      res.status(status).json(body);
+    }
+  }
+);
+
+app.post(
+  "/settlements/markPaid",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  validateBody(settlementMarkPaidSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await markSettlementPaid({
+        statementId: req.body.statementId,
+        reference: req.body.reference,
+        paidOn: req.body.paidOn,
+        note: req.body.note,
+        caller: settlementCaller(req.user),
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      const { status, body } = settlementErrorResponse(err);
+      res.status(status).json(body);
+    }
+  }
+);
+
+// ==========================================
 // 4. SUPPORT TICKETING & ESCALATOR ROUTES
 // ==========================================
 
@@ -2360,6 +2477,49 @@ export const sweepStaleDispatchClaimsJob = onSchedule(
     console.log(
       `[Stale Claim Sweep] scanned ${result!.scanned} — parked ${result!.parked}`
     );
+  }
+);
+
+// Franchise settlement statement job (owner decision 2026-11-20): on the 1st of
+// every month at 00:20 IST, settle the PREVIOUS Asia/Kolkata calendar month for
+// every branch. 00:20 (not 00:00) leaves the last orders of the closing month
+// time to land and the webhook lane to finish writing captures. The run is
+// idempotent — a branch that already has a statement for the month is skipped,
+// so a Cloud Scheduler retry can never spawn a spurious version.
+export const monthlyBranchSettlements = onSchedule(
+  {
+    region: REGION,
+    schedule: "20 0 1 * *", // 1st of the month, 00:20 Asia/Kolkata
+    timeZone: "Asia/Kolkata",
+    // Every branch × (orders scan + version transaction): minutes, not seconds.
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "monthly-branch-settlements",
+      // 60 minutes: a month-end run over many branches must not be taken over by
+      // the next tick, and the next tick is a month away anyway.
+      60 * 60 * 1000,
+      () => runMonthlySettlementScheduler()
+    );
+    if (!ran) {
+      console.log("[Settlements] previous run still active — skipped");
+      return;
+    }
+    const summary = result as Awaited<ReturnType<typeof runMonthlySettlementScheduler>>;
+    console.log(
+      `[Settlements] ${summary.monthKey}: generated ${summary.generated.length}, ` +
+        `skipped ${summary.skipped.length}, failed ${summary.failed.length}`
+    );
+    if (summary.failed.length > 0) {
+      // Fail loud: a branch that could not be settled is money the owner cannot
+      // reconcile, and the next scheduled attempt is a month away.
+      throw new Error(
+        `Settlement run ${summary.monthKey} failed for ${summary.failed
+          .map((f) => f.branchId)
+          .join(",")}`
+      );
+    }
   }
 );
 
