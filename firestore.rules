@@ -1319,9 +1319,35 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // COUPON AUTHORITY (audit 2026-11-20 §1.6). The server is the ONLY writer,
+    // and — after this wave — the only READER too: the customer app asks
+    // POST /coupons/quote and GET /coupons/available, so no client needs the raw
+    // documents. The previous `allow read: if true` let any scraper enumerate
+    // every code, discount and cap, which is exactly what
+    // references/firebase_security.md claimed had been fixed.
     match /coupons/{couponCode} {
-      allow read: if true; // public coupon validation at checkout — unauth guest checkout needs read
-      allow write: if isBrandOwner();
+      allow read, write: if false; // server-only (Admin SDK bypasses rules)
+    }
+
+    // Redemption ledger. One row per order, written only inside the server's
+    // pricing transaction; a customer must never be able to forge or replay one.
+    match /coupon_redemptions/{redemptionId} {
+      allow read, write: if false;
+    }
+
+    // Usage counters that make the cap and the per-customer limit atomic.
+    match /coupon_stats/{code} {
+      allow read, write: if false;
+    }
+
+    match /coupon_customer_usage/{usageId} {
+      allow read, write: if false;
+    }
+
+    // Staff issue trail ("coupon issued to this customer").
+    match /coupon_issues/{issueId} {
+      allow read: if isBrandOwner();
+      allow write: if false;
     }
 
     // Admin audit trail — immutable append-only

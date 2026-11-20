@@ -5,6 +5,14 @@ import {
   resolvePackagingFeeSnapshot,
   type BranchPricingConfig,
 } from "./branchPricing";
+// ONE coupon formula. The discount is not computed here any more: it is the
+// coupon authority's answer, so a preview and the charge cannot disagree.
+import {
+  evaluateCoupon,
+  normalizeCoupon,
+  normalizeCouponCustomer,
+  readCouponUsage,
+} from "../coupons/couponAuthority";
 
 export interface PricingLineItem {
   id: string;
@@ -42,6 +50,12 @@ export interface CalculateOrderPricingInput {
    */
   serverPackagingFee?: number;
   couponCode?: string;
+  /**
+   * The customer the per-customer coupon limit applies to. Optional: a walk-in
+   * or guest checkout has none, and a customer-scoped coupon then simply
+   * refuses (it was issued to somebody).
+   */
+  customerId?: string | null;
   loyaltyPointsToRedeem?: number;
 }
 
@@ -421,6 +435,15 @@ export interface SnapshotPricingInput {
   branchId?: string;
   /** Coupon document read in the same transaction, when the order carries one. */
   coupon?: any | null;
+  /**
+   * Committed + live-reserved redemptions, read from the coupon authority's
+   * counters in the same snapshot as `coupon`. Absent means "unknown", which
+   * the authority treats as zero usage — the caller that RESERVES the slot
+   * (`reserveCouponInTx`) is the one that enforces the cap atomically.
+   */
+  couponUsage?: { totalUsed?: number; customerUsed?: number };
+  /** Customer whose per-customer limit applies. */
+  customerId?: string | null;
   loyaltyPointsToRedeem?: number;
   /** R7: a server-locked packaging fee (repricing an agreed total). */
   packagingFeeOverride?: number;
@@ -470,47 +493,36 @@ function assertPriceableItems(items: PricingLineItem[]): void {
 }
 
 /**
- * Coupon discount from a document the caller already read. Pure: the clock is
- * passed in. Same clamps as before — active, unexpired, branch-eligible and
- * above the minimum; percent bounded to 0–100; `maxDiscount` honoured; floor 0;
- * ceiling at the food subtotal so a corrupt coupon can never inflate the bill.
+ * Coupon discount from a document the caller already read. Pure: the clock and
+ * the usage counters are passed in.
+ *
+ * This is a thin delegate to the coupon authority (`evaluateCoupon`): the
+ * canonical rules (active, validity window, branch scope, customer scope,
+ * minimum order, per-customer limit, total cap, max discount, percent clamp,
+ * floor 0, ceiling at the food subtotal) live in ONE place. The old local
+ * implementation read `expiresAt`/`branchId` only, so a coupon written in the
+ * canonical shape was silently ignored — the two-authority bug this replaces.
  */
 function computeCouponDiscount(
   couponDoc: any,
   foodSubtotal: number,
   branchId: string,
-  nowMs: number
+  nowMs: number,
+  usage?: { totalUsed?: number; customerUsed?: number },
+  customerId?: string | null
 ): number {
-  if (!couponDoc) return 0;
-  const c = couponDoc as any;
-  const looksLikeCoupon =
-    c &&
-    (typeof c.discount === "number" ||
-      typeof c.value === "number" ||
-      typeof c.amount === "number" ||
-      c.type === "percent" ||
-      c.discountType === "percent");
-  if (!looksLikeCoupon) return 0;
-
-  const isActive = c.active !== false;
-  const notExpired =
-    !c.expiresAt ||
-    (c.expiresAt.toMillis
-      ? c.expiresAt.toMillis() > nowMs
-      : new Date(c.expiresAt).getTime() > nowMs);
-  const branchAllowed = !c.branchId || c.branchId === branchId;
-  const minOk = foodSubtotal >= (c.minOrder ?? c.min_order ?? 0);
-  if (!(isActive && notExpired && branchAllowed && minOk)) return 0;
-
-  // Percent coupons are bounded (0,100] — a corrupt >100% value must not zero
-  // out (or negate) the bill.
-  const pct = c.discount ?? c.value ?? 0;
-  const raw =
-    c.type === "percent" || c.discountType === "percent"
-      ? Math.round((foodSubtotal * Math.min(100, Math.max(0, pct))) / 100)
-      : (c.discount ?? c.value ?? c.amount ?? 0);
-  const capped = c.maxDiscount ? Math.min(raw, c.maxDiscount) : raw;
-  return Math.max(0, Math.min(capped, foodSubtotal));
+  const coupon = couponDoc
+    ? normalizeCoupon(String(couponDoc.code ?? ""), couponDoc)
+    : null;
+  const evaluation = evaluateCoupon(coupon, {
+    foodSubtotal,
+    branchId,
+    nowMs,
+    customerId: normalizeCouponCustomer(customerId),
+    totalUsed: usage?.totalUsed,
+    customerUsed: usage?.customerUsed,
+  });
+  return evaluation.discount;
 }
 
 /**
@@ -661,12 +673,15 @@ export function computeSnapshotPricing(
     deliveryFee = round2(quoted);
   }
 
-  // 5. Discount from the supplied coupon document (already read by the caller).
+  // 5. Discount from the supplied coupon document (already read by the caller),
+  // decided by the ONE coupon authority.
   const discount = computeCouponDiscount(
     input.coupon ?? null,
     foodSubtotal,
     String(input.branchId ?? ""),
-    input.nowMs ?? Date.now()
+    input.nowMs ?? Date.now(),
+    input.couponUsage,
+    input.customerId ?? null
   );
 
   // 6. Loyalty points deduction (1 pt = ₹1, strictly capped at 20% of subtotal).
@@ -887,6 +902,11 @@ export async function calculateOrderPricing(
   // Coupons collection is the SOLE discount authority (no hardcoded fallback).
   const branchState: { config: BranchPricingConfig | null } = { config: null };
   let couponDoc: any = null;
+  // Usage counters (committed + live reservations). Read alongside the coupon so
+  // an exhausted cap or a used-up per-customer limit is reported at pricing time
+  // instead of only at reservation. A read failure keeps the old fail-closed
+  // contract: with a code supplied, we must be able to verify it.
+  let couponUsage: { totalUsed?: number; customerUsed?: number } | undefined;
 
   const couponCode = input.couponCode?.trim().toUpperCase();
   const branchRead: Promise<void> = resolveBranchPricingConfig(input.branchId).then(
@@ -900,6 +920,10 @@ export async function calculateOrderPricing(
           try {
             const couponSnap = await db.collection("coupons").doc(couponCode).get();
             if (couponSnap.exists) couponDoc = couponSnap.data();
+            couponUsage = await readCouponUsage(
+              couponCode,
+              normalizeCouponCustomer(input.customerId)
+            );
           } catch (err: any) {
             // Fail-closed: coupon read failure must not silently charge full price.
             // If coupon was provided, we must verify it; failure = 503.
@@ -960,6 +984,8 @@ export async function calculateOrderPricing(
     branchConfig: branchState.config,
     branchId: input.branchId,
     coupon: couponDoc,
+    couponUsage,
+    customerId: input.customerId ?? null,
     loyaltyPointsToRedeem: input.loyaltyPointsToRedeem,
     packagingFeeOverride: input.serverPackagingFee,
     serverDeliveryFee: input.serverDeliveryFee,
@@ -1054,6 +1080,8 @@ export async function repriceOrderForVerification(
         ? storedPackagingFee
         : undefined,
     couponCode: (orderData as any)?.couponCode,
+    // The per-customer limit belongs to the same customer who is paying.
+    customerId: (orderData as any)?.customerId ?? (orderData as any)?.userId ?? null,
     loyaltyPointsToRedeem: (orderData as any)?.loyaltyPointsToRedeem,
   });
 

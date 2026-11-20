@@ -21,6 +21,14 @@ import {
   clearPaymentVerificationInFlight,
 } from "../orders/paymentGate";
 import { calculateOrderPricing, assertCatalogLinesSellable, CalculateOrderPricingInput } from "./pricing.engine";
+// Coupon redemption is atomic with the order: reserved in the pricing-stamp
+// transaction below, committed when the payment is confirmed, released on
+// cancel/failure (see modules/orders/cancelSideEffects.ts).
+import {
+  commitCouponRedemption,
+  isCouponRefusal,
+  reserveCouponInTx,
+} from "../coupons/couponAuthority";
 import {
   guardCaptureFulfillment,
   captureGateAllowsConfirm,
@@ -1516,6 +1524,8 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     orderType,
     serverDeliveryFee,
     couponCode,
+    // The per-customer coupon limit applies to the customer who is paying.
+    customerId: params.customerId,
     loyaltyPointsToRedeem,
   });
 
@@ -1535,16 +1545,51 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // order doc at intent time so the webhook + verify amount binding always
   // has a trustworthy total (previously the field was often missing and the
   // binding silently skipped). Fail CLOSED: no stamp, no payable order.
+  //
+  // A coupon is RESERVED in this SAME transaction. That is what makes a
+  // redemption atomic with the order: the discount the customer is charged, the
+  // slot it consumes and the price stamped on the order are written together, so
+  // two concurrent checkouts of the last slot conflict here instead of both
+  // being charged the discount. An ineligible coupon throws a typed 400 BEFORE
+  // any gateway order is minted.
   if (params.orderId && db && typeof db.collection === "function") {
     try {
-      await db.collection("orders").doc(params.orderId).set(
-        {
-          pricing,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      await db.runTransaction(async (tx: any) => {
+        if (couponCode) {
+          await reserveCouponInTx(tx, {
+            code: couponCode,
+            orderId: params.orderId as string,
+            customerId: params.customerId,
+            branchId,
+            foodSubtotal: pricing.foodSubtotal,
+            expectedDiscount: pricing.discount,
+            nowMs: Date.now(),
+          });
+        }
+        tx.set(
+          db.collection("orders").doc(params.orderId as string),
+          {
+            pricing,
+            // Stamp the coupon the bill was actually priced with, so the KOT,
+            // receipt and support trail name the same code the customer used.
+            ...(couponCode ? { couponCode } : {}),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      });
     } catch (err: any) {
+      // A refused coupon is the customer's to fix: pass it through unchanged
+      // (400/409 with the authority's message) instead of a generic 503.
+      //
+      // The authority's own reasons are not all prefixed `COUPON_` — a
+      // below-minimum basket is refused with `MIN_ORDER_NOT_MET`, and the
+      // order/coupon conflict uses `COUPON_ORDER_CONFLICT`. Matching only the
+      // prefix turned "add ₹99 more" into "payment service unavailable", so
+      // `isCouponRefusal` matches the explicit reason set instead.
+      if (couponCode && isCouponRefusal(err)) {
+        throw err;
+      }
       console.warn("[Payments] pricing stamp failed, refusing fresh order:", err?.message || err);
       await captureErrorSnapshot({
         source: "payments",
@@ -3411,6 +3456,18 @@ async function finishVerifiedPayment(args: {
       transferResult,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // The order is paid: the coupon slot it held becomes a permanent use.
+    // Idempotent (a replay is a no-op) and non-fatal — the customer is already
+    // charged, and an uncommitted redemption only ever frees a slot early.
+    try {
+      await commitCouponRedemption(orderId);
+    } catch (err: any) {
+      console.warn(
+        `[Payments] coupon commit failed for confirmed order ${orderId}:`,
+        err?.message || err
+      );
+    }
 
     // No Grill-Coins debit runs here any more: redemption is refused at intent
     // creation (D31-D33), so no captured order can carry a coin discount. The
