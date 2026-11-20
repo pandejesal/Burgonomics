@@ -14,9 +14,17 @@
 | **Primary Category** | Food & Drink (Food Delivery) | Business (Operations / POS) |
 | **Content Rating** | 4+ (Apple) / Everyone (Google Play) | 4+ (Apple) / Everyone (Google Play) |
 | **Default Language** | English (en-US / en-IN) | English (en-US / en-IN) |
-| **Support URL** | `https://burgonomics.com/support` | `https://burgonomics.com/partner/support` |
-| **Privacy Policy URL** | `https://burgonomics.com/privacy` | `https://burgonomics.com/privacy` |
-| **Terms of Service URL** | `https://burgonomics.com/terms` | `https://burgonomics.com/terms` |
+| **Support URL** | `[NEEDS: production hosting base]/legal/grievance` | `[NEEDS: production hosting base]/legal/grievance` |
+| **Privacy Policy URL** | `[NEEDS: production hosting base]/legal/privacy` | `[NEEDS: production hosting base]/legal/privacy` |
+| **Terms of Service URL** | `[NEEDS: production hosting base]/legal/terms` | `[NEEDS: production hosting base]/legal/terms` |
+| **Refund & Cancellation URL** | `[NEEDS: production hosting base]/legal/refund-policy` | `[NEEDS: production hosting base]/legal/refund-policy` |
+
+> **Legal URLs are NOT `burgonomics.com`.** That domain is out of scope for this wave and its legal
+> paths 404. The four documents ship inside the Customer app and are published at `/legal/<slug>` on
+> its own Firebase Hosting target, so fill the production base URL once hosting is deployed. While
+> `burgonomics-foundation-core/LEGAL-FACTS-NEEDED.md` lists anything open, the pages show a
+> "not publishable yet" banner and **neither app may be submitted** — see
+> `client-handover/STORE_SUBMISSION_CHECKLIST.md` §0.
 
 ---
 
@@ -75,53 +83,71 @@ sandbox payment: none of those exist in the app.
 ## 📝 3. Store Listing Metadata & Copy
 
 ### A. Customer App (`BURGONOMICS`)
+
+> Copy below matches `STORE_LISTINGS_DRAFT.md` §1 and the owner's 2026-11-20
+> decisions: offers yes, **no loyalty/coins/tiers/points**, online + COD + counter
+> cash, iPhone in scope. Do not reintroduce a removed claim without re-reading
+> §7 of `STORE_LISTINGS_DRAFT.md`.
+
 - **Short Description (Google Play - 80 chars max)**:
-  `Order 100% Pure Veg Gourmet Burgers, Combos & Shakes with live order tracking!`
+  `Order pure-veg burgers from your nearest Burgonomics branch.` (56)
 - **Promotional Text (App Store - 170 chars max)**:
-  `Crave-worthy 100% Pure Veg gourmet burgers crafted with artisanal buns and bold house sauces. 1-tap quick add, 3-way fulfillment & real-time kitchen tracking.`
+  `Order from your nearest Burgonomics branch — pure-veg burgers, coupons, delivery or pickup, and cash or online payment.`
 - **Keywords (App Store - 100 chars max, comma-separated)**:
-  `burgers,veg burger,gourmet burger,pure veg,food delivery,fast food,takeaway,dine in,burgonomics`
+  `burger,food,delivery,takeaway,pure veg,menu,order,track,coupon,offer`
 - **Full Description (Google Play & App Store)**:
   ```markdown
-  Welcome to BURGONOMICS — The House of DAMN GOOD 100% Pure Veg Burgers!
+  Burgonomics is the official ordering app for Burgonomics — a 100% pure
+  vegetarian kitchen. Order from your nearest branch, pay how you like, and
+  follow your order's status from the kitchen to your door.
 
-  Crafted for true burger enthusiasts, Burgonomics redefines the fast-casual dining experience with gourmet vegetarian patties, freshly baked artisanal brioche buns, melted artisanal cheeses, and signature house-made sauces.
+  WHAT YOU CAN DO
+  • Browse each branch's live menu and add items to your cart
+  • Apply an available coupon or offer at checkout
+  • Choose delivery, takeaway, or dine-in
+  • Pay online, pay cash on delivery, or pay at the counter
+  • Track your order's status as the kitchen and the rider update it
+  • Save addresses and reorder what you had last time
+  • Reach the store or our support team from the order screen
 
-  Why You'll Love Burgonomics:
-  • 100% Pure Veg Kitchens: Zero cross-contamination. Prepared with pride and uncompromising hygiene.
-  • 3-Way Fulfillment: Choose Delivery to your doorstep, Quick Takeaway, or Contactless Dine-In.
-  • 1-Tap Quick Add: Customize your burgers with extra cheese, jalapenos, patties, or meal combos in seconds.
-  • Live Kitchen Tracking: Watch your burger progress from grill preparation to delivery dispatch.
-  • Global Grill Coins: Earn loyalty coins on every bite and redeem them for free sides and drinks.
-  • Secure & Fast Payments: Pay effortlessly with UPI, Credit/Debit Cards, Netbanking, or Cash on Delivery.
+  PAYING
+  Online payments go through Razorpay's secure checkout. Cash on delivery is
+  paid to the rider. Takeaway and dine-in orders can be paid at the counter.
+  Prices are in Indian Rupees and include GST at 5%.
 
-  Download BURGONOMICS today and taste the pure veg gourmet revolution!
+  CANCELLATIONS AND REFUNDS
+  You can cancel from the app while your order is being prepared or earlier,
+  and before a rider is assigned. Online payments are refunded to the method
+  you paid with. The full policy is in the app's Privacy & Legal screens.
+
+  Questions? Use Help & Support inside the app.
   ```
 
 ---
 
 ### B. Partner App (`Burgonomics Partner`)
 - **Short Description (Google Play - 80 chars max)**:
-  `Franchise operations, live KDS kitchen display, POS billing & Porter dispatch.`
+  `Order console for Burgonomics branches: kitchen tickets, dispatch, refunds.` (76)
 - **Promotional Text (App Store - 170 chars max)**:
-  `Complete store operations app for Burgonomics franchise partners. Live KOT audio alerts, fast POS billing, menu item toggling, and logistics dispatch.`
+  `The operations console Burgonomics branches run the day on: live kitchen tickets, dispatch, refunds and customer support.`
 - **Keywords (App Store - 100 chars max, comma-separated)**:
-  `pos,kds,kitchen display,restaurant pos,order management,kot,burgonomics,franchise pos`
+  `pos,kds,kitchen display,order management,kot,burgonomics,branch operations`
 - **Full Description (Google Play & App Store)**:
   ```markdown
-  Burgonomics Partner is the unified franchise operations and kitchen management platform for Burgonomics restaurants.
+  Burgonomics Partner is the operations console our branches run the day on.
+  It is for Burgonomics staff, not for customers.
 
-  Built for fast-paced QSR environments, Burgonomics Partner empowers store operators and kitchen chefs to streamline orders, manage menus, and monitor real-time sales.
+  WHAT IT DOES
+  • Live kitchen tickets (KDS) for orders placed in the customer app
+  • Accept, prepare and complete an order, with the customer seeing the same status
+  • Mark an item out of stock for the branch
+  • Send a delivery to a courier integration or assign an in-house rider
+  • Review and approve refunds for cancelled paid orders
+  • Manage offers and combos for the branch
+  • Ticket queue for customer issues, with escalation
 
-  Core Features:
-  • Live Kitchen Display (KDS): Real-time KOT tickets with loud audio alerts, prep timer badges, and 1-tap state transitions (Prep -> Ready -> Dispatched).
-  • POS Billing & Counter Orders: Fast walk-in and takeaway billing with instant thermal receipt generation.
-  • Instant Menu 86ing: Mark ingredients or items out-of-stock instantly across all customer ordering channels.
-  • Porter Logistics Dispatch: 1-tap manual driver request and rider live tracking.
-  • Unified Support Ticketing: 3-tier escalation desk for resolving customer queries and branch issues.
-  • Executive Analytics: Monitor hourly sales, top-performing burgers, average ticket size, and revenue breakdown.
-
-  Authorized access only. Account credentials provided by Burgonomics Brand Management.
+  Access requires a Burgonomics staff account. Sign-in is role-based: branch,
+  regional, support and brand-owner scopes see different screens.
   ```
 
 ---
@@ -139,7 +165,7 @@ sandbox payment: none of those exist in the app.
 | **Email** | Yes | No | Account profile / partner-staff login | Optional (customer) / Required (partner staff) |
 | **Phone Number** | Yes | Yes (courier rider + Petpooja order payload) | Phone OTP login & order contact | Required |
 | **Address** | Yes | Yes (couriers + Petpooja order payload) | Delivery fulfillment | Required for delivery |
-| **Purchase History** | Yes | No | Order tracking, loyalty coins & history | Required |
+| **Purchase History** | Yes | No | Order history, receipts & support | Required |
 | **Photos & Videos** | Yes | No | Customer avatar & support ticket attachments (≤3) | Optional |
 | **Date of Birth, Gender** | Yes | No | Account profile (user-entered) | Optional |
 | **Device / App Identifiers** | Yes | No | FCM push routing + Google App Check (Play Integrity) fraud prevention | Persistent while signed in (NOT ephemeral) |
@@ -305,6 +331,14 @@ chmod +x mac-build.sh
 - Blocked-on-user: Petpooja trio, `RAZORPAY_WEBHOOK_SECRET`, Porter triple (see §8.1) — E2E + `BURGONOMICS_ENV=production` flip wait on these.
 
 ## 🌐 9. Phase 3 Execution Log — Legal/Support URLs (2026-10-08)
+
+> [!WARNING]
+> **Superseded by fix wave 2026-11-20.** The marketing-site legal URLs described in this section
+> live on a separate Firebase site (`burgonomics-site`) whose custom-domain attach was never done, so
+> `burgonomics.com/privacy|/terms|/support` still 404. That domain is **out of scope** for this wave.
+> The legal pages the apps actually need (privacy, terms, refund/cancellation, grievance) now ship
+> **inside the Customer app** at `/legal/<slug>` on its own hosting target — see §1's URL table and
+> `client-handover/STORE_SUBMISSION_CHECKLIST.md` §0. Read this section as history only.
 
 > Owner: store-submission readiness agent. **STATUS: DEPLOYED & LIVE on `burgonomics-site.web.app` — custom-domain attach is the only remaining user click.** Workflow: ANALYZE → SME ×2 (deploy-path / content-inventory) → COLLATE → CODE → QA_REVIEW (APPROVED 7/7) → TEST (PHASE3-GATES: PASS).
 
