@@ -14,6 +14,26 @@ import type { PetpoojaPackaging } from "../petpooja/packaging";
 /** Documented default packaging fee, used when Petpooja has given no value. */
 export const DEFAULT_PACKAGING_FEE = 15;
 
+/**
+ * Per-branch cash-on-delivery switch (owner decision 2026-11-20: COD is in the
+ * launch scope). Cash is the one payment lane with no gateway receipt, so the
+ * branch — not the customer app — decides whether it is offered and up to what
+ * order value. Read from `branches/{id}.cashOnDelivery`.
+ *
+ * Defaults are deliberately explicit: COD ON (it is in launch scope) with a
+ * documented per-order ceiling, so a branch that never configures the field
+ * cannot accept an unbounded cash order.
+ */
+export const DEFAULT_COD_ENABLED = true;
+/** ₹5,000 per order — the documented default ceiling for a cash order. */
+export const DEFAULT_COD_MAX_ORDER_VALUE_PAISE = 500_000;
+
+export interface CashOnDeliveryConfig {
+  enabled: boolean;
+  /** `null` means no ceiling was configured for this branch. */
+  maxOrderValuePaise: number | null;
+}
+
 export interface BranchPricingConfig {
   /** Effective fee (branch value, else DEFAULT_PACKAGING_FEE). */
   packagingFee: number;
@@ -25,6 +45,8 @@ export interface BranchPricingConfig {
   monthlyFeePaise: number;
   /** F1: true when `monthlyFee` is negative or non-finite (capture flags it). */
   monthlyFeeInvalid?: boolean;
+  /** Owner decision 2026-11-20: per-branch cash-on-delivery switch + cap. */
+  cashOnDelivery?: CashOnDeliveryConfig;
 }
 
 export const DEFAULT_MONTHLY_FEE_RUPEES = 2500;
@@ -41,6 +63,89 @@ function branchConfigUnavailable(reason: string, branchId: string): Error {
   return err;
 }
 
+/** The documented default when a branch has never configured cash on delivery. */
+export function defaultCashOnDeliveryConfig(): CashOnDeliveryConfig {
+  return { enabled: DEFAULT_COD_ENABLED, maxOrderValuePaise: DEFAULT_COD_MAX_ORDER_VALUE_PAISE };
+}
+
+/**
+ * Validates the branch's `cashOnDelivery` block. Pure and total:
+ *   absent/null   → documented defaults (COD on, default ceiling)
+ *   {enabled}     → must be a boolean, else REFUSE
+ *   {maxOrderValuePaise} → a positive safe integer, or `null` for no ceiling;
+ *                    anything else REFUSES (a bad ceiling is never "unlimited")
+ * A refusal throws, and the caller's catch turns it into a fail-closed 503 —
+ * the same treatment packaging/royalty misconfiguration gets.
+ */
+export function resolveCashOnDeliveryConfig(raw: unknown, branchId?: string): CashOnDeliveryConfig {
+  if (raw === undefined || raw === null) return defaultCashOnDeliveryConfig();
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      `branch cashOnDelivery config is not an object for ${branchId || "(unknown)"} — refusing to price a cash order`
+    );
+  }
+  const block = raw as Record<string, unknown>;
+  const enabledRaw = block.enabled;
+  if (enabledRaw !== undefined && typeof enabledRaw !== "boolean") {
+    throw new Error(
+      `branch cashOnDelivery.enabled is not a boolean for ${branchId || "(unknown)"} — refusing to price a cash order`
+    );
+  }
+  const capRaw = block.maxOrderValuePaise;
+  let maxOrderValuePaise: number | null = DEFAULT_COD_MAX_ORDER_VALUE_PAISE;
+  if (capRaw === null) {
+    maxOrderValuePaise = null;
+  } else if (capRaw !== undefined) {
+    if (
+      typeof capRaw !== "number" ||
+      !Number.isSafeInteger(capRaw) ||
+      capRaw <= 0
+    ) {
+      throw new Error(
+        `branch cashOnDelivery.maxOrderValuePaise is invalid for ${branchId || "(unknown)"} — refusing to price a cash order`
+      );
+    }
+    maxOrderValuePaise = capRaw;
+  }
+  return {
+    enabled: enabledRaw === undefined ? DEFAULT_COD_ENABLED : enabledRaw,
+    maxOrderValuePaise,
+  };
+}
+
+/**
+ * The ONE cash-order admission rule, shared by the COD create route and
+ * `POST /checkout/fees` so the customer is never offered a cash lane the
+ * server will refuse. Returns the refusal as a typed error (409) rather than
+ * throwing a bare message: the client shows the server's own sentence.
+ */
+export function assertCashOnDeliveryAllowed(
+  config: CashOnDeliveryConfig | undefined,
+  totalPaise: number
+): void {
+  const effective = config ?? defaultCashOnDeliveryConfig();
+  if (effective.enabled !== true) {
+    const err: any = new Error(
+      "Cash on delivery is not available at this outlet. Please pay online."
+    );
+    err.statusCode = 409;
+    err.code = "COD_UNAVAILABLE";
+    throw err;
+  }
+  const cap = effective.maxOrderValuePaise;
+  if (typeof cap === "number" && Number.isFinite(cap) && totalPaise > cap) {
+    const err: any = new Error(
+      `Cash on delivery is available up to ₹${Math.floor(cap / 100)} for one order. ` +
+        "Please pay online for this order, or reduce it."
+    );
+    err.statusCode = 409;
+    err.code = "COD_LIMIT_EXCEEDED";
+    err.maxOrderValuePaise = cap;
+    throw err;
+  }
+}
+
+
 /**
  * Resolves royalty/packaging for a branch. `branchId` absent or no datastore
  * yields the documented defaults (callers flag that separately).
@@ -52,6 +157,7 @@ export async function resolveBranchPricingConfig(
     return {
       packagingFee: DEFAULT_PACKAGING_FEE,
       monthlyFeePaise: DEFAULT_MONTHLY_FEE_RUPEES * 100,
+      cashOnDelivery: defaultCashOnDeliveryConfig(),
     };
   }
 
@@ -63,6 +169,7 @@ export async function resolveBranchPricingConfig(
       packaging: cached.packaging ?? null,
       monthlyFeePaise: cached.monthlyFeePaise,
       ...(cached.monthlyFeeInvalid ? { monthlyFeeInvalid: true } : {}),
+      ...(cached.cashOnDelivery ? { cashOnDelivery: cached.cashOnDelivery } : {}),
     };
   }
 
@@ -88,6 +195,12 @@ export async function resolveBranchPricingConfig(
       packagingFee: DEFAULT_PACKAGING_FEE,
       monthlyFeePaise: DEFAULT_MONTHLY_FEE_RUPEES * 100,
     };
+
+    // COD switch + cap. Absent → the documented defaults (COD on, ₹5,000 cap).
+    // Present but malformed → REFUSE (throw, caught below as
+    // BRANCH_CONFIG_UNREADABLE): a typo in a money ceiling must never be read
+    // as "unlimited", and a non-boolean switch must never be guessed at.
+    config.cashOnDelivery = resolveCashOnDeliveryConfig(branchData?.cashOnDelivery, branchId);
 
     // F1: the fixed monthly fee (rupees). Absent → 2500; 0 is valid and means
     // no fee; negative/non-finite is recorded as invalid (capture flags it for

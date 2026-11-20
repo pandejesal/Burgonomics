@@ -57,6 +57,36 @@ export interface VerifyDeliveryOtpParams {
 export const OTP_MAX_ATTEMPTS = 3;
 export const OTP_LOCKOUT_MS = 15 * 60 * 1000;
 
+/**
+ * The "cash is now in the branch's hand" stamp for a COD hand-over.
+ *
+ * Deliberately NOT a gateway shape: the amount comes from the server-written
+ * `cashDuePaise` (never from the request), it is recorded as
+ * `cashCollectedPaise` rather than `capturedAmountPaise`, and `paymentChannel`
+ * stays `"cash"` so no refund/Route/reconciliation lane can mistake a collected
+ * banknote for a captured card payment.
+ */
+export function cashCollectedPatch(order: Record<string, any>): Record<string, any> {
+  const due = Number(order?.cashDuePaise);
+  const existing =
+    order?.payment && typeof order.payment === "object" && !Array.isArray(order.payment)
+      ? order.payment
+      : {};
+  const collectedAt = admin.firestore.FieldValue.serverTimestamp();
+  return {
+    payment: {
+      ...existing,
+      method: "cod",
+      status: "completed",
+      cashCollectedPaise: due,
+      cashCollectedAt: collectedAt,
+    },
+    paymentStatus: "paid",
+    cashCollectedPaise: due,
+    cashCollectedAt: collectedAt,
+  };
+}
+
 export interface DeliveryHandoverResult {
   readonly success: true;
   readonly orderId: string;
@@ -133,6 +163,7 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
       // Returning (not throwing) commits the failed-guess counter first.
       return { kind: "invalid" as const, attempts, locked };
     }
+    const isCashOrder = order.paymentChannel === "cash";
     transaction.set(orderRef, {
       deliveryOtpAttempts: 0, deliveryOtpLockedUntil: null,
       deliveryOtpHash: null, deliveryOtp: null,
@@ -143,6 +174,12 @@ export async function verifyDeliveryOtp(params: VerifyDeliveryOtpParams): Promis
       deliveryVerifiedBy: "customer_otp",
       verifiedByStaff: caller.email || caller.uid || staffName || "Branch Staff",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Owner decision 2026-11-20: cash is collected AT HAND-OFF, and the
+      // hand-over code is the proof of hand-off. So this is the one moment a
+      // COD order becomes paid — and it is recorded as CASH, never as a
+      // gateway capture: no `capturedAmountPaise`, no `paymentChannel`
+      // rewrite, and the server's own `cashDuePaise` is the amount recorded.
+      ...(isCashOrder ? cashCollectedPatch(order) : {}),
     }, { merge: true });
     return { kind: "delivered" as const };
   });

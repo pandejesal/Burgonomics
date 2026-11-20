@@ -1454,6 +1454,34 @@ export async function pushKotForCashOrderOnAccept(
 }
 
 /**
+ * Owner decision 2026-11-20: a COD order the SERVER created must reach the
+ * kitchen immediately. F04 ("no KOT before payment") is about an online order
+ * whose money has not arrived; a COD order has no gateway money to wait for.
+ *
+ * The distinction that makes this safe is the `paymentChannel: "cash"` marker,
+ * which ONLY `orders/createCashOrder` writes — a client that types
+ * `payment.method: "cod"` into a payload gets no marker and therefore still
+ * waits for staff acceptance (`pushKotForCashOrderOnAccept` above). This is the
+ * same server-proof rule F04 established for `paymentChannel: "razorpay"`.
+ */
+export function isServerAuthorisedCashOrder(order: any): boolean {
+  return (
+    order?.paymentChannel === "cash" &&
+    isCashOrPayAtStoreOrder(order) &&
+    !isCancelledOrTerminal(order)
+  );
+}
+
+/** KOT-on-create for a server-priced COD order. Returns null when not applicable. */
+export async function pushKotForServerCashOrderOnCreate(
+  orderId: string,
+  order: any
+): Promise<boolean | null> {
+  if (!isServerAuthorisedCashOrder(order)) return null;
+  return pushOrderToPetpooja(orderId);
+}
+
+/**
  * P1-K: the staff resolve path for a parked (ambiguous) KOT.
  *
  * Petpooja exposes NO order-lookup API (references/petpooja_save_order_api.md

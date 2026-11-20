@@ -9,7 +9,7 @@ import {
   resolvePickupCoordinates,
 } from "../../core/utils/pickupCoords";
 import { resolveBranchId } from "./branchResolver";
-import { computePackagingFee, resolveBranchPricingConfig } from "./branchPricing";
+import { computePackagingFee, defaultCashOnDeliveryConfig, resolveBranchPricingConfig } from "./branchPricing";
 import { DELIVERY_FEE_QUOTES } from "./deliveryQuotes";
 
 /**
@@ -46,6 +46,16 @@ export interface CheckoutFeesResult {
   expiresAt?: number;
   reason?: string;
   message?: string;
+  /**
+   * Owner decision 2026-11-20: whether THIS branch offers cash on delivery and
+   * its per-order ceiling. Returned so the checkout screen never offers a cash
+   * lane the create route will refuse. The create route re-reads the same
+   * branch config and enforces it — this field is advisory, never the gate.
+   */
+  cashOnDelivery: {
+    enabled: boolean;
+    maxOrderValuePaise: number | null;
+  };
 }
 
 function unauthenticatedError(): Error {
@@ -77,6 +87,7 @@ export async function resolveCheckoutFees(
     storeId: input.storeId,
   });
   const config = await resolveBranchPricingConfig(branchId);
+  const cashOnDelivery = config.cashOnDelivery ?? defaultCashOnDeliveryConfig();
   // P2: the SAME helper the pricing engine uses. Dine-in is 0 inside it, so
   // the screen and the bill cannot disagree about packaging.
   const packagingFee = await computePackagingFee({
@@ -88,7 +99,7 @@ export async function resolveCheckoutFees(
 
   if (input.orderType !== "delivery") {
     // Non-delivery: no provider call, ever.
-    return { serviceable: true, packagingFee, deliveryFee: 0 };
+    return { serviceable: true, packagingFee, deliveryFee: 0, cashOnDelivery };
   }
 
   if (!isRealCoordinatePair(input.dropLat, input.dropLng)) {
@@ -117,6 +128,7 @@ export async function resolveCheckoutFees(
       message: String(
         quote?.message || "Delivery isn't available to this address."
       ),
+      cashOnDelivery,
     };
   }
 
@@ -160,5 +172,6 @@ export async function resolveCheckoutFees(
     deliveryQuoteId,
     provider: String(quote?.winner || ""),
     expiresAt,
+    cashOnDelivery,
   };
 }
