@@ -545,6 +545,34 @@ export const deleteAccountSchema = z.object({
   confirm: z.literal(true),
 });
 
+// Franchise settlement (owner decision 2026-11-20). Months are `YYYY-MM`; the
+// service re-proves every key, so these schemas only reject shapeless bodies.
+export const settlementGenerateSchema = z.object({
+  branchId: nonEmptyString.max(128),
+  monthKey: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+});
+
+export const settlementListSchema = z.object({
+  monthKey: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  branchId: nonEmptyString.max(128).optional(),
+  allVersions: z.boolean().optional(),
+});
+
+export const settlementCsvSchema = z.object({
+  monthKey: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  branchId: nonEmptyString.max(128).optional(),
+});
+
+// "Mark as paid" records evidence only — it moves no money. The reference is
+// the bank UTR / cheque number / cash voucher, and the date is the day the
+// money left the brand's account.
+export const settlementMarkPaidSchema = z.object({
+  statementId: nonEmptyString.max(200),
+  reference: nonEmptyString.max(120),
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  note: z.string().max(500).optional(),
+});
+
 // Franchise lead intake: customerId MUST equal the caller UID (rules bind it
 // too) — kills victim-id stamping at both layers (M14 follow-up).
 export const franchiseLeadSchema = z.object({
