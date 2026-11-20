@@ -1,193 +1,311 @@
-# STORE SUBMISSION PACKAGE — DRAFT 1 (2026-10-17)
+# STORE LISTINGS — launch copy (2026-11-20)
 
-Owner: coordinator session (review + release-readiness lane).
-Builds: `burgonomics-partner` (com.burgonomics.partner) and
-`burgonomics-foundation-core` (com.burgonomics). Android AAB build candidates archived; public release is blocked.
-Status: DRAFT — every `[NEEDS: …]` marker is an input only a human can supply.
+Owner of this file: the `customer-polish` package of fix wave 2026-11-20.
+Supersedes `DRAFT 1 (2026-10-17)` — the draft archive is kept at the bottom
+(§10) because it holds build/asset history that still matters.
 
-## STATUS 2026-10-18 ~01:00 (coordinator, final for the night)
+**Who this is for:** the person filling the Google Play Console and App Store
+Connect forms. Every sentence below is either (a) something the app does today
+and a test or a run record backs, or (b) marked `[NEEDS: …]` because a human has
+to supply it. Nothing in between. The owner is not a developer; a line of
+listing copy that sounds good and is false is what triggers a rejection or, worse,
+a refund fight after launch.
 
-| Item | State |
+## 0. The owner's launch decisions this file obeys
+
+| Decision (2026-11-20) | Consequence for listing copy |
 |---|---|
-| Signed AABs (v1.0.0, versionCode 1) | ✅ BUILT + **signature-verified** (`jarsigner -verify` exit 0; the JAR-vs-JarInputStream notices are the normal AAB scheme note, not a failure). `burgonomics-partner-v1.0.0-20261017.aab` 26.4 MB SHA-256 `B86291AD4BF39AF5FA4DA886FCA0F4DC3199D0ADB168400C4CA26410AAA01120`; `burgonomics-customer-v1.0.0-20261017.aab` 20.9 MB SHA-256 `60D1B11CA673B4D14439F6D06A38E5ABCB341CD9837864FBF17609CAEB01CE4B`. Keystores keytool-verified, fail-closed signing, targetSdk 36 (policy-compliant) |
-| Full-tree validation (functions, dirty tree incl. payments) | ✅ `vitest run`: 53 files passed / 1 skipped; **591 passed / 2 skipped / 0 failed**; `tsc` (build) exit 0 |
-| Doc corrections made at close | Store copy rebuilt as an explicitly-unverified skeleton; reviewer access changed to "working demo account required" (video supplementary only); test-mode/mock integrations no longer described as storable-ready; partner Mac runbook corrected (no archive/Xcode claim), SPM claim downgraded to inspected-not-resolved, push claim requires APNs + device test, core's full patch-ioS-spm scope noted as not merely version rewriting |
-| assetlinks fingerprints | ✅ FIXED: core corrected to `15:3F:30:0D:…CD54` (stale `C8:70:5A:38` replaced); partner file CREATED (`25:C9:63:BC:…CF:D7`). Both propagated to publish dirs |
-| Root hosting preflight | ✅ PASS 25 / FAIL 2 — the only remaining FAILs are the `TEAMID.` App Store placeholder (needs the Apple Team ID; blocked on team) |
-| "Delivery app" identity | ✅ CONFIRMED == `burgonomics-foundation-core` (`com.burgonomics`); exactly two Capacitor apps exist, no courier app |
-| CI device-status | core `android-build.yml` builds signed AAB/APK from secrets, proven green (run 37866985230); NO Play upload API in any workflow → uploads are manual console |
-| Petpooja backend | ✅ FULLY reviewed, zero blockers: `152d834` → `9c20c12` → `b26d5e3` → `1627204` → `9407006` → `317b6ea` → `cc9fc8c` (docs) |
-| dispatch backend | ✅ FULLY reviewed, zero blockers: `39efc40` → `91f487c` → `8a144f7`. Owner items deliberately open: wire probes, `store.phone` backfill, finding 15 |
+| Launch on **web, Android and iPhone** | Both stores get a listing; iPhone is in scope, so the App Store section is not optional. |
+| **Online payment, cash on delivery (COD), counter (walk-in) cash** | All three may be named. Nothing about wallets, EMI, Pay-Later, or "save a card". |
+| **Offers (coupons) yes** | Coupons/offers may be named. |
+| **Loyalty no — hide coins, tiers and points everywhere** | **No** "Grill Coins", no points, no tiers, no rewards, no "earn on every order" anywhere in either listing. The draft's coin line is deleted, not softened. |
+| Franchise money: flat ₹2,000/branch/month | Internal commercial term. **Never** in a store listing, and no per-order split or Razorpay Route is promised. |
+| `burgonomics.com` **out of scope** | No listing field points at `burgonomics.com`. Legal URLs use the Customer app's own hosting (§4). |
+| Petpooja owns open/closed while an outlet is linked | No claim that the app is the source of truth for a store's opening state. |
+| Unproven: courier coverage, live rider GPS, real-time stock, POS in production | Not claimed. See §7 for the exact list of removed claims. |
 
 ---
 
-## 0. Hard constraints stated plainly (decided from user's answers 2026-10-17)
+## 1. Customer app — `com.burgonomics` — "BURGONOMICS"
 
-1. **No Play Console account exists yet.** Creating one today is step one;
-   identity verification can take 48h+ (org accounts need D-U-N-S).
-   → **"Live on Play by tomorrow" is not attainable from zero; "submitted by
-   tomorrow" is, if account creation starts today and verification is kind.**
-2. **Apple** — account is burgonomics-team-owned. Required from them: the
-   **Apple Team ID** (10 chars), an **App Store Connect invite**, and approval
-   for the friend's Mac run (no tooling installed there; a human runs
-   `mac-build.sh` per `MAC_INSTRUCTIONS.txt`).
-3. **Integrations are mock/test or unverified** (Razorpay, Porter/Borzo/Shadowfax,
-   Petpooja sandbox). These builds are internal-test candidates, NOT approved
-   production releases. Staged rollout does not make broken checkout or
-   dispatch safe. Verify supported order/payment/refund/fulfilment flows before
-   production submission; do not advertise unverified functionality.
-4. Apps are login-gated: provide working reviewer accounts and any necessary
-   OTP/login instructions. A video can supplement access, not replace a
-   functioning reviewable app. `[NEEDS: accessible demo account per app]`
+### 1.1 Google Play
 
----
+- **App name:** `Burgonomics` (10/30)
+- **Short description (≤80):**
+  `Order pure-veg burgers from your nearest Burgonomics branch.` (56)
 
-## 1. Customer app — com.burgonomics ("BURGONOMICS")
+- **Full description (≤4000).** Copy this verbatim; each bold line is followed by
+  the reason it is safe to say.
 
-**Play**
-- Name: `Burgonomics` (12/30)
-- Short description (≤80):
-  `Order fresh burgers from local Burgonomics branches. Exclusive offers inside.` (78) `[verify offers are usable in demo mode]`
-- Full description (≤4000): unverified feature-copy skeleton below. Remove
-  every claim whose end-to-end acceptance check has not passed before use.
   ```
-  Skip the line. Burgonomics is the official way to order from your
-  neighbourhood Burgonomics branch.
+  Burgonomics is the official ordering app for Burgonomics — a 100% pure
+  vegetarian kitchen. Order from your nearest branch, pay how you like, and
+  follow your order's status from the kitchen to your door.
 
-  • Browse the live menu of your nearest branch, with real-time availability
-  • Customise every item and check ingredients before you add
-  • Track your order from kitchen to doorstep, with live status updates
-  • Collect Grill-Coins on every order and redeem them on the next one
-  • Members-only offers, combos and coupons
-  • Secure sign-in, saved addresses, one-tap reorders
+  WHAT YOU CAN DO
+  • Browse each branch's live menu and add items to your cart
+  • Apply an available coupon or offer at checkout
+  • Choose delivery, takeaway, or dine-in
+  • Pay online, pay cash on delivery, or pay at the counter
+  • Track your order's status as the kitchen and the rider update it
+  • Save addresses and reorder what you had last time
+  • Reach the store or our support team from the order screen
 
-  New branches are added regularly. Support: [NEEDS: support email]
+  PAYING
+  Online payments go through Razorpay's secure checkout. Cash on delivery is
+  paid to the rider. Takeaway and dine-in orders can be paid at the counter.
+  Prices are in Indian Rupees and include GST at 5%.
+
+  CANCELLATIONS AND REFUNDS
+  You can cancel from the app while your order is being prepared or earlier,
+  and before a rider is assigned. Online payments are refunded to the method
+  you paid with. The full policy is at the URL in the app's Privacy & Legal
+  screens and in the store listing's policy fields.
+
+  Questions? Use Help & Support inside the app.
   ```
-- Category: Food & Drink / tags: Food & Drink, Shopping
-- Graphics `[NEEDS: assets]`: app icon 512×512 (source found in repo? audit
-  running), feature graphic 1024×500, 8 screenshots:
-  1. Home (branch/store discovery)
-  2. Menu category view
-  3. Item customizer (screenshot_4_customizer.png exists at repo root as source)
-  4. Cart
-  5. Checkout (payment-sheet state, test mode)
-  6. Offers/combo view
-  7. Order tracking screen
-  8. Profile / Grill-Coins wallet
-- Content rating questionnaire: complete `[NEEDS: does app show any user-generated images? offers banners only → "no UGC" path]`
-- Data safety form: Firebase (Auth/Firestore/FCM), Razorpay — answers in
-  section 4. `[NEEDS: confirm Analytics + App Check still enabled]`
 
-**App Store**
-- Title `Burgonomics`, subtitle (≤30): `Burger ordering, done right` `[final polish pass]`
-- Keywords (≤100): `burger,food,delivery,offers,grill,coins,menu,order,tracking,rewards` (71)
-- Promo text ≤170; description mirrors Play.
-- Screenshots at 2026-required device sizes (6.9" + optional iPad set) —
-  `xcrun simctl` capture on the friend's Mac, or export Play-set images scaled.
-- **App Privacy labels** must match Firebase+Razorpay usage (identifiers,
-  purchase history, location-when-using if address/location used).
-  `[NEEDS: team confirms Apple account holder fills the privacy manifest]`
-- Review notes: demo login or video (see §0.4); test-mode payments explained
-  in notes; `TEAMID.` placeholder must be replaced BEFORE archive (R18 preflight).
+  **Why each claim holds**
 
-**versionCode/versionName**: held in `android/version.properties` — bump both
-before archive. Current values read from `version.properties` (audit output). `[NEEDS: confirm current versionCode policy — first launch starts at 1]`
+  | Claim | Backed by |
+  |---|---|
+  | "live menu" of a branch | `src/features/stores/services/storesService.ts` reads the public `stores` directory; the menu reads the branch's catalogue. |
+  | "coupon or offer at checkout" | Offers/coupons are in launch scope by owner decision; the offers feature and checkout promo field exist. |
+  | delivery / takeaway / dine-in | `FulfillmentPanel` branches on `order.fulfillment`; `stores` service restricts pickup by distance. |
+  | online / COD / counter cash | Razorpay hosted checkout, the cash path in `payment.tsx`, and the staff walk-in creation route. |
+  | "track your order's status" | The tracker renders the order's own status code from Firestore. Deliberately says **status**, not "live GPS" — rider telemetry depends on webhook coverage that is unproven. |
+  | "save addresses and reorder" | Address store + `useReorderItems`. |
+  | "reach the store or support from the order screen" | `RiderContactCard` "Call store" and the support ticket path (this package fixed the dead Call-store button). |
+  | cancellation window | `functions/src/modules/orders/customerCancel.ts` — PREPARING or earlier, no rider assigned. Copy matches the server, not the old FAQ. |
+  | "refunded to the method you paid with" | `cancelRefundObligation.ts` queues one human-approved refund, then Razorpay returns to the original method. |
+  | "GST at 5%" | Pricing config + the terms page; CGST 2.5% + SGST 2.5%. |
 
----
+- **Category:** Food & Drink. **Tags:** Food & Drink, Shopping.
+- **Graphics:** `[NEEDS: app icon 512×512, feature graphic 1024×500, ≥4 phone screenshots]`
+  Screenshot set to capture (must contain no fake numbers, no loyalty screen, no
+  invented ETA): home → menu → item detail → cart → checkout (payment sheet,
+  test-mode note removed) → order status → profile.
+  **Do not** capture an offers screenshot unless a real coupon is active in the
+  capture environment.
+- **Content rating:** no user-generated content, no user-to-user chat, no
+  gambling → complete the questionnaire as such. `[NEEDS: reviewer confirm]`
+- **Data safety:** §5.
 
-## 2. Partner app — com.burgonomics.partner ("Burgonomics Partner")
+### 1.2 Apple App Store
 
-**Play**
-- Name: `Burgonomics Partner` (20/30)
-- Short: `POS & operations console for Burgonomics franchise branches.` (58)
-- Full description: from README §1 (KOT stream, Porter screen, ticket
-  escalator, combo/offer creator, RBAC, dev diagnostics). Write in
-  operator-facing voice; mention Petpooja POS bridge and courier dispatch as
-  platform capabilities without promising live coverage. `[draft pass 2]`
-- Category: Food & Drink / Productivity
-- Screenshots plan (8): KOT stream · Live orders · Porter dispatch quote/booking
-  · 3-tier tickets · Combo creator · Analytics · Users/RBAC · Dev diagnostics.
-- Ratings/segmentation: business app; still needs the questionnaire. Data
-  safety: Firebase Auth/Firestore/FCM, Razorpay refunds, Petpooja/Porter
-  server-side.
-- **Demo credentials are mandatory here** (RBAC login wall). Two demo users:
-  Branch Manager + Brand Owner, both visible in a demo branch.
-  `[NEEDS: these two accounts — the Petpooja sandbox demo store exists]`
-
-**App Store**: same structure; keywords
-`pos,kitchen,orders,kot,restaurant,delivery,dispatch,tickets,adapter,owner` (≤100 check) `[draft pass 2]`
-
-**versionCode/versionName**: `android/version.properties` — bump.
+- **Title:** `Burgonomics` (10/30)
+- **Subtitle (≤30):** `Pure-veg burgers, ordered direct` (32 — trim to
+  `Pure-veg burgers, direct` at 25)
+- **Keywords (≤100):**
+  `burger,food,delivery,takeaway,pure veg,menu,order,track,coupon,offer` (66)
+  (No `coins`, no `rewards`, no `points` — those features are not shipping.)
+- **Promotional text (≤170):** `Order from your nearest Burgonomics branch —
+  pure-veg burgers, coupons, delivery or pickup, and cash or online payment.`
+- **Description:** identical to §1.1 full description.
+- **Screenshots:** 6.9" set required; capture on the Mac/simulator at submit
+  time. `[NEEDS: device capture]`
+- **App Privacy labels:** §6.
+- **Review notes:** a working reviewer account plus OTP instructions —
+  `[NEEDS: demo phone number + how the reviewer receives the OTP]`. Test-mode
+  payments must be disclosed in the notes; never claim live charging.
+- **Export compliance:** standard HTTPS only → "no non-exempt encryption".
 
 ---
 
-## 3. Shared assets + policy artifacts `[NEEDS: owner]`
+## 2. Partner app — `com.burgonomics.partner` — "Burgonomics Partner"
 
-| Artifact | Status | Owner |
-|---|---|---|
-| Privacy policy URL per app | `[NEEDS: must be a live URL before submission — publish burgonomics.land/privacy or similar; Apple+Play both hard-require it]` | burgonomics team |
-| Terms of use (Apple's pairing with privacy when any IAP/coins exist) | `[NEEDS]` | burgonomics team |
-| Support email + phone | `[NEEDS]` | burgonomics team |
-| App icon 1024 (iOS) / 512 (Play) | verify existing source; regenerate if mismatch | I can validate today |
-| Feature graphic 1024×500 (Play) | `[NEEDS]` | designer |
-| Screenshots | capture on device/Mac after AAB lands | me (device not present → produce from browser captures + note) |
-| assetlinks.json fingerprint check | ✅ FIXED 17-10: core source + `dist/mobile` corrected to real `15:3F:30:0D:…`; partner `assetlinks.json` created (source + `dist`) with `25:C9:63:BC:…` — verifies green in root preflight. Note: when Play "app signing" generates a Google-managed key later, ADD that SHA-256 as a second entry rather than replacing this one | me — done |
-| AASA `TEAMID.` placeholder | ⏳ BLOCKED — the single remaining preflight failure, requires burgonomics team's Apple Team ID in 4 files (core public, partner public, partner android assets, partner ios public) | team |
-| iOS `GoogleService-Info.plist` for both apps | ⏳ MISSING (neither `ios/App/App/` has it) — register the iOS apps in Firebase console (project `burgonomics-7faa8`), download the plists, drop into both `ios/App/App/` — console/web work, NOT Mac-blocked | team |
+Internal operations app. The listing may describe what the console does; it may
+**not** promise live courier coverage, live POS sync, or franchise billing.
+
+- **Play name:** `Burgonomics Partner` (20/30)
+- **Play short description (≤80):**
+  `Order console for Burgonomics branches: kitchen tickets, dispatch, refunds.` (76)
+- **Full description:**
+
+  ```
+  Burgonomics Partner is the operations console our branches run the day on.
+  It is for Burgonomics staff, not for customers.
+
+  WHAT IT DOES
+  • Live kitchen tickets (KDS) for orders placed in the customer app
+  • Accept, prepare and complete an order, with the customer seeing the same
+    status
+  • Mark an item out of stock for the branch
+  • Send a delivery to a courier integration or assign an in-house rider
+  • Review and approve refunds for cancelled paid orders
+  • Manage offers and combos for the branch
+  • Ticket queue for customer issues, with escalation
+
+  Access requires a Burgonomics staff account. Sign-in is role-based: branch,
+  regional, support and brand-owner scopes see different screens.
+  ```
+
+  **Why each claim holds** — KDS/order state transitions, item 86ing, courier
+  dispatch (`dispatch.router.ts`), the refunds console (`cancelRefundObligation`
+  → partner approval), offers/combos, and the 3-tier ticket queue all exist in
+  `burgonomics-partner`. **No claim** is made about Shadowfax as a backup
+  carrier, about production POS parity, or about per-order franchise money.
+
+- **Category:** Business. **Tags:** Business, Productivity.
+- **Screenshots:** KDS, live orders, dispatch queue, refunds, tickets. Redact
+  real customer names and phone numbers before upload — `[NEEDS: redacted captures]`
+- **Reviewer access:** `[NEEDS: one working branch-manager account in a demo
+  branch]`. A password-only demo account on a real branch is not acceptable; use
+  a demo branch with fake data.
+- **Data safety / App Privacy:** staff account identifiers, order data, no
+  advertising SDKs. §5/§6.
 
 ---
 
-## 4. Data-safety answers (Play) — pre-filled skeleton
+## 3. App identity and build facts
 
-- Does app collect personal data? Yes (account email, name, addresses, order
-  history, device identifiers via Firebase).
-- Collected for: app functionality, personalisation, analytics `[confirm]`.
-- Transmitted off device: Yes (Firebase Firestore/functions, Razorpay).
-- Location:-if-used by customer app? `[confirm branches-based only]`
-- Purchases: order totals via Razorpay `[test mode at submission]`.
-- Deletion path: account delete in profile settings `[confirm exists]`.
+| Item | Value |
+|---|---|
+| Customer application id / bundle id | `com.burgonomics` |
+| Partner application id / bundle id | `com.burgonomics.partner` |
+| Customer display name | `BURGONOMICS` |
+| Partner display name | `Burgonomics Partner` |
+| Platforms shipping | Web (Customer app), Android, iPhone |
+| Customer hosting target | `burgonomics-app` → `burgonomics-foundation-core/dist/mobile` |
+| Partner hosting target | `burgonomics-partner` → `burgonomics-partner/dist` |
+| versionCode / versionName | `android/version.properties` in each app — bump before every upload. `[NEEDS: confirm the next value at submit time; never reuse an uploaded code]` |
 
-## 5. Apple App Privacy — pre-filled skeleton
-
-Identifiers (user id, device), Purchase history, Coarse location `[confirm]`,
-Contact info (name/email/address), In-app purchase none.
+Build candidates from 2026-10-17 are **not** the binaries to submit: the code
+has changed since (privacy hardening, this wave's tracker/legal fixes). Rebuild
+from the release branch before uploading, and record the SHA-256 of the artifact
+you upload.
 
 ---
 
-## 6. Submission sequence (critical path)
+## 4. Legal and policy URLs — the Customer app's own hosting
 
-**Today 2026-10-17 (me + user) — DONE unless noted**
-1. ✅ AAB builds landed; signatures verified; archived in `client-handover/release-builds/*-v1.0.0-20261017.aab`. versionCode 1/1.0.0 = correct for first upload; hand-bump every next upload (`android/version.properties` + the matching gradle fallback lines).
-2. ✅ assetlinks fingerprints fixed/created and propagated (see STATUS table).
-3. 🔄 Review + close dispatch/payments lane work (in-flight) + Petpooja `9c20c12` fix-up review (running).
-4. ✅ Listings + reviewer-access spec in this document; screenshots: pre-captured sets exist at `client-handover/store-assets` (29 customer / 22 partner) — pair them with the §1/§2 plans at upload time.
+`burgonomics.com` is out of scope for this wave, so **no store field points at it**.
+The four documents ship as static HTML inside the Customer app bundle
+(`public/legal/<slug>/index.html`) and are served ahead of the SPA catch-all, so
+they work on both hosting targets and at the same path inside the iOS/Android
+shells.
 
-**Tonight (burgonomics team)**
-5. Create Play Console account NOW (longest external lead time), invite user.
-6. Apple Team ID + App Store Connect invite + integration-keys decision.
+| Store field | URL |
+|---|---|
+| Privacy policy URL (both apps) | `/legal/privacy` |
+| Terms of use / EULA | `/legal/terms` |
+| Refund & cancellation policy | `/legal/refund-policy` |
+| Grievance / support contact page | `/legal/grievance` |
+| Index of all four | `/legal/` |
 
-**Tomorrow 2026-10-18**
-7. Play: app entries + internal testing track upload (AABs ready).
-   Production release = after review + team decision on live keys.
-8. iOS: friend's Mac runs `mac-build.sh`; if Team ID supplied tonight, the
-   archive upload can happen tomorrow — App Store **submission** (not release)
-   is the realistic iOS outcome.
+Hosting base today — **staging only** (`burgonomics-7faa8`, target
+`burgonomics-app`, site `burgonomics-7faa8.web.app`), so the full staging URLs are
+e.g. `https://burgonomics-7faa8.web.app/legal/privacy`.
 
-## 7. Anti-rejection checklist (Google Play, new app 2026)
+`[NEEDS: the production hosting base URL once `burgonomics-prod` hosting is
+deployed]` — fill this in before typing a URL into either console. Do **not**
+paste a `web.app` staging URL into a production store form.
 
-- [ ] Registration fee paid + identity verification `[team]`
-- [ ] Closed-testing track first for personal accounts (12 testers × 14 days if
-      account is personal — org accounts bypass; D-U-N-S needs verifying) `[team]`
-- [ ] Screenshot set matches required min count per form-factor
-- [ ] App reviewed by human + demo access works (`§0.4`)
-- [ ] No functional payment claim while Razorpay is in test mode
-- [ ] versionCode ≥ dist already-shipped APKs (if any installs exist) `[confirm]`
+In-app, the same four documents are at `/privacy`, `/terms`, `/refund-policy`
+and `/grievance`, linked from the sign-in screen (terms + privacy) and from
+**Profile → More** for all four. The copy is one module
+(`src/features/legal/content/legalContent.ts`), so the app and the public URLs
+cannot drift.
 
-## 8. Anti-rejection checklist (App Store)
+> **Hard gate:** three of the four pages currently render a visible
+> `[TO BE SUPPLIED: …]` mark and a "not publishable yet" banner. The missing
+> facts and the unverified ones are listed in
+> `burgonomics-foundation-core/LEGAL-FACTS-NEEDED.md` and repeated as a blocking
+> section in `client-handover/STORE_SUBMISSION_CHECKLIST.md`. **Do not submit
+> either app while that list is non-empty.** Apple and Google both read the
+> privacy URL, and Indian law reads the grievance page.
 
-- [ ] Team ID substituted in AASA (both sites) + hosting redeployed `[team/self after Team ID]`
-- [ ] `xcrun simctl`/Screenshot capture on Mac; images at required sizes
-- [ ] App Privacy + privacy policy URL live
-- [ ] Demo credentials or video in review notes
-- [x] SPM resolution ground-truth 17-10: on a fresh `npm ci`, BOTH apps' graphs resolve (all plugins `from: "8.0.0"` + aggregator `exact: "8.5.2"`); partner needs NO patch step; core's patch step is optional (pins everything to 8.5.0 = the documented skew). Partner runbook: `burgonomics-partner/MAC_INSTRUCTIONS.txt`
-- [ ] Export compliance: uses standard HTTPS only → answer ITSAppUsesNonExemptEncryption-no at review `[confirm no custom crypto]`
+---
+
+## 5. Google Play — Data safety answers
+
+- **Collects personal data?** Yes. Phone number (OTP sign-in), name, delivery
+  addresses, order history, payment reference, device/push token.
+- **Purpose:** app functionality (order fulfilment), fraud prevention, and
+  customer support. **Not** advertising — no ad SDK is bundled.
+- **Shared with third parties?** Yes, as processors: Razorpay (payments/refunds),
+  Google Firebase (auth, database, notifications), Petpooja (kitchen ticket at
+  the outlet), and the courier that accepts the delivery (drop address, hand-over
+  contact, order value).
+- **Data encrypted in transit?** Yes (HTTPS only).
+- **Deletion:** in-app **Profile → Settings → Delete account**, plus the email
+  route on the grievance page. Order invoices are retained 8 years per GST law,
+  then anonymised — say so, exactly as the privacy page does.
+- **Location:** optional, only while using the app, for nearest-outlet and
+  drop-off. Typing an address works without it. `[NEEDS: confirm the final
+  manifest declares "while in use" only]`
+
+## 6. Apple — App Privacy labels
+
+Identifiers (user id, device/push token), Contact info (name, phone, email if
+given), Physical address (delivery), Purchase history, Coarse location (optional,
+app functionality), Diagnostics (crash/error reports).
+**Not** used for advertising or tracking; no "data used to track you" category.
+`[NEEDS: whoever holds the Apple account confirms these labels before submission]`
+
+---
+
+## 7. Claims removed from this listing, and why
+
+| Draft-1 claim | Why it is gone |
+|---|---|
+| "Collect Grill-Coins on every order and redeem them" | Loyalty is out of launch scope by owner decision. |
+| "Members-only offers, combos and coupons" | "Members-only" implied a loyalty tier. Coupons and offers are named plainly instead. |
+| "real-time availability" (live menu stock) | 86ing → customer-visible stock is coded but unproven end to end; the listing says "live menu", which is a catalogue read. |
+| "Track your order from kitchen to doorstep, with live status updates" | Replaced with status tracking. Live rider GPS depends on courier webhooks (`DISPATCH_REQUIRE_LIVE` gating, test-host Borzo) that have never run against a real rider. |
+| Partner: "Porter dispatch" as a named capability | Porter is legacy-only in the order data; the live adapters are Borzo (test host) and Shadowfax (disabled). Copy says "a courier integration" without naming a brand as the working path. |
+| Partner: "POS billing & Porter dispatch" in the short description | POS billing is not a claim this app can make; it is an operations console over the customer app's orders. |
+| Any reference to `burgonomics.com/privacy` | Domain is out of scope and its legal pages 404. All four URLs are on the Customer app's own hosting (§4). |
+| "New branches are added regularly" | No evidence of a branch pipeline; drop it rather than promise growth. |
+| Screenshots of a coins wallet | Feature is not shipping. |
+
+---
+
+## 8. Submission sequence
+
+1. **Owner supplies** the facts in `LEGAL-FACTS-NEEDED.md` (FSSAI per outlet,
+   Grievance Officer name + phone, the CIN question) and confirms the printed
+   values (registered address, GSTIN, mailboxes). Re-run `npm run legal:facts
+   -- --check`, `npm run legal:html`, and `npm test -- tests/legal-pages.test.ts`
+   in the Customer app; all four pages must show zero marks.
+2. **Rebuild** both apps from the release branch (not the 2026-10-17 AABs), bump
+   `versionCode`/`versionName`, verify signatures, record artifact SHA-256.
+3. **Deploy hosting** for the Customer app so the `/legal/*` URLs resolve on the
+   environment the store form points at. Fetch each of the four URLs and confirm
+   HTTP 200 **and** that the page body contains no `[TO BE SUPPLIED:`.
+4. **Capture screenshots** per §1.1/§2, with no loyalty screen and no fabricated
+   numbers.
+5. **Fill the console forms** using §1/§2/§5/§6. Reviewer credentials are
+   mandatory for both apps.
+6. **Internal/closed testing first**, then production. Do not describe test-mode
+   payments as live charging.
+
+## 9. Open items only a human can close
+
+- [ ] Every item in `LEGAL-FACTS-NEEDED.md` (see §4).
+- [ ] Production hosting base URL for the legal pages.
+- [ ] Reviewer account for the Customer app (phone + OTP delivery method).
+- [ ] Reviewer account for the Partner app (demo branch, fake data).
+- [ ] App icon 512 (Play) / 1024 (App Store), feature graphic 1024×500.
+- [ ] Screenshot sets for both apps at current required sizes.
+- [ ] Apple Team ID for the AASA association file (pre-existing blocker, unchanged).
+- [ ] `ios/App/App/GoogleService-Info.plist` for both apps.
+- [ ] Confirmation of the App Privacy / Data safety answers in §5/§6.
+
+---
+
+## 10. Archive — draft 1 status, kept for build history
+
+The 2026-10-17/18 status table is retained because it records artifact hashes and
+what was verified then. **It is not a statement about the current code**: the
+privacy-hardening work and this wave's tracker/legal fixes changed both apps
+after it was written.
+
+| Item | State as of 2026-10-18 ~01:00 |
+|---|---|
+| Signed AABs (v1.0.0, versionCode 1) | BUILT + signature-verified. `burgonomics-partner-v1.0.0-20261017.aab` SHA-256 `B86291AD4BF39AF5FA4DA886FCA0F4DC3199D0ADB168400C4CA26410AAA01120`; `burgonomics-customer-v1.0.0-20261017.aab` SHA-256 `60D1B11CA673B4D14439F6D06A38E5ABCB341CD9837864FBF17609CAEB01CE4B`. targetSdk 36. |
+| Full-tree validation then | `vitest run`: 53 files passed / 1 skipped; 591 passed / 2 skipped / 0 failed; `tsc` exit 0. |
+| assetlinks fingerprints | core `15:3F:30:0D:…CD54`, partner `25:C9:63:BC:…CF:D7`; propagated to publish dirs. |
+| Root hosting preflight | PASS 25 / FAIL 2 — both FAILs were the `TEAMID.` App Store placeholder. |
+| App identity | Exactly two Capacitor apps; `com.burgonomics` is the Customer app. |
+| Play upload | No upload API in any workflow → uploads are manual console work. |
