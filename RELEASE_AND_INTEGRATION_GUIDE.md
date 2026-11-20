@@ -195,23 +195,32 @@ cd android
 
 ## 6. Reviewer Demo Credentials & Sandbox Mode
 
-> [!IMPORTANT]
-> Both Apple and Google review teams are located internationally. Enter these exact credentials in the **App Review Information / Sign-in required** section to ensure instant approval without SMS delivery failure.
+> [!WARNING]
+> **There is no sandbox mode, and no reviewer credential belongs in this file.** Phone numbers, fixed codes
+> and passwords live in the team's secure store (`_secrets\` on the release workstation and the Burgonomics
+> password manager) and are typed straight into App Store Connect / Google Play Console at submission time.
+
+Live Auth config, 20 November 2026 (names and counts only): staging `burgonomics-7faa8` has **1** test phone
+number and 3 authorized domains; production `burgonomics-prod` has **0** test phone numbers and 4 authorized
+domains. The number this guide used to print is configured in neither project, so a reviewer following it
+would be refused.
 
 ### Customer App Reviewer Login
-- **Login Method**: Phone OTP
-- **Phone Number**: `+91 99999 99999` (or `9999999999`)
-- **Fixed Verification Code / OTP**: `123456`
+- **Login Method**: Phone OTP with a fixed code (no SMS reaches a test number).
+- **Number and fixed code**: in the secure store, never here.
 - **Reviewer Note**:
-  > *"Please log in using the test phone number and OTP above. A sandbox delivery address and test branch ('Ahmedabad Central') will be pre-selected. Placing an order triggers automated sandbox checkout where payment completes instantly and transitions to live order tracking."*
+  > "Enter the phone number provided in App Review Information and tap Continue, then enter the fixed code
+  > provided there. This build uses our rehearsal environment, so outlet and menu data may be limited.
+  > Payments run in the provider's test mode and no money moves."
 
 ### Partner POS App Reviewer Login
-- **Login Method**: Email & Password
-- **Email**: `reviewer@burgonomics.com`
-- **Password**: `Burgonomics@2026`
-- **Assigned Role**: `branch_owner` (Demo Branch)
+- **Login Method**: Email & Password, role `branch_owner`.
+- **Email, password and branch**: in the secure store, never here. No successful sign-in with this account is
+  on record, so confirm it exists before submitting.
 - **Reviewer Note**:
-  > *"Burgonomics Partner is an internal operations management application for authorized franchise store managers and kitchen staff. Log in with the credentials above to test live Kitchen Order Tickets (KDS), menu item 86ing, ticket management, and analytics."*
+  > "Burgonomics Partner is an internal operations app for authorised franchise staff. Sign in with the email
+  > and password in App Review Information to open the kitchen display, change item availability and view
+  > tickets and reports."
 
 ---
 

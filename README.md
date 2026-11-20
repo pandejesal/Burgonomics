@@ -141,6 +141,10 @@ npx firebase-tools deploy --only hosting --project burgonomics-7faa8
 
 ## 🛡️ Store Reviewer Demo Credentials
 
-- **Customer App**: Phone `+91 99999 99999` | Fixed OTP: `123456`
-- **Partner App**: Email `reviewer@burgonomics.com` | Password: `Burgonomics@2026`
+- No reviewer phone number, fixed code or password is written in this repository. They live in the team's
+  secure store (`_secrets\` on the release workstation and the Burgonomics password manager) and are entered
+  directly into App Store Connect / Google Play Console.
+- Current state: staging `burgonomics-7faa8` has **1** test phone number, production `burgonomics-prod` has
+  **0**. The number these docs used to print is configured in neither project. See
+  `STORE_SUBMISSION_GUIDE.md` §2.
 
