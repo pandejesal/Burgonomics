@@ -6,6 +6,72 @@
 
 ---
 
+## 🚫 0. Legal facts — BLOCKING (do not submit either app while any item is open)
+
+Apple and Google both require a **live privacy-policy URL**, and Indian law requires a refund/cancellation
+policy, a named grievance contact and the FSSAI licence of the kitchen that cooks the food. The Customer app
+now carries all four documents and publishes them at stable public URLs on **its own hosting** (not
+`burgonomics.com`, which is out of scope for this wave):
+
+| Public URL (append to the Customer app hosting base) | Document | In-app route |
+|---|---|---|
+| `/legal/privacy` | Privacy Policy | `/privacy` |
+| `/legal/terms` | Terms of Use | `/terms` |
+| `/legal/refund-policy` | Refund & Cancellation Policy | `/refund-policy` |
+| `/legal/grievance` | Grievance Redressal | `/grievance` |
+| `/legal/` | index of the four | — |
+
+Hosting base today (staging, target `burgonomics-app` → site `burgonomics-7faa8`):
+`https://burgonomics-7faa8.web.app` → e.g. `https://burgonomics-7faa8.web.app/legal/privacy`.
+Production (`burgonomics-prod`) uses the same paths once its hosting target is deployed; the release
+worker confirms the prod URL before it fills a store form.
+
+### 0.1 Missing facts — each renders as a visible `[TO BE SUPPLIED: …]` mark
+
+The pages **say on screen** that they are not publishable while these are open, and a store reviewer
+reads that banner. **All four must be supplied before submission.**
+
+- [ ] **F1. FSSAI licence number for each outlet.** One number per outlet, not per brand. The app's
+      `fssaiLicense` constant is still the masked `1072XXXXXXXXXX`, which is why the pages mark it
+      instead of printing a fake number. Owner: Burgonomics team.
+- [ ] **F2. Grievance Officer — full name.** A named individual, not a job title. The previous pages
+      printed "Manager — Legal", which the DPDP Act 2023 and the IT Rules 2021 do not accept.
+      Owner: owner.
+- [ ] **F3. Grievance Officer — phone number.** A complaint must not depend on an inbox staying alive.
+      Owner: owner.
+- [ ] **F4. CIN — or a written statement that none applies.** The GST registration names a partnership,
+      so no CIN may apply, but nothing on record confirms that in writing and the constant is empty.
+      Owner: owner.
+
+### 0.2 Printed but never verified — no mark on the page, so a wrong value would be silent
+
+- [ ] **C1. Registered address.** Printed as
+      `A-802, Unicus Shyamal, Shyamal Cross Road, Satellite, Ahmedabad, Gujarat 380015`.
+      Older handover notes describe a different address (a studio name), so this must be confirmed
+      against the registration certificate. Owner: owner.
+- [ ] **C2. GSTIN.** Printed as `24ABHFP6677N1ZG` on receipts and legal pages. Handover notes still
+      describe the field as masked, so a wrong value is a false tax disclosure on every invoice.
+      Owner: owner.
+- [ ] **C3. Grievance / privacy mailboxes.** Printed as `privacy@burgonomics.com` and
+      `nodal@burgonomics.com`. No evidence exists that either mailbox has been created. A DPDP erasure
+      request that bounces is the exact failure the Act penalises. Owner: Burgonomics team.
+
+### 0.3 How to check the state, and what "done" looks like
+
+```bash
+cd burgonomics-foundation-core
+npm run legal:facts -- --check    # the owner list is in step with the page content
+npm run legal:html                # regenerate the published HTML
+npm test -- tests/legal-pages.test.ts
+```
+
+Done means: zero `[TO BE SUPPLIED:` marks on all four pages, the banner is gone, and
+`burgonomics-foundation-core/LEGAL-FACTS-NEEDED.md` lists nothing open. **Until then the answer to
+"can we submit?" is no** — not because of engineering, but because a page that promises a grievance
+officer who does not exist is worse than a delayed launch.
+
+---
+
 ## 📁 1. Release Files Directory (`client-handover/`)
 
 All required binaries, store graphics, and screenshots are organized:
@@ -59,14 +125,14 @@ Register these URLs in your third-party developer consoles to receive live updat
    - **App or game**: `App`
    - **Free or paid**: `Free`
 3. Under **App Content**:
-   - **Privacy Policy**: `https://burgonomics.com/privacy`
+   - **Privacy Policy**: `<production hosting base>/legal/privacy` — see §0; never `burgonomics.com`.
    - **App Access / Reviewer Credentials**: Select "All or some functionality is restricted" -> Add credentials:
      - Phone: `+91 99999 99999`
      - OTP: `123456`
      - Instructions: "Login with test phone and OTP. Ahmedabad test branch and sandbox address are pre-selected. Checkout executes instant sandbox payment."
    - **Data Safety**: Consult Section 4 of `STORE_SUBMISSION_GUIDE.md` (Location, Name, Phone, Address, Purchase history collected for order fulfillment).
 4. Under **Main Store Listing**:
-   - **Short description**: `Order 100% Pure Veg Gourmet Burgers, Combos & Shakes with live order tracking!`
+   - **Short description**: `Order pure-veg burgers from your nearest Burgonomics branch.`
    - **Full description**: Paste full description from Section 3.A of `STORE_SUBMISSION_GUIDE.md`.
    - **App Icon**: Upload `client-handover/store-assets/customer-icon-1024x1024.png`.
    - **Feature Graphic**: Upload `client-handover/store-assets/customer-feature-graphic-1024x500.png`.
@@ -82,13 +148,13 @@ Register these URLs in your third-party developer consoles to receive live updat
    - **Default language**: `English (India)`
    - **Category**: `Business`
 2. Under **App Content**:
-   - **Privacy Policy**: `https://burgonomics.com/privacy`
+   - **Privacy Policy**: `<production hosting base>/legal/privacy` — see §0; never `burgonomics.com`.
    - **App Access / Reviewer Credentials**:
      - Email: `reviewer@burgonomics.com`
      - Password: `Burgonomics@2026`
      - Instructions: "Internal operations app for store managers. Login to test live KDS Kitchen Order Tickets, item 86ing, ticket management, and analytics."
 3. Under **Main Store Listing**:
-   - **Short description**: `Franchise operations, live KDS kitchen display, POS billing & Porter dispatch.`
+   - **Short description**: `Order console for Burgonomics branches: kitchen tickets, dispatch, refunds.`
    - **Full description**: Paste full description from Section 3.B of `STORE_SUBMISSION_GUIDE.md`.
    - **App Icon**: Upload `client-handover/store-assets/partner-icon-1024x1024.png`.
    - **Feature Graphic**: Upload `client-handover/store-assets/partner-feature-graphic-1024x500.png`.
