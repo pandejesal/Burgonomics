@@ -101,6 +101,7 @@ import { handleCreateWalkIn } from "./modules/orders/createWalkInRoute";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { recoverStuckCaptureFulfilments } from "./modules/payments/captureRecovery";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
+import { setStaffStoreStatus } from "./modules/stores/storeStatus";
 import { getOwnerDeliveryOtp } from "./modules/orders/deliveryHandover.service";
 import { DeliveryOtpError } from "./modules/orders/deliveryOtp";
 import {
@@ -197,6 +198,7 @@ import {
   migrateGuestSchema,
   verifyBonusSchema,
   deleteAccountSchema,
+  storeOperatingStatusSchema,
 } from "./core/validation";
 
 // Live production-key enforcement.
@@ -376,6 +378,9 @@ app.use(
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
+    // Staff open/close (owner rule C): the client sends X-Firebase-AppCheck via
+    // partnerFunctionsApi, and this route writes the customer storefront gate.
+    "/stores/setOperatingStatus",
     // Read-only owner endpoint; its client (`retrieveDeliveryCode`) already
     // sends X-Firebase-AppCheck via buildCheckoutFeesHeaders().
     "/orders/deliveryOtp",
@@ -1231,6 +1236,55 @@ app.post(
       // staff fallback (500) without widening what the body leaks.
       const { status, body } = bumpStatusErrorResponse(err);
       res.status(status).json(body);
+    }
+  }
+);
+
+// Staff open/close for an outlet (owner rule C, fix wave 2026-11-20).
+//
+// Why a SERVER route: the gate customers read is `stores|admin_stores .isOpen`,
+// and Firestore rules deny every branch role that write (`stores/{id}` is
+// brand-owner only; the `admin_stores` branch arm allows eight metadata keys and
+// `isOpen` is not one of them). A client-side "save" could therefore only move
+// `branches/{id}.acceptingOrdersStatus`, which NO ordering path reads — the
+// reported bug where staff closed the outlet and customers kept ordering.
+//
+// `assertBranchAccess` inside the service makes the answer the same for both
+// directions: a brand admin may flip any outlet, a branch role only its own.
+// A refusal maps to the status the message implies (401 unauthorized, 403
+// forbidden, 409 for an unlinked/ambiguous storefront) — never a silent 200.
+app.post(
+  "/stores/setOperatingStatus",
+  requireAuth,
+  requireRole(["brand_owner", "developer", "branch_owner", "branch_staff"]),
+  validateBody(storeOperatingStatusSchema),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await setStaffStoreStatus({
+        branchId: req.body.branchId,
+        status: req.body.status,
+        reason: req.body.reason,
+        caller: req.user,
+      });
+      res.status(200).json(result);
+    } catch (err: any) {
+      const message = String(err?.message || "Store status could not be changed");
+      const status = message.startsWith("Unauthorized")
+        ? 401
+        : message.startsWith("Forbidden")
+          ? 403
+          : 409;
+      res.status(status).json({
+        code:
+          status === 403
+            ? "BRANCH_FORBIDDEN"
+            : status === 401
+              ? "UNAUTHORIZED"
+              : /more than one storefront/.test(message)
+                ? "STOREFRONT_AMBIGUOUS"
+                : "STOREFRONT_NOT_LINKED",
+        error: message,
+      });
     }
   }
 );

@@ -6,6 +6,11 @@ import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
 import { isSafeDocId } from "../../core/security";
 import { createHash } from "crypto";
+import {
+  resolveStorefrontForBranch,
+  staffCloseOverrideInForce,
+  type StorefrontMatch,
+} from "../stores/storeStatus";
 
 /**
  * Computes a deterministic, bounded, Firestore-safe document ID for quarantined 86ing payloads.
@@ -1147,71 +1152,12 @@ export interface PetpoojaStoreStatusReply {
  * left customers able to order from an outlet the POS had closed, so the POS
  * update has to land HERE.
  *
- * Resolution: the same authoritative mapping the rest of the integration uses —
- * `stores/{id}.partnerBranchId == branchId`, or the storefront's own
- * `petpoojaRestId == restID`. Ambiguity (two stores claiming the branch) is
- * refused rather than guessed: closing the wrong outlet is worse than a failed
- * callback.
+ * Resolution and the staff-override predicate live in `../stores/storeStatus`
+ * so the Partner open/close route resolves the SAME storefront with the SAME
+ * rules: two implementations would drift, and drift here means the POS and the
+ * operator disagree about which document stops ordering.
  */
-interface StorefrontMatch {
-  storeId: string;
-  /** Which collection the doc lives in: that is the doc the customers read. */
-  collection: "stores" | "admin_stores";
-  data: Record<string, any>;
-}
-
-/**
- * Finds the storefront document(s) for an outlet.
- *
- * TWO collections can carry it: `stores/*` is authoritative, and the customer
- * directory falls back to `admin_stores/*` when `stores` is empty
- * (`storesService.fetchFirestoreStores`). So an outlet whose directory entry is
- * `admin_stores`-only is NOT "unlinked" — refusing it would break every
- * store-status update on such a deployment. `stores` wins when both exist.
- *
- * Ambiguity (two docs in the same collection claiming the branch) is reported,
- * never guessed: closing the wrong outlet is worse than a failed callback.
- */
-async function resolveStorefrontForBranch(
-  branchId: string,
-  restId: string
-): Promise<{ match: StorefrontMatch | null; ambiguous: boolean }> {
-  for (const collection of ["stores", "admin_stores"] as const) {
-    const col = db.collection(collection) as any;
-    if (!col || typeof col.where !== "function") continue;
-
-    const seen = new Map<string, StorefrontMatch>();
-    let lookupFailed = false;
-    for (const [field, value] of [
-      ["partnerBranchId", branchId],
-      ["petpoojaRestId", restId],
-    ] as Array<[string, string]>) {
-      if (!value) continue;
-      try {
-        const snap = await col.where(field, "==", value).limit(5).get();
-        for (const doc of snap?.docs || []) {
-          if (!doc?.id) continue;
-          seen.set(String(doc.id), {
-            storeId: String(doc.id),
-            collection,
-            data: doc.data() || {},
-          });
-        }
-      } catch (err: any) {
-        console.warn(
-          `[Petpooja Store Status] storefront lookup in ${collection} by ${field} failed:`,
-          err?.message || err
-        );
-        lookupFailed = true;
-        break;
-      }
-    }
-    if (lookupFailed) continue;
-    if (seen.size > 1) return { match: null, ambiguous: true };
-    if (seen.size === 1) return { match: [...seen.values()][0], ambiguous: false };
-  }
-  return { match: null, ambiguous: false };
-}
+export { resolveStorefrontForBranch, staffCloseOverrideInForce, type StorefrontMatch } from "../stores/storeStatus";
 
 /**
  * The vendor's documented store-status encoding: `"1"` is open/accepting,
@@ -1436,6 +1382,22 @@ export async function handlePetpoojaStoreStatus(
   // Which document actually stops ordering? The storefront (`stores/{id}.isOpen`).
   // Resolve it BEFORE any write so an unlinked or ambiguous outlet fails cleanly
   // instead of half-applying the branch flag.
+  let branchData: Record<string, any> = {};
+  try {
+    const branchSnap = await db.collection("branches").doc(branchId).get();
+    branchData = branchSnap?.exists ? branchSnap.data() || {} : {};
+  } catch (err: any) {
+    // The branch read is only needed for the staff-override check below. A
+    // failure must not silently treat an override as absent (that would let a
+    // POS open undo a staff close), so refuse and touch nothing.
+    console.warn(
+      `[Petpooja Store Status] could not read branch ${branchId}:`,
+      err?.message || err
+    );
+    await recordStoreStatusEvent(restIdText, branchId, requested, true);
+    return storeStatusFailure("Store status could not be updated", "update");
+  }
+
   let storefront: StorefrontMatch | null = null;
   let ambiguous = false;
   try {
@@ -1497,6 +1459,46 @@ export async function handlePetpoojaStoreStatus(
   }
 
   const desiredOpen = requested === "1";
+
+  // RULE C (owner decision 2026-11-20): a staff "close" in the Partner app wins
+  // until staff reopen. The override is stamped by the Partner open/close route
+  // on both the storefront and the branch, and ONLY a staff reopen clears it —
+  // so a POS "open" must not undo it. A POS "close" while the override stands is
+  // a no-op agreement: it keeps the override AND must not rewrite the gate, or
+  // its own idempotence would erase the staff reason.
+  const staffClosed = staffCloseOverrideInForce(storefront.data, branchData);
+  if (staffClosed && desiredOpen) {
+    console.warn(
+      `[Petpooja Store Status] POS open REFUSED for branch ${branchId}: a staff close is in force (override set)`
+    );
+    await recordStoreStatusEvent(restIdText, branchId, requested, true);
+    return storeStatusFailure(
+      `Store ${boundedParkedString(
+        restIdText,
+        PARKED_REF_MAX_CHARS
+      )} was closed from the Burgonomics Partner app — reopen it there before accepting orders`,
+      "update"
+    );
+  }
+
+  if (staffClosed) {
+    // Staff already closed it and the POS agrees. Touch NOTHING: rewriting the
+    // gate with `storeStatusSource: "petpooja"` would relabel a staff decision
+    // as a POS one and could drop the staff reason on a later replay.
+    await recordStoreStatusEvent(restIdText, branchId, requested, true);
+    return {
+      kind: "update",
+      httpStatus: 200,
+      body: {
+        http_code: 200,
+        status: "success",
+        message: `Store Status updated successfully for store ${boundedParkedString(
+          restIdText,
+          PARKED_REF_MAX_CHARS
+        )}`,
+      },
+    };
+  }
 
   try {
     // (1) The customer gate. `isOpen` is the single field the customer app reads
