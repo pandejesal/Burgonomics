@@ -144,6 +144,9 @@ export const COUPON_REFUSAL_CODES = new Set<string>([
   "COUPON_USAGE_UNAVAILABLE",
   "COUPON_ORDER_CONFLICT",
   "COUPON_PRICE_CHANGED",
+  // The Partner till has no coupon control (F9, 2026-11-22). A coupon sent by
+  // a walk-in caller is a known, customer/staff-facing refusal, not an outage.
+  "COUPON_NOT_SUPPORTED_FOR_WALKIN",
   "ORDER_ID_REQUIRED",
 ]);
 

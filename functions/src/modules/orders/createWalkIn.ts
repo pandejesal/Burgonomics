@@ -96,6 +96,16 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
   const parsed = createWalkInSchema.safeParse(raw);
   if (!parsed.success) throw new WalkInError(400, "INVALID_INPUT", "Invalid walk-in request.");
   const input = parsed.data;
+  // The till offers no coupon entry and no opt-in flag exists. Refuse loudly
+  // with the coupon vocabulary instead of silently dropping the code or
+  // charging a discount no till can explain (F9, 2026-11-22).
+  if (input.couponCode?.trim()) {
+    throw new WalkInError(
+      400,
+      "COUPON_NOT_SUPPORTED_FOR_WALKIN",
+      "Coupons are not available on the Partner till. Remove the coupon or use the customer app."
+    );
+  }
   if (input.orderType === "delivery") {
     throw new WalkInError(
       422,

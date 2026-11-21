@@ -205,6 +205,39 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
     expect(savedDocs[`delivery_fee_quotes/dfq_good_quote_1`].usedByOrderId).toBe(ORDER_ID);
   });
 
+  // F9 regression (2026-11-22): the cash coupon fix must not change the ONLINE
+  // contract. The online path still reserves the slot in the SAME transaction
+  // that stamps the server pricing, and leaves it reserved for the webhook.
+  it("regresses: an online order with a coupon reserves one slot at intent time", async () => {
+    savedDocs["coupons/WELCOME20"] = {
+      code: "WELCOME20",
+      active: true,
+      discountType: "percent",
+      value: 20,
+      maxDiscount: null,
+      minOrder: 0,
+      validFromMs: null,
+      validToMs: null,
+      perCustomerLimit: null,
+      totalCap: null,
+      branchScope: "all",
+      customerScope: null,
+    };
+    const res: any = await createPaymentOrder(
+      baseOrderParams({ deliveryQuoteId: "dfq_good_quote_1", couponCode: "WELCOME20" })
+    );
+    // 199 food − ₹40 coupon (whole-rupee rule) + 15 packing + 42.55 = ₹216.55.
+    expect(res.pricing.discount).toBe(40);
+    expect(res.pricing.grandTotal).toBe(216.55);
+    expect(res.amountPaise).toBe(21655);
+    expect(savedDocs[`coupon_redemptions/${ORDER_ID}`]).toMatchObject({
+      code: "WELCOME20",
+      customerId: UID,
+      status: "reserved",
+    });
+    expect(savedDocs[`orders/${ORDER_ID}`].couponCode).toBe("WELCOME20");
+  });
+
   it("binds the quote to the order it paid for", async () => {
     const inflated = await createPaymentOrder(
       baseOrderParams({ deliveryQuoteId: "dfq_good_quote_1", deliveryFee: 999 })

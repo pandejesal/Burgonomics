@@ -22,6 +22,14 @@ import {
   assertOutletOpenForOnlineOrders,
 } from "../payments/outletStatus";
 import { DELIVERY_FEE_QUOTES, assertDeliveryQuoteBindable } from "../payments/deliveryQuotes";
+import {
+  commitCouponRedemption,
+  evaluateCoupon,
+  isCouponRefusal,
+  normalizeCoupon,
+  reserveCouponInTx,
+} from "../coupons/couponAuthority";
+import { captureErrorSnapshot } from "../../core/errors";
 
 /**
  * COD / pay-at-counter order creation (owner decision 2026-11-20: cash on
@@ -218,6 +226,7 @@ export async function createCashOrder(
   const input = parsed.data;
   const requestHash = requestHashOf(input);
   const orderRef = db.collection("orders").doc(input.orderId);
+  const couponCode = input.couponCode?.trim().toUpperCase();
 
   // F2 (staging 2026-11-21, Test 9): a closed outlet must not take new cash
   // orders either — the server created the order and told the kitchen about it
@@ -232,8 +241,9 @@ export async function createCashOrder(
     throw err;
   }
 
+  let receipt: CashOrderReceipt;
   try {
-    return await db.runTransaction(async (tx) => {
+    receipt = await db.runTransaction(async (tx) => {
       // 1. Idempotency first: a retry of the same request converges on the
       // stored receipt, and never reprices against a moved menu.
       const orderSnap = await tx.get(orderRef);
@@ -351,14 +361,10 @@ export async function createCashOrder(
           dropLat: typeof drop.lat === "number" ? drop.lat : undefined,
           dropLng: typeof drop.lng === "number" ? drop.lng : undefined,
         });
-        tx.set(
-          db.collection(DELIVERY_FEE_QUOTES).doc(quoteId),
-          {
-            usedByOrderId: input.orderId,
-            usedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
+        // The claim is a WRITE. It is deliberately deferred until after every
+        // read (including the coupon authority's reads) — Firestore rejects a
+        // tx.get after a tx.set, and the old order of these two lines is the
+        // staging 503. See step 7 below.
       } else if (quoteId) {
         // Off-delivery a quote id means nothing; refusing is louder than
         // silently dropping a field the caller thought was used.
@@ -370,8 +376,8 @@ export async function createCashOrder(
       }
 
       // 5. The coupon is the ONLY discount authority (never the request).
+      // This is still a READ: no transaction write has happened yet.
       let coupon: any = null;
-      const couponCode = input.couponCode?.trim().toUpperCase();
       if (couponCode) {
         const couponSnap = await tx.get(db.collection("coupons").doc(couponCode));
         coupon = couponSnap.exists ? couponSnap.data() : null;
@@ -384,8 +390,25 @@ export async function createCashOrder(
         branchId,
         orderType: input.orderType,
         ...(couponCode ? { coupon } : {}),
+        ...(couponCode ? { customerId: actorUid } : {}),
         ...(serverDeliveryFee !== undefined ? { serverDeliveryFee } : {}),
       });
+
+      // A bad code is the CUSTOMER's to fix. Check eligibility with the SAME
+      // authority the pricing engine used, before the amount check can turn it
+      // into a misleading "price changed". Usage limits are re-checked inside
+      // reserveCouponInTx below, against the transactional counters.
+      if (couponCode) {
+        const evaluation = evaluateCoupon(normalizeCoupon(couponCode, coupon), {
+          foodSubtotal: totals.foodSubtotal,
+          branchId,
+          nowMs: Date.now(),
+          customerId: actorUid,
+        });
+        if (!evaluation.eligible) {
+          throw new CashOrderError(400, evaluation.reason, evaluation.message);
+        }
+      }
 
       // F8 — the Customer app renders the ONLINE field names. Derive them from
       // this one server calculation (never from a client payload), while the
@@ -442,6 +465,42 @@ export async function createCashOrder(
           typeof err?.statusCode === "number" ? err.statusCode : 409,
           typeof err?.code === "string" ? err.code : "COD_UNAVAILABLE",
           err?.message || "Cash on delivery is not available for this order."
+        );
+      }
+
+      // 7. Coupon slot + quote claim: the FIRST writes in this transaction.
+      // reserveCouponInTx re-reads the coupon, stats, usage and redemption and
+      // then writes them; every earlier tx.get is already done, so Firestore's
+      // read-before-write rule holds. Holding the slot here makes the discount,
+      // the counters and the order one atomic decision: two cash checkouts of
+      // the last slot conflict on the stats doc, exactly as online checkout
+      // does in createPaymentOrder. An ineligible coupon throws its typed
+      // 400/409 here, before any write and before any order exists.
+      if (couponCode) {
+        try {
+          await reserveCouponInTx(tx, {
+            code: couponCode,
+            orderId: input.orderId,
+            customerId: actorUid,
+            branchId,
+            foodSubtotal: totals.foodSubtotal,
+            expectedDiscount: totals.discount,
+          });
+        } catch (err: any) {
+          if (isCouponRefusal(err)) {
+            throw new CashOrderError(err.statusCode, err.code, err.message);
+          }
+          throw err;
+        }
+      }
+      if (input.orderType === "delivery" && quoteId) {
+        tx.set(
+          db.collection(DELIVERY_FEE_QUOTES).doc(quoteId),
+          {
+            usedByOrderId: input.orderId,
+            usedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
         );
       }
 
@@ -507,6 +566,9 @@ export async function createCashOrder(
         ...(input.customerPhone ? { customerPhone: input.customerPhone } : {}),
         items: customerLines,
         ...(input.promo !== undefined && input.promo !== null ? { promo: input.promo } : {}),
+        // Stamp the code the SERVER priced with, as the online path does, so
+        // the KOT, receipt, cancel release and support trail agree.
+        ...(couponCode ? { couponCode } : {}),
         tipAmount: input.tipAmount ?? 0,
         loyaltyPointsRedeemed: 0,
         ...(input.notes ? { notes: input.notes } : {}),
@@ -555,4 +617,25 @@ export async function createCashOrder(
     }
     throw new CashOrderError(503, "CASH_ORDER_UNAVAILABLE", "Cash ordering is temporarily unavailable.");
   }
+
+  // A cash order has no payment callback: the reservation is spent as soon as
+  // the order exists. This runs AFTER the outer transaction commits, is
+  // idempotent (a replay returns early above), and never turns a written order
+  // into a 503 — a failed commit is alerted and the still-reserved slot is
+  // released by cancel or by its TTL.
+  if (couponCode && !receipt.replayed) {
+    try {
+      await commitCouponRedemption(input.orderId);
+    } catch (err: any) {
+      console.warn(`[CreateCashOrder] coupon commit failed for ${input.orderId}:`, err?.message || err);
+      await captureErrorSnapshot({
+        source: "payments",
+        severity: "high",
+        message: `Coupon ${couponCode} could not be committed for cash order ${input.orderId}`,
+        orderId: input.orderId,
+        errorStack: err?.stack,
+      }).catch(() => undefined);
+    }
+  }
+  return receipt;
 }

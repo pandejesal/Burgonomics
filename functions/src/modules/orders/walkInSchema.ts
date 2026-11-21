@@ -28,6 +28,10 @@ export const createWalkInSchema = z
       .min(1)
       .max(100),
     expectedTotalPaise: z.number().int().nonnegative().safe(),
+    // Parsed only so a coupon sent by a caller gets a clear, typed refusal.
+    // The Partner till has no coupon control and no opt-in flag, so walk-in
+    // cash cannot honour one (F9, 2026-11-22).
+    couponCode: z.string().trim().max(64).optional(),
     tableNumber: z.string().trim().min(1).max(64).optional(),
     notes: z.string().trim().max(1000).optional(),
     customerName: z.string().trim().max(200).optional(),
@@ -42,6 +46,6 @@ export type CreateWalkInRequest = z.infer<typeof createWalkInSchema>;
  * total).
  */
 export const walkInQuoteSchema = createWalkInSchema
-  .omit({ requestId: true, expectedTotalPaise: true, tender: true })
+  .omit({ requestId: true, expectedTotalPaise: true, tender: true, couponCode: true })
   .strict();
 export type WalkInQuoteRequest = z.infer<typeof walkInQuoteSchema>;
