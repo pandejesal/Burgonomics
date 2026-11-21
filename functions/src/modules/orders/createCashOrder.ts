@@ -10,7 +10,9 @@ import {
   type BranchPricingConfig,
 } from "../payments/branchPricing";
 import {
+  applyCatalogBasePrice,
   computeSnapshotPricing,
+  GST_RATE,
   type PricingBreakdown,
   type PricingLineItem,
   type SnapshotProduct,
@@ -256,6 +258,9 @@ export async function createCashOrder(
       // 2. The branch comes from the STORE link, and a client branchId must
       // agree with it — a caller cannot point a store's order at another
       // outlet's packaging, COD switch or cash ceiling.
+      const resolvedStoreId =
+        input.storeId ??
+        (input.store && typeof input.store.id === "string" ? input.store.id : undefined);
       let branchId = input.branchId ?? null;
       let storeData: Record<string, any> | null = null;
       if (input.storeId) {
@@ -382,6 +387,42 @@ export async function createCashOrder(
         ...(serverDeliveryFee !== undefined ? { serverDeliveryFee } : {}),
       });
 
+      // F8 — the Customer app renders the ONLINE field names. Derive them from
+      // this one server calculation (never from a client payload), while the
+      // original backend names remain in the same object for the receipt, KOT
+      // and Partner cash stream. `unitPrice` is the all-in catalogue price,
+      // identical to the value the pricing engine used for `foodSubtotal`.
+      const customerLines = lines.map((line, index) => {
+        // Same key the pricing engine used for the authoritative price.
+        const productKey = String(line.productId || line.id || "");
+        const product = products.get(productKey);
+        return {
+          lineId: `line_cash_${input.orderId}_${index + 1}`,
+          id: productKey,
+          productId: productKey,
+          storeId: resolvedStoreId ?? branchId,
+          name: line.name,
+          unitPrice: product
+            ? applyCatalogBasePrice(line, Number(product.price), product.customizations)
+            : Number(line.price) || 0,
+          price: Number(line.price) || 0,
+          quantity: line.quantity,
+          modifiers: line.modifiers ?? [],
+          availability: "available",
+          ...(line.customizations ? { customizations: line.customizations } : {}),
+        };
+      });
+      const customerTotals = {
+        ...totals,
+        subtotal: totals.foodSubtotal,
+        itemDiscount: 0,
+        promoDiscount: totals.discount,
+        taxes: totals.gst,
+        gstRate: GST_RATE,
+        packingFee: totals.packagingFee,
+        currency: "INR",
+      };
+
       // 6. The customer agreed to a bill; if the menu moved, refuse and hand
       // back the server's number instead of charging a different one.
       if (totals.split.totalAmountPaise !== input.expectedTotalPaise) {
@@ -422,9 +463,7 @@ export async function createCashOrder(
       // both at create; cash must have the same customer-readable shape or a
       // valid order is invisible in Orders and Track.
       const placedAtIso = new Date().toISOString();
-      const storeId =
-        input.storeId ??
-        (input.store && typeof input.store.id === "string" ? input.store.id : undefined);
+      const storeId = resolvedStoreId;
       const address = input.deliveryAddress ?? input.address;
       // An API caller may omit the display snapshot (the app's own cash path
       // sends one). Derive it from the same store doc that supplied the pricing
@@ -466,7 +505,7 @@ export async function createCashOrder(
         ...(address ? { deliveryAddress: address } : {}),
         ...(input.customerName ? { customerName: input.customerName } : {}),
         ...(input.customerPhone ? { customerPhone: input.customerPhone } : {}),
-        items: lines,
+        items: customerLines,
         ...(input.promo !== undefined && input.promo !== null ? { promo: input.promo } : {}),
         tipAmount: input.tipAmount ?? 0,
         loyaltyPointsRedeemed: 0,
@@ -490,8 +529,8 @@ export async function createCashOrder(
         cashOnDelivery: {
           maxOrderValuePaise: config.cashOnDelivery?.maxOrderValuePaise ?? null,
         },
-        pricing: totals,
-        totals,
+        pricing: customerTotals,
+        totals: customerTotals,
         // Flat mirrors the Partner lists/reports read without normalising.
         subtotal: totals.foodSubtotal,
         tax: totals.gst,

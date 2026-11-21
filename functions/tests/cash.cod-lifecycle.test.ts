@@ -121,6 +121,156 @@ beforeEach(() => {
   seed();
 });
 
+/**
+ * F8 — the Customer app reads an Order/CartLine/CartTotals. Pin every field it
+ * reads, not just the grand total: a rename such as `foodSubtotal` → `subtotal`
+ * or `price` → `unitPrice` must fail here even when the payable amount is right.
+ */
+const CUSTOMER_ORDER_FIELDS = [
+  "id",
+  "orderId",
+  "shortCode",
+  "branchId",
+  "storeId",
+  "store",
+  "orderType",
+  "fulfillment",
+  "fulfillmentType",
+  "status",
+  "paymentMethod",
+  "paymentStatus",
+  "payment",
+  "paymentChannel",
+  "cashDuePaise",
+  "placedAt",
+  "createdAt",
+  "updatedAt",
+  "items",
+  "totals",
+  "pricing",
+  "tipAmount",
+  "loyaltyPointsRedeemed",
+  "whatsappOptIn",
+  "cashRequestHash",
+  "cashReceipt",
+  "cashOnDelivery",
+  // Flat mirrors the partner lists read; keep them while adding canonical ones.
+  "subtotal",
+  "tax",
+  "deliveryFee",
+  "total",
+];
+
+const CUSTOMER_ITEM_FIELDS = [
+  "lineId",
+  "id",
+  "productId",
+  "storeId",
+  "name",
+  "unitPrice",
+  "price",
+  "quantity",
+  "modifiers",
+  "availability",
+];
+
+const CUSTOMER_TOTALS_FIELDS = [
+  "subtotal",
+  "itemDiscount",
+  "promoDiscount",
+  "taxes",
+  "cgst",
+  "sgst",
+  "gstRate",
+  "deliveryFee",
+  "packingFee",
+  "grandTotal",
+  "currency",
+  // Cash/backend breakdown stays for the receipt and the Partner cash stream.
+  "foodSubtotal",
+  "packagingFee",
+  "gst",
+  "discount",
+  "loyaltyDiscount",
+  "split",
+];
+
+function expectOwnFields(label: string, object: unknown, fields: readonly string[]): void {
+  for (const field of fields) {
+    expect(
+      Object.prototype.hasOwnProperty.call(object, field),
+      `${label} is missing Customer-read field "${field}"`,
+    ).toBe(true);
+    expect((object as Record<string, unknown>)[field], `${label}.${field} is undefined`).not.toBe(
+      undefined,
+    );
+  }
+}
+
+function expectFullCustomerCashShape(
+  doc: any,
+  expected: {
+    deliveryFee: number;
+    promoDiscount: number;
+    taxes: number;
+    grandTotal: number;
+  },
+): void {
+  expectOwnFields("order", doc, CUSTOMER_ORDER_FIELDS);
+  expectOwnFields("order.totals", doc.totals, CUSTOMER_TOTALS_FIELDS);
+  expect(Array.isArray(doc.items)).toBe(true);
+  expect(doc.items).toHaveLength(1);
+  expectOwnFields("order.items[0]", doc.items[0], CUSTOMER_ITEM_FIELDS);
+
+  expect(doc.items[0]).toMatchObject({
+    lineId: expect.any(String),
+    id: "p1",
+    productId: "p1",
+    storeId: "s1",
+    name: "Paneer Makhani Burger",
+    unitPrice: 100,
+    price: 100,
+    quantity: 1,
+    availability: "available",
+  });
+  // The Customer UI adds `Σ unitPrice × quantity` itself. It must equal the
+  // server's food subtotal, or the item list and the bill disagree.
+  expect(
+    doc.items.reduce(
+      (sum: number, item: any) => sum + item.unitPrice * item.quantity,
+      0,
+    ),
+  ).toBe(doc.totals.subtotal);
+
+  expect(doc.totals).toMatchObject({
+    subtotal: 100,
+    itemDiscount: 0,
+    promoDiscount: expected.promoDiscount,
+    taxes: expected.taxes,
+    gstRate: 0.05,
+    deliveryFee: expected.deliveryFee,
+    packingFee: 15,
+    grandTotal: expected.grandTotal,
+    currency: "INR",
+    foodSubtotal: 100,
+    packagingFee: 15,
+    gst: expected.taxes,
+    discount: expected.promoDiscount,
+    loyaltyDiscount: 0,
+    split: { totalAmountPaise: Math.round(expected.grandTotal * 100) },
+  });
+  // Customer's price summary is subtotal - discounts + packing + delivery.
+  // GST is inclusive (informational only), so it must not be added again.
+  expect(
+    doc.totals.subtotal -
+      doc.totals.itemDiscount -
+      doc.totals.promoDiscount +
+      doc.totals.packingFee +
+      doc.totals.deliveryFee,
+  ).toBeCloseTo(doc.totals.grandTotal, 2);
+  expect(doc.totals.cgst + doc.totals.sgst).toBeCloseTo(doc.totals.taxes, 2);
+}
+
 describe("COD order creation — the server owns the money", () => {
   it("creates the order with catalog prices and the server cash marker", async () => {
     const receipt = await createCashOrder(CUSTOMER, baseInput());
@@ -267,6 +417,99 @@ describe("customer-readable document shape for server-created cash orders", () =
       city: "Surat",
     });
     expect(typeof doc.placedAt).toBe("string");
+  });
+});
+
+describe("F8 — full Customer-read field parity for server-created cash orders", () => {
+  const STORE_SNAPSHOT = {
+    id: "s1",
+    name: "Surat Adajan",
+    address: "1 Main Road",
+    area: "Adajan",
+    city: "Surat",
+    phone: "+919876543210",
+    partnerBranchId: "branch_a",
+  };
+
+  it("writes every Customer-read field for a walk-in counter order", async () => {
+    await createCashOrder(CUSTOMER, baseInput({ store: STORE_SNAPSHOT }));
+    const doc = h.docs.get(`orders/${ORDER}`);
+    expectFullCustomerCashShape(doc, {
+      deliveryFee: 0,
+      promoDiscount: 0,
+      taxes: 4.76,
+      grandTotal: 115,
+    });
+    expect(doc.store).toMatchObject({ id: "s1", name: "Surat Adajan" });
+    expect(typeof doc.placedAt).toBe("string");
+  });
+
+  it("writes every Customer-read field for a COD delivery order", async () => {
+    h.docs.set("delivery_fee_quotes/dfq_cash_1", {
+      uid: CUSTOMER,
+      branchId: "branch_a",
+      dropLat: 21.2,
+      dropLng: 72.8,
+      fee: 50,
+      expiresAt: Date.now() + 600_000,
+      usedByOrderId: null,
+    });
+    const address = { lat: 21.2, lng: 72.8, city: "Surat", line1: "1 Main Road" };
+    await createCashOrder(
+      CUSTOMER,
+      baseInput({
+        store: STORE_SNAPSHOT,
+        orderType: "delivery",
+        address,
+        deliveryAddress: address,
+        deliveryQuoteId: "dfq_cash_1",
+        expectedTotalPaise: 16500,
+      }),
+    );
+    const doc = h.docs.get(`orders/${ORDER}`);
+    expectFullCustomerCashShape(doc, {
+      deliveryFee: 50,
+      promoDiscount: 0,
+      taxes: 4.76,
+      grandTotal: 165,
+    });
+    expect(doc.address).toMatchObject(address);
+    expect(doc.deliveryAddress).toMatchObject(address);
+    expect(doc.deliveryQuoteId).toBe("dfq_cash_1");
+  });
+
+  it("maps a server coupon discount to the Customer promoDiscount field", async () => {
+    h.docs.set("coupons/SAVE10", {
+      code: "SAVE10",
+      active: true,
+      discountType: "flat",
+      value: 10,
+      maxDiscount: null,
+      minOrder: 0,
+      validFromMs: null,
+      validToMs: null,
+      perCustomerLimit: null,
+      totalCap: null,
+      branchScope: "all",
+      customerScope: null,
+    });
+    await createCashOrder(
+      CUSTOMER,
+      baseInput({
+        store: STORE_SNAPSHOT,
+        couponCode: "SAVE10",
+        promo: { code: "SAVE10", discount: 10 },
+        expectedTotalPaise: 10500,
+      }),
+    );
+    const doc = h.docs.get(`orders/${ORDER}`);
+    expectFullCustomerCashShape(doc, {
+      deliveryFee: 0,
+      promoDiscount: 10,
+      taxes: 4.29,
+      grandTotal: 105,
+    });
+    expect(doc.promo).toMatchObject({ code: "SAVE10", discount: 10 });
   });
 });
 
