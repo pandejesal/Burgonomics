@@ -257,12 +257,14 @@ export async function createCashOrder(
       // agree with it — a caller cannot point a store's order at another
       // outlet's packaging, COD switch or cash ceiling.
       let branchId = input.branchId ?? null;
+      let storeData: Record<string, any> | null = null;
       if (input.storeId) {
         const storeSnap = await tx.get(db.collection("stores").doc(input.storeId));
         if (!storeSnap.exists) {
           throw new CashOrderError(409, "STORE_NOT_LINKED", "This outlet isn't taking orders yet.");
         }
-        const linked = (storeSnap.data() || {}).partnerBranchId;
+        storeData = (storeSnap.data() || {}) as Record<string, any>;
+        const linked = storeData.partnerBranchId;
         if (typeof linked !== "string" || !linked) {
           throw new CashOrderError(409, "STORE_NOT_LINKED", "This outlet isn't taking orders yet.");
         }
@@ -415,15 +417,42 @@ export async function createCashOrder(
         status: placed,
       };
       const timestamp = admin.firestore.FieldValue.serverTimestamp();
+      // The customer service keys its history map on the body `id` and
+      // quarantines docs without an ISO `placedAt` string. The paid path writes
+      // both at create; cash must have the same customer-readable shape or a
+      // valid order is invisible in Orders and Track.
+      const placedAtIso = new Date().toISOString();
       const storeId =
         input.storeId ??
         (input.store && typeof input.store.id === "string" ? input.store.id : undefined);
       const address = input.deliveryAddress ?? input.address;
+      // An API caller may omit the display snapshot (the app's own cash path
+      // sends one). Derive it from the same store doc that supplied the pricing
+      // branch, so the confirmation screen has a real outlet to render.
+      const storeSnapshot: Record<string, unknown> | undefined = input.store
+        ? input.store
+        : storeData && storeId
+          ? {
+              id: storeId,
+              ...(typeof storeData.name === "string" ? { name: storeData.name } : {}),
+              ...(typeof storeData.address === "string" ? { address: storeData.address } : {}),
+              ...(typeof storeData.area === "string" ? { area: storeData.area } : {}),
+              ...(typeof storeData.city === "string" ? { city: storeData.city } : {}),
+              ...(typeof storeData.phone === "string" ? { phone: storeData.phone } : {}),
+              ...(typeof storeData.lat === "number" ? { lat: storeData.lat } : {}),
+              ...(typeof storeData.lng === "number" ? { lng: storeData.lng } : {}),
+              partnerBranchId: branchId,
+            }
+          : undefined;
 
       tx.create(orderRef, {
         // Ownership — both fields, exactly as the customer create rule requires.
         customerId: actorUid,
         userId: actorUid,
+        // Identity mirrors the paid path: Firestore ref id in the BODY, so the
+        // customer list/track can key it without guessing from the ref.
+        id: input.orderId,
+        orderId: input.orderId,
         branchId,
         ...(storeId ? { storeId } : {}),
         shortCode: `BG-${input.orderId.slice(-6).toUpperCase()}`,
@@ -432,7 +461,7 @@ export async function createCashOrder(
         fulfillment: input.orderType,
         fulfillmentType: input.orderType,
         // Display snapshots (never money).
-        ...(input.store ? { store: input.store } : {}),
+        ...(storeSnapshot ? { store: storeSnapshot } : {}),
         ...(address ? { address } : {}),
         ...(address ? { deliveryAddress: address } : {}),
         ...(input.customerName ? { customerName: input.customerName } : {}),
@@ -472,7 +501,7 @@ export async function createCashOrder(
         cashReceipt: receipt,
         createdAt: timestamp,
         updatedAt: timestamp,
-        placedAt: timestamp,
+        placedAt: placedAtIso,
       });
 
       return receipt;

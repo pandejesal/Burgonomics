@@ -214,6 +214,62 @@ describe("COD order creation — the server owns the money", () => {
   });
 });
 
+describe("customer-readable document shape for server-created cash orders", () => {
+  const STORE_SNAPSHOT = {
+    partnerBranchId: "branch_a",
+    name: "Surat Adajan",
+    address: "1 Main Road",
+    area: "Adajan",
+    city: "Surat",
+    phone: "+919876543210",
+    lat: 21.2,
+    lng: 72.8,
+  };
+
+  it("writes the body id, store snapshot and ISO placedAt the customer service reads", async () => {
+    h.docs.set("stores/s1", { ...STORE_SNAPSHOT });
+    const snapshot = { id: "s1", name: "Surat Adajan", address: "1 Main Road" };
+    await createCashOrder(CUSTOMER, baseInput({ store: snapshot }));
+
+    const doc = h.docs.get(`orders/${ORDER}`);
+    expect(doc).toMatchObject({
+      // The Firestore ref id is the customer app's key. Without this body field
+      // listOrders quarantines the doc and tracking says "Order not found".
+      id: ORDER,
+      shortCode: `BG-${ORDER.slice(-6).toUpperCase()}`,
+      store: snapshot,
+      customerId: CUSTOMER,
+      userId: CUSTOMER,
+      branchId: "branch_a",
+      fulfillment: "takeaway",
+      status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
+      payment: { method: "cod", label: "Pay at Store", status: "pending" },
+      items: [expect.objectContaining({ productId: "p1", price: 100, quantity: 1 })],
+      totals: expect.objectContaining({ grandTotal: 115 }),
+    });
+    // A Firestore serverTimestamp becomes a Timestamp object on read; the
+    // customer history filter only accepts an ISO string. The paid path writes
+    // a string, and cash must have the same customer-readable shape.
+    expect(typeof doc.placedAt).toBe("string");
+    expect(Number.isNaN(Date.parse(doc.placedAt))).toBe(false);
+  });
+
+  it("writes a store snapshot and body id when an API caller omits the display store", async () => {
+    h.docs.set("stores/s1", { ...STORE_SNAPSHOT });
+    await createCashOrder(CUSTOMER, baseInput());
+
+    const doc = h.docs.get(`orders/${ORDER}`);
+    expect(doc.id).toBe(ORDER);
+    expect(doc.store).toMatchObject({
+      id: "s1",
+      name: "Surat Adajan",
+      address: "1 Main Road",
+      city: "Surat",
+    });
+    expect(typeof doc.placedAt).toBe("string");
+  });
+});
+
 describe("per-branch COD switch and ceiling", () => {
   it("refuses when the branch has switched COD off", async () => {
     seed({ cashOnDelivery: { enabled: false } });
