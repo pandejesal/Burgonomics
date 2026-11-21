@@ -87,6 +87,7 @@ export type CouponReason =
   | "COUPON_PER_CUSTOMER_LIMIT"
   | "COUPON_SIGN_IN_REQUIRED"
   | "COUPON_EXHAUSTED"
+  | "COUPON_NO_DISCOUNT"
   | "COUPON_USAGE_UNAVAILABLE";
 
 export interface CouponEvaluation {
@@ -109,6 +110,8 @@ export const COUPON_MESSAGES: Record<CouponReason, string> = {
   COUPON_PER_CUSTOMER_LIMIT: "You have already used this coupon.",
   COUPON_SIGN_IN_REQUIRED: "Sign in to use this coupon — it is limited per customer.",
   COUPON_EXHAUSTED: "This coupon has been fully redeemed.",
+  COUPON_NO_DISCOUNT:
+    "This coupon doesn't take anything off this order, so it can't be applied.",
   COUPON_USAGE_UNAVAILABLE:
     "We couldn't check this coupon just now — please try again in a moment.",
 };
@@ -137,6 +140,7 @@ export const COUPON_REFUSAL_CODES = new Set<string>([
   "COUPON_PER_CUSTOMER_LIMIT",
   "COUPON_SIGN_IN_REQUIRED",
   "COUPON_EXHAUSTED",
+  "COUPON_NO_DISCOUNT",
   "COUPON_USAGE_UNAVAILABLE",
   "COUPON_ORDER_CONFLICT",
   "COUPON_PRICE_CHANGED",
@@ -201,7 +205,22 @@ function toEpochMs(value: any): number | null {
   return null;
 }
 
+/**
+ * A stored counter read as a whole number, or null for "no limit".
+ *
+ * F1 (staging 2026-11-21): `createCoupon` writes an EXPLICIT `maxDiscount: null`
+ * for a flat coupon and for a percent coupon created without a cap, and this
+ * helper used to run it through `Number()` — `Number(null)` is 0, finite and
+ * non-negative, so "no cap" was stored as a cap of ZERO and every discount was
+ * clamped to nothing while still answering "Coupon applied.". An ABSENT field
+ * behaved correctly (`Number(undefined)` is NaN), which is exactly why the bug
+ * was easy to miss.
+ *
+ * An explicit null, an empty string or any other absent marker therefore means
+ * "no limit", never "zero of something".
+ */
 function positiveIntOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
   const n = finiteNumber(value);
   if (n === null || n < 0) return null;
   return Math.floor(n);
@@ -370,6 +389,15 @@ export function evaluateCoupon(
   const capped =
     coupon.maxDiscount !== null ? Math.min(raw, coupon.maxDiscount) : raw;
   const discount = Math.max(0, Math.min(capped, subtotal));
+
+  // F1 (staging 2026-11-21): "Coupon applied." may only be said when money
+  // actually comes off. A coupon that would take ₹0 (a corrupt document, a
+  // percentage that rounds to nothing on a small bill, or a cap of 0) is
+  // REFUSED with its own reason, so the customer is never told a discount
+  // applied while paying full price.
+  if (discount <= 0) {
+    return fail("COUPON_NO_DISCOUNT");
+  }
 
   return {
     eligible: true,

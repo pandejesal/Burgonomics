@@ -9,6 +9,7 @@ import {
   resolvePickupCoordinates,
 } from "../../core/utils/pickupCoords";
 import { resolveBranchId } from "./branchResolver";
+import { assertOutletOpenForOnlineOrders } from "./outletStatus";
 import { computePackagingFee, defaultCashOnDeliveryConfig, resolveBranchPricingConfig } from "./branchPricing";
 import { DELIVERY_FEE_QUOTES } from "./deliveryQuotes";
 
@@ -86,6 +87,13 @@ export async function resolveCheckoutFees(
     branchId: input.branchId,
     storeId: input.storeId,
   });
+  // F2 (staging 2026-11-21, Test 9): a staff "close" is not a shop window. The
+  // server answered serviceable:true with a live COD offer for a closed outlet,
+  // so a customer who reached checkout by a deep link or a restored cart could
+  // still pay. Refuse BEFORE quoting anything — a fee for a closed outlet is a
+  // price nobody can accept. `storeId` is the document the customer storefront
+  // reads; the branch is only the fallback when a caller names no store.
+  await assertOutletOpenForOnlineOrders({ storeId: input.storeId, branchId });
   const config = await resolveBranchPricingConfig(branchId);
   const cashOnDelivery = config.cashOnDelivery ?? defaultCashOnDeliveryConfig();
   // P2: the SAME helper the pricing engine uses. Dine-in is 0 inside it, so
