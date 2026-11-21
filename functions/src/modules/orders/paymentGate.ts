@@ -216,9 +216,16 @@ export function assertKitchenAdmissionPaid(order: any): void {
 
 /**
  * True only for the abandoned state the expiry worker may cancel: an online
- * customer order still PLACED with a pending payment, no capture marker, no
- * recorded capture and no paid status. Re-evaluated INSIDE the cancel
+ * customer order still PLACED whose payment never completed, with no capture
+ * marker, no recorded capture and no paid status. Re-evaluated INSIDE the cancel
  * transaction so a capture landing in the same moment wins.
+ *
+ * F3 (staging 2026-11-21, Test 3): `failed` counts as abandoned alongside
+ * `pending`. A DECLINED online payment left the order PLACED for ever — nothing
+ * cancelled it, so it collected in the order list as a permanent orphan. The
+ * money question is unchanged: a failed payment moved nothing, and any
+ * authorization or capture still makes the order unsafe to expire
+ * (`isUnsafeToExpire`).
  */
 export function isAbandonedUnpaidOnlineOrder(order: any): boolean {
   if (!isOnlineCustomerOrder(order)) return false;
@@ -226,10 +233,19 @@ export function isAbandonedUnpaidOnlineOrder(order: any): boolean {
   if (hasCapturedPayment(order)) return false;
   // P1-C: a live verify marker or an authorization means money may be moving.
   if (isUnsafeToExpire(order)) return false;
-  const nestedStatus = String(order?.payment?.status ?? "").toLowerCase();
-  if (nestedStatus !== "pending") return false;
+  if (!isUnpaidTerminalStatus(order?.payment?.status)) return false;
   const topStatus = String(order?.paymentStatus ?? "").toLowerCase();
-  if (topStatus && topStatus !== "pending") return false;
+  if (topStatus && !isUnpaidTerminalStatus(topStatus)) return false;
   const code = String(order?.status?.code ?? "").toUpperCase();
   return code === "PLACED" || code === "PENDING";
+}
+
+/**
+ * The payment states that mean "this attempt is over and nothing was taken":
+ * `pending` (never started/completed) and `failed` (declined by the gateway).
+ * An empty/absent status is NOT on this list — it fails closed as "unknown".
+ */
+function isUnpaidTerminalStatus(raw: unknown): boolean {
+  const value = String(raw ?? "").trim().toLowerCase();
+  return value === "pending" || value === "failed";
 }

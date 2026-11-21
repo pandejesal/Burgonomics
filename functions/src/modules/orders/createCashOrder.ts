@@ -15,6 +15,10 @@ import {
   type PricingLineItem,
   type SnapshotProduct,
 } from "../payments/pricing.engine";
+import {
+  STORE_CLOSED,
+  assertOutletOpenForOnlineOrders,
+} from "../payments/outletStatus";
 import { DELIVERY_FEE_QUOTES, assertDeliveryQuoteBindable } from "../payments/deliveryQuotes";
 
 /**
@@ -212,6 +216,19 @@ export async function createCashOrder(
   const input = parsed.data;
   const requestHash = requestHashOf(input);
   const orderRef = db.collection("orders").doc(input.orderId);
+
+  // F2 (staging 2026-11-21, Test 9): a closed outlet must not take new cash
+  // orders either — the server created the order and told the kitchen about it
+  // while `stores/{id}.isOpen` was false. Refused BEFORE the transaction, so
+  // nothing is written and no KOT is dispatched.
+  try {
+    await assertOutletOpenForOnlineOrders({ storeId: input.storeId, branchId: input.branchId });
+  } catch (err: any) {
+    if (err?.code === STORE_CLOSED) {
+      throw new CashOrderError(409, STORE_CLOSED, err.message);
+    }
+    throw err;
+  }
 
   try {
     return await db.runTransaction(async (tx) => {

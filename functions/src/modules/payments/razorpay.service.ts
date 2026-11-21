@@ -36,6 +36,7 @@ import {
 } from "./captureFulfillment";
 import { PAYMENT_INTENT_TTL_MS } from "./lifetimes";
 import { resolveBranchId } from "./branchResolver";
+import { assertOutletOpenForOnlineOrders } from "./outletStatus";
 import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } from "./monthlyFee";
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
@@ -1337,6 +1338,16 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   // and the Route transfer target, so a request branch must never move money.
   // The doc's branch wins; its store mapping is the only fallback.
   const branchId = await resolveOrderBranchForPayment(orderData);
+  // F2 (staging 2026-11-21, Test 9): a closed outlet must not mint a payable
+  // gateway order. Checked BEFORE the idempotency lookup and before ANY mint —
+  // a reused intent is a live payable order too, so the refusal has to cover
+  // the retry path as well. The order doc names the storefront the customer
+  // read; `branchId` is only the fallback when the doc carries no store.
+  const docStoreId =
+    (typeof orderData.storeId === "string" && orderData.storeId.trim()) ||
+    (typeof orderData.store?.id === "string" && orderData.store.id.trim()) ||
+    "";
+  await assertOutletOpenForOnlineOrders({ storeId: docStoreId, branchId });
   const orderType = orderDocType(orderData, params.orderType) as
     | "delivery"
     | "takeaway"
