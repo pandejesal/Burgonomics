@@ -127,35 +127,32 @@ describe("resolveTicket (real money paths)", () => {
     expect(savedDocs["support_tickets/tk_cod"].status).toBeUndefined();
   });
 
-  it("applies loyalty credit exactly once to the customer's REAL balance, with a ledger row", async () => {
+  it("refuses a loyalty credit: the programme is retired (owner decision 2026-11-20)", async () => {
+    // CHANGED FOR THE LOYALTY RETIREMENT (owner decision 2026-11-20: "Loyalty
+    // no: hide coins, tiers and points everywhere"). This case used to assert a
+    // successful credit into customers.loyaltyPoints with a ledger row. Nothing
+    // in the launch renders or spends that balance, so minting it is a dead
+    // write; the resolution is now refused BEFORE the claim lease, exactly like
+    // the other refusals below, and it writes nothing.
     savedDocs["support_tickets/tk_loyal"] = {
       ticketNumber: "TICK-2026-0004",
       customerId: "cust_9",
     };
-    // The wallet lives on customers/{uid}.loyaltyPoints (redeem gate +
-    // staff adjustments + redemption debits all read it) — the old code
-    // credited users/{uid}, which nothing reads.
     savedDocs["customers/cust_9"] = { loyaltyPoints: 50 };
-    const res = await resolveTicket({
-      ...BASE,
-      ticketId: "tk_loyal",
-      action: "loyalty_credit",
-      amount: 100,
-    });
-    expect(res.success).toBe(true);
-    expect(savedDocs["support_tickets/tk_loyal"].status).toBe("resolved");
-    expect(savedDocs["customers/cust_9"].loyaltyPoints).toBe(150);
-    // Audit trail: one coin_transactions ledger row per credit.
-    const ledger = savedDocs["coin_transactions/coin_ticket_credit_tk_loyal"];
-    expect(ledger).toMatchObject({
-      customerId: "cust_9",
-      delta: 100,
-      balanceAfter: 150,
-      type: "ticket_credit",
-      ticketId: "tk_loyal",
-    });
-    // Never the wrong collection again.
-    expect(savedDocs["users/cust_9"]).toBeUndefined();
+    await expect(
+      resolveTicket({
+        ...BASE,
+        ticketId: "tk_loyal",
+        action: "loyalty_credit",
+        amount: 100,
+      })
+    ).rejects.toMatchObject({ code: "LOYALTY_RETIRED" });
+    expect(savedDocs["support_tickets/tk_loyal"].status).toBeUndefined();
+    // The historical balance is untouched, and nothing new is minted.
+    expect(savedDocs["customers/cust_9"].loyaltyPoints).toBe(50);
+    expect(
+      Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/"))
+    ).toEqual([]);
   });
 
   it("refuses loyalty credit when the customer profile doc is missing (no void credit)", async () => {
@@ -165,7 +162,7 @@ describe("resolveTicket (real money paths)", () => {
     };
     await expect(
       resolveTicket({ ...BASE, ticketId: "tk_loyal_missing", action: "loyalty_credit", amount: 100 })
-    ).rejects.toThrow(/not found/);
+    ).rejects.toMatchObject({ code: "LOYALTY_RETIRED" });
     expect(savedDocs["support_tickets/tk_loyal_missing"].status).toBeUndefined();
     expect(
       Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/"))
@@ -179,7 +176,7 @@ describe("resolveTicket (real money paths)", () => {
     };
     await expect(
       resolveTicket({ ...BASE, ticketId: "tk_loyal_big", action: "loyalty_credit", amount: 100000 })
-    ).rejects.toThrow(/between 1 and 5000/);
+    ).rejects.toMatchObject({ code: "LOYALTY_RETIRED" });
     expect(savedDocs["support_tickets/tk_loyal_big"].status).toBeUndefined();
   });
 
@@ -190,7 +187,7 @@ describe("resolveTicket (real money paths)", () => {
     };
     await expect(
       resolveTicket({ ...BASE, ticketId: "tk_loyal_neg", action: "loyalty_credit", amount: -50 })
-    ).rejects.toThrow(/between 1 and 5000/);
+    ).rejects.toMatchObject({ code: "LOYALTY_RETIRED" });
     expect(savedDocs["support_tickets/tk_loyal_neg"].status).toBeUndefined();
   });
 
@@ -200,7 +197,7 @@ describe("resolveTicket (real money paths)", () => {
     };
     await expect(
       resolveTicket({ ...BASE, ticketId: "tk_loyal_guest", action: "loyalty_credit", amount: 100 })
-    ).rejects.toThrow(/no customer profile/);
+    ).rejects.toMatchObject({ code: "LOYALTY_RETIRED" });
     expect(savedDocs["support_tickets/tk_loyal_guest"].status).toBeUndefined();
   });
 
@@ -211,7 +208,7 @@ describe("resolveTicket (real money paths)", () => {
     };
     await expect(
       resolveTicket({ ...BASE, ticketId: "tk_loyal_noamt", action: "loyalty_credit" })
-    ).rejects.toThrow(/no coin amount/);
+    ).rejects.toMatchObject({ code: "LOYALTY_RETIRED" });
     expect(savedDocs["support_tickets/tk_loyal_noamt"].status).toBeUndefined();
   });
 

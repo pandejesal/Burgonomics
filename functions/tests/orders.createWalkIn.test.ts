@@ -94,7 +94,17 @@ describe("walk-in creation", () => {
     state.docs["products/p1"].price = 999;
     const replay = await create();
     expect(replay).toEqual({ ...first, replayed: true });
-    await expect(create({ ...input(), expectedTotalPaise: 999 })).rejects.toMatchObject({ statusCode: 409, code: "IDEMPOTENCY_CONFLICT" });
+    // CHANGED FOR F5 (staging 2026-11-21): this assertion used to require a
+    // 409 IDEMPOTENCY_CONFLICT for the same cart under a different
+    // expectedTotalPaise. That is the bug F5 reports: after a PRICE_CHANGED
+    // refusal the till retries at the server's total under the same request id
+    // and must be recognised as the SAME order, not a new one. The total is a
+    // confirmation, not an identity, so the honest answer here is the receipt
+    // the order was actually booked at. A different CART is still refused
+    // (next assertion, and tests/orders.createWalkIn-f5-replay.test.ts).
+    const sameOrderNewTotal = await create({ ...input(), expectedTotalPaise: 99900 });
+    expect(sameOrderNewTotal).toEqual({ ...first, replayed: true });
+    await expect(create({ ...input(), items: [{ productId: "p1", quantity: 2 }] })).rejects.toMatchObject({ statusCode: 409, code: "IDEMPOTENCY_CONFLICT" });
     expect(orders()).toHaveLength(1);
     state.docs["admins/staff"].branchIds = [];
     await expect(create()).rejects.toMatchObject({ statusCode: 403 });
