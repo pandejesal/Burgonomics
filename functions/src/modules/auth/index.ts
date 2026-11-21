@@ -22,7 +22,6 @@ export type { StaffSuspensionInput } from "./staffSuspension.schema";
 export {
   migrateGuestAccount,
   verifyBonusEligibility,
-  awardWelcomeBonus,
   normalizePhoneIN,
   areAddressesDuplicate,
   mintGuestOwnershipProof,

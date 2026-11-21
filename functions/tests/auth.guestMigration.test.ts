@@ -272,19 +272,22 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       expect(normalizePhoneIN("not-a-phone")).toBeNull();
     });
 
-    it("awards the welcome bonus exactly once under concurrent claims (deterministic create)", async () => {
-      const { awardWelcomeBonus } = await import("../src/modules/auth/guestMigration");
-      // Truly concurrent (not sequential awaits): exactly one claim wins.
-      const [first, second] = await Promise.all([
-        awardWelcomeBonus("usr_race_1", "+91 98250 22222", 50),
-        awardWelcomeBonus("usr_race_1", "9825022222", 50),
-      ]);
-      expect([first, second].sort()).toEqual([0, 50]);
+    it("no longer mints a welcome bonus: the programme is retired", async () => {
+      // CHANGED FOR THE LOYALTY RETIREMENT (owner decision 2026-11-20). This
+      // case used to prove awardWelcomeBonus() minted exactly once under
+      // concurrency. The minter is gone with the programme, so the assertion
+      // is now that the exported surface no longer offers it — a future route
+      // cannot resurrect the mint by importing it.
+      const authModule = await import("../src/modules/auth/guestMigration");
+      expect("awardWelcomeBonus" in authModule).toBe(false);
+      expect(
+        Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/"))
+      ).toEqual([]);
     });
   });
 
   describe("3. Full Atomic Guest Account Migration", () => {
-    it("relins orders, deduplicates addresses, migrates cart, and awards first-time welcome bonus", async () => {
+    it("relins orders, deduplicates addresses, migrates cart, and mints no loyalty bonus", async () => {
       const guestSessionId = "sess_guest_abc_999";
       const permanentUid = "usr_aarav_phone_999";
       const phone = "+91 98250 55555";
@@ -334,8 +337,8 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       expect(migrationResult.migratedOrdersCount).toBe(2);
       expect(migrationResult.migratedAddressesCount).toBe(1); // only 1 unique new address
       expect(migrationResult.cartMigrated).toBe(true);
-      expect(migrationResult.welcomeBonusAwarded).toBe(true);
-      expect(migrationResult.bonusCoins).toBe(50);
+      expect(migrationResult.welcomeBonusAwarded).toBe(false);
+      expect(migrationResult.bonusCoins).toBe(0);
 
       // Verify orders were updated to permanentUid
       expect(savedDocs["orders/ord_guest_1"].customerId).toBe(permanentUid);
@@ -351,16 +354,13 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       expect(updatedUser.addresses.length).toBe(2);
       expect(updatedUser.hasClaimedWelcomeBonus).toBe(true);
 
-      // Readiness-1: the bonus credits the SPENDABLE ledger field
-      // (customers.loyaltyPoints), never the dead users.grillCoins. The
-      // award is DEFERRED until after the relink batch commits (finding:
-      // ledger-before-batch loss), so it lands outside batchSets now.
-      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
-      // Exactly one deterministic ledger row, alongside the balance. No
-      // OTP-verified caller phone here, so the row is UID-keyed.
+      // Loyalty is RETIRED (owner decision 2026-11-20): no bonus coins are
+      // minted and no ledger row is written. The claim flag is still stamped,
+      // which keeps a future re-enable exactly-once.
+      expect(savedDocs[`customers/${permanentUid}`]).toBeUndefined();
       expect(
-        savedDocs[`coin_transactions/welcome_bonus_uid_${permanentUid}`]
-      ).toMatchObject({ type: "welcome_bonus", amount: 50, customerId: permanentUid });
+        Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/"))
+      ).toEqual([]);
       const deadWrites = batchSets.filter(
         (s: any) =>
           typeof s.ref?.path === "string" &&
@@ -415,27 +415,28 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       savedDocs["orders/ord_batchfail_1"].customerId = "guest";
       delete savedDocs["orders/ord_batchfail_1"].migratedAt;
 
-      // Retry (batch healthy again): relink + FULL bonus, exactly once.
+      // Retry (batch healthy again): relink + no bonus (loyalty retired).
       const retry = await migrateGuestAccount(
         { guestSessionId, permanentUid, guestProof: await proofFor(guestSessionId) },
         { uid: permanentUid }
       );
       expect(retry.success).toBe(true);
       expect(retry.migratedOrdersCount).toBe(1);
-      expect(retry.welcomeBonusAwarded).toBe(true);
-      expect(retry.bonusCoins).toBe(50);
-      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
+      expect(retry.welcomeBonusAwarded).toBe(false);
+      expect(retry.bonusCoins).toBe(0);
+      expect(savedDocs[`customers/${permanentUid}`]).toBeUndefined();
       expect(
-        savedDocs[`coin_transactions/welcome_bonus_uid_${permanentUid}`]
-      ).toMatchObject({ type: "welcome_bonus", amount: 50 });
+        Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/"))
+      ).toEqual([]);
 
-      // A THIRD run (double-submit) grants nothing further.
+      // A THIRD run (double-submit) grants nothing further either.
       const third = await migrateGuestAccount(
         { guestSessionId, permanentUid, guestProof: await proofFor(guestSessionId) },
         { uid: permanentUid }
       );
       expect(third.welcomeBonusAwarded).toBe(false);
-      expect(savedDocs[`customers/${permanentUid}`].loyaltyPoints).toBe(50);
+      expect(third.bonusCoins).toBe(0);
+      expect(savedDocs[`customers/${permanentUid}`]).toBeUndefined();
     });
 
     it("H1 fail-closed: cross-UID relink is BLOCKED and the Admin-SDK lookup is never an authorization", async () => {
@@ -629,7 +630,11 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
       ).rejects.toThrow(/not a valid unguessable token/);
     });
 
-    it("mints the UID-keyed (not phone-keyed) bonus when the caller has no verified phone", async () => {
+    it("mints no bonus for an unverified phone, and never writes the unverified number", async () => {
+      // CHANGED FOR THE LOYALTY RETIREMENT (owner decision 2026-11-20): the
+      // UID-keyed fallback used to prove no phone ledger was burned for an
+      // unverified number. Nothing is minted now, so the assertion that matters
+      // is that the unverified body phone still never lands on the profile.
       const { normalizePhoneIN } = await import("../src/modules/auth/guestMigration");
       expect(normalizePhoneIN("+91 98250 33333")).toBe("+919825033333");
       const result = await migrateGuestAccount(
@@ -641,10 +646,11 @@ describe("Auth Module — Guest Account Migration, Order Relink & Loyalty Fraud 
         },
         { uid: "usr_unverified_ph_1" }
       );
-      expect(result.welcomeBonusAwarded).toBe(true);
-      expect(result.bonusCoins).toBe(50);
-      // No phone-ledger entry burned for an unverified number…
-      expect(savedDocs["coin_transactions/welcome_bonus_phone_919825033333"]).toBeUndefined();
+      expect(result.welcomeBonusAwarded).toBe(false);
+      expect(result.bonusCoins).toBe(0);
+      expect(
+        Object.keys(savedDocs).filter((p) => p.startsWith("coin_transactions/"))
+      ).toEqual([]);
       // …and the unverified number is NOT written to the profile either.
       expect(savedDocs["users/usr_unverified_ph_1"].phone).toBeUndefined();
     });

@@ -3,7 +3,6 @@ import { db } from "../../core/firebase";
 import { captureErrorSnapshot, serviceError } from "../../core/errors";
 import { resolveOrderBranchId } from "../../core/middleware";
 import { autoRefund } from "../payments/razorpay.service";
-import { creditTicketLoyaltyCoins } from "../customers/customerCoins";
 import { ticketTierRank } from "./ticketReminder.scheduler";
 import {
   notifySupportEscalation,
@@ -753,26 +752,18 @@ async function releaseResolutionClaim(
 }
 
 /**
- * Validates a loyalty credit amount and returns it narrowed to `number`.
- * Pure, so it can run both before the lease (fail fast, burn no claim) and at
- * the credit site (where the compiler needs the narrowing back).
+ * Loyalty is retired (owner decision 2026-11-20: "Loyalty no: hide coins, tiers
+ * and points everywhere"). A ticket resolution asking for a coin credit is
+ * refused BEFORE the claim lease, so it can never burn a resolution lease or
+ * mint a balance no screen shows and no checkout can spend. Historical
+ * coin_transactions rows and existing balances are left exactly as they are.
  */
-function assertLoyaltyAmount(amount: number | undefined): number {
-  if (!amount) {
-    throw serviceError(
-      "TICKET_LOYALTY_NO_AMOUNT",
-      "Cannot credit loyalty: no coin amount was specified.",
-      400
-    );
-  }
-  if (!Number.isInteger(amount) || amount <= 0 || amount > 5000) {
-    throw serviceError(
-      "TICKET_LOYALTY_AMOUNT_INVALID",
-      "Loyalty credit must be a whole number of points between 1 and 5000.",
-      400
-    );
-  }
-  return amount;
+function refuseRetiredLoyalty(): never {
+  throw serviceError(
+    "LOYALTY_RETIRED",
+    "Grill Coins are retired. Resolve the ticket with a refund, coupon or explanation instead.",
+    409
+  );
 }
 
 /**
@@ -824,7 +815,7 @@ export async function resolveTicket(input: ResolveTicketInput) {
     );
   }
   if (action === "loyalty_credit") {
-    assertLoyaltyAmount(amount);
+    refuseRetiredLoyalty();
   }
 
   // Atomic resolution lease (race hardening): the pre-read guard above is a
@@ -918,43 +909,10 @@ export async function resolveTicket(input: ResolveTicketInput) {
     );
   }
 
-  // 2. If loyalty credit, update customer profile. Amount is bounded like
-  // staff adjustments (±5000, coin_transactions ledger): an unbounded
-  // increment mints money-equivalent points, a negative one drains them.
-  // Loop 33/120 fail-closed: a loyalty_credit without a customer profile
-  // must REFUSE loudly — the old code skipped the credit yet still resolved
-  // the ticket as credited.
-  if (action === "loyalty_credit") {
-    if (!liveTicket.customerId) {
-      throw serviceError(
-        "TICKET_LOYALTY_NO_CUSTOMER",
-        "Cannot credit loyalty: ticket has no customer profile (guest ticket).",
-        400
-      );
-    }
-    // Loop 33/120 fix (finding: wrong collection / no ledger): the credit
-    // lands on `customers/{uid}.loyaltyPoints` — the balance the redeem
-    // gate, staff adjustments, and redemption debits all read — WITH a
-    // coin_transactions audit row. The old `users/{uid}` write credited a
-    // collection nothing reads and left no ledger trail at all.
-    try {
-      await creditTicketLoyaltyCoins({
-        customerId: liveTicket.customerId,
-        ticketId,
-        ticketNumber: liveTicket.ticketNumber,
-        amount: assertLoyaltyAmount(amount),
-        actorUid: actorId,
-        actorName: resolvedByName,
-      });
-    } catch (err: any) {
-      if (err?.code === "TICKET_LOYALTY_CUSTOMER_MISSING") {
-        // Refuse loudly (Loop 33/120): never resolve a ticket as credited
-        // when the money-equivalent points went nowhere.
-        throw serviceError("TICKET_LOYALTY_CUSTOMER_MISSING", err.message, 404);
-      }
-      throw err;
-    }
-  }
+  // 2. Loyalty is retired (owner decision 2026-11-20), so a ticket resolution
+  // asking for a coin credit was already refused BEFORE the claim lease: no
+  // lease is burned and no money-equivalent points are minted. Nothing to do
+  // here any more — the previous mint block is gone with the programme.
 
   resolution = {
     action,

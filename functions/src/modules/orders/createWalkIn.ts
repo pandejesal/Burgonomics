@@ -1,25 +1,20 @@
 import { createHash } from "node:crypto";
 import * as admin from "firebase-admin";
-import { z } from "zod";
 import { db } from "../../core/firebase";
-import { DEFAULT_MONTHLY_FEE_RUPEES, DEFAULT_PACKAGING_FEE, type BranchPricingConfig } from "../payments/branchPricing";
-import { computeSnapshotPricing, type PricingBreakdown, type PricingLineItem, type SnapshotProduct } from "../payments/pricing.engine";
+import type { PricingBreakdown, PricingLineItem, SnapshotProduct } from "../payments/pricing.engine";
+import {
+  assertWalkInScope,
+  priceWalkInLines,
+  walkInBranchConfig,
+  walkInLineFor,
+} from "./walkInBill";
+import { WalkInError } from "./walkInErrors";
+import { createWalkInSchema, type CreateWalkInRequest } from "./walkInSchema";
 
-const documentId = z.string().trim().min(1).max(128).refine((value) => !value.includes("/") && value !== "." && value !== "..");
-export const createWalkInSchema = z.object({
-  requestId: z.string().trim().min(1).max(128),
-  branchId: documentId,
-  // Delivery parses so that it can be refused explicitly as unsupported.
-  orderType: z.enum(["takeaway", "dinein", "delivery"]),
-  tender: z.enum(["cash", "upi"]),
-  items: z.array(z.object({ productId: documentId, quantity: z.number().int().min(1).max(99) }).strict()).min(1).max(100),
-  expectedTotalPaise: z.number().int().nonnegative().safe(),
-  tableNumber: z.string().trim().min(1).max(64).optional(),
-  notes: z.string().trim().max(1000).optional(),
-  customerName: z.string().trim().max(200).optional(),
-  customerPhone: z.string().trim().max(32).optional(),
-}).strict();
-export type CreateWalkInRequest = z.infer<typeof createWalkInSchema>;
+/** Re-exported so the route wiring and its tests keep one import site. */
+export { createWalkInSchema };
+export type { CreateWalkInRequest };
+
 export interface WalkInReceipt {
   orderId: string;
   replayed: boolean;
@@ -31,21 +26,68 @@ export interface WalkInReceipt {
   branchId: string;
   branchName: string;
 }
-export class WalkInError extends Error {
-  constructor(public readonly statusCode: number, public readonly code: string, message: string, public readonly totals?: PricingBreakdown) {
-    super(message);
-  }
-}
+
+/** Re-exported so `createWalkInRoute` and its tests keep one import site. */
+export { WalkInError };
 
 const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
-const placed: WalkInReceipt["status"] = { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false };
+const placed: WalkInReceipt["status"] = {
+  code: "PLACED",
+  label: "Order placed",
+  kind: "upcoming",
+  terminal: false,
+};
 
-/** Re-checks authoritative role and assignment even on an idempotent replay. */
-function assertScope(data: FirebaseFirestore.DocumentData | undefined, branchId: string): void {
-  const role = data?.role;
-  if (role === "brand_owner" || role === "developer") return;
-  if ((role === "branch_owner" || role === "branch_staff") && Array.isArray(data?.branchIds) && data.branchIds.includes(branchId)) return;
-  throw new WalkInError(403, "FORBIDDEN", "You cannot create an order for this branch.");
+/**
+ * The ORDER identity of a counter request: the cashier's request id, the outlet,
+ * the tender, the cart and the notes. The confirmed total is deliberately NOT
+ * part of it (F5).
+ *
+ * A counter bill is confirmed in two steps: the till posts the total it
+ * previewed, the server re-prices the cart and refuses a stale figure with
+ * PRICE_CHANGED, then the till posts the server's total under the SAME request
+ * id. Hashing the total made the refused body and the accepted body differ, so
+ * a replay of either answered IDEMPOTENCY_CONFLICT instead of the receipt. The
+ * expected total is a CONFIRMATION of the server's price, not a second identity:
+ * one cashier + one request id + one cart is one order, at whatever price the
+ * server sanctioned. A genuinely different cart/outlet/tender still conflicts.
+ */
+export function walkInIdentityHash(input: CreateWalkInRequest): string {
+  // Reconstruct a fixed-key object so JSON property ordering sent by clients is irrelevant.
+  const canonical = {
+    requestId: input.requestId,
+    branchId: input.branchId,
+    orderType: input.orderType,
+    tender: input.tender,
+    items: input.items.map(({ productId, quantity }) => ({ productId, quantity })),
+    tableNumber: input.tableNumber ?? null,
+    notes: input.notes ?? null,
+    customerName: input.customerName ?? null,
+    customerPhone: input.customerPhone ?? null,
+  };
+  return digest(JSON.stringify(canonical));
+}
+
+/**
+ * The pre-F5 hash, expected total included. Kept ONLY so counter orders written
+ * before this fix stay replayable: their stored `walkInRequestHash` is this
+ * value, and comparing it against the identity hash would turn an honest replay
+ * of yesterday's bill into a conflict. New orders never store it.
+ */
+export function walkInLegacyHash(input: CreateWalkInRequest): string {
+  const canonical = {
+    requestId: input.requestId,
+    branchId: input.branchId,
+    orderType: input.orderType,
+    tender: input.tender,
+    items: input.items.map(({ productId, quantity }) => ({ productId, quantity })),
+    expectedTotalPaise: input.expectedTotalPaise,
+    tableNumber: input.tableNumber ?? null,
+    notes: input.notes ?? null,
+    customerName: input.customerName ?? null,
+    customerPhone: input.customerPhone ?? null,
+  };
+  return digest(JSON.stringify(canonical));
 }
 
 /** Creates a pending-payment walk-in and audit receipt atomically. */
@@ -54,65 +96,155 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
   const parsed = createWalkInSchema.safeParse(raw);
   if (!parsed.success) throw new WalkInError(400, "INVALID_INPUT", "Invalid walk-in request.");
   const input = parsed.data;
-  if (input.orderType === "delivery") throw new WalkInError(422, "ORDER_TYPE_UNSUPPORTED", "Delivery is not supported for walk-ins.");
+  if (input.orderType === "delivery") {
+    throw new WalkInError(
+      422,
+      "ORDER_TYPE_UNSUPPORTED",
+      "Delivery is not supported for walk-ins."
+    );
+  }
   const orderType = input.orderType;
-  // Reconstruct a fixed-key object so JSON property ordering sent by clients is irrelevant.
-  const canonical = { requestId: input.requestId, branchId: input.branchId, orderType, tender: input.tender, items: input.items.map(({ productId, quantity }) => ({ productId, quantity })), expectedTotalPaise: input.expectedTotalPaise, tableNumber: input.tableNumber ?? null, notes: input.notes ?? null, customerName: input.customerName ?? null, customerPhone: input.customerPhone ?? null };
-  const requestHash = digest(JSON.stringify(canonical));
+  const requestHash = walkInIdentityHash(input);
+  const legacyHash = walkInLegacyHash(input);
   const orderId = `walkin_${digest(JSON.stringify([actorUid, input.requestId]))}`;
   const orderRef = db.collection("orders").doc(orderId);
   const auditRef = db.collection("admin_audit_logs").doc(orderId);
   try {
     return await db.runTransaction(async (tx) => {
       const adminSnap = await tx.get(db.collection("admins").doc(actorUid));
-      assertScope(adminSnap.exists ? adminSnap.data() : undefined, input.branchId);
+      assertWalkInScope(adminSnap.exists ? adminSnap.data() : undefined, input.branchId, "create");
       const branchSnap = await tx.get(db.collection("branches").doc(input.branchId));
-      if (!branchSnap.exists) throw new WalkInError(503, "BRANCH_UNAVAILABLE", "Branch configuration is unavailable.");
+      if (!branchSnap.exists) {
+        throw new WalkInError(
+          503,
+          "BRANCH_UNAVAILABLE",
+          "Branch configuration is unavailable."
+        );
+      }
       const orderSnap = await tx.get(orderRef);
       if (orderSnap.exists) {
         const existing = orderSnap.data();
-        if (existing?.walkInRequestHash !== requestHash) throw new WalkInError(409, "IDEMPOTENCY_CONFLICT", "Request ID was already used for a different order.");
-        if (!existing?.walkInReceipt) throw new WalkInError(503, "RECEIPT_UNAVAILABLE", "Original receipt is unavailable.");
+        const stored = existing?.walkInRequestHash;
+        // Two accepted hashes because two honest writers exist: the identity
+        // hash (this fix) and the legacy price-included hash for a counter order
+        // booked before it. Anything else is a different order.
+        if (stored !== requestHash && stored !== legacyHash) {
+          throw new WalkInError(
+            409,
+            "IDEMPOTENCY_CONFLICT",
+            "Request ID was already used for a different order."
+          );
+        }
+        if (!existing?.walkInReceipt) {
+          throw new WalkInError(
+            503,
+            "RECEIPT_UNAVAILABLE",
+            "Original receipt is unavailable."
+          );
+        }
         return { ...(existing.walkInReceipt as WalkInReceipt), replayed: true };
       }
       const products = new Map<string, SnapshotProduct>();
       const lines: PricingLineItem[] = [];
       for (const item of input.items) {
         const snapshot = await tx.get(db.collection("products").doc(item.productId));
-        const product = snapshot.data();
-        if (!snapshot.exists || !product || product.branchId !== input.branchId || product.inStock !== true || typeof product.price !== "number" || !Number.isFinite(product.price) || product.price < 0 || product.price > 100000 || typeof product.name !== "string" || !product.name.trim() || product.priceAvailable === false) {
-          throw new WalkInError(503, "ITEM_UNAVAILABLE", "An item is unavailable or cannot be verified.");
-        }
-        if ((product.customizations !== undefined && (!Array.isArray(product.customizations) || product.customizations.length > 0)) || product.priceFromVariation === true) {
-          throw new WalkInError(422, "PRODUCT_UNSUPPORTED", "Configurable products are not supported for walk-ins.");
-        }
-        products.set(item.productId, { price: product.price, inStock: product.inStock });
-        lines.push({ id: item.productId, productId: item.productId, name: product.name, price: product.price, quantity: item.quantity, ...(typeof product.petpoojaItemId === "string" && product.petpoojaItemId.trim() ? { petpoojaItemId: product.petpoojaItemId } : {}) });
+        const { snapshot: product, line } = walkInLineFor(
+          snapshot.data(),
+          snapshot.exists,
+          input.branchId,
+          item.productId,
+          item.quantity
+        );
+        products.set(item.productId, product);
+        lines.push(line);
       }
       const branch = branchSnap.data() ?? {};
-      const branchFee = branch.packagingFee;
-      if (branchFee !== undefined && (typeof branchFee !== "number" || !Number.isFinite(branchFee) || branchFee < 0)) throw new WalkInError(503, "BRANCH_UNAVAILABLE", "Branch pricing is unavailable.");
-      const config: BranchPricingConfig = { packagingFee: branchFee ?? DEFAULT_PACKAGING_FEE, monthlyFeePaise: DEFAULT_MONTHLY_FEE_RUPEES * 100, ...(branchFee !== undefined ? { branchPackagingFee: branchFee } : {}), packaging: branch.packaging ?? null };
-      const { packagingUsedFallback: _fallback, ...totals } = computeSnapshotPricing({ items: lines, products, branchConfig: config, branchId: input.branchId, orderType });
-      if (totals.split.totalAmountPaise !== input.expectedTotalPaise) throw new WalkInError(409, "PRICE_CHANGED", "The order price changed; please reconfirm.", totals);
-      const receipt: WalkInReceipt = { orderId, replayed: false, status: placed, paymentStatus: "pending", totals, settlementAvailable: false, branchId: input.branchId, branchName: "" };
+      const totals = priceWalkInLines({
+        lines,
+        products,
+        branchConfig: walkInBranchConfig(branch, input.branchId),
+        branchId: input.branchId,
+        orderType,
+      });
+      if (totals.split.totalAmountPaise !== input.expectedTotalPaise) {
+        throw new WalkInError(
+          409,
+          "PRICE_CHANGED",
+          "The order price changed; please reconfirm.",
+          totals
+        );
+      }
+      const receipt: WalkInReceipt = {
+        orderId,
+        replayed: false,
+        status: placed,
+        paymentStatus: "pending",
+        totals,
+        settlementAvailable: false,
+        branchId: input.branchId,
+        branchName: "",
+      };
       const timestamp = admin.firestore.FieldValue.serverTimestamp();
       // The REAL outlet identity, read from the branch document that was just
-      // authorised. The Partner modal used to guess it from a two-value
-      // ternary on the branch id, so 15 of 17 outlets recorded counter revenue
-      // under the wrong store name. Never fall back to a guess: an unnamed
-      // branch keeps its id and an empty name, which is visibly wrong instead
-      // of plausibly wrong.
-      const branchName = typeof branch.name === "string" && branch.name.trim() ? branch.name.trim() : "";
-      const city = typeof branch.city === "string" && branch.city.trim() ? branch.city.trim() : "";
+      // authorised. The Partner modal used to guess it from a two-value ternary
+      // on the branch id, so 15 of 17 outlets recorded counter revenue under the
+      // wrong store name. Never fall back to a guess: an unnamed branch keeps
+      // its id and an empty name, which is visibly wrong instead of plausibly
+      // wrong.
+      const branchName =
+        typeof branch.name === "string" && branch.name.trim() ? branch.name.trim() : "";
+      const city =
+        typeof branch.city === "string" && branch.city.trim() ? branch.city.trim() : "";
       const tenderMethod = input.tender === "cash" ? "cod" : "upi";
       receipt.branchName = branchName;
-      tx.create(orderRef, { customerId: "cust_walkin", userId: actorUid, branchId: input.branchId, branchName, city, shortCode: `BG-${orderId.slice(-6).toUpperCase()}`, orderType, fulfillment: orderType, fulfillmentType: orderType, items: lines, status: placed, paymentMethod: tenderMethod, paymentStatus: "pending", payment: { method: tenderMethod, status: "pending" }, pricing: totals, totals, subtotal: totals.foodSubtotal, tax: totals.gst, deliveryFee: totals.deliveryFee, total: totals.grandTotal, ...(input.tableNumber !== undefined ? { tableNumber: input.tableNumber } : {}), ...(input.notes !== undefined ? { notes: input.notes } : {}), ...(input.customerName !== undefined ? { customerName: input.customerName } : {}), ...(input.customerPhone !== undefined ? { customerPhone: input.customerPhone } : {}), walkInRequestHash: requestHash, walkInReceipt: receipt, createdAt: timestamp, updatedAt: timestamp, placedAt: timestamp });
-      tx.create(auditRef, { actorUid, actorEmail: null, action: "walkin_created", targetType: "order", targetId: orderId, metadata: { branchId: input.branchId, tender: input.tender }, createdAt: timestamp });
+      tx.create(orderRef, {
+        customerId: "cust_walkin",
+        userId: actorUid,
+        branchId: input.branchId,
+        branchName,
+        city,
+        shortCode: `BG-${orderId.slice(-6).toUpperCase()}`,
+        orderType,
+        fulfillment: orderType,
+        fulfillmentType: orderType,
+        items: lines,
+        status: placed,
+        paymentMethod: tenderMethod,
+        paymentStatus: "pending",
+        payment: { method: tenderMethod, status: "pending" },
+        pricing: totals,
+        totals,
+        subtotal: totals.foodSubtotal,
+        tax: totals.gst,
+        deliveryFee: totals.deliveryFee,
+        total: totals.grandTotal,
+        ...(input.tableNumber !== undefined ? { tableNumber: input.tableNumber } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        ...(input.customerName !== undefined ? { customerName: input.customerName } : {}),
+        ...(input.customerPhone !== undefined ? { customerPhone: input.customerPhone } : {}),
+        walkInRequestHash: requestHash,
+        walkInReceipt: receipt,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        placedAt: timestamp,
+      });
+      tx.create(auditRef, {
+        actorUid,
+        actorEmail: null,
+        action: "walkin_created",
+        targetType: "order",
+        targetId: orderId,
+        metadata: { branchId: input.branchId, tender: input.tender },
+        createdAt: timestamp,
+      });
       return receipt;
     });
   } catch (error: unknown) {
     if (error instanceof WalkInError) throw error;
-    throw new WalkInError(503, "WALKIN_UNAVAILABLE", "Walk-in creation is temporarily unavailable.");
+    throw new WalkInError(
+      503,
+      "WALKIN_UNAVAILABLE",
+      "Walk-in creation is temporarily unavailable."
+    );
   }
 }

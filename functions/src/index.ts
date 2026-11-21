@@ -129,6 +129,8 @@ import { bumpOrderStatus } from "./modules/orders/orderStatus";
 import { cancelOrderAsCustomer } from "./modules/orders/customerCancel";
 import { createWalkInSchema } from "./modules/orders/createWalkIn";
 import { handleCreateWalkIn } from "./modules/orders/createWalkInRoute";
+import { walkInQuoteSchema } from "./modules/orders/walkInSchema";
+import { handleWalkInQuote } from "./modules/orders/walkInQuoteRoute";
 import { createCashOrderSchema } from "./modules/orders/createCashOrder";
 import { handleCreateCashOrder } from "./modules/orders/createCashOrderRoute";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
@@ -412,6 +414,7 @@ app.use(
     "/dispatch/cancel",
     "/dispatch/cancel/confirm",
     "/orders/createWalkIn",
+    "/orders/walkInQuote",
     "/orders/createCashOrder",
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
@@ -1296,6 +1299,16 @@ app.post(
   handleCreateWalkIn
 );
 
+// F4: the read-only counter bill the till displays and confirms. Same pricing
+// builder as `/orders/createWalkIn` (walkInBill), so the preview cannot disagree
+// with the charge. Writes nothing.
+app.post(
+  "/orders/walkInQuote",
+  requireAuth,
+  validateBody(walkInQuoteSchema),
+  handleWalkInQuote
+);
+
 // COD / pay-at-counter. `requireAuth` ONLY: this is the CUSTOMER lane (a
 // customer placing a cash order), and the service owns ownership, branch
 // resolution, catalog pricing and the branch's COD switch/ceiling. Staff
@@ -1574,6 +1587,7 @@ app.post(
         reference: req.body.reference,
         paidOn: req.body.paidOn,
         note: req.body.note,
+        additionalPayment: req.body.additionalPayment,
         caller: settlementCaller(req.user),
       });
       res.status(200).json(result);

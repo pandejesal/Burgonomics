@@ -421,6 +421,13 @@ export interface MarkSettlementPaidInput {
   reference: string;
   paidOn: string;
   note?: string;
+  /**
+   * N1 (staging 2026-11-21): an already-paid statement refuses a second payment
+   * unless the caller states that this IS an additional payment (a split payout
+   * or a top-up). Two UTRs on one statement is a real accounting event, so it is
+   * allowed — but only when asked for, never by a double tap.
+   */
+  additionalPayment?: boolean;
   caller: CallerShape | null | undefined;
   now?: number;
 }
@@ -511,6 +518,18 @@ export async function markSettlementPaid(
       if (already) {
         return { statement: current, reused: true };
       }
+      // N1: a second, different payment is a separate accounting event. It is
+      // recorded only when the caller says so explicitly. Without that flag a
+      // double tap on "mark as paid" would add a second UTR to a statement that
+      // was already settled, which is what staging saw on two statements.
+      if (payments.length > 0 && input.additionalPayment !== true) {
+        throw new SettlementError(
+          "SETTLEMENT_ALREADY_PAID",
+          `Settlement ${input.statementId} is already marked paid as ${current.paymentReference ?? payments[0]?.reference ?? "unknown"}. Record another payment only if this is an additional payment.`,
+          409
+        );
+      }
+      const isAdditionalPayment = payments.length > 0;
       const record = {
         paidAtMs,
         reference,
@@ -518,19 +537,24 @@ export async function markSettlementPaid(
         recordedByEmail: caller.email ? String(caller.email) : null,
         note: input.note ? String(input.note).trim().slice(0, 500) : null,
       };
+      // The FIRST payment is the one that settles the statement; any further row
+      // is additional history. Overwriting `paymentReference`/`paidAtMs` on a top
+      // up would silently restate when the statement was settled.
+      const settledAtMs = isAdditionalPayment ? current.paidAtMs : paidAtMs;
+      const settledReference = isAdditionalPayment ? current.paymentReference : reference;
       const paid = {
         ...current,
         paidStatus: "paid" as const,
-        paidAtMs,
-        paymentReference: reference,
+        paidAtMs: settledAtMs,
+        paymentReference: settledReference,
         payments: [...payments, record],
       };
       tx.set(
         ref,
         {
           paidStatus: "paid",
-          paidAtMs,
-          paymentReference: reference,
+          paidAtMs: settledAtMs,
+          paymentReference: settledReference,
           // The transaction already read the current list, so writing the full
           // array is the same read-modify-write Firestore's arrayUnion would do,
           // and it keeps the stored history in one canonical order.

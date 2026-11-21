@@ -566,11 +566,16 @@ export const settlementCsvSchema = z.object({
 // "Mark as paid" records evidence only — it moves no money. The reference is
 // the bank UTR / cheque number / cash voucher, and the date is the day the
 // money left the brand's account.
+//
+// N1 (staging 2026-11-21): a statement that is already paid refuses a second
+// payment unless the caller sets `additionalPayment: true`. Without that flag a
+// double tap recorded a second UTR against the same statement.
 export const settlementMarkPaidSchema = z.object({
   statementId: nonEmptyString.max(200),
   reference: nonEmptyString.max(120),
   paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   note: z.string().max(500).optional(),
+  additionalPayment: z.boolean().optional(),
 });
 
 // Franchise lead intake: customerId MUST equal the caller UID (rules bind it

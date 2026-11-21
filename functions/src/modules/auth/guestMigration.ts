@@ -209,41 +209,19 @@ export async function verifyBonusEligibility(
 }
 
 /**
- * Awards the welcome bonus exactly once per phone/UID, even under concurrent
- * migrateGuest calls. The ledger doc has a DETERMINISTIC id and is written
- * with create() (fails if it exists), so two racers serialize: one wins,
- * the other gets ALREADY_EXISTS and grants nothing. Returns coins awarded.
+ * RETIRED (owner decision 2026-11-20: "Loyalty no: hide coins, tiers and
+ * points everywhere").
+ *
+ * This was the deterministic-create welcome-bonus minter. Nothing mints Grill
+ * Coins any more: the balance it credited is not displayed and cannot be spent
+ * at checkout, so granting it is a dead write that keeps a retired feature
+ * alive in the data model. It is deleted rather than left callable, so no
+ * future route can resurrect the mint by accident.
+ *
+ * Historical `coin_transactions` welcome_bonus rows and existing balances are
+ * untouched; `verifyBonusEligibility` still reads them, which is what keeps a
+ * re-enabled programme exactly-once per phone/UID.
  */
-export async function awardWelcomeBonus(
-  permanentUid: string,
-  phone: string | undefined,
-  coins: number
-): Promise<number> {
-  const normalizedPhone = normalizePhoneIN(phone);
-  const txId = normalizedPhone
-    ? `welcome_bonus_phone_${normalizedPhone.replace(/\D/g, "")}`
-    : `welcome_bonus_uid_${permanentUid}`;
-  try {
-    await db.collection("coin_transactions").doc(txId).create({
-      id: txId,
-      customerId: permanentUid,
-      phone: normalizedPhone,
-      amount: coins,
-      type: "welcome_bonus",
-      description: "Welcome Bonus: First Sign-In Grill Coins",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    return coins;
-  } catch (err: any) {
-    // ALREADY_EXISTS (code 6) = another request won the race or a prior
-    // grant exists — not an error, just no award.
-    if (err?.code === 6 || err?.message?.includes("ALREADY_EXISTS")) {
-      console.log(`[Auth] Welcome bonus already granted (${txId}) — skipping duplicate.`);
-      return 0;
-    }
-    throw err;
-  }
-}
 
 /**
  * Migrates guest orders, saved addresses, cart items, and resolves loyalty welcome bonus
@@ -328,8 +306,7 @@ export async function migrateGuestAccount(
   let migratedTicketsCount = 0;
   let migratedAddressesCount = 0;
   let cartMigrated = false;
-  let welcomeBonusAwarded = false;
-  let bonusCoins = 0;
+  // Loyalty is retired (owner decision 2026-11-20): no welcome bonus is minted.
   let skippedProtectedCount = 0;
 
   type Op =
@@ -540,19 +517,19 @@ export async function migrateGuestAccount(
     }
   }
 
-  // 4. LOYALTY & WALLET BONUS INTEGRITY (50 Grill Coins First Order / Welcome Bonus)
-  // Advisory eligibility read first (cheap early-out). THE AWARD ITSELF IS
-  // DEFERRED TO STEP 6.5, AFTER the relink batch commits (finding: welcome-
-  // bonus ledger-before-batch loss): the ledger row used to be create()d
-  // HERE, before the batch — any failure between this create() and the batch
-  // commit stranded a "granted" ledger row with NO balance increment, and
-  // every retry then read "already claimed" and could never recover the lost
-  // coins. The ledger is keyed by the OTP-VERIFIED phone only — an unverified
-  // body phone mints nothing (falls back to the once-per-UID key, still
-  // idempotent).
-  const WELCOME_BONUS_COINS = 50;
-  const eligibility = await verifyBonusEligibility(verifiedPhone ?? undefined, permanentUid);
-  const welcomeBonusEligible = eligibility.eligible;
+  // 4. LOYALTY RETIRED (owner decision 2026-11-20: "Loyalty no: hide coins,
+  // tiers and points everywhere").
+  //
+  // This step used to award a 50-coin welcome bonus into
+  // `customers/{uid}.loyaltyPoints` with a `coin_transactions` ledger row.
+  // Nothing in the launch renders or spends that balance any more, so minting
+  // it is a dead write that keeps a retired feature alive in the data model.
+  // New grants therefore stop here. What remains is the CLAIM FLAG, so the
+  // bonus stays exactly-once-claimed: a later re-enable cannot double-grant an
+  // account that was already awarded, and no historical row is deleted or
+  // zeroed. `welcomeBonusAwarded`/`bonusCoins` keep reporting zero so every
+  // existing caller sees the truth.
+
 
   // 5. UPDATE PERMANENT USER PROFILE (phone = verified only)
   const userUpdates: Record<string, any> = {
@@ -604,85 +581,21 @@ export async function migrateGuestAccount(
     await batch.commit();
   }
 
-  // 6.5. WELCOME-BONUS AWARD — AFTER the relink batch, in ONE transaction.
-  // Ledger row + SPENDABLE balance (customers.loyaltyPoints — the field the
-  // pricing clamp, client display, and debits all read; never the dead
-  // users.grillCoins) + claim flag commit together, so no crash window can
-  // strand a "granted" ledger row without the coins. The deterministic ledger
-  // id keeps the award exactly-once: a race loser or retry reads the row and
-  // grants nothing. A failed migration above throws BEFORE this point, so a
-  // guest whose migration never committed is never burned out of the bonus.
-  if (welcomeBonusEligible) {
-    const normalizedPhone = normalizePhoneIN(verifiedPhone ?? undefined);
-    const txId = normalizedPhone
-      ? `welcome_bonus_phone_${normalizedPhone.replace(/\D/g, "")}`
-      : `welcome_bonus_uid_${permanentUid}`;
-    const ledgerRef = db.collection("coin_transactions").doc(txId);
-    const customerRef = db.collection("customers").doc(permanentUid);
-    const ledgerRow = {
-      id: txId,
-      customerId: permanentUid,
-      phone: normalizedPhone,
-      amount: WELCOME_BONUS_COINS,
-      type: "welcome_bonus",
-      description: "Welcome Bonus: First Sign-In Grill Coins",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-    const balanceAndFlag = () => ({
-      loyaltyPoints: admin.firestore.FieldValue.increment(WELCOME_BONUS_COINS),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    try {
-      if (db && typeof (db as any).runTransaction === "function") {
-        await (db as any).runTransaction(async (tx: any) => {
-          const ledgerSnap = await tx.get(ledgerRef as any);
-          if (ledgerSnap.exists) {
-            return; // already granted (concurrent winner / prior migration)
-          }
-          // Non-merge set AFTER an absence read: Firestore validates the read
-          // set at commit, so a row created between the read and the commit
-          // forces a retry — where the exists check turns this into a no-op.
-          // create()-grade exactly-once, with balance + flag in the same
-          // atomic unit.
-          tx.set(ledgerRef as any, ledgerRow);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          tx.set(customerRef as any, balanceAndFlag() as any, { merge: true });
-          tx.set(
-            permanentUserRef as any,
-            {
-              hasClaimedWelcomeBonus: true,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-        });
-        bonusCoins = WELCOME_BONUS_COINS;
-        welcomeBonusAwarded = true;
-      } else {
-        // Datastore shim without runTransaction: same order, best-effort.
-        await ledgerRef.create(ledgerRow);
-        await customerRef.set(balanceAndFlag(), { merge: true });
-        await permanentUserRef.set(
-          {
-            hasClaimedWelcomeBonus: true,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-        bonusCoins = WELCOME_BONUS_COINS;
-        welcomeBonusAwarded = true;
-      }
-    } catch (err: any) {
-      if (err?.code === 6 || err?.message?.includes("ALREADY_EXISTS")) {
-        // Race loser against a concurrent claim — not an error, no award.
-        console.log(`[Auth] Welcome bonus already granted (${txId}) — skipping duplicate.`);
-        bonusCoins = 0;
-        welcomeBonusAwarded = false;
-      } else {
-        throw err;
-      }
-    }
+  // 6.5. WELCOME-BONUS: RETIRED. The award used to land here, after the relink
+  // batch, as ledger row + balance + claim flag in one transaction. Loyalty is
+  // no longer part of the launch, so nothing is minted. Only the claim flag is
+  // stamped (outside the relink batch, so a failed relink never burns it), which
+  // preserves exactly-once semantics if the programme is ever re-enabled:
+  // verifyBonusEligibility still short-circuits on it.
+  const claimSnap = await permanentUserRef.get();
+  if (!(claimSnap.exists && claimSnap.data()?.hasClaimedWelcomeBonus)) {
+    await permanentUserRef.set(
+      {
+        hasClaimedWelcomeBonus: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
   }
 
   return {
@@ -692,8 +605,11 @@ export async function migrateGuestAccount(
     migratedTicketsCount,
     migratedAddressesCount,
     cartMigrated,
-    welcomeBonusAwarded,
-    bonusCoins,
+    // Loyalty is retired (owner decision 2026-11-20): nothing is minted, so
+    // both counters report zero. The fields stay in the contract so existing
+    // callers and historical evidence keep parsing.
+    welcomeBonusAwarded: false,
+    bonusCoins: 0,
     skippedProtectedCount,
     message: "Guest session successfully migrated to authenticated account.",
   };

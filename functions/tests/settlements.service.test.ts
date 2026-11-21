@@ -404,16 +404,83 @@ describe("markSettlementPaid", () => {
     });
   });
 
-  it("appends a second payment (a split payout) without losing the first", async () => {
+  it("treats an identical reference+date as a replay, not a second payment", async () => {
+    const statement = await makeStatement();
+    const first = await markSettlementPaid({
+      statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: OWNER, now: DEC_10TH,
+    });
+    const again = await markSettlementPaid({
+      statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: BRAND_MGR, now: DEC_10TH,
+    });
+    expect(again.reused).toBe(true);
+    expect(again.statement.payments).toHaveLength(1);
+    expect(again.statement.payments[0].reference).toBe("R1");
+    // One settlement_marked_paid audit row, for the payment that happened once.
+    const markAudits = Object.entries(savedDocs).filter(
+      ([path, data]) =>
+        path.startsWith("admin_audit_logs/") &&
+        (data as any)?.action === "settlement_marked_paid"
+    );
+    expect(markAudits).toHaveLength(1);
+  });
+
+  it("N1: refuses a second payment on an already-paid statement", async () => {
+    // Staging 2026-11-21, Test 10 note N1: pressing "mark as paid" twice
+    // appended a second payments[] row with a different UTR, so one statement
+    // ended up claiming two bank payments. A second payment is a different
+    // accounting event; it must be asked for explicitly (next test).
+    const statement = await makeStatement();
+    const first = await markSettlementPaid({
+      statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: OWNER, now: DEC_10TH,
+    });
+    expect(first.statement.payments).toHaveLength(1);
+    await expect(
+      markSettlementPaid({
+        statementId: statement.id, reference: "R2", paidOn: "2026-12-05", caller: BRAND_MGR, now: DEC_10TH,
+      })
+    ).rejects.toMatchObject({ code: "SETTLEMENT_ALREADY_PAID", statusCode: 409 });
+    // The refusal must not write: no second row, no second mark-paid audit row.
+    expect(savedDocs[`branch_settlements/${statement.id}`].payments).toHaveLength(1);
+    const markAudits = Object.entries(savedDocs).filter(
+      ([path, data]) =>
+        path.startsWith("admin_audit_logs/") &&
+        (data as any)?.action === "settlement_marked_paid"
+    );
+    expect(markAudits).toHaveLength(1);
+  });
+
+  it("N1: records a second payment only when the caller asks for an additional payment", async () => {
     const statement = await makeStatement();
     await markSettlementPaid({
       statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: OWNER, now: DEC_10TH,
     });
     const second = await markSettlementPaid({
-      statementId: statement.id, reference: "R2", paidOn: "2026-12-05", caller: BRAND_MGR, now: DEC_10TH,
+      statementId: statement.id, reference: "R2", paidOn: "2026-12-05",
+      caller: BRAND_MGR, now: DEC_10TH, additionalPayment: true,
     });
+    expect(second.reused).toBe(false);
     expect(second.statement.payments.map((p) => p.reference)).toEqual(["R1", "R2"]);
-    expect(second.statement.paymentReference).toBe("R2");
+    // `paymentReference` stays the FIRST payment: that is the reference the
+    // statement was settled with. The extra row is history, not a restatement.
+    expect(second.statement.paymentReference).toBe("R1");
+    expect(savedDocs[`branch_settlements/${statement.id}`].payments).toHaveLength(2);
+  });
+
+  it("N1: an explicit additional payment still cannot replay itself twice", async () => {
+    const statement = await makeStatement();
+    await markSettlementPaid({
+      statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: OWNER, now: DEC_10TH,
+    });
+    await markSettlementPaid({
+      statementId: statement.id, reference: "R2", paidOn: "2026-12-05",
+      caller: BRAND_MGR, now: DEC_10TH, additionalPayment: true,
+    });
+    const replay = await markSettlementPaid({
+      statementId: statement.id, reference: "R2", paidOn: "2026-12-05",
+      caller: BRAND_MGR, now: DEC_10TH, additionalPayment: true,
+    });
+    expect(replay.reused).toBe(true);
+    expect(replay.statement.payments.map((p) => p.reference)).toEqual(["R1", "R2"]);
   });
 
   it("refuses a branch owner, a staff caller and an empty reference", async () => {
