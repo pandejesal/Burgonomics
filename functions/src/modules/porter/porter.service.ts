@@ -17,6 +17,7 @@ import {
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 import { assertOnlineOrderPaid } from "../orders/paymentGate";
+import { mintCashDeliveryOtp } from "../orders/deliveryOtp";
 export { verifyDeliveryOtp, OTP_MAX_ATTEMPTS, OTP_LOCKOUT_MS, type VerifyDeliveryOtpParams } from "../orders/deliveryHandover.service";
 import {
   dropContactMissingError,
@@ -1759,7 +1760,20 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
       return { needsReconciliation: true as const };
     }
 
-    tx.set(orderDoc.ref, manualWrite, { merge: true });
+    // F6 (integration-truth 2026-11-20, cycle 3): a COD delivery must reach the
+    // door with a hand-over code. The paid lane mints its code at confirmation
+    // from the gateway capture; the cash lane has no capture, so the code is
+    // minted HERE — the moment a rider actually takes the food. `undefined` for
+    // every non-cash lane and for an order already handed over, so this write
+    // can neither invent a code nor reissue a consumed one.
+    const mintedOtp = mintCashDeliveryOtp(d, orderDoc.ref.id);
+
+    tx.set(orderDoc.ref, {
+      ...manualWrite,
+      ...(mintedOtp
+        ? { deliveryOtpHash: mintedOtp.deliveryOtpHash, deliveryOtpVersion: mintedOtp.deliveryOtpVersion }
+        : {}),
+    }, { merge: true });
     return { ok: true as const };
   });
 

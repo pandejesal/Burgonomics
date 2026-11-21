@@ -11,6 +11,7 @@ import {
   isAbandonedUnpaidOnlineOrder,
   isUnsafeToExpire,
 } from "./paymentGate";
+import { mintCashDeliveryOtp } from "./deliveryOtp";
 import { applyCancelSideEffects } from "./cancelSideEffects";
 
 /**
@@ -308,6 +309,22 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
     }
     // P1-G: never promise a delivery nobody is making.
     assertRiderForOutForDelivery(freshOrder, fulfillment, canonical);
+    // F6 (integration-truth 2026-11-20, cycle 3): a COD delivery must reach the
+    // door with a hand-over code, exactly like a paid one. The paid lane mints
+    // its code from the gateway capture; cash has no capture, so the SAME
+    // confirmation write mints it from the server-owned cash marker instead.
+    // Cash takeaway/walk-in and client-typed "cod" docs are returned as
+    // `undefined` by `mintCashDeliveryOtp`, so this can never mint for them.
+    // A pre-fix COD delivery that was confirmed before this change is backfilled
+    // on its next kitchen move, and an existing/consumed code is never replaced.
+    const writePayload: Record<string, any> = { ...payload };
+    if (canonical !== "pending" && canonical !== "cancelled" && canonical !== "delivered") {
+      const mintedOtp = mintCashDeliveryOtp(freshOrder, orderRef.id);
+      if (mintedOtp) {
+        writePayload.deliveryOtpHash = mintedOtp.deliveryOtpHash;
+        writePayload.deliveryOtpVersion = mintedOtp.deliveryOtpVersion;
+      }
+    }
     if (params.onlyIfUnpaid) {
       // P1-C layer 1: the doc was re-read INSIDE this transaction, so this is
       // the freshest truth there is. Refuse on any capture, authorization, or
@@ -328,7 +345,7 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
         );
       }
     }
-    tx.update(orderRef, payload);
+    tx.update(orderRef, writePayload);
   });
 
   // Shadowfax dispatch-ready (docs: "Notify Shadowfax when the shipment is

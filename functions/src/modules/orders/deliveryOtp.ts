@@ -171,6 +171,42 @@ export function deriveDeliveryOtp(canonicalOrderId: string): string {
   return String(1000 + digest.readUInt32BE(0) % 9000);
 }
 
+/**
+ * F6: the COD delivery hand-over proof.
+ *
+ * A paid delivery gets its code from the gateway capture (verify + webhook).
+ * A cash-on-delivery order has NO gateway receipt by design, so the capture
+ * paths can never fire for it and it used to reach the door with no code at
+ * all: the customer's own screen answered LEGACY_OTP_UNAVAILABLE and the
+ * branch could only complete it with a brand-level override, leaving "cash
+ * collected at hand-off" unreachable.
+ *
+ * So the code is minted at the SAME lifecycle point — the moment the order is
+ * confirmed/allowed into the kitchen — from the server-owned proofs this lane
+ * actually has: the `paymentChannel: "cash"` marker (which only
+ * `orders/createCashOrder` writes) and the amount it stamped. Callers still go
+ * through `mintDeliveryOtp`, so an existing code is never replaced and a
+ * consumed one is never reissued.
+ */
+export function mintCashDeliveryOtp(
+  order: OrderRecord,
+  canonicalOrderId: string
+): MintedDeliveryOtp | undefined {
+  if (order.paymentChannel !== "cash") return undefined;
+  const due = order.cashDuePaise;
+  if (typeof due !== "number" || !Number.isSafeInteger(due) || due <= 0) return undefined;
+  // Already handed over: the code was burnt and the cash is in the branch's hand.
+  if (order.cashCollectedAt != null || order.cashCollectedPaise != null) return undefined;
+  const payment = record(order.payment);
+  const statuses = [payment.status, order["payment.status"], order.paymentStatus].filter(
+    (value) => value != null
+  );
+  if (statuses.some((value) => ["completed", "captured", "paid"].includes(normalized(value)))) {
+    return undefined;
+  }
+  return mintDeliveryOtp(order, canonicalOrderId);
+}
+
 /** Never reissue historical codes, unknown versions, or consumed verifiers. */
 export function mintDeliveryOtp(order: OrderRecord, canonicalOrderId: string): MintedDeliveryOtp | undefined {
   if (!isDeliveryOtpEligible(order) || hasDeliveryOtpHash(order) ||
