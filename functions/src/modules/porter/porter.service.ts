@@ -17,6 +17,7 @@ import {
 import { captureErrorSnapshot } from "../../core/errors";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
 import { assertOnlineOrderPaid } from "../orders/paymentGate";
+import { isCourierCashDelivery } from "../dispatch/providers/cashCollection";
 import { mintCashDeliveryOtp } from "../orders/deliveryOtp";
 export { verifyDeliveryOtp, OTP_MAX_ATTEMPTS, OTP_LOCKOUT_MS, type VerifyDeliveryOtpParams } from "../orders/deliveryHandover.service";
 import {
@@ -621,6 +622,18 @@ export async function bookPorterRider(
 
   const order = orderDoc.data()!;
   if (caller) await assertOrderBranchAccess(caller, order);
+
+  // Porter has no documented COD cash-collection contract. The direct
+  // /porter/book and /porter/rebook routes call this service, so the gate must
+  // live here (the adapter guard alone does not protect them).
+  if (isCourierCashDelivery(order)) {
+    const err: any = new Error(
+      "Porter cannot carry a cash-on-delivery order. Choose a courier enabled for cash collection."
+    );
+    err.statusCode = 409;
+    err.code = "COURIER_COD_DISABLED";
+    throw err;
+  }
 
   // CUS-16: unpaid online orders are not dispatchable (see paymentGate.ts).
   assertOnlineOrderPaid(order);

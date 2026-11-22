@@ -459,7 +459,11 @@ export async function createCashOrder(
 
       // 7. Branch switch + per-order cash ceiling, against the SERVER's total.
       try {
-        assertCashOnDeliveryAllowed(config.cashOnDelivery, totals.split.totalAmountPaise);
+        assertCashOnDeliveryAllowed(
+          config.cashOnDelivery,
+          totals.split.totalAmountPaise,
+          input.orderType
+        );
       } catch (err: any) {
         throw new CashOrderError(
           typeof err?.statusCode === "number" ? err.statusCode : 409,
@@ -590,6 +594,16 @@ export async function createCashOrder(
         cashDuePaise,
         cashOnDelivery: {
           maxOrderValuePaise: config.cashOnDelivery?.maxOrderValuePaise ?? null,
+          // Snapshot for dispatch: an unready provider must never book COD,
+          // even if the branch config changed after checkout.
+          ...(config.cashOnDelivery?.courierCod
+            ? {
+                courierCod: {
+                  enabled: config.cashOnDelivery.courierCod.enabled,
+                  providers: { ...config.cashOnDelivery.courierCod.providers },
+                },
+              }
+            : {}),
         },
         pricing: customerTotals,
         totals: customerTotals,

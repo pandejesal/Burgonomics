@@ -8,6 +8,7 @@ import {
   type ProviderQuoteOk,
 } from "../types";
 import { QUOTE_TTL_MS, isProvenPreSendFailure, bookAmbiguous } from "./shared";
+import { isCourierCashDelivery } from "./cashCollection";
 
 /**
  * Porter adapter — reuses the existing, heavily-tested porter.service path
@@ -133,6 +134,15 @@ export const porterAdapter: ProviderAdapter = {
   },
 
   async book(ctx: DispatchBookContext): Promise<ProviderBookResult> {
+    // Porter has no documented COD cash-collection contract, so it must never
+    // be the direct or fallback courier for a cash delivery.
+    if (isCourierCashDelivery(ctx.order)) {
+      throw new ProviderDispatchError(
+        "porter",
+        "not_serviced",
+        "Porter cannot carry a cash-on-delivery order. Cash delivery needs a courier enabled for cash collection."
+      );
+    }
     if (!porterApiReady()) {
       // DR8 manual lane: no key configured — staff books in the Porter app.
       return {

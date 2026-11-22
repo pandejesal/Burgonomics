@@ -227,6 +227,9 @@ service cloud.firestore {
         'routeTransferRetryCount', 'routeTransferClaimedAt',
         'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
         'paymentChannel', 'monthlyFeeHold',
+        // Courier COD money and readiness are server-written. Branch staff
+        // must not rewrite the cash due or forge a courier-collection flag.
+        'cashDuePaise', 'cashOnDelivery',
         'deliveryOtpHash', 'deliveryOtp', 'deliveryOtpAttempts', 'deliveryOtpLockedUntil',
         'deliveryOtpVersion', 'deliveryOtpConsumedAt',
         'petpoojaAcceptedNoId', 'petpoojaAcceptedNoIdAt', 'petpoojaAcceptedNoIdAck',
@@ -499,6 +502,13 @@ service cloud.firestore {
     // BRANCHES & PRODUCTS CATALOG
     // =========================================================================
 
+    // Courier cash readiness is an owner/server decision. A branch may still
+    // edit its own cash-on-delivery switch/ceiling, but never courierCod.
+    function courierCodSnapshot(data) {
+      let cod = data is map ? data.get('cashOnDelivery', null) : null;
+      return cod is map ? cod.get('courierCod', null) : null;
+    }
+
     match /branches/{branchId} {
       // Hardened: was `if true`, then `isAuthenticated()`. Grep evidence —
       // the customer app NEVER reads branches/* (its store directory is
@@ -512,6 +522,7 @@ service cloud.firestore {
       allow create: if isBrandOwner();
       allow update: if isBrandOwner() || (
         ownsBranch(branchId) &&
+        courierCodSnapshot(request.resource.data) == courierCodSnapshot(resource.data) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'servicedRadiusKm',
           // F9: money config is brand-only. A branch may not move its own

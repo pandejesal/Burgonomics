@@ -29,6 +29,9 @@ export default defineConfig({
       "**/node_modules/**",
       "**/dist/**",
       ...(process.env.STORAGE_EMULATOR_HOST ? [] : ["tests/storage.rules.test.ts"]),
+      ...(process.env.FIRESTORE_EMULATOR_HOST
+        ? []
+        : ["tests/rules.cod-courier.emulator.test.ts"]),
     ],
   },
   resolve: {

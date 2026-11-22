@@ -10,7 +10,12 @@ import {
 } from "../../core/utils/pickupCoords";
 import { resolveBranchId } from "./branchResolver";
 import { assertOutletOpenForOnlineOrders } from "./outletStatus";
-import { computePackagingFee, defaultCashOnDeliveryConfig, resolveBranchPricingConfig } from "./branchPricing";
+import {
+  computePackagingFee,
+  defaultCashOnDeliveryConfig,
+  effectiveCashOnDeliveryForCheckout,
+  resolveBranchPricingConfig,
+} from "./branchPricing";
 import { DELIVERY_FEE_QUOTES } from "./deliveryQuotes";
 
 /**
@@ -56,6 +61,8 @@ export interface CheckoutFeesResult {
   cashOnDelivery: {
     enabled: boolean;
     maxOrderValuePaise: number | null;
+    /** Server's own checkout message when the cash lane is refused. */
+    reason?: string | null;
   };
 }
 
@@ -95,7 +102,10 @@ export async function resolveCheckoutFees(
   // reads; the branch is only the fallback when a caller names no store.
   await assertOutletOpenForOnlineOrders({ storeId: input.storeId, branchId });
   const config = await resolveBranchPricingConfig(branchId);
-  const cashOnDelivery = config.cashOnDelivery ?? defaultCashOnDeliveryConfig();
+  const cashOnDelivery = effectiveCashOnDeliveryForCheckout(
+    config.cashOnDelivery ?? defaultCashOnDeliveryConfig(),
+    input.orderType
+  );
   // P2: the SAME helper the pricing engine uses. Dine-in is 0 inside it, so
   // the screen and the bill cannot disagree about packaging.
   const packagingFee = await computePackagingFee({

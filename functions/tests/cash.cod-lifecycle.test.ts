@@ -88,7 +88,11 @@ function seed(overrides: Record<string, any> = {}) {
     name: "Surat Adajan",
     city: "Surat",
     packagingFee: 15,
-    cashOnDelivery: { enabled: true, maxOrderValuePaise: 500000 },
+    cashOnDelivery: {
+      enabled: true,
+      maxOrderValuePaise: 500000,
+      courierCod: { enabled: true, providers: { borzo: true, shadowfax: true } },
+    },
     ...overrides,
   });
   h.docs.set("branches/branch_b", {

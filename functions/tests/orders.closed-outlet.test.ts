@@ -128,7 +128,11 @@ function seedWorld(isOpen: boolean) {
     name: "Burgonomics DEMO",
     city: "Ahmedabad",
     packagingFee: 0,
-    cashOnDelivery: { enabled: true, maxOrderValuePaise: 500000 },
+    cashOnDelivery: {
+      enabled: true,
+      maxOrderValuePaise: 500000,
+      courierCod: { enabled: true, providers: { borzo: true, shadowfax: true } },
+    },
     monthlyFee: 2000,
   });
   h.docs.set("products/p1", {

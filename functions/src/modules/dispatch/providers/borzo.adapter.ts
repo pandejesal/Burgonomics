@@ -11,6 +11,13 @@ import type {
 import { ProviderDispatchError } from "../types";
 import { normalizePhone } from "../dropContact";
 import {
+  assertCourierCodBookingAllowed,
+  assertCourierCodProviderReady,
+  borzoMoneyString,
+  courierCashDuePaise,
+  isServerCashOrder,
+} from "./cashCollection";
+import {
   QUOTE_TTL_MS,
   bookAmbiguous,
   classifyHttpStatus,
@@ -300,7 +307,11 @@ function borzoBookAmbiguous(message: string, cause?: unknown, providerOrderId?: 
   return bookAmbiguous("borzo", message, cause, providerOrderId);
 }
 
-function buildPoints(ctx: DispatchQuoteContext, forBooking: boolean): any[] {
+function buildPoints(
+  ctx: DispatchQuoteContext,
+  forBooking: boolean,
+  cashDue: number | null
+): any[] {
   const pickup = pickupContact(ctx.order);
   const drop = dropContact(ctx);
   const clientOrderId = ctx.orderId ? ctx.orderId.slice(0, 32) : undefined;
@@ -337,19 +348,38 @@ function buildPoints(ctx: DispatchQuoteContext, forBooking: boolean): any[] {
       client_order_id: clientOrderId,
       latitude: String(ctx.drop.lat),
       longitude: String(ctx.drop.lng),
+      // Borzo COD lives on the CUSTOMER DROP POINT (docs: "Cash on delivery
+      // (COD) service" uses `is_cod_cash_voucher_required` + `taking_amount`,
+      // both belonging to delivery points). Omitted on a prepaid drop.
+      ...(cashDue !== null && cashDue > 0
+        ? {
+            taking_amount: borzoMoneyString(cashDue),
+            is_cod_cash_voucher_required: true,
+          }
+        : {}),
     },
   ];
 }
 
 function buildOrderPayload(ctx: DispatchQuoteContext, forBooking: boolean): Record<string, any> {
+  // For a server-owned COD booking the rider MUST be told to collect the exact
+  // `cashDuePaise`. Borzo puts COD on the customer drop point, not at the top
+  // level; a quote carries no order and stays non-COD.
+  const cashDue = forBooking && isServerCashOrder(ctx.order) ? courierCashDuePaise(ctx.order) : null;
   return {
     // standard = bike-class work (D5: bike-for-all until catering volume).
     type: "standard",
     matter: "Food order delivery",
     vehicle_type_id: 8, // Motorbike — types 1/2/3/5 forbidden for new orders
     total_weight_kg: 1,
-    points: buildPoints(ctx, forBooking),
+    points: buildPoints(ctx, forBooking, cashDue),
   };
+}
+
+/** Exposed for contract tests; the book path must use exactly this builder. */
+export function buildBorzoBookingPayload(ctx: DispatchQuoteContext): Record<string, any> {
+  assertCourierCodProviderReady(ctx.order, "borzo");
+  return buildOrderPayload(ctx, true);
 }
 
 export const borzoAdapter: ProviderAdapter = {
@@ -462,6 +492,9 @@ export const borzoAdapter: ProviderAdapter = {
   },
 
   async book(ctx: DispatchBookContext): Promise<ProviderBookResult> {
+    // Snapshot AND live branch approval: a checkout-time flag revoked later
+    // must stop a new booking, while an existing booking is replayed earlier.
+    await assertCourierCodBookingAllowed(ctx.order, "borzo");
     if (config.mock.borzoDispatch) {
       assertLiveDispatchContext("borzo book");
       const providerOrderId = `BRZ-ORD-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -482,7 +515,7 @@ export const borzoAdapter: ProviderAdapter = {
     // try: a typed LOCAL gate there keeps its exact classification AND its
     // zero-fetch guarantee, and can never be confused with a wire outcome.
     const headers = borzoHeaders();
-    const payload = buildOrderPayload(ctx, true);
+    const payload = buildBorzoBookingPayload(ctx);
     let body: string;
     try {
       body = JSON.stringify(payload);

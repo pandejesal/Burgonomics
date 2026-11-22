@@ -52,6 +52,12 @@ import {
   type ResolvedPickupContact,
 } from "./pickupContact";
 import { fareConfirmCheck } from "./providers/shared";
+import {
+  codReadyQuotes,
+  isCourierCashDelivery,
+  loadCurrentCourierCodReadiness,
+  resolveCourierCodReadiness,
+} from "./providers/cashCollection";
 import { borzoAdapter } from "./providers/borzo.adapter";
 import { shadowfaxAdapter, cancelShadowfaxOrder } from "./providers/shadowfax.adapter";
 import { porterAdapter } from "./providers/porter.adapter";
@@ -877,6 +883,16 @@ function noServiceableProviderError(outcomes: ProviderQuoteOutcome[]): Error {
   return err;
 }
 
+/** COD needs a courier the branch currently approves for cash collection. */
+function codNoReadyCourierError(): Error {
+  const err: any = new Error(
+    "No courier is currently enabled to collect cash for this branch. Cash is available for takeaway only; ask the customer to pay online or choose takeaway."
+  );
+  err.statusCode = 409;
+  err.code = "COURIER_COD_DISABLED";
+  return err;
+}
+
 /** Typed, retryable 422 — one of the quote pins is null-island or garbage. */
 function coordinatesInvalidError(): Error {
   const err: any = new Error(
@@ -959,6 +975,30 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
   const liveBooking = authenticBookingReuse(order);
   if (liveBooking) return liveBooking;
 
+  // Validate COD readiness AFTER replay but BEFORE any claim. A malformed
+  // snapshot must not park a dispatch_pending lease for ten minutes.
+  const codDelivery = isCourierCashDelivery(order);
+  let snapshotCod: ReturnType<typeof resolveCourierCodReadiness> | undefined;
+  let liveCod: Awaited<ReturnType<typeof loadCurrentCourierCodReadiness>> | undefined;
+  if (codDelivery) {
+    try {
+      snapshotCod = resolveCourierCodReadiness(order.cashOnDelivery?.courierCod, order.branchId);
+    } catch {
+      throw codNoReadyCourierError();
+    }
+    liveCod = await loadCurrentCourierCodReadiness(order.branchId);
+    // Already revoked before booking: refuse before a claim is taken.
+    if (
+      codReadyQuotes(
+        [{ provider: "borzo" }, { provider: "shadowfax" }],
+        liveCod,
+        snapshotCod
+      ).length === 0
+    ) {
+      throw codNoReadyCourierError();
+    }
+  }
+
   // P1-F: resolve the drop contact BEFORE any claim or provider call. Every
   // real customer-app order arrives with an empty address contact and no
   // `customerPhone`; the verified Auth profile is the authoritative fallback.
@@ -1019,7 +1059,22 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
     throw err;
   }
 
-  const { outcomes, ranked } = await runQuoteFanOut(ctx);
+  const { outcomes, ranked: quoted } = await runQuoteFanOut(ctx);
+  let ranked = quoted;
+
+  // COD DELIVERY: only couriers the branch CURRENTLY approves for cash may be
+  // ranked, fare-confirmed, booked or used for a rebook. This runs after the
+  // fan-out so an unready courier's quote never lends its fare to a booking.
+  if (ranked.length > 0 && codDelivery && snapshotCod) {
+    // Re-read IMMEDIATELY before filtering: a revocation during fan-out must
+    // invalidate a stale quote before fare confirmation, not just at book().
+    const freshLiveCod = await loadCurrentCourierCodReadiness(order.branchId);
+    ranked = codReadyQuotes(ranked, freshLiveCod, snapshotCod);
+    if (ranked.length === 0) {
+      await releaseClaimIdle(orderDoc);
+      throw codNoReadyCourierError();
+    }
+  }
 
   if (ranked.length === 0) {
     const eligibleCount = eligibleAdapters().length;
@@ -1759,6 +1814,9 @@ export async function savePorterManualBooking(params: PorterManualParams): Promi
   }
   const order = orderDoc.data()!;
   if (caller) await assertOrderBranchAccess(caller, order);
+  // Porter has no documented COD collection contract: the manual paste lane
+  // must not become a bypass for a cash delivery either.
+  if (isCourierCashDelivery(order)) throw codNoReadyCourierError();
   // Terminal guard (audit finding 1): `delivered`/`cancelled` are NOT in
   // ACTIVE_DELIVERY_STATUSES, so the active-dispatch guards below skip exactly
   // the orders this lane must never touch — and the write rewinded

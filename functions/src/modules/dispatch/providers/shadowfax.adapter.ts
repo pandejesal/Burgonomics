@@ -9,6 +9,12 @@ import type {
 import { ProviderDispatchError } from "../types";
 import { normalizePhone } from "../dropContact";
 import {
+  assertCourierCodBookingAllowed,
+  assertCourierCodProviderReady,
+  courierCashDuePaise,
+  isServerCashOrder,
+} from "./cashCollection";
+import {
   QUOTE_TTL_MS,
   assertProviderOk,
   bookAmbiguous,
@@ -312,6 +318,14 @@ function paidFlag(ctx: DispatchQuoteContext): string {
 
 /** Order value for serviceability/place-order payloads (INR, number). */
 function orderValueInr(ctx: DispatchQuoteContext): number {
+  // The documented Marketplace API has no separate COD-amount field: `paid`
+  // is the collection instruction and `order_value` is the amount. For a
+  // server-owned COD order it must be the SERVER's cashDuePaise, never the
+  // displayed grand total (which may include online-only adjustments).
+  if (isServerCashOrder(ctx.order)) {
+    const cashDue = courierCashDuePaise(ctx.order);
+    if (cashDue !== null) return Number((cashDue / 100).toFixed(2));
+  }
   return (
     pickFiniteNumber(
       ctx.order?.pricing?.grandTotal,
@@ -364,7 +378,10 @@ function resolveDropCity(order: Record<string, any>, dropCity: string | undefine
   return found ? String(found).trim().slice(0, 80) : "";
 }
 
-function serviceabilityPayload(ctx: DispatchQuoteContext): Record<string, any> {
+/** Exposed for contract tests; the serviceability call uses exactly this. */
+export function buildShadowfaxServiceabilityPayload(
+  ctx: DispatchQuoteContext
+): Record<string, any> {
   return {
     pickup_latitude: String(ctx.pickup.lat),
     pickup_longitude: String(ctx.pickup.lng),
@@ -379,6 +396,22 @@ function serviceabilityPayload(ctx: DispatchQuoteContext): Record<string, any> {
     // surge, and never an omitted field the provider might default upward.
     rain_flag: false,
     client_surge: 0,
+  };
+}
+
+/**
+ * Documented `order_details` for the place-order call. `paid: "false"` with
+ * `order_value` equal to `cashDuePaise / 100` is the maximum honest COD
+ * instruction this API supports; no undocumented collection key is invented.
+ */
+export function buildShadowfaxOrderDetails(
+  ctx: DispatchQuoteContext
+): Record<string, any> {
+  assertCourierCodProviderReady(ctx.order, "shadowfax");
+  return {
+    order_value: orderValueInr(ctx),
+    paid: paidFlag(ctx),
+    client_order_id: ctx.orderId,
   };
 }
 
@@ -451,7 +484,7 @@ export const shadowfaxAdapter: ProviderAdapter = {
       {
         method: "PUT",
         headers: shadowfaxHeaders(),
-        body: JSON.stringify(serviceabilityPayload(ctx)),
+        body: JSON.stringify(buildShadowfaxServiceabilityPayload(ctx)),
       }
     );
     // HTTP 400 "Order in non-serviceable area" → not_serviced via DR3 classify.
@@ -493,6 +526,9 @@ export const shadowfaxAdapter: ProviderAdapter = {
   },
 
   async book(ctx: DispatchBookContext): Promise<ProviderBookResult> {
+    // Snapshot AND live branch approval: a checkout-time flag revoked later
+    // must stop a new booking, while an existing booking is replayed earlier.
+    await assertCourierCodBookingAllowed(ctx.order, "shadowfax");
     if (config.mock.shadowfaxDispatch) {
       assertLiveDispatchContext("shadowfax book");
       const providerOrderId = `SFX-ORD-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -597,9 +633,7 @@ export const shadowfaxAdapter: ProviderAdapter = {
     const createPayload = {
           client_code: clientCode,
           order_details: {
-            order_value: orderValueInr(ctx),
-            paid: paidFlag(ctx),
-            client_order_id: ctx.orderId,
+            ...buildShadowfaxOrderDetails(ctx),
             // OTP FIELDS ARE DELIBERATELY ABSENT (DECIDED, not an oversight).
             // The schema offers `order_details.pickup_otp`, `return_otp` and
             // `drop_details.delivery_otp`, but our handover OTP exists to prove

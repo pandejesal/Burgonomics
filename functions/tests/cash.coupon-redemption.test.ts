@@ -166,7 +166,11 @@ beforeEach(() => {
     name: "Surat Adajan",
     city: "Surat",
     packagingFee: 15,
-    cashOnDelivery: { enabled: true, maxOrderValuePaise: 500000 },
+    cashOnDelivery: {
+      enabled: true,
+      maxOrderValuePaise: 500000,
+      courierCod: { enabled: true, providers: { borzo: true, shadowfax: true } },
+    },
   });
   h.docs.set("products/p1", {
     name: "Paneer Makhani Burger",

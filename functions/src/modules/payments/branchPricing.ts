@@ -1,5 +1,18 @@
 import { db } from "../../core/firebase";
 import type { PetpoojaPackaging } from "../petpooja/packaging";
+import {
+  COURIER_COD_DISABLED_MESSAGE,
+  type CodCourierReadiness,
+  anyCourierCodReady,
+  defaultCourierCodReadiness,
+  resolveCourierCodReadiness,
+} from "../dispatch/providers/cashCollection";
+
+export {
+  DEFAULT_COURIER_COD_READINESS,
+  courierCodReady,
+  resolveCourierCodReadiness,
+} from "../dispatch/providers/cashCollection";
 
 /**
  * Branch pricing config — the single server source of packaging (owner
@@ -32,6 +45,13 @@ export interface CashOnDeliveryConfig {
   enabled: boolean;
   /** `null` means no ceiling was configured for this branch. */
   maxOrderValuePaise: number | null;
+  /**
+   * Courier-cash readiness. OFF by default: a COD DELIVERY needs an explicit
+   * branch + provider confirmation. Takeaway cash is unaffected.
+   */
+  courierCod?: CodCourierReadiness;
+  /** Server's own explanation for the checkout screen, when cash is blocked. */
+  reason?: string | null;
 }
 
 export interface BranchPricingConfig {
@@ -65,7 +85,12 @@ function branchConfigUnavailable(reason: string, branchId: string): Error {
 
 /** The documented default when a branch has never configured cash on delivery. */
 export function defaultCashOnDeliveryConfig(): CashOnDeliveryConfig {
-  return { enabled: DEFAULT_COD_ENABLED, maxOrderValuePaise: DEFAULT_COD_MAX_ORDER_VALUE_PAISE };
+  return {
+    enabled: DEFAULT_COD_ENABLED,
+    maxOrderValuePaise: DEFAULT_COD_MAX_ORDER_VALUE_PAISE,
+    courierCod: defaultCourierCodReadiness(),
+    reason: null,
+  };
 }
 
 /**
@@ -107,9 +132,23 @@ export function resolveCashOnDeliveryConfig(raw: unknown, branchId?: string): Ca
     }
     maxOrderValuePaise = capRaw;
   }
+  // Courier readiness is a DELIVERY-only gate. A typo in that block must not
+  // make prepaid pricing or takeaway cash fail: log it, leave courier COD OFF,
+  // and let the delivery guard refuse only delivery cash.
+  let courierCod = defaultCourierCodReadiness();
+  try {
+    courierCod = resolveCourierCodReadiness(block.courierCod, branchId);
+  } catch (err: any) {
+    console.error(
+      `[checkout] courier COD readiness malformed for ${branchId || "(unknown)"}; delivery cash is OFF`,
+      err?.message || err
+    );
+  }
   return {
     enabled: enabledRaw === undefined ? DEFAULT_COD_ENABLED : enabledRaw,
     maxOrderValuePaise,
+    courierCod,
+    reason: null,
   };
 }
 
@@ -121,7 +160,8 @@ export function resolveCashOnDeliveryConfig(raw: unknown, branchId?: string): Ca
  */
 export function assertCashOnDeliveryAllowed(
   config: CashOnDeliveryConfig | undefined,
-  totalPaise: number
+  totalPaise: number,
+  orderType?: string
 ): void {
   const effective = config ?? defaultCashOnDeliveryConfig();
   if (effective.enabled !== true) {
@@ -143,6 +183,38 @@ export function assertCashOnDeliveryAllowed(
     err.maxOrderValuePaise = cap;
     throw err;
   }
+  // COD DELIVERY is a different promise from counter cash: no in-house rider
+  // exists yet, so a courier must be explicitly ready to carry the money.
+  if (orderType === "delivery" && !anyCourierCodReady(effective.courierCod)) {
+    const err: any = new Error(COURIER_COD_DISABLED_MESSAGE);
+    err.statusCode = 409;
+    err.code = "COURIER_COD_DISABLED";
+    throw err;
+  }
+}
+
+/**
+ * Checkout-facing view of the SAME gate. The create route re-reads the branch
+ * config and calls `assertCashOnDeliveryAllowed`, so an advisory flag here can
+ * never authorise a cash delivery the create route would refuse.
+ */
+export function effectiveCashOnDeliveryForCheckout(
+  config: CashOnDeliveryConfig | undefined,
+  orderType?: string
+): CashOnDeliveryConfig {
+  const effective = config ?? defaultCashOnDeliveryConfig();
+  const branchOff = effective.enabled !== true;
+  const courierOff = orderType === "delivery" && !anyCourierCodReady(effective.courierCod);
+  if (!branchOff && !courierOff) {
+    return { enabled: true, maxOrderValuePaise: effective.maxOrderValuePaise };
+  }
+  return {
+    enabled: false,
+    maxOrderValuePaise: effective.maxOrderValuePaise,
+    reason: branchOff
+      ? "Cash on delivery is not available at this outlet. Please pay online."
+      : COURIER_COD_DISABLED_MESSAGE,
+  };
 }
 
 

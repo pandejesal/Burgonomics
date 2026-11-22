@@ -1227,3 +1227,114 @@ describe("dispatch webhooks (DR10)", () => {
     expect(keysWithPrefix("unmatched_dispatch_events/")).toHaveLength(0);
   });
 });
+
+describe("COD dispatch readiness uses BOTH the order snapshot and current approval", () => {
+  const cod = {
+    orderType: "delivery",
+    paymentChannel: "cash",
+    payment: { method: "cod", status: "pending" },
+    cashDuePaise: 12345,
+  };
+
+  it("does not let a cheaper courier enabled after checkout win over the snapshot", async () => {
+    config.porter.enabled = false;
+    // Checkout snapshot allowed ONLY Shadowfax. Borzo (the cheaper mock quote)
+    // was enabled on the branch afterwards; it must still be ineligible.
+    seedOrder("ord_cod_newcheap", {
+      ...cod,
+      cashOnDelivery: {
+        maxOrderValuePaise: 500000,
+        courierCod: { enabled: true, providers: { shadowfax: true, borzo: false } },
+      },
+    });
+    savedDocs["branches/branch_ahmedabad_1"].cashOnDelivery = {
+      courierCod: { enabled: true, providers: { shadowfax: true, borzo: true } },
+    };
+
+    // A stale quoted fare forces DR7 confirmation; the provider in that
+    // response is the quote that would be COMMITTED. It must be Shadowfax.
+    const res = await dispatchBook({ orderId: "ord_cod_newcheap", quotedFare: 1 });
+    expect(res.needsFareConfirm).toBe(true);
+    expect(res.provider).toBe("shadowfax");
+  });
+
+  it("refuses when no courier is eligible under both checks", async () => {
+    config.porter.enabled = false;
+    seedOrder("ord_cod_noready", {
+      ...cod,
+      cashOnDelivery: {
+        maxOrderValuePaise: 500000,
+        courierCod: { enabled: true, providers: { shadowfax: true } },
+      },
+    });
+    savedDocs["branches/branch_ahmedabad_1"].cashOnDelivery = {
+      courierCod: { enabled: true, providers: { borzo: false, shadowfax: false } },
+    };
+
+    await expect(dispatchBook({ orderId: "ord_cod_noready" })).rejects.toMatchObject({
+      code: "COURIER_COD_DISABLED",
+      statusCode: 409,
+    });
+  });
+
+  it("rejects a malformed snapshot with a typed denial before claiming a lease", async () => {
+    config.porter.enabled = false;
+    seedOrder("ord_cod_badsnapshot", {
+      ...cod,
+      cashOnDelivery: {
+        maxOrderValuePaise: 500000,
+        // A typo must be refused cleanly, not after a 10-minute claim.
+        courierCod: { enabled: "yes", providers: { borzo: true } },
+      },
+    });
+    savedDocs["branches/branch_ahmedabad_1"].cashOnDelivery = {
+      courierCod: { enabled: true, providers: { borzo: true } },
+    };
+
+    await expect(dispatchBook({ orderId: "ord_cod_badsnapshot" })).rejects.toMatchObject({
+      code: "COURIER_COD_DISABLED",
+      statusCode: 409,
+    });
+    expect(fetchCalls).toHaveLength(0);
+    expect(docOf("ord_cod_badsnapshot").dispatchStatus).toBeUndefined();
+  });
+
+  it("re-reads live readiness after fan-out and refuses a mid-quote revocation", async () => {
+    config.porter.enabled = false;
+    config.shadowfax.enabled = false;
+    config.borzo.apiKey = "test_borzo_key";
+    config.mock.borzoDispatch = false;
+    seedOrder("ord_cod_revoked_midquote", {
+      ...cod,
+      cashOnDelivery: {
+        maxOrderValuePaise: 500000,
+        courierCod: { enabled: true, providers: { borzo: true } },
+      },
+    });
+    savedDocs["branches/branch_ahmedabad_1"].cashOnDelivery = {
+      courierCod: { enabled: true, providers: { borzo: true } },
+    };
+    let revoked = false;
+    fetchHandler = (url) => {
+      if (url.includes("/calculate-order")) {
+        // Revocation happens DURING the quote fan-out, after the pre-claim read.
+        if (!revoked) {
+          revoked = true;
+          savedDocs["branches/branch_ahmedabad_1"].cashOnDelivery.courierCod = {
+            enabled: false,
+            providers: { borzo: false, shadowfax: false },
+          };
+        }
+        return okJson({ is_successful: true, order: { payment_amount: "60.00" } });
+      }
+      return okJson({ message: "not found" }, 404);
+    };
+
+    await expect(
+      dispatchBook({ orderId: "ord_cod_revoked_midquote", quotedFare: 1 })
+    ).rejects.toMatchObject({ code: "COURIER_COD_DISABLED", statusCode: 409 });
+    expect(fetchCalls.some((c) => c.url.includes("/create-order"))).toBe(false);
+    // The claim was released, not left pending.
+    expect(docOf("ord_cod_revoked_midquote").dispatchStatus).toBeNull();
+  });
+});
