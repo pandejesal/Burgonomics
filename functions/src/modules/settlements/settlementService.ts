@@ -353,6 +353,16 @@ export async function generateSettlementStatement(
       priorSettledNetPaise: Number(ledgerData?.settledNetPaise) || 0,
       priorPaymentRecords: Array.isArray(ledgerData?.payments) ? ledgerData.payments : [],
     });
+    // ALL reads first: Firestore rejects any tx.get() after a tx.set().
+    // The cycle-9 500 was exactly this error when a month had prior versions.
+    const priorToRetire: any[] = [];
+    for (let prior = 1; prior < version; prior += 1) {
+      const priorRef = db.collection(SETTLEMENT_STATEMENTS).doc(settlementStatementId(branchId, monthKey, prior));
+      const priorSnap: any = await tx.get(priorRef);
+      if (priorSnap && priorSnap.exists && (priorSnap.data() as any)?.current !== false) {
+        priorToRetire.push(priorRef);
+      }
+    }
     tx.set(versionsRef, {
       branchId,
       monthKey,
@@ -361,12 +371,8 @@ export async function generateSettlementStatement(
     }, { merge: true });
     tx.set(db.collection(SETTLEMENT_STATEMENTS).doc(statement.id), statement);
     // Retire earlier versions deterministically by known document IDs.
-    for (let prior = 1; prior < version; prior += 1) {
-      const priorRef = db.collection(SETTLEMENT_STATEMENTS).doc(settlementStatementId(branchId, monthKey, prior));
-      const priorSnap: any = await tx.get(priorRef);
-      if (priorSnap && priorSnap.exists && (priorSnap.data() as any)?.current !== false) {
-        tx.set(priorRef, { current: false }, { merge: true });
-      }
+    for (const priorRef of priorToRetire) {
+      tx.set(priorRef, { current: false }, { merge: true });
     }
   });
 
