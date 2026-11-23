@@ -813,7 +813,7 @@ export async function commitCouponRedemption(
 export async function releaseCouponRedemption(params: {
   orderId: string;
   reason: string;
-}): Promise<{ released: boolean; code: string | null }> {
+}): Promise<{ released: boolean; code: string | null; failed?: boolean }> {
   const id = couponRedemptionId(params.orderId);
   if (!id) return { released: false, code: null };
   try {
@@ -876,7 +876,9 @@ export async function releaseCouponRedemption(params: {
       `[Coupons] release failed for order ${params.orderId}:`,
       err?.message || err
     );
-    return { released: false, code: null };
+    // r3: a datastore fault is a FAILED release, not a harmless noop. The
+    // caller must keep the obligation retryable instead of marking it done.
+    return { released: false, code: null, failed: true };
   }
 }
 

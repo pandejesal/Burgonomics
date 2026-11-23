@@ -13,6 +13,7 @@ import {
 } from "./paymentGate";
 import { mintCashDeliveryOtp } from "./deliveryOtp";
 import { applyCancelSideEffects } from "./cancelSideEffects";
+import { posCancelIntentPatch } from "../petpooja/orderCancel";
 
 /**
  * Server-side KDS order-status bump. Mirrors the partner
@@ -344,6 +345,15 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
           409,
         );
       }
+    }
+    if (canonical === "cancelled") {
+      // r2 P1: persist the POS-cancel intent WITH the status transition. A crash
+      // before the post-commit side-effect funnel still leaves a durable,
+      // server-owned obligation the 5-minute worker can claim.
+      Object.assign(
+        writePayload,
+        posCancelIntentPatch("order_cancelled", staffNameForCancel(), Date.now())
+      );
     }
     tx.update(orderRef, writePayload);
   });

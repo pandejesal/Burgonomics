@@ -11,6 +11,43 @@ import {
   staffCloseOverrideInForce,
   type StorefrontMatch,
 } from "../stores/storeStatus";
+import {
+  enqueuePosCancelSideEffectsTx,
+  enqueuePosCancelSideEffects,
+  processPosCancelSideEffectObligation,
+} from "./cancelSideEffectsObligation";
+
+/** P2/r2: how long a stock-push claim blocks an overlapping vendor send. */
+const STOCK_PUSH_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+/** Numeric-first read of a claim timestamp (serverTimestamp sentinels are not 0). */
+function numberFieldForStock(raw: any): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (raw && typeof raw.toMillis === "function") {
+    const ms = Number(raw.toMillis());
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  return 0;
+}
+
+/** r3: release a stock-push claim only if we still own it. */
+async function releaseStockPushClaimIfOwned(
+  productId: string,
+  token: string
+): Promise<void> {
+  if (!db || typeof (db as any).runTransaction !== "function") return;
+  try {
+    await (db as any).runTransaction(async (tx: any) => {
+      const ref = db.collection("products").doc(productId);
+      const snap = await tx.get(ref);
+      const data = (snap.exists ? snap.data() : undefined) as any;
+      if (!data || data.stockPushClaim?.token !== token) return;
+      tx.set(ref, { stockPushClaim: null }, { merge: true });
+    });
+  } catch {
+    // The claim lease expires on its own; a stale token cannot clear a newer one.
+  }
+}
 
 /**
  * Computes a deterministic, bounded, Firestore-safe document ID for quarantined 86ing payloads.
@@ -803,7 +840,13 @@ export async function pushItemStockToPetpooja(
   branchId: string,
   itemId: string,
   inStock: boolean,
-  caller?: StaffCaller
+  caller?: StaffCaller,
+  /** P2/r2: version captured with the local availability; a later edit invalidates the send. */
+  expectedVersion?: number | null,
+  /** P2/r2: unique token for this send; overlapping sends for one version are deduped. */
+  pushToken?: string,
+  /** Internal: a reconciliation send must not recurse into another reconciliation. */
+  isReconcile?: boolean
 ): Promise<boolean> {
   // Validate safe branch/item identifiers before vendor I/O
   if (
@@ -944,6 +987,89 @@ export async function pushItemStockToPetpooja(
       return false;
     }
 
+    // P2/r2: re-read the product immediately before the vendor call. A local
+    // sell-out / manual toggle between our decision and the POST must stop the
+    // stale send; a later version invalidates an older queued send entirely.
+    let freshForSend: any = prodData;
+    try {
+      const freshSnap = await productRef.get();
+      if (freshSnap?.exists) freshForSend = freshSnap.data() || prodData;
+    } catch (err: any) {
+      console.warn(`[Petpooja Stock Push] pre-send read failed for ${productId}:`, err?.message || err);
+      return false;
+    }
+    if (expectedVersion != null && Number(freshForSend.stockVersion || 0) !== expectedVersion) {
+      console.warn(
+        `[Petpooja Stock Push] skipping stale send for ${productId}: version ${Number(freshForSend.stockVersion || 0)} != ${expectedVersion}`
+      );
+      return false;
+    }
+    const currentAvailable =
+      freshForSend.inStock !== false &&
+      freshForSend.isAvailable !== false &&
+      freshForSend.available !== false &&
+      freshForSend.delistedFromPos !== true &&
+      freshForSend.ghostRetired !== true &&
+      freshForSend.deleted !== true;
+    // Only an auto-restore (which supplies a version) is bound to the decision
+    // it made inside its transaction. A direct staff 86/relist legitimately
+    // sends the OPPOSITE of the current local state — that is the whole point
+    // of an outbound toggle — so it must not be blocked here.
+    if (expectedVersion != null && currentAvailable !== inStock) {
+      console.warn(
+        `[Petpooja Stock Push] skipping stale send for ${productId}: current availability ${currentAvailable} != requested ${inStock}`
+      );
+      return false;
+    }
+    // r3: the claim is taken atomically AFTER re-checking the version and
+    // availability, and returns the claimed version from the COMMITTED attempt
+    // only. Writing the claim must NOT bump stockVersion, or our own ACK would
+    // fail its version fence.
+    let claimedVersion = expectedVersion;
+    if (pushToken && db && typeof (db as any).runTransaction === "function") {
+      type StockClaim = { version: number } | null;
+      let claim: StockClaim = null;
+      try {
+        claim = await (db as any).runTransaction(async (tx: any): Promise<StockClaim> => {
+          const snap = await tx.get(productRef);
+          const data = (snap.exists ? snap.data() : undefined) as any;
+          if (!data) return null;
+          const version = Number(data.stockVersion || 0);
+          if (expectedVersion != null && version !== expectedVersion) return null;
+          const available =
+            data.inStock !== false &&
+            data.isAvailable !== false &&
+            data.available !== false &&
+            data.delistedFromPos !== true &&
+            data.ghostRetired !== true &&
+            data.deleted !== true;
+          if (expectedVersion != null && available !== inStock) return null;
+          const other = data.stockPushClaim;
+          const otherAt = numberFieldForStock(other?.at);
+          if (
+            other?.token &&
+            other.token !== pushToken &&
+            otherAt > 0 &&
+            Date.now() - otherAt < STOCK_PUSH_CLAIM_TTL_MS
+          ) {
+            return null;
+          }
+          tx.set(
+            productRef,
+            { stockPushClaim: { token: pushToken, at: Date.now(), version } },
+            { merge: true }
+          );
+          return { version };
+        });
+      } catch (err: any) {
+        console.warn(`[Petpooja Stock Push] claim failed for ${productId}:`, err?.message || err);
+        return false;
+      }
+      if (!claim) return false;
+      claimedVersion = claim.version;
+      freshForSend = { ...freshForSend, stockVersion: claimedVersion };
+    }
+
     const requestInitiatedAt = Date.now();
     const petpoojaConfig = getPetpoojaConfig();
     const response = await fetch(petpoojaConfig.stockUrl, {
@@ -993,6 +1119,7 @@ export async function pushItemStockToPetpooja(
         result.success === true ||
         result.status === "success");
     if (!acked) {
+      if (pushToken) await releaseStockPushClaimIfOwned(productId, pushToken);
       await captureErrorSnapshot({
         source: "petpooja",
         severity: "high",
@@ -1020,6 +1147,9 @@ export async function pushItemStockToPetpooja(
           if (!freshData.branchId || freshData.branchId !== branchId) {
             return "ownership_mismatch";
           }
+          if (pushToken && freshData.stockPushClaim?.token !== pushToken) {
+            return "claim_lost";
+          }
           if (
             (freshData.petpoojaItemId && String(freshData.petpoojaItemId) !== String(rawItemId)) ||
             (freshData.itemId && String(freshData.itemId) !== String(rawItemId))
@@ -1027,17 +1157,31 @@ export async function pushItemStockToPetpooja(
             return "ownership_mismatch";
           }
 
-          // Strict version check against immutable initial snapshot:
-          // Check updateTime if available; check inStock conflict or updatedAt
-          const freshUpdateTime = freshSnap.updateTime;
-          const versionMatches =
-            initialUpdateTime && freshUpdateTime
-              ? typeof initialUpdateTime.isEqual === "function"
-                ? initialUpdateTime.isEqual(freshUpdateTime)
-                : initialUpdateTime === freshUpdateTime
-              : true;
-
-          if (!versionMatches) {
+          // r3: fenced sends use the claimed version (the claim write moves
+          // updateTime, so an updateTime fence would reject our own ACK). A
+          // direct staff toggle has no claim and still uses updateTime.
+          if (pushToken) {
+            if (claimedVersion != null && Number(freshData.stockVersion || 0) !== claimedVersion) {
+              return "stale_conflict";
+            }
+          } else {
+            const freshUpdateTime = freshSnap.updateTime;
+            const versionMatches =
+              initialUpdateTime && freshUpdateTime
+                ? typeof initialUpdateTime.isEqual === "function"
+                  ? initialUpdateTime.isEqual(freshUpdateTime)
+                  : initialUpdateTime === freshUpdateTime
+                : true;
+            if (!versionMatches) return "stale_conflict";
+          }
+          const freshAvailable =
+            freshData.inStock !== false &&
+            freshData.isAvailable !== false &&
+            freshData.available !== false &&
+            freshData.delistedFromPos !== true &&
+            freshData.ghostRetired !== true &&
+            freshData.deleted !== true;
+          if (claimedVersion != null && freshAvailable !== inStock) {
             return "stale_conflict";
           }
 
@@ -1048,7 +1192,12 @@ export async function pushItemStockToPetpooja(
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           };
 
-          if (initialUpdateTime) {
+          if (pushToken) {
+            // The claim token is the fence, and releasing it here reconciles
+            // overlapping sends without an updateTime precondition invalidated
+            // by the claim write itself.
+            tx.update(productRef, { ...updateData, stockPushClaim: null });
+          } else if (initialUpdateTime) {
             try {
               tx.update(productRef, updateData, { lastUpdateTime: initialUpdateTime });
             } catch {
@@ -1115,14 +1264,49 @@ export async function pushItemStockToPetpooja(
       return true;
     }
 
+    // r3: a failed or conflicted ACK must not hold the claim for its whole TTL.
+    if (pushToken) await releaseStockPushClaimIfOwned(productId, pushToken);
+
     if (conflictReason === "stale_conflict") {
       console.warn(
         `[Petpooja Stock Push] Newer stock toggle detected for ${productId} (version conflict) — skipping stale POS ack overwrite`
       );
+      // P2/r2: our send already reached the POS, but a newer local toggle won
+      // the ack race. Re-assert the CURRENT availability so the vendor cannot
+      // keep the state we sent. One bounded reconciliation; never recurse.
+      if (!isReconcile) {
+        try {
+          const currentSnap = await productRef.get();
+          const current = currentSnap?.exists ? currentSnap.data() || {} : null;
+          if (current) {
+            const currentAvailable =
+              current.inStock !== false &&
+              current.isAvailable !== false &&
+              current.available !== false &&
+              current.delistedFromPos !== true &&
+              current.ghostRetired !== true &&
+              current.deleted !== true;
+            await pushItemStockToPetpooja(
+              branchId,
+              itemId,
+              currentAvailable,
+              caller,
+              Number(current.stockVersion || 0),
+              `reconcile_${productId}_${Date.now()}`,
+              true
+            );
+          }
+        } catch (err: any) {
+          console.warn(
+            `[Petpooja Stock Push] reconciliation failed for ${productId}:`,
+            err?.message || err
+          );
+        }
+      }
       await captureErrorSnapshot({
         source: "petpooja",
         severity: "high",
-        message: `Petpooja POS acknowledged stock push for item ${rawItemId} at branch ${branchId}, but local product ${productId} was updated concurrently — preserving newer local state, manual reconciliation required`,
+        message: `Petpooja POS acknowledged stock push for item ${rawItemId} at branch ${branchId}, but local product ${productId} was updated concurrently — POS reconciled to current local availability`,
         branchId,
       });
       return false;
@@ -1153,6 +1337,10 @@ export async function pushItemStockToPetpooja(
     });
     return false;
   } catch (err: any) {
+    // r4: the claim is taken before config resolution and the vendor POST. A
+    // fault anywhere after it (including getPetpoojaConfig or fetch) must
+    // release the lease, or the next versioned send is blocked for the TTL.
+    if (pushToken) await releaseStockPushClaimIfOwned(productId, pushToken);
     console.warn(`[Petpooja Stock Push Error] Failed for item ${itemId}:`, err.message);
     await captureErrorSnapshot({
       source: "petpooja",
@@ -1568,73 +1756,92 @@ export async function handlePetpoojaStoreStatus(
     };
   }
 
+  // A3: BOTH writes and the override re-check happen in ONE transaction. The
+  // early checks above are only a fast path; the authoritative decision is the
+  // fresh re-read inside the callback. Re-reading the storefront makes Firestore
+  // retry if a staff close commits after this callback resolved — and on retry
+  // the override is visible, so a late authenticated POS open cannot leave
+  // `isOpen: true` while a staff close is in force.
+  let lateCloseRefusal = false;
   try {
-    // (1) The customer gate. `isOpen` is the single field the customer app reads
-    //     (`storesService.mapStoreDoc` → `PaymentRepository` closed-store gate →
-    //     cart/checkout disabled states), so this write is what actually stops
-    //     and restarts ordering. It goes to the SAME collection the storefront
-    //     was resolved from: `stores` is authoritative, but the customer
-    //     directory falls back to `admin_stores` when `stores` is empty
-    //     (`storesService.fetchFirestoreStores`), and in that deployment
-    //     `admin_stores` IS the gate.
-    const storeRef = db.collection(storefront.collection).doc(storefront.storeId);
-    const storeSnap = await storeRef.get();
-    const storeCurrent = storeSnap?.exists ? storeSnap.data() || {} : null;
-    const storeUnchanged =
-      storeCurrent !== null &&
-      storeCurrent.isOpen === desiredOpen &&
-      storeCurrent.storeStatusSource === "petpooja" &&
-      (turnOnAt === null ? true : (storeCurrent.storeTurnOnAt ?? null) === turnOnAt) &&
-      (reason === null ? true : (storeCurrent.storeStatusReason ?? null) === reason);
-    if (!storeUnchanged) {
-      await storeRef.set(
-        {
-          isOpen: desiredOpen,
-          storeStatusSource: "petpooja",
-          storeStatusReason: reason,
-          storeTurnOnAt: turnOnAt,
-          storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+    if (!db || typeof (db as any).runTransaction !== "function") {
+      throw new Error("store-status update requires an atomic datastore");
     }
-
-    // (2) The Partner-app flag. Kept in step because operators read it in the
-    //     branch screens, and because a stale "open" there is what a human would
-    //     trust over the POS.
-    const branchRef = db.collection("branches").doc(branchId);
-    const snap = await branchRef.get();
-    const current = snap?.exists ? snap.data() || {} : {};
-    // Idempotent: a repeated identical update must not rewrite the branch (a
-    // rewrite would invalidate every concurrent reader's version and re-drive
-    // listeners for no state change).
-    const unchanged =
-      current.acceptingOrdersStatus === acceptingOrdersStatus &&
-      (turnOnAt === null ? true : (current.turnOnAt ?? null) === turnOnAt) &&
-      (reason === null ? true : (current.storeStatusReason ?? null) === reason);
-    if (!unchanged) {
-      await branchRef.set(
-        {
-          acceptingOrdersStatus,
-          turnOnAt,
-          storeStatusReason: reason,
-          storeStatusSource: "petpooja",
-          storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    }
-
-    // (3) The Partner directory copy, when one exists. Only an EXISTING doc is
-    //     touched: creating a partial `admin_stores` record from a POS callback
-    //     would fabricate a directory entry the operator never created.
-    try {
+    await (db as any).runTransaction(async (tx: any) => {
+      // A retried callback starts clean: no decision may leak from an attempt
+      // that Firestore discarded.
+      lateCloseRefusal = false;
+      const storeRef = db.collection(storefront.collection).doc(storefront.storeId);
+      const branchRef = db.collection("branches").doc(branchId);
+      // A3/r2: the Partner directory mirror is read and written INSIDE this
+      // transaction, so a delayed mirror write cannot undo a newer close.
       const adminRef = db.collection("admin_stores").doc(storefront.storeId);
-      const adminSnap = await adminRef.get();
+      // All reads before any write (real Firestore rejects a read after a write).
+      const [storeSnap, branchSnap, adminSnap] = await Promise.all([
+        tx.get(storeRef),
+        tx.get(branchRef),
+        storefront.collection === "admin_stores" ? Promise.resolve(null) : tx.get(adminRef),
+      ]);
+      const freshStore = storeSnap?.exists ? storeSnap.data() || {} : null;
+      const freshBranch = branchSnap?.exists ? branchSnap.data() || {} : {};
+
+      const staffClosed = staffCloseOverrideInForce(freshStore, freshBranch);
+      if (staffClosed && desiredOpen) {
+        lateCloseRefusal = true;
+        return; // no writes; the staff close wins
+      }
+      if (staffClosed) return; // no-op agreement: touch nothing
+      if (freshStore === null) {
+        // The storefront vanished after resolution — fail closed rather than
+        // fabricate a new gate document with a POS callback.
+        throw new Error(`storefront ${storefront.storeId} no longer linked`);
+      }
+
+      // (1) The customer gate. `isOpen` is the single field the customer app
+      //     reads, written to the SAME collection the storefront resolved from.
+      const storeUnchanged =
+        freshStore.isOpen === desiredOpen &&
+        freshStore.storeStatusSource === "petpooja" &&
+        (turnOnAt === null ? true : (freshStore.storeTurnOnAt ?? null) === turnOnAt) &&
+        (reason === null ? true : (freshStore.storeStatusReason ?? null) === reason);
+      if (!storeUnchanged) {
+        tx.set(
+          storeRef,
+          {
+            isOpen: desiredOpen,
+            storeStatusSource: "petpooja",
+            storeStatusReason: reason,
+            storeTurnOnAt: turnOnAt,
+            storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+
+      // (2) The Partner-app flag, kept in step so a stale "open" there is never
+      //     what a human trusts over the real gate. Idempotent by design.
+      const unchanged =
+        freshBranch.acceptingOrdersStatus === acceptingOrdersStatus &&
+        (turnOnAt === null ? true : (freshBranch.turnOnAt ?? null) === turnOnAt) &&
+        (reason === null ? true : (freshBranch.storeStatusReason ?? null) === reason);
+      if (!unchanged) {
+        tx.set(
+          branchRef,
+          {
+            acceptingOrdersStatus,
+            turnOnAt,
+            storeStatusReason: reason,
+            storeStatusSource: "petpooja",
+            storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
       if (adminSnap?.exists) {
         const adminCurrent = adminSnap.data() || {};
-        if (adminCurrent.isOpen !== desiredOpen) {
-          await adminRef.set(
+        if (adminCurrent.isOpen !== desiredOpen || adminCurrent.storeStatusSource !== "petpooja") {
+          tx.set(
+            adminRef,
             {
               isOpen: desiredOpen,
               storeStatusSource: "petpooja",
@@ -1644,14 +1851,19 @@ export async function handlePetpoojaStoreStatus(
           );
         }
       }
-    } catch (err: any) {
-      // The Partner directory is a mirror, not the gate: a failure here must not
-      // turn a successful close into a failure reply.
-      console.warn(
-        `[Petpooja Store Status] admin_stores mirror update failed for ${storefront.storeId}:`,
-        err?.message || err
+    });
+
+    if (lateCloseRefusal) {
+      await recordStoreStatusEvent(restIdText, branchId, requested, true);
+      return storeStatusFailure(
+        `Store ${boundedParkedString(
+          restIdText,
+          PARKED_REF_MAX_CHARS
+        )} was closed from the Burgonomics Partner app — reopen it there before accepting orders`,
+        "update"
       );
     }
+
   } catch (err: any) {
     console.warn(
       `[Petpooja Store Status] update failed for branch ${branchId}:`,
@@ -2508,6 +2720,10 @@ export async function handlePetpoojaWebhook(
     });
   };
 
+  // P3: a verified cancellation coming FROM the POS still needs the shared
+  // coupon/courier cleanup. That obligation is persisted with the transition.
+  const posOriginatedCancellation = canonicalStatus === "cancelled" && !untrusted;
+
   if (db && typeof (db as any).runTransaction === "function") {
     const txOutcome = await (db as any).runTransaction(async (tx: any) => {
       // 1. ALL READS FIRST: Fresh snapshot of the order document
@@ -2563,6 +2779,17 @@ export async function handlePetpoojaWebhook(
 
       if (plan.action !== "apply") {
         return plan;
+      }
+
+      // P3: persist the shared cancel obligation WITH the status transition,
+      // still before any write in this transaction (Firestore forbids a read
+      // after a write). A crash after commit leaves a durable cleanup to drain.
+      if (posOriginatedCancellation) {
+        const branch =
+          typeof freshOrderData.branchId === "string" && freshOrderData.branchId
+            ? freshOrderData.branchId
+            : claimedBranch || null;
+        await enqueuePosCancelSideEffectsTx(tx, resolvedOrderId, branch);
       }
 
       // 3. ALL WRITES AFTER ALL READS
@@ -2663,6 +2890,16 @@ export async function handlePetpoojaWebhook(
           `[Petpooja Webhook] Unauthenticated cancellation for order ${resolvedOrderId} — refund injection refused`
         );
       }
+      // P3: run the persisted shared cleanup (coupon release + courier cleanup)
+      // exactly once, with NO outbound POS cancel for a POS-originated event.
+      if (posOriginatedCancellation) {
+        await processPosCancelSideEffectObligation(resolvedOrderId).catch((err: any) => {
+          console.warn(
+            `[Petpooja Webhook] POS cancel side-effect drain failed for ${resolvedOrderId}:`,
+            err?.message || err
+          );
+        });
+      }
       return;
     }
 
@@ -2747,6 +2984,15 @@ export async function handlePetpoojaWebhook(
         console.warn(
           `[Petpooja Webhook] Unauthenticated cancellation for order ${resolvedOrderId} — refund injection refused`
         );
+      }
+      // P3: same durable obligation on the no-transaction shim path.
+      if (posOriginatedCancellation) {
+        const branch =
+          typeof freshOrderData.branchId === "string" && freshOrderData.branchId
+            ? freshOrderData.branchId
+            : claimedBranch || null;
+        await enqueuePosCancelSideEffects(resolvedOrderId, branch).catch(() => undefined);
+        await processPosCancelSideEffectObligation(resolvedOrderId).catch(() => undefined);
       }
       return;
     } else if (plan.action === "untrusted_terminal_refused") {

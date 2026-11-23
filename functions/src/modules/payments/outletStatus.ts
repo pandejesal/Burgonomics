@@ -73,6 +73,10 @@ async function readIsOpenFromDoc(collection: string, id: string): Promise<boolea
   const snap = await db.collection(collection).doc(id).get();
   const data = snap?.exists ? snap.data() || {} : null;
   if (!data) return null;
+  // A3: while a staff close is in force, checkout refuses even if a late POS
+  // "open" left the gate inconsistent (`isOpen: true` + override true). The
+  // override is the canonical signal and outranks the raw flag here too.
+  if ((data as any).storeStatusOverride === true) return false;
   return typeof (data as any).isOpen === "boolean" ? (data as any).isOpen : null;
 }
 
@@ -144,6 +148,8 @@ export async function assertOutletOpenForOnlineOrders(
  */
 export function isStorefrontOpen(storefront: any): boolean | null {
   if (!storefront || typeof storefront !== "object") return null;
+  // A3: the close override wins even when the gate flag reads open.
+  if (storefront.storeStatusOverride === true) return false;
   return typeof storefront.isOpen === "boolean" ? storefront.isOpen : null;
 }
 

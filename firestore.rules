@@ -214,6 +214,16 @@ service cloud.firestore {
     // refundedTotalPaise accounting that a later refund claim trusted.
     function orderServerOwnedKeys() {
       return [
+        // r2 P1: the POS-cancel queue (lease, attempts, outcome and reason) is
+        // server-only. A client must not plant a 'cancelled' outcome to silence
+        // a live kitchen ticket, nor clear a lease to double-send a cancel.
+        'petpoojaCancelStatus', 'petpoojaCancelReason', 'petpoojaCancelReasonClass',
+        'petpoojaCancelRequestedBy', 'petpoojaCancelRequestedAtMs', 'petpoojaCancelRequestedAt',
+        'petpoojaCancelNextRetryAtMs', 'petpoojaCancelClaimedAt', 'petpoojaCancelAttemptCount',
+        'petpoojaCancelCompletedAt', 'petpoojaCancelAckMessage', 'petpoojaCancelPosOrderId',
+        'petpoojaCancelSkippedReason', 'lastPetpoojaCancelError', 'kotCancelFailed',
+        // The POS binding is the identity the cancel queue fences against.
+        'petpoojaOrderId',
         'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
         // Walk-in retries trust this original server receipt and request binding.
         // No client, including brand/developer, may plant, edit or remove them.
@@ -552,6 +562,10 @@ service cloud.firestore {
         isBranchOwner() && ownsBranch(request.resource.data.branchId) &&
         !request.resource.data.keys().hasAny([
           'costPrice', 'compareAtPrice', 'discountPercentage', 'petpoojaItemId',
+          // r3 P2: the outbound stock-push version and lease are server-owned.
+          // A client must not fabricate a version to force a stale vendor send,
+          // nor plant a claim to block a legitimate toggle.
+          'stockVersion', 'stockPushClaim',
           // F9: priced selections and catalog packing data moved into the
           // rules: `customizations` now sets what customers pay, so it gets the
           // same protection as `price`.
@@ -568,7 +582,9 @@ service cloud.firestore {
           // POS delisting state is decided by the Petpooja sync, never by a
           // client: without these a partner could clear the marker while the
           // SKU is still absent from the POS.
-          'delistedFromPos', 'delistedAt'
+          'delistedFromPos', 'delistedAt',
+          // r3 P2: version and lease fence the vendor stock POST and its ACK.
+          'stockVersion', 'stockPushClaim'
         ])
       );
       allow delete: if isBrandOwner();

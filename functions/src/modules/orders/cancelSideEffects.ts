@@ -31,6 +31,8 @@ import { db } from "../../core/firebase";
 export interface CancelSideEffectsResult {
   providerCancelAttempted: boolean;
   providerCancelSkipped?: string;
+  /** P3/r2: an explicit courier-cleanup failure keeps the obligation retryable. */
+  courierCleanup?: "attempted" | "failed";
   coinsRestored: "restored" | "noop" | "failed";
   /** Petpooja cancel outcome — absent when the POS never received the order. */
   posCancel?: string;
@@ -46,6 +48,19 @@ export async function applyCancelSideEffects(input: {
   orderId: string;
   requestedBy: string;
   reason?: "order_cancelled" | "staff_cancelled";
+  /**
+   * P3: a POS-originated cancellation already reached the kitchen, so calling
+   * the vendor's "Update Order Status" back would be redundant. The shared
+   * coupon release and courier cleanup still run exactly as usual.
+   */
+  skipPosCancel?: boolean;
+  /**
+   * P3/r2: a retry of an obligation whose coupon release already succeeded
+   * must not double-count a one-use slot.
+   */
+  skipCoupon?: boolean;
+  /** P3/r2: do not re-attempt a courier cancel that already succeeded. */
+  skipCourier?: boolean;
 }): Promise<CancelSideEffectsResult> {
   const orderId = String(input.orderId || "").trim();
   if (!orderId) {
@@ -81,8 +96,11 @@ export async function applyCancelSideEffects(input: {
     // Only a LIVE binding is worth a remote cancel; a delivered booking is a
     // real fulfilment and must never be cancelled from a late order flip.
     const liveBooking = provider && providerOrderId && live.deliveryStatus !== "delivered";
-    if (liveBooking) {
-      await recordAndAttemptProviderCancel({
+    if (input.skipCourier === true) {
+      result.providerCancelSkipped = "already_attempted";
+      result.courierCleanup = "attempted";
+    } else if (liveBooking) {
+      const attempt = await recordAndAttemptProviderCancel({
         orderId,
         provider,
         providerOrderId: String(providerOrderId),
@@ -90,6 +108,12 @@ export async function applyCancelSideEffects(input: {
         requestedBy,
       });
       result.providerCancelAttempted = true;
+      // r2 P3: an acknowledged-but-unconfirmed courier cancel is an explicit
+      // failure, not a completed cleanup. The shared obligation must retry it.
+      result.courierCleanup =
+        attempt?.state === "pending" || attempt?.state === "dead_lettered"
+          ? "failed"
+          : "attempted";
     } else {
       result.providerCancelSkipped = "no_live_booking";
     }
@@ -109,12 +133,17 @@ export async function applyCancelSideEffects(input: {
   // contracted never to throw, and it refuses outright when the POS never
   // received the order — so a locally-cancelled order costs no vendor call.
   try {
-    const { requestPetpoojaOrderCancel } = await import("../petpooja/orderCancel");
-    result.posCancel = await requestPetpoojaOrderCancel({
-      orderId,
-      reason,
-      requestedBy,
-    });
+    if (input.skipPosCancel === true) {
+      // P3: the POS told US this order is cancelled — no outbound POS cancel.
+      result.posCancel = "skipped_pos_originated";
+    } else {
+      const { requestPetpoojaOrderCancel } = await import("../petpooja/orderCancel");
+      result.posCancel = await requestPetpoojaOrderCancel({
+        orderId,
+        reason,
+        requestedBy,
+      });
+    }
   } catch (err: any) {
     // A failed import or an unexpected fault must not fail the cancel; the
     // order doc keeps whatever cancel state it had, and the 5-minute worker
@@ -154,9 +183,15 @@ export async function applyCancelSideEffects(input: {
   // twice, or releasing an order that never had a coupon, is a no-op. Never
   // throws — a failed release is alerted, not surfaced as a cancel error.
   try {
-    const { releaseCouponRedemption } = await import("../coupons/couponAuthority");
-    const released = await releaseCouponRedemption({ orderId, reason });
-    result.couponReleased = released.released ? "released" : "noop";
+    if (input.skipCoupon === true) {
+      result.couponReleased = "noop";
+    } else {
+      const { releaseCouponRedemption } = await import("../coupons/couponAuthority");
+      const released = await releaseCouponRedemption({ orderId, reason });
+      // r3: an explicit datastore failure must surface as a failure. Treating
+      // it as "noop" made the obligation mark a lost slot as done.
+      result.couponReleased = released.failed === true ? "failed" : released.released ? "released" : "noop";
+    }
   } catch (err: any) {
     result.couponReleased = "failed";
     console.warn(

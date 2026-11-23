@@ -14,6 +14,7 @@ import {
   petpoojaRetryScheduledAtMs,
 } from "./retryBackoff";
 import { dispatchFCM } from "../notifications/fcm.service";
+import { processPendingPosCancelSideEffects } from "./cancelSideEffectsObligation";
 
 /**
  * Petpooja "Update Order Status" — the CANCEL half of the POS bridge.
@@ -74,8 +75,15 @@ export const PETPOOJA_CANCEL_CLAIM_TTL_MS = 10 * 60 * 1000;
 /** Vendor `cancelReason` is free text; keep it short and PII-free. */
 export { PETPOOJA_CANCEL_REASON_MAX_CHARS };
 
-/** Lanes the retry worker scans (equality-only: no composite index needed). */
-export const PETPOOJA_CANCEL_OPEN_STATUSES = ["pending", "pending_retry"] as const;
+/**
+ * Lanes the retry worker scans (equality-only: no composite index needed).
+ *
+ * P1: `processing` is a LEASED obligation, not a terminal state. A crash after
+ * `claimCancelAttempt` but before the result is persisted leaves the order here;
+ * the worker must scan it so an EXPIRED lease can be reclaimed. `claimCancelAttempt`
+ * defers while the lease is live and takes it over once stale.
+ */
+export const PETPOOJA_CANCEL_OPEN_STATUSES = ["pending", "pending_retry", "processing"] as const;
 
 /** Rows per lane per tick — the same bound the KOT retry worker uses. */
 const CANCEL_SCAN_LIMIT = 100;
@@ -105,7 +113,8 @@ export type PosCancelOutcome =
   | "blocked_configuration"
   | "disabled"
   | "missing"
-  | "unsupported";
+  | "unsupported"
+  | "not_cancelled";
 
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   "cancelled",
@@ -335,6 +344,19 @@ function intentPatch(reason: string | undefined, requestedBy: string, nowMs: num
   };
 }
 
+/**
+ * r2 P1: the SAME intent patch is written inside each cancellation transaction
+ * (orderStatus / customerCancel) so a crash before the first claim still leaves
+ * a durable, server-owned obligation for this worker.
+ */
+export function posCancelIntentPatch(
+  reason: string | undefined,
+  requestedBy: string,
+  nowMs: number = Date.now()
+): Record<string, any> {
+  return intentPatch(reason, requestedBy, nowMs);
+}
+
 function notPushedPatch(reason: string) {
   return {
     petpoojaCancelStatus: "not_pushed",
@@ -358,8 +380,44 @@ function cancelledPatch(ack: PosCancelAck) {
   };
 }
 
+/**
+ * P1: persist a provider acknowledgement ONLY while the caller still owns the
+ * lease it claimed. An interrupt/overlap can let another instance take over a
+ * stale `processing` lease and send its own cancel; a late success from the old
+ * instance must not clobber that newer state. Mirrors `recordCancelFailure`.
+ */
+export async function recordPosCancelSuccessIfOwned(
+  orderId: string,
+  ack: PosCancelAck,
+  claimedAtMs: number
+): Promise<"recorded" | "skipped"> {
+  const ref = db.collection("orders").doc(orderId);
+  if (!db || typeof (db as any).runTransaction !== "function") {
+    // Fail closed: a plain write could overwrite a newer claim.
+    return "skipped";
+  }
+  try {
+    return await (db as any).runTransaction(async (tx: any) => {
+      const snap = await tx.get(ref);
+      const order = (snap.exists ? snap.data() : undefined) as any;
+      if (!order) return "skipped" as const;
+      if (String(order.petpoojaCancelStatus || "") !== "processing") return "skipped" as const;
+      if (numberField(order.petpoojaCancelClaimedAt) !== claimedAtMs) return "skipped" as const;
+      tx.set(ref, cancelledPatch(ack), { merge: true });
+      return "recorded" as const;
+    });
+  } catch (err: any) {
+    logger.warn(
+      `[Petpooja Cancel] acknowledged write failed for order ${orderId}:`,
+      err?.message || err
+    );
+    return "skipped";
+  }
+}
+
 type ClaimResult =
   | { state: "claimed"; order: any; claimedAtMs: number }
+  | { state: "not_cancelled" }
   | { state: "already"; outcome: PosCancelOutcome }
   | { state: "not_pushed"; reason: string }
   | { state: "deferred"; reason: string }
@@ -388,6 +446,11 @@ async function claimCancelAttempt(
       const snap = await tx.get(ref);
       const order = (snap.exists ? snap.data() : undefined) as any;
       if (!order) return { state: "missing" };
+
+      // r2 P1: the vendor may only be contacted for an order whose cancellation
+      // is ALREADY durable. Check inside the claim transaction so a stale read
+      // cannot send a cancel for a live order.
+      if (orderStatusCode(order) !== "CANCELLED") return { state: "not_cancelled" };
 
       const status = String(order.petpoojaCancelStatus || "");
       if (status === "cancelled") return { state: "already", outcome: "already_cancelled" };
@@ -591,7 +654,12 @@ export async function requestPetpoojaOrderCancel(
     try {
       const snap = await db.collection("orders").doc(orderId).get();
       const order = (snap.exists ? snap.data() : undefined) as any;
-      if (order && !TERMINAL_STATUSES.has(String(order.petpoojaCancelStatus || ""))) {
+      // r2 P1: even the queued-intent path refuses a live order.
+      if (
+        order &&
+        orderStatusCode(order) === "CANCELLED" &&
+        !TERMINAL_STATUSES.has(String(order.petpoojaCancelStatus || ""))
+      ) {
         await db
           .collection("orders")
           .doc(orderId)
@@ -609,6 +677,7 @@ export async function requestPetpoojaOrderCancel(
   try {
     const claim = await claimCancelAttempt(orderId, reason, requestedBy);
     if (claim.state === "missing") return "missing";
+    if (claim.state === "not_cancelled") return "not_cancelled";
     if (claim.state === "unsupported") return "unsupported";
     if (claim.state === "busy") return "busy";
     if (claim.state === "not_due") return "pending_retry";
@@ -619,10 +688,16 @@ export async function requestPetpoojaOrderCancel(
     const branchId = typeof claim.order?.branchId === "string" ? claim.order.branchId : "";
     try {
       const ack = await postPosCancel(orderId, claim.order, reason);
-      await db
-        .collection("orders")
-        .doc(orderId)
-        .set(cancelledPatch(ack), { merge: true });
+      // P1: write the result only if we STILL own the lease we claimed. The
+      // vendor cancel is idempotent, so another instance taking over is safe;
+      // clobbering its newer state with our late ack is not.
+      const recorded = await recordPosCancelSuccessIfOwned(orderId, ack, claim.claimedAtMs);
+      if (recorded !== "recorded") {
+        logger.warn(
+          `[Petpooja Cancel] ack for ${orderId} was not recorded — the lease moved on; no state overwritten`
+        );
+        return "busy";
+      }
       logger.info(
         `[Petpooja Cancel] Order ${orderId} cancelled at the POS (${ack.message || "acknowledged"})`
       );
@@ -677,7 +752,15 @@ async function deadLetterExhaustedCancel(doc: any): Promise<boolean> {
       const order = (snap.exists ? snap.data() : undefined) as any;
       if (!order) return;
       const status = String(order.petpoojaCancelStatus || "");
-      if (status !== "pending" && status !== "pending_retry") return;
+      const isProcessing = status === "processing";
+      if (status !== "pending" && status !== "pending_retry" && !isProcessing) return;
+      if (isProcessing) {
+        // P1: a leased row is dead-lettered only once its lease has EXPIRED.
+        // A live lease still belongs to an instance that may be finishing its
+        // vendor call; relabelling it would page staff for an in-flight cancel.
+        const claimedAt = numberField(order.petpoojaCancelClaimedAt);
+        if (claimedAt > 0 && Date.now() - claimedAt < PETPOOJA_CANCEL_CLAIM_TTL_MS) return;
+      }
       const attempts = Number(order.petpoojaCancelAttemptCount || 0);
       if (attempts <= PETPOOJA_MAX_RETRY_ATTEMPTS) return;
       branchId = typeof order.branchId === "string" ? order.branchId : "";
@@ -726,9 +809,21 @@ export async function retryPendingPetpoojaOrderCancelsWorker(): Promise<{
   let failedCount = 0;
   let deferredCount = 0;
 
+  // P3/r2: drain persisted POS-originated cleanups FIRST and unconditionally —
+  // these obligations never call the vendor, so a disabled outbound bridge must
+  // not strand a coupon release or courier cleanup. Reuses this 5-minute tick.
+  try {
+    await processPendingPosCancelSideEffects();
+  } catch (err: any) {
+    logger.warn(
+      "[Petpooja Cancel Worker] POS cancel side-effect drain failed:",
+      err?.message || err
+    );
+  }
+
   if (!isPetpoojaEnabled()) {
     logger.info(
-      "[Petpooja Cancel Worker] PETPOOJA_ENABLED=false — bridge disabled, skipping the cancel tick"
+      "[Petpooja Cancel Worker] PETPOOJA_ENABLED=false — bridge disabled, skipping the outbound cancel tick"
     );
     return { cancelledCount, failedCount, deferredCount };
   }
