@@ -213,6 +213,9 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
       const city =
         typeof branch.city === "string" && branch.city.trim() ? branch.city.trim() : "";
       const tenderMethod = input.tender === "cash" ? "cod" : "upi";
+      // cycle 9c: same approved cash semantics as createCashOrder.ts —
+      // the server's placed instant, confirmed, never unresolved.
+      const placedAtMs = Date.now();
       receipt.branchName = branchName;
       tx.create(orderRef, {
         customerId: "cust_walkin",
@@ -229,6 +232,9 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
         paymentMethod: tenderMethod,
         paymentStatus: "pending",
         payment: { method: tenderMethod, status: "pending" },
+        settlementEffectiveAtMs: placedAtMs,
+        settlementCaptureState: "confirmed",
+        settlementCaptureUnresolved: false,
         pricing: totals,
         totals,
         subtotal: totals.foodSubtotal,

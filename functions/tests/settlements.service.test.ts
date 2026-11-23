@@ -592,3 +592,17 @@ describe("SettlementError", () => {
     expect(err.statusCode).toBe(403);
   });
 });
+
+
+describe("cycle 9c cash in statements", () => {
+  it("a collected cash order is counted as cash information without changing net payable", async () => {
+    seedCash("c9_collected_cash", BRANCH, NOV.startMs + 5000, 1200, "DELIVERED");
+    const statement = await generateSettlementStatement({
+      branchId: BRANCH, monthKey: "2026-11", caller: OWNER, source: "on_demand", now: DEC_1ST,
+    });
+    expect(statement!.cashCollectedPaise).toBe(120000);
+    // No online money: the flat fee is the only amount in the net.
+    expect(statement!.onlineNetPaise).toBe(0);
+    expect(statement!.netPayablePaise).toBe(-200000);
+  });
+});

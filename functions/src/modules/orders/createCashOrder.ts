@@ -633,6 +633,11 @@ export async function createCashOrder(
         // THE marker. Only this module writes it, and every cash-aware reader
         // (KOT-on-create, delivery OTP, Partner cash stream) keys on it.
         paymentChannel: "cash",
+        // cycle 9c: the canonical settlement key belongs on the ORDER DOC,
+        // not only inside `cashReceipt` (settlementMath queries this field).
+        settlementEffectiveAtMs: placedAtMs,
+        settlementCaptureState: "confirmed",
+        settlementCaptureUnresolved: false,
         cashDuePaise,
         cashOnDelivery: {
           maxOrderValuePaise: config.cashOnDelivery?.maxOrderValuePaise ?? null,

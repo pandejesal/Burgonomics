@@ -719,3 +719,27 @@ describe("cancellation follows F24 and owes no refund on cash", () => {
     ).rejects.toMatchObject({ statusCode: 403 });
   });
 });
+
+
+describe("cycle 9c cash settlement stamp (real createCashOrder)", () => {
+  it.each(["takeaway", "dinein"] as const)("%s cash order stamps the top level with the receipt values", async (orderType) => {
+    let body = baseInput({ orderType });
+    let receipt: any;
+    try {
+      receipt = await createCashOrder(CUSTOMER, body);
+    } catch (err: any) {
+      if (err?.code !== "PRICE_CHANGED") throw err;
+      body = { ...body, expectedTotalPaise: err.totals.split.totalAmountPaise };
+      receipt = await createCashOrder(CUSTOMER, body);
+    }
+    const order = h.docs.get(`orders/${ORDER}`) as any;
+    expect(order.settlementEffectiveAtMs).toBe(receipt.settlementEffectiveAtMs);
+    expect(order.settlementCaptureState).toBe("confirmed");
+    expect(order.settlementCaptureUnresolved).toBe(false);
+    expect(order.cashReceipt).toMatchObject({
+      settlementEffectiveAtMs: receipt.settlementEffectiveAtMs,
+      settlementCaptureState: "confirmed",
+      settlementCaptureUnresolved: false,
+    });
+  });
+});

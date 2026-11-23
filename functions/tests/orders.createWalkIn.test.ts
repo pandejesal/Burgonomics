@@ -137,3 +137,25 @@ describe("walk-in creation", () => {
     await expect(createWalkIn("staff", { ...input(), orderType: "delivery" })).rejects.toMatchObject({ statusCode: 422 });
   });
 });
+
+
+describe("cycle 9c counter settlement stamp (real createWalkIn)", () => {
+  it.each(["dinein", "takeaway"] as const)("%s walk-in stamps the top level with the cash semantics", async (orderType) => {
+    const before = Date.now();
+    let body = { ...input(), orderType };
+    try {
+      await createWalkIn("staff", body);
+    } catch (err: any) {
+      if (err?.code !== "PRICE_CHANGED") throw err;
+      body = { ...body, expectedTotalPaise: err.totals.split.totalAmountPaise };
+      await createWalkIn("staff", body);
+    }
+    const order: any = Object.values(state.docs).find((d: any) => d?.orderId === "walkin_19e5d7d94d1c1b8f4a4e2c6c5b0b6db0" && d?.customerId === "cust_walkin")
+      ?? Object.values(state.docs).find((d: any) => d?.customerId === "cust_walkin" && d?.orderType === orderType);
+    expect(order).toBeTruthy();
+    expect(typeof order.settlementEffectiveAtMs).toBe("number");
+    expect(order.settlementEffectiveAtMs).toBeGreaterThanOrEqual(before);
+    expect(order.settlementCaptureState).toBe("confirmed");
+    expect(order.settlementCaptureUnresolved).toBe(false);
+  });
+});
