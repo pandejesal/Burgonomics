@@ -45,21 +45,22 @@ export interface StorefrontMatch {
  */
 export async function resolveStorefrontForBranch(
   branchId: string,
-  restId: string
+  restId: string,
+  reader?: {get: (reference: any) => Promise<any>}
 ): Promise<{ match: StorefrontMatch | null; ambiguous: boolean }> {
   for (const collection of ["stores", "admin_stores"] as const) {
     const col = db.collection(collection) as any;
     if (!col || typeof col.where !== "function") continue;
 
     const seen = new Map<string, StorefrontMatch>();
-    let lookupFailed = false;
     for (const [field, value] of [
       ["partnerBranchId", branchId],
       ["petpoojaRestId", restId],
     ] as Array<[string, string]>) {
       if (!value) continue;
       try {
-        const snap = await col.where(field, "==", value).limit(5).get();
+        const query = col.where(field, "==", value).limit(5);
+        const snap = reader ? await reader.get(query) : await query.get();
         for (const doc of snap?.docs || []) {
           if (!doc?.id) continue;
           seen.set(String(doc.id), {
@@ -73,11 +74,9 @@ export async function resolveStorefrontForBranch(
           `[Store Status] storefront lookup in ${collection} by ${field} failed:`,
           err?.message || err
         );
-        lookupFailed = true;
-        break;
+        throw err;
       }
     }
-    if (lookupFailed) continue;
     if (seen.size > 1) return { match: null, ambiguous: true };
     if (seen.size === 1) return { match: [...seen.values()][0], ambiguous: false };
   }

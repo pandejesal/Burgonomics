@@ -31,7 +31,10 @@ export default defineConfig({
       ...(process.env.STORAGE_EMULATOR_HOST ? [] : ["tests/storage.rules.test.ts"]),
       ...(process.env.FIRESTORE_EMULATOR_HOST
         ? []
-        : ["tests/rules.cod-courier.emulator.test.ts"]),
+        : [
+            "tests/rules.cod-courier.emulator.test.ts",
+            "tests/fr-checkout.rules.emulator.test.ts",
+          ]),
     ],
   },
   resolve: {

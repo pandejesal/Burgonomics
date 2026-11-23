@@ -1,4 +1,5 @@
 import { db } from "../../core/firebase";
+import { isAccountActive } from "../../core/middleware";
 import type {
   PricingBreakdown,
   PricingLineItem,
@@ -39,6 +40,12 @@ export async function quoteWalkIn(
   raw: unknown
 ): Promise<WalkInQuoteResult> {
   if (!actorUid) throw new WalkInError(401, "UNAUTHENTICATED", "Authentication required.");
+  // F06: a suspended till operator (users/{uid}.active !== true) must not even
+  // see a live counter quote. The role check below is token-based and would
+  // otherwise keep admitting an already-issued token until it ages out.
+  if (!(await isAccountActive(actorUid))) {
+    throw new WalkInError(403, "ACCOUNT_INACTIVE", "This account is not active.");
+  }
   const parsed = walkInQuoteSchema.safeParse(raw);
   if (!parsed.success) {
     throw new WalkInError(400, "INVALID_INPUT", "Invalid walk-in quote request.");

@@ -44,7 +44,11 @@ export const couponQuoteSchema = z.object({
         productId: z.string().trim().min(1).max(128),
         quantity: z.number().int().min(1).max(99),
         price: z.number().min(0).max(100000).optional(),
+        // M9: the priced SELECTIONS (option ids) travel with the quote, so the
+        // coupon is evaluated against the same catalogue-priced basket that
+        // cash create and online checkout price — not a bare base price.
         customizations: z.array(z.any()).max(50).optional(),
+        modifiers: z.array(z.any()).max(50).optional(),
       })
     )
     .min(1)

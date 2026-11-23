@@ -145,8 +145,12 @@ describe("bumpOrderStatus — unpaid online orders may not advance (CUS-16)", ()
     expect(res.status).toMatchObject({ code: "PREPARING" });
   });
 
-  it("leaves cash/COD orders untouched", async () => {
+  it("leaves server-marked cash/COD orders untouched", async () => {
     savedDocs["orders/ord_cash"] = abandonedOnlineOrder({
+      // A2: the server cash marker, not the client `method` label, is what
+      // admits a customer cash order to the kitchen.
+      paymentChannel: "cash",
+      cashReceipt: { orderId: "ord_cash" },
       payment: { method: "cod", label: "Cash on Delivery", status: "CASH_PENDING" },
     });
     const res: any = await bumpOrderStatus({ orderId: "ord_cash", status: "preparing", caller });
@@ -302,11 +306,14 @@ describe("F04 — kitchen admission needs the server capture marker, not the met
     ["cod", "CASH_PENDING"],
     ["cash", "pending"],
     ["cod", "PAY_AT_STORE"],
-  ])("keeps the deliberate cash/COD method=%s status=%s exemption", async (method, status) => {
+  ])("admits a SERVER-marked cash order (method=%s status=%s)", async (method, status) => {
     const id = `ord_f04_cash_${method}_${String(status).toLowerCase()}`;
     savedDocs[`orders/${id}`] = abandonedOnlineOrder({
       customerId: "cust_f04",
       userId: "cust_f04",
+      // A2: the server marker is required; a bare method label is refused.
+      paymentChannel: "cash",
+      cashReceipt: { orderId: id },
       payment: { method, status },
       paymentMethod: method,
       paymentStatus: status,

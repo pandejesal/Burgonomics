@@ -65,6 +65,7 @@ beforeEach(() => {
     role: "branch_staff",
     branchIds: BRANCHES.map((branch) => branch.id),
   };
+  state.docs["users/staff"] = { active: true };
   for (const branch of BRANCHES) state.docs[`branches/${branch.id}`] = branch;
   state.docs["products/p1"] = {
     name: "Burger",

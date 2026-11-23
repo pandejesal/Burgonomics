@@ -82,6 +82,7 @@ const { mockDb, savedDocs } = vi.hoisted(() => {
       fn({
         get: (ref: any) => ref.get(),
         set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+        create: (ref:any,data:any)=>ref.create(data),
         update: (ref: any, data: any) => ref.set(data, { merge: true }),
       }),
   };

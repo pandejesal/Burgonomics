@@ -380,6 +380,12 @@ describe("release and commit", () => {
         [key]: { expiresAtMs: NOW - COUPON_RESERVATION_TTL_MS - 1 },
       },
     });
+    // M3: a dead checkout's durable obligation is resolved (released) by the
+    // worker before its slot becomes available again. An unresolved pending
+    // obligation keeps holding the cap even after the reservation TTL.
+    store.set("coupon_obligations/order_1", {
+      code: "SAVE50", orderId: "order_1", status: "released", resolvedAtMs: NOW,
+    });
     await expect(
       reserveCoupon({
         code: "SAVE50",

@@ -111,6 +111,7 @@ describe("bumpOrderStatus transactional re-authorization (stress sweep)", () => 
       // F04: this sweep re-authorizes the TRANSACTIONAL snapshot; the payment
       // lane is incidental here, so the seed states the admissible counter
       // cash/COD lane explicitly. It never fabricates `paymentChannel`.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
