@@ -112,6 +112,8 @@ vi.mock("firebase-admin", () => {
 import { resolveCheckoutFees } from "../src/modules/payments/checkoutFees";
 import { createCashOrder } from "../src/modules/orders/createCashOrder";
 import { createWalkIn } from "../src/modules/orders/createWalkIn";
+import { quoteWalkIn } from "../src/modules/orders/walkInQuote";
+import { couponQuoteSchema, handleCouponQuote } from "../src/modules/coupons/couponRoutes";
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
 import { clearBranchPricingCache } from "../src/modules/payments/branchPricing";
@@ -142,6 +144,7 @@ function seedWorld(isOpen: boolean) {
     inStock: true,
   });
   h.docs.set(`admins/staff_demo`, { role: "branch_owner", branchIds: [BRANCH] });
+  h.docs.set("users/staff_demo", { active: true });
   h.docs.set("admins/brand_admin", { role: "brand_owner", branchIds: [] });
 }
 
@@ -178,6 +181,60 @@ beforeEach(() => {
   seedWorld(true);
   prevMockGateway = config.mock.paymentGateway;
   config.mock.paymentGateway = true;
+});
+
+it("a suspended held staff session can neither quote nor create", async () => {
+  h.docs.set("users/staff_demo", { active: false });
+  const cart = { branchId: BRANCH, orderType: "takeaway", items: [{productId:"p1", quantity:1}] };
+  await expect(quoteWalkIn("staff_demo", cart)).rejects.toMatchObject({statusCode:403});
+  await expect(createWalkIn("staff_demo", {...cart, tender:"cash", expectedTotalPaise:10900, requestId:"deny"})).rejects.toMatchObject({statusCode:403});
+  expect([...h.docs.keys()].some(k=>k.startsWith("orders/"))).toBe(false);
+});
+
+it("deduplicates one uid/attempt across order IDs even after the storefront closes", async () => {
+  const first=await createCashOrder(CUSTOMER,cashInput("cash_original",{attemptId:"attempt_one"}));
+  seedWorld(false);
+  const replay=await createCashOrder(CUSTOMER,cashInput("cash_another_tab",{attemptId:"attempt_one"}));
+  expect(replay).toEqual({...first,replayed:true});
+  expect(h.docs.has("orders/cash_another_tab")).toBe(false);
+});
+
+it("refuses a stale explicit store while its actual branch is closed", async () => {
+  seedWorld(false);
+  seedOrderForPayment("ord_stale");
+  Object.assign(h.docs.get("orders/ord_stale"),{branchId:BRANCH,storeId:"removed_store"});
+  await expect(createPaymentOrder({orderId:"ord_stale",orderType:"takeaway",customerId:CUSTOMER} as never)).rejects.toMatchObject({statusCode:409});
+  expect([...h.docs.keys()].filter(k=>k.startsWith("payment_intents/"))).toHaveLength(0);
+});
+
+it("refuses a still-open card under a branch staff close override", async () => {
+  Object.assign(h.docs.get(`branches/${BRANCH}`),{storeStatusOverride:true});
+  await expect(createCashOrder(CUSTOMER,cashInput("cash_override"))).rejects.toMatchObject({code:"STORE_CLOSED"});
+});
+
+it("prices a paid modifier identically on coupon quote, cash and online", async () => {
+  h.docs.set("products/p1", {...h.docs.get("products/p1"), customizations:[{id:"extras",options:[{id:"cheese",price:11}]}]});
+  h.docs.set("coupons/PARITY", {active:true, discountType:"percent",value:10,minOrder:115});
+  const selections=[{id:"cheese",name:"Cheese",priceDelta:999}];
+  const quoteItems=[{productId:"p1",quantity:1,price:109,modifiers:selections}];
+  const cashItems=[{productId:"p1",quantity:1,modifiers:selections}];
+  const res = {status:vi.fn().mockReturnThis(),json:vi.fn()};
+  await handleCouponQuote({user:{uid:CUSTOMER},body:couponQuoteSchema.parse({code:"PARITY",storeId:STORE,items:quoteItems})} as never,res as never);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({subtotal:120,discount:12}));
+  const cash = await createCashOrder(CUSTOMER,cashInput("cash_parity",{items:cashItems,couponCode:"PARITY",expectedTotalPaise:10800}));
+  expect(cash.totals).toMatchObject({foodSubtotal:120,discount:12});
+  seedOrderForPayment("online_parity");
+  Object.assign(h.docs.get("orders/online_parity"),{items:cashItems,couponCode:"PARITY"});
+  const paid= await createPaymentOrder({orderId:"online_parity",orderType:"takeaway",customerId:CUSTOMER} as never);
+  expect(paid.pricing).toMatchObject({foodSubtotal:120,discount:12});
+  const slot = h.docs.get("coupon_redemptions/online_parity");
+  expect(slot.gatewayOrderId).toBe(paid.razorpayOrderId);
+  expect(slot.version).toBe(1);
+  Object.assign(h.docs.get("orders/online_parity"), {paymentStatus:"failed"});
+  const retry=await createPaymentOrder({orderId:"online_parity",orderType:"takeaway",customerId:CUSTOMER} as never);
+  expect(retry.razorpayOrderId).toBe(paid.razorpayOrderId);
+  Object.assign(slot,{gatewayOrderId:"different_generation"});
+  await expect(createPaymentOrder({orderId:"online_parity",orderType:"takeaway",customerId:CUSTOMER} as never)).rejects.toMatchObject({statusCode:409});
 });
 
 describe("F2 — a closed outlet refuses new ONLINE customer orders", () => {

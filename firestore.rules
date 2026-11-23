@@ -237,6 +237,10 @@ service cloud.firestore {
         'routeTransferRetryCount', 'routeTransferClaimedAt',
         'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
         'paymentChannel', 'monthlyFeeHold', 'settlementEffectiveAtMs', 'settlementCaptureUnresolved', 'settlementProcessedRefunds',
+        // A2: the cash receipt and its request binding are server-issued proof
+        // of a real cash sale; staff must not plant or edit them (they used to
+        // be writable, which let a forged receipt impersonate legacy cash).
+        'cashReceipt', 'cashRequestHash', 'couponIntentId',
         // Courier COD money and readiness are server-written. Branch staff
         // must not rewrite the cash due or forge a courier-collection flag.
         'cashDuePaise', 'cashOnDelivery',
@@ -275,7 +279,37 @@ service cloud.firestore {
         // feed cash reconciliation, POS financials and customer-facing totals.
         'subtotal', 'tax', 'deliveryFee', 'total', 'tipAmount',
         'promo', 'loyaltyPointsRedeemed', 'paymentMethod', 'deliveryQuoteId',
+        // M8 r3 — receipt money proof. The customer receipt prints the amount
+        // actually moved from these fields; a staff/owner client must never be
+        // able to plant or edit them. The literal dotted name is required:
+        // diff().affectedKeys() reports leaf paths, so naming only `payment`
+        // does NOT cover `payment.capturedAmountPaise` (nested or literal).
+        'cashCollectedPaise', 'payment.capturedAmountPaise', 'receiptEvidence',
+        // r2 P1: the POS-cancel queue (lease, attempts, outcome and reason) is
+        // server-only. A client must not plant a 'cancelled' outcome to silence
+        // a live kitchen ticket, nor clear a lease to double-send a cancel.
+        'petpoojaCancelStatus', 'petpoojaCancelReason', 'petpoojaCancelReasonClass',
+        'petpoojaCancelRequestedBy', 'petpoojaCancelRequestedAtMs', 'petpoojaCancelRequestedAt',
+        'petpoojaCancelNextRetryAtMs', 'petpoojaCancelClaimedAt', 'petpoojaCancelAttemptCount',
+        'petpoojaCancelCompletedAt', 'petpoojaCancelAckMessage', 'petpoojaCancelPosOrderId',
+        'petpoojaCancelSkippedReason', 'lastPetpoojaCancelError', 'kotCancelFailed',
+        // The POS binding is the identity the cancel queue fences against.
+        'petpoojaOrderId',
       ];
+    }
+
+    // M8 r4 — receipt evidence must stay UNCHANGED on client writes. Staff may
+    // still edit unrelated order fields (status via the server endpoint, notes,
+    // etc.); only the server merge-set that stamps capture/collection may
+    // introduce or change these fields. get() resolves dotted paths inside
+    // maps, which is exactly the nested payment.capturedAmountPaise shape.
+    function orderReceiptEvidenceServerOwned() {
+      return request.resource.data.get('receiptEvidence', null) ==
+          resource.data.get('receiptEvidence', null) &&
+        request.resource.data.get('cashCollectedPaise', null) ==
+          resource.data.get('cashCollectedPaise', null) &&
+        request.resource.data.get('payment', {}).get('capturedAmountPaise', null) ==
+          resource.data.get('payment', {}).get('capturedAmountPaise', null);
     }
 
     // Nested payment display marker at birth. The customer lane is
@@ -482,7 +516,8 @@ service cloud.firestore {
         // SEC-04 applies to EVERY client role: status moves only through
         // POST /orders/bumpStatus (scope check + audit record).
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys()) &&
+        orderReceiptEvidenceServerOwned()
       ) || (
         isBranchOwner() &&
         ownsBranch(resource.data.branchId) &&
@@ -492,7 +527,8 @@ service cloud.firestore {
         // scope check + audit record). No partner client writes an order's
         // status directly; letting the rule allow it bypassed that audit.
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys()) &&
+        orderReceiptEvidenceServerOwned()
       ) || (
         // F24: customers may NOT write order status at all. A direct
         // `{status: CANCELLED}` client write skipped the server-owned
@@ -562,6 +598,10 @@ service cloud.firestore {
         isBranchOwner() && ownsBranch(request.resource.data.branchId) &&
         !request.resource.data.keys().hasAny([
           'costPrice', 'compareAtPrice', 'discountPercentage', 'petpoojaItemId',
+          // r3 P2: the outbound stock-push version and lease are server-owned.
+          // A client must not fabricate a version to force a stale vendor send,
+          // nor plant a claim to block a legitimate toggle.
+          'stockVersion', 'stockPushClaim',
           // F9: priced selections and catalog packing data moved into the
           // rules: `customizations` now sets what customers pay, so it gets the
           // same protection as `price`.
@@ -578,7 +618,9 @@ service cloud.firestore {
           // POS delisting state is decided by the Petpooja sync, never by a
           // client: without these a partner could clear the marker while the
           // SKU is still absent from the POS.
-          'delistedFromPos', 'delistedAt'
+          'delistedFromPos', 'delistedAt',
+          // r3 P2: version and lease fence the vendor stock POST and its ACK.
+          'stockVersion', 'stockPushClaim'
         ])
       );
       allow delete: if isBrandOwner();

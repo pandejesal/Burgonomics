@@ -19,17 +19,17 @@ import {
 } from "../payments/pricing.engine";
 import {
   STORE_CLOSED,
+  assertStorefrontOpenAndMatching,
   assertOutletOpenForOnlineOrders,
 } from "../payments/outletStatus";
+import { staffCloseOverrideInForce } from "../stores/storeStatus";
 import { DELIVERY_FEE_QUOTES, assertDeliveryQuoteBindable } from "../payments/deliveryQuotes";
 import {
-  commitCouponRedemption,
   evaluateCoupon,
   isCouponRefusal,
   normalizeCoupon,
   reserveCouponInTx,
 } from "../coupons/couponAuthority";
-import { captureErrorSnapshot } from "../../core/errors";
 
 /**
  * COD / pay-at-counter order creation (owner decision 2026-11-20: cash on
@@ -107,6 +107,8 @@ const displayRecord = z.record(z.string(), z.unknown());
 export const createCashOrderSchema = z
   .object({
     orderId: documentId,
+    attemptId: documentId.optional(),
+    addressId: documentId.optional(),
     storeId: documentId.optional(),
     branchId: documentId.optional(),
     orderType: z.enum(["delivery", "takeaway", "dinein"]),
@@ -169,7 +171,9 @@ const placed: CashOrderReceipt["status"] = {
 function requestHashOf(input: CreateCashOrderRequest): string {
   return digest(
     JSON.stringify({
-      orderId: input.orderId,
+      orderId: input.attemptId ?? input.orderId,
+      ...(input.addressId ? {addressId: input.addressId} : {}),
+      ...(input.attemptId && input.tableNumber ? {tableNumber:input.tableNumber} : {}),
       storeId: input.storeId ?? null,
       branchId: input.branchId ?? null,
       orderType: input.orderType,
@@ -178,17 +182,14 @@ function requestHashOf(input: CreateCashOrderRequest): string {
         quantity: item.quantity,
         customizations: item.customizations ?? null,
         modifiers: item.modifiers ?? null,
-        notes: item.notes ?? null,
       })),
-      expectedTotalPaise: input.expectedTotalPaise,
       deliveryQuoteId: input.deliveryQuoteId ?? null,
       couponCode: input.couponCode ?? null,
       tipAmount: input.tipAmount ?? null,
-      notes: input.notes ?? null,
-      fulfillmentInstructions: input.fulfillmentInstructions ?? null,
-      tableNumber: input.tableNumber ?? null,
-      customerName: input.customerName ?? null,
-      customerPhone: input.customerPhone ?? null,
+      // M4 privacy + reconfirmation: display-only fields (notes, contact,
+      // instructions, table) and the confirmation total are NOT identity. They
+      // are never persisted in the client replay record, so hashing them would
+      // break an honest retry after a PRICE_CHANGED reconfirmation.
     })
   );
 }
@@ -229,24 +230,27 @@ export async function createCashOrder(
   const input = parsed.data;
   const requestHash = requestHashOf(input);
   const orderRef = db.collection("orders").doc(input.orderId);
+  const attemptRef = input.attemptId ? db.collection("cash_checkout_attempts").doc(digest(JSON.stringify([actorUid,input.attemptId]))) : null;
   const couponCode = input.couponCode?.trim().toUpperCase();
 
-  // F2 (staging 2026-11-21, Test 9): a closed outlet must not take new cash
-  // orders either — the server created the order and told the kitchen about it
-  // while `stores/{id}.isOpen` was false. Refused BEFORE the transaction, so
-  // nothing is written and no KOT is dispatched.
-  try {
-    await assertOutletOpenForOnlineOrders({ storeId: input.storeId, branchId: input.branchId });
-  } catch (err: any) {
-    if (err?.code === STORE_CLOSED) {
-      throw new CashOrderError(409, STORE_CLOSED, err.message);
-    }
-    throw err;
-  }
+  // A4: the close gate is read INSIDE the write transaction below (after the
+  // replay check), from the same canonical storefront doc that supplies the
+  // branch link. A close racing this create rejects the NEW order; a replay of
+  // an already-received receipt still resolves above, without needing a live
+  // storefront (otherwise receipt recovery would break during a close).
 
   let receipt: CashOrderReceipt;
   try {
     receipt = await db.runTransaction(async (tx) => {
+      if (attemptRef) {
+        const attempt = (await tx.get(attemptRef)).data();
+        if (attempt) {
+          if (attempt.actorUid !== actorUid || attempt.requestHash !== requestHash || !attempt.receipt) {
+            throw new CashOrderError(409,"IDEMPOTENCY_CONFLICT","This checkout attempt already has a different receipt.");
+          }
+          return {...attempt.receipt,replayed:true} as CashOrderReceipt;
+        }
+      }
       // 1. Idempotency first: a retry of the same request converges on the
       // stored receipt, and never reprices against a moved menu.
       const orderSnap = await tx.get(orderRef);
@@ -277,11 +281,18 @@ export async function createCashOrder(
       let branchId = input.branchId ?? null;
       let storeData: Record<string, any> | null = null;
       if (input.storeId) {
-        const storeSnap = await tx.get(db.collection("stores").doc(input.storeId));
-        if (!storeSnap.exists) {
+        // A4: the same `stores` → `admin_stores` precedence the canonical
+        // storefront resolver applies, so a linked fallback outlet works.
+        for (const collection of ["stores", "admin_stores"] as const) {
+          const storeSnap = await tx.get(db.collection(collection).doc(input.storeId));
+          if (storeSnap.exists) {
+            storeData = (storeSnap.data() || {}) as Record<string, any>;
+            break;
+          }
+        }
+        if (!storeData) {
           throw new CashOrderError(409, "STORE_NOT_LINKED", "This outlet isn't taking orders yet.");
         }
-        storeData = (storeSnap.data() || {}) as Record<string, any>;
         const linked = storeData.partnerBranchId;
         if (typeof linked !== "string" || !linked) {
           throw new CashOrderError(409, "STORE_NOT_LINKED", "This outlet isn't taking orders yet.");
@@ -290,6 +301,17 @@ export async function createCashOrder(
           throw new CashOrderError(409, "STORE_NOT_LINKED", "This outlet isn't linked to that branch.");
         }
         branchId = linked;
+        // A4: gate from THIS doc, in this transaction, after the replay check.
+        assertStorefrontOpenAndMatching(
+          { ...storeData, id: input.storeId },
+          input.storeId,
+          input.branchId ?? null
+        );
+      } else if (input.branchId) {
+        // Branch-only API fallback: resolve the same canonical storefront and
+        // read its gate here, inside the create transaction.
+        const outlet = await assertOutletOpenForOnlineOrders({ branchId: input.branchId }, tx);
+        storeData = outlet.data;
       }
       if (!branchId) throw new CashOrderError(400, "BRANCH_REQUIRED", "branchId or storeId is required.");
 
@@ -298,6 +320,11 @@ export async function createCashOrder(
         throw new CashOrderError(503, "BRANCH_UNAVAILABLE", "Branch configuration is unavailable.");
       }
       const branch = branchSnap.data() || {};
+      // A4: a staff close override wins even if the storefront card is still
+      // marked open (rule C). Re-read inside the write transaction.
+      if (staffCloseOverrideInForce(storeData, branch)) {
+        throw new CashOrderError(409, STORE_CLOSED, "This outlet is closed right now.");
+      }
       const config = branchConfigFromDoc(branch, branchId);
 
       // 3. Catalog-priced lines: the product docs are read HERE, in the same
@@ -345,8 +372,15 @@ export async function createCashOrder(
       // in this same transaction (same rule as the online path: no static fee,
       // no default, and one quote can never back two orders).
       let serverDeliveryFee: number | undefined;
+      let address = input.deliveryAddress ?? input.address;
       const quoteId = input.deliveryQuoteId;
       if (input.orderType === "delivery") {
+        if (input.attemptId) {
+          if (!input.addressId) throw new CashOrderError(422,'ADDRESS_REQUIRED','Select a saved delivery address.');
+          const saved = await tx.get(db.collection('users').doc(actorUid).collection('addresses').doc(input.addressId));
+          address = saved.data();
+          if (!address || !Number.isFinite(address.lat) || !Number.isFinite(address.lng)) throw new CashOrderError(422,'ADDRESS_REQUIRED','Select a saved delivery address.');
+        }
         if (!quoteId) {
           throw new CashOrderError(
             409,
@@ -355,7 +389,7 @@ export async function createCashOrder(
           );
         }
         const quoteSnap = await tx.get(db.collection(DELIVERY_FEE_QUOTES).doc(quoteId));
-        const drop = (input.deliveryAddress ?? input.address ?? {}) as Record<string, unknown>;
+        const drop = address ?? {};
         serverDeliveryFee = assertDeliveryQuoteBindable({
           quote: quoteSnap.exists ? quoteSnap.data() : null,
           orderId: input.orderId,
@@ -475,14 +509,13 @@ export async function createCashOrder(
         );
       }
 
-      // 7. Coupon slot + quote claim: the FIRST writes in this transaction.
-      // reserveCouponInTx re-reads the coupon, stats, usage and redemption and
-      // then writes them; every earlier tx.get is already done, so Firestore's
-      // read-before-write rule holds. Holding the slot here makes the discount,
-      // the counters and the order one atomic decision: two cash checkouts of
-      // the last slot conflict on the stats doc, exactly as online checkout
-      // does in createPaymentOrder. An ineligible coupon throws its typed
-      // 400/409 here, before any write and before any order exists.
+      // 7. Coupon redemption + BOTH counters are committed INSIDE this same
+      // transaction (M3) — there is no cash payment callback that could be lost
+      // after the order write. `commitNow` writes a committed redemption, bumps
+      // the global and per-customer counters and settles the durable obligation
+      // together with the order doc. Two cash checkouts of the last slot still
+      // conflict on the stats doc. An ineligible coupon throws its typed 400/409
+      // here, before any write and before any order exists.
       if (couponCode) {
         try {
           await reserveCouponInTx(tx, {
@@ -492,6 +525,8 @@ export async function createCashOrder(
             branchId,
             foodSubtotal: totals.foodSubtotal,
             expectedDiscount: totals.discount,
+            paymentIntentId: input.orderId,
+            commitNow: true,
           });
         } catch (err: any) {
           if (isCouponRefusal(err)) {
@@ -535,7 +570,6 @@ export async function createCashOrder(
       // valid order is invisible in Orders and Track.
       const placedAtIso = new Date(placedAtMs).toISOString();
       const storeId = resolvedStoreId;
-      const address = input.deliveryAddress ?? input.address;
       // An API caller may omit the display snapshot (the app's own cash path
       // sends one). Derive it from the same store doc that supplied the pricing
       // branch, so the confirmation screen has a real outlet to render.
@@ -627,6 +661,7 @@ export async function createCashOrder(
         placedAt: placedAtIso,
       });
 
+      if (attemptRef) tx.create(attemptRef, {actorUid, requestHash, receipt, createdAt:timestamp});
       return receipt;
     });
   } catch (error: unknown) {
@@ -638,26 +673,6 @@ export async function createCashOrder(
       throw new CashOrderError(statusCode, code, (error as any)?.message || "Cash order refused.");
     }
     throw new CashOrderError(503, "CASH_ORDER_UNAVAILABLE", "Cash ordering is temporarily unavailable.");
-  }
-
-  // A cash order has no payment callback: the reservation is spent as soon as
-  // the order exists. This runs AFTER the outer transaction commits, is
-  // idempotent (a replay returns early above), and never turns a written order
-  // into a 503 — a failed commit is alerted and the still-reserved slot is
-  // released by cancel or by its TTL.
-  if (couponCode && !receipt.replayed) {
-    try {
-      await commitCouponRedemption(input.orderId);
-    } catch (err: any) {
-      console.warn(`[CreateCashOrder] coupon commit failed for ${input.orderId}:`, err?.message || err);
-      await captureErrorSnapshot({
-        source: "payments",
-        severity: "high",
-        message: `Coupon ${couponCode} could not be committed for cash order ${input.orderId}`,
-        orderId: input.orderId,
-        errorStack: err?.stack,
-      }).catch(() => undefined);
-    }
   }
   return receipt;
 }

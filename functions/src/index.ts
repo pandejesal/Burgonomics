@@ -158,6 +158,7 @@ import {
   BroadcastSchema,
 } from "./modules/notifications/broadcast";
 import { withSchedulerLock } from "./core/schedulerLock";
+import { drainCouponObligationsScheduled } from "./modules/coupons/couponObligationWorker";
 import { dispatchFCM } from "./modules/notifications/fcm.service";
 import { unregisterDeviceToken } from "./modules/notifications/unregisterToken";
 import { filterSubscribableTopics } from "./modules/notifications/topics";
@@ -2686,6 +2687,24 @@ export const recoverStuckCaptureFulfilmentsJob = onSchedule(
         `refunded ${result!.refunded}, confirmed ${result!.confirmed}, ` +
         `retried ${result!.retried}, escalated ${result!.escalated}, ` +
         `escalationPending ${result!.escalationPending}, failed ${result!.failed}`
+    );
+  }
+);
+
+// M3: drain durable coupon obligations so a captured order never silently
+// loses its slot usage, and a slot is never held past a terminal outcome.
+export const drainCouponObligationsJob = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/5 * * * *",
+    timeZone: "Asia/Kolkata",
+    timeoutSeconds: 300,
+  },
+  async () => {
+    const result = await drainCouponObligationsScheduled();
+    console.log(
+      `[Coupon Obligations] committed ${result.committed}, released ${result.released}, ` +
+        `left ${result.left}, flagged ${result.flagged}`
     );
   }
 );

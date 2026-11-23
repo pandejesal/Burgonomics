@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 /**
  * Firestore rules, real emulator, no new dependencies.
@@ -64,21 +64,25 @@ const READY = map({
 });
 
 async function setup(): Promise<void> {
-  await seed(`admins/${BRANCH_STAFF}`, {
-    role: str("branch_owner"),
-    branchId: str("branch_cod"),
-    active: bool(true),
-  });
-  await seed(`users/${BRANCH_STAFF}`, { active: bool(true) });
-  await seed("branches/branch_cod", {
-    name: str("COD Branch"),
-    cashOnDelivery: map({
-      enabled: bool(true),
-      maxOrderValuePaise: int(500000),
-      courierCod: READY,
+  // Parallel seeds: the first test used to spend its whole 5s budget waiting
+  // for four sequential emulator writes on a cold emulator. Parallel writes
+  // keep the timeout unchanged while making the suite reliable.
+  await Promise.all([
+    seed(`admins/${BRANCH_STAFF}`, {
+      role: str("branch_owner"),
+      branchId: str("branch_cod"),
+      active: bool(true),
     }),
-  });
-  await seed("orders/ord_cod_rules", {
+    seed(`users/${BRANCH_STAFF}`, { active: bool(true) }),
+    seed("branches/branch_cod", {
+      name: str("COD Branch"),
+      cashOnDelivery: map({
+        enabled: bool(true),
+        maxOrderValuePaise: int(500000),
+        courierCod: READY,
+      }),
+    }),
+    seed("orders/ord_cod_rules", {
     branchId: str("branch_cod"),
     customerId: str("cust_cod_rules"),
     // A REAL status map: rules read status.code in directDeliveredBypass(), so
@@ -92,10 +96,18 @@ async function setup(): Promise<void> {
     paymentChannel: str("cash"),
     cashDuePaise: int(12345),
     cashOnDelivery: map({ maxOrderValuePaise: int(500000), courierCod: READY }),
-  });
+    }),
+  ]);
 }
 
 describe("branch staff cannot rewrite courier COD money or readiness (emulator)", () => {
+  // Warm the emulator and compile the rules OUTSIDE a 5s test budget. No test
+  // timeout or assertion is relaxed; cold-start work simply is not billed to
+  // the first case.
+  beforeAll(async () => {
+    await setup();
+  }, 30_000);
+
   it("allows a staff order edit that is not server-owned", async () => {
     await setup();
     // Same staff identity, valid status: a normal order edit still succeeds.
@@ -105,6 +117,34 @@ describe("branch staff cannot rewrite courier COD money or readiness (emulator)"
   it("denies an order cashDuePaise rewrite", async () => {
     await setup();
     expect(await staffPatch("orders/ord_cod_rules", "cashDuePaise", int(1))).toBe(403);
+  });
+
+  it("keeps POS cancel state, lease and retry controls server-owned", async () => {
+    await setup();
+    for (const [field, value] of Object.entries({
+      petpoojaCancelStatus: str("pending"), petpoojaCancelAttemptCount: int(7),
+      petpoojaCancelClaimedAt: int(1), petpoojaCancelNextRetryAtMs: int(1),
+      kotCancelFailed: bool(true), petpoojaOrderId: str("other-ticket"),
+    })) {
+      expect(await staffPatch("orders/ord_cod_rules", field, value), field).toBe(403);
+    }
+  });
+
+  it("denies client writes to the stock-push version and lease", async () => {
+    await setup();
+    await seed("products/prod_cod_rules", {
+      branchId: str("branch_cod"), inStock: bool(true), stockVersion: int(1),
+    });
+    // UPDATE denial on an existing product.
+    expect(await staffPatch("products/prod_cod_rules", "stockVersion", int(99))).toBe(403);
+    expect(await staffPatch("products/prod_cod_rules", "stockPushClaim", map({ token: str("x"), at: int(1) }))).toBe(403);
+    // CREATE denial: staff must not plant either field at birth.
+    const create = await fetch(`${BASE}/products/prod_cod_rules_new?updateMask.fieldPaths=branchId&updateMask.fieldPaths=stockVersion`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${staffToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { branchId: str("branch_cod"), stockVersion: int(9) } }),
+    });
+    expect(create.status).toBe(403);
   });
 
   it("denies an order readiness-snapshot rewrite", async () => {

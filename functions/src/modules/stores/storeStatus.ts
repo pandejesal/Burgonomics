@@ -45,21 +45,22 @@ export interface StorefrontMatch {
  */
 export async function resolveStorefrontForBranch(
   branchId: string,
-  restId: string
+  restId: string,
+  reader?: {get: (reference: any) => Promise<any>}
 ): Promise<{ match: StorefrontMatch | null; ambiguous: boolean }> {
   for (const collection of ["stores", "admin_stores"] as const) {
     const col = db.collection(collection) as any;
     if (!col || typeof col.where !== "function") continue;
 
     const seen = new Map<string, StorefrontMatch>();
-    let lookupFailed = false;
     for (const [field, value] of [
       ["partnerBranchId", branchId],
       ["petpoojaRestId", restId],
     ] as Array<[string, string]>) {
       if (!value) continue;
       try {
-        const snap = await col.where(field, "==", value).limit(5).get();
+        const query = col.where(field, "==", value).limit(5);
+        const snap = reader ? await reader.get(query) : await query.get();
         for (const doc of snap?.docs || []) {
           if (!doc?.id) continue;
           seen.set(String(doc.id), {
@@ -73,11 +74,9 @@ export async function resolveStorefrontForBranch(
           `[Store Status] storefront lookup in ${collection} by ${field} failed:`,
           err?.message || err
         );
-        lookupFailed = true;
-        break;
+        throw err;
       }
     }
-    if (lookupFailed) continue;
     if (seen.size > 1) return { match: null, ambiguous: true };
     if (seen.size === 1) return { match: [...seen.values()][0], ambiguous: false };
   }
@@ -156,56 +155,66 @@ export async function setStaffStoreStatus(
     typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 500) : null;
 
   const storeRef = db.collection(storefront.collection).doc(storefront.storeId);
-  await storeRef.set(
-    {
-      isOpen: desiredOpen,
-      storeStatusSource: "manual",
-      storeStatusOverride: override,
-      storeStatusReason: boundedReason,
-      storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  // The flag operators read on the outlet screens — kept in step so a stale
-  // "open" there can never be what a human trusts over the real gate.
-  await branchRef.set(
-    {
-      acceptingOrdersStatus: status,
-      active: desiredOpen ? true : branchData.active === false ? false : true,
-      storeStatusSource: "manual",
-      storeStatusOverride: override,
-      storeStatusReason: boundedReason,
-      storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  // The Partner directory mirror, when one exists. Only an EXISTING doc is
-  // touched: creating a partial `admin_stores` record from a status flip would
-  // fabricate a directory entry the operator never created.
-  if (storefront.collection !== "admin_stores") {
-    try {
+  // A3: the customer gate and the staff override must land in ONE transaction.
+  // The storefront/branch are re-read inside it, so a POS "open" that resolved
+  // before this call and commits during it forces a retry; the fresh snapshot
+  // then carries our override and the late open can never leave `isOpen: true`
+  // alongside an active staff close.
+  if (db && typeof (db as any).runTransaction === "function") {
+    await (db as any).runTransaction(async (tx: any) => {
+      const freshBranchSnap = await tx.get(branchRef);
+      const freshBranch = freshBranchSnap?.exists ? freshBranchSnap.data() || {} : {};
+      // A3/r2: read the Partner directory mirror INSIDE the transaction too. A
+      // delayed mirror write from an older operation can then never clobber a
+      // newer close: Firestore retries on a concurrent modification, and the
+      // fresh snapshot decides whether a mirror write is still warranted.
       const adminRef = db.collection("admin_stores").doc(storefront.storeId);
-      const adminSnap = await adminRef.get();
-      if (adminSnap?.exists) {
-        await adminRef.set(
-          {
-            isOpen: desiredOpen,
-            storeStatusSource: "manual",
-            storeStatusOverride: override,
-            storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }
-    } catch (err: any) {
-      // Mirror only: the gate write above is what stops ordering.
-      console.warn(
-        `[Store Status] admin_stores mirror update failed for ${storefront.storeId}:`,
-        err?.message || err
+      const adminSnap = storefront.collection === "admin_stores" ? null : await tx.get(adminRef);
+      tx.set(
+        storeRef,
+        {
+          isOpen: desiredOpen,
+          storeStatusSource: "manual",
+          storeStatusOverride: override,
+          storeStatusReason: boundedReason,
+          storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
       );
-    }
+      // The flag operators read on the outlet screens — kept in step so a stale
+      // "open" there can never be what a human trusts over the real gate.
+      tx.set(
+        branchRef,
+        {
+          acceptingOrdersStatus: status,
+          active: desiredOpen ? true : freshBranch.active === false ? false : true,
+          storeStatusSource: "manual",
+          storeStatusOverride: override,
+          storeStatusReason: boundedReason,
+          storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      if (adminSnap?.exists) {
+        const adminCurrent = adminSnap.data() || {};
+        if (adminCurrent.isOpen !== desiredOpen || adminCurrent.storeStatusOverride !== override) {
+          tx.set(
+            adminRef,
+            {
+              isOpen: desiredOpen,
+              storeStatusSource: "manual",
+              storeStatusOverride: override,
+              storeStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      }
+    });
+  } else {
+    // Fail closed: a client-side half-write is the reported bug. Without an
+    // atomic primitive the only honest answer is to refuse the change.
+    throw new Error("Store status could not be updated atomically — nothing was saved.");
   }
 
   return {

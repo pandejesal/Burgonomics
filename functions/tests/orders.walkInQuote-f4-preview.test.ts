@@ -87,6 +87,7 @@ const orders = () => Object.entries(state.docs).filter(([path]) => path.startsWi
 beforeEach(() => {
   for (const key of Object.keys(state.docs)) delete state.docs[key];
   state.docs["admins/staff"] = { role: "branch_staff", branchIds: ["hl-road"] };
+  state.docs["users/staff"] = { active: true };
   // HL Road charges ₹15 packaging, exactly as the staging branch does.
   state.docs["branches/hl-road"] = {
     name: "Burgonomics - HL Road",

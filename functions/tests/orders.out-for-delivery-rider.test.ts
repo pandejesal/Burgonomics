@@ -108,6 +108,7 @@ describe("P1-G: OUT_FOR_DELIVERY needs a real rider on a delivery order", () => 
       // delivery order, so the payment lane must be explicit. COD (collected at
       // the door) is the admissible non-gateway lane; the server-only
       // `paymentChannel: "razorpay"` capture marker is never fabricated.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -189,6 +190,7 @@ describe("P1-G: OUT_FOR_DELIVERY needs a real rider on a delivery order", () => 
       orderType: "takeaway",
       status: { code: "READY_FOR_PICKUP", terminal: false },
       // F04: no-courier fixture, explicit counter cash lane.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -205,6 +207,7 @@ describe("P1-G: OUT_FOR_DELIVERY needs a real rider on a delivery order", () => 
       orderType: "dinein",
       status: { code: "READY_TO_SERVE", terminal: false },
       // F04: no-courier fixture, explicit counter cash lane.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },

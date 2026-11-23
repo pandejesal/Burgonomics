@@ -51,6 +51,9 @@ import { pushItemStockToPetpooja } from "../petpooja/item86ingSync";
 /** Rows restored per tick — bounded so one tick cannot run past its timeout. */
 export const SOLD_OUT_RESTORE_BATCH = 40;
 
+/** P2: max pages examined per tick, so a stuck row cannot starve later ones. */
+export const SOLD_OUT_MAX_SCAN_PAGES = 4;
+
 /** Concurrent restores per chunk (each may hold a POS POST). */
 const RESTORE_CHUNK_SIZE = 4;
 
@@ -88,6 +91,34 @@ export function isDueSoldOutTimer(product: any, nowMs: number): boolean {
   return until > 0 && until <= nowMs && isMarkedSoldOut(product);
 }
 
+/**
+ * P2: a product the POS has delisted (`menuSyncWebhook` writes these markers)
+ * must never be brought back on sale by a timer. Its stale timer is cleared,
+ * but its availability flags are left alone.
+ */
+export function isPosDelisted(product: any): boolean {
+  return (
+    product?.delistedFromPos === true ||
+    product?.ghostRetired === true ||
+    product?.deleted === true
+  );
+}
+
+/** True when a timer deadline has arrived, regardless of availability (P2). */
+function hasDueTimer(product: any, nowMs: number): boolean {
+  const until = soldOutUntilMsOf(product);
+  return until > 0 && until <= nowMs;
+}
+
+/**
+ * P2: the value pushed to the POS is derived from the product's CURRENT
+ * availability, never a hardcoded `true` (nor a stale scan snapshot). A sold-out,
+ * delisted or unavailable product is never pushed as in-stock.
+ */
+export function availabilityForPosPush(product: any): boolean {
+  return !isMarkedSoldOut(product) && !isPosDelisted(product);
+}
+
 /** Query cutoff. Tolerates a datastore shim without `Timestamp.fromMillis`. */
 function cutoffValue(nowMs: number): any {
   const Timestamp: any = (admin.firestore as any)?.Timestamp;
@@ -112,8 +143,27 @@ function restorePatch(nowMs: number): Record<string, any> {
   };
 }
 
+/**
+ * P2: clear a timer that no longer needs restoring (item already available, or
+ * delisted) WITHOUT touching the availability flags. This is what lets a stale
+ * row leave the scan so the rows behind it are no longer starved.
+ */
+function clearStaleTimerPatch(nowMs: number, reason: "already_available" | "delisted") {
+  return {
+    disabledUntil: null,
+    eightSixDuration: null,
+    eightSixReason: null,
+    autoRestoreSkippedAt: admin.firestore.FieldValue.serverTimestamp(),
+    autoRestoreSkipDueAtMs: nowMs,
+    autoRestoreSkipReason: reason,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
 interface RestoreOutcome {
   restored: boolean;
+  /** P2: a stale timer was cleared (no restore, no POS push). */
+  staleCleared?: boolean;
   product?: any;
 }
 
@@ -143,10 +193,35 @@ async function restoreOne(doc: any, nowMs: number): Promise<RestoreOutcome> {
       const product = (fresh.exists ? fresh.data() : undefined) as any;
       if (!product) return;
       // Re-prove the deadline on the FRESH snapshot: the scan is minutes old and
-      // a re-86 (or a manual restore) must win.
-      if (!isDueSoldOutTimer(product, nowMs)) return;
-      tx.set(ref, restorePatch(nowMs), { merge: true });
-      outcome = { restored: true, product };
+      // a re-86 (or a manual restore) must win. If the deadline moved into the
+      // future (or was cleared), the row left the scan on its own — leave it be.
+      if (!hasDueTimer(product, nowMs)) return;
+
+      if (isPosDelisted(product)) {
+        // P2: a delisted SKU keeps its availability exactly as it is; only the
+        // stale timer goes, so the worker cannot resurrect a retired product.
+        tx.set(ref, clearStaleTimerPatch(nowMs, "delisted"), { merge: true });
+        outcome = { restored: false, staleCleared: true, product };
+        return;
+      }
+      if (!isMarkedSoldOut(product)) {
+        // P2: the item is available again but its timer survived. Clear it
+        // transactionally so this row stops blocking the queue; no POS push.
+        tx.set(ref, clearStaleTimerPatch(nowMs, "already_available"), { merge: true });
+        outcome = { restored: false, staleCleared: true, product };
+        return;
+      }
+      // Still due, still sold out and still listed: restore it. The product we
+      // hand to the POS push is the FRESH post-restore snapshot, so the outbound
+      // stock value is bound to the availability we actually committed.
+      // P2/r2: a monotonically increasing version fences the outbound stock
+      // POST. Write the SAME numeric value we hand to the vendor call so the
+      // pre-send re-check cannot disagree with what the transaction committed.
+      const nextVersion = Number(product.stockVersion || 0) + 1;
+      const patch = { ...restorePatch(nowMs), stockVersion: nextVersion };
+      const restored = { ...product, ...patch };
+      tx.set(ref, patch, { merge: true });
+      outcome = { restored: true, product: restored };
     });
   } catch (err: any) {
     logger.warn(
@@ -168,8 +243,22 @@ async function pushRestoredStockToPos(product: any): Promise<"synced" | "skipped
   const petpoojaItemId = product?.petpoojaItemId;
   if (!branchId || !petpoojaItemId) return "skipped";
   if (!isPetpoojaEnabled()) return "skipped";
+  // P2: never push a hardcoded "true". `product` is the fresh snapshot captured
+  // inside the restore transaction, so the value reflects the availability that
+  // was actually committed — a delisted or re-sold-out item is not pushed as
+  // in-stock. (The caller only invokes this for a committed restore.)
+  const inStock = availabilityForPosPush(product);
+  const expectedVersion = Number(product?.stockVersion || 0) || null;
+  const pushToken = `restore_${String(product?.id || petpoojaItemId)}_${expectedVersion}_${Date.now()}`;
   try {
-    const ok = await pushItemStockToPetpooja(branchId, String(petpoojaItemId), true);
+    const ok = await pushItemStockToPetpooja(
+      branchId,
+      String(petpoojaItemId),
+      inStock,
+      undefined,
+      expectedVersion,
+      pushToken
+    );
     return ok ? "synced" : "failed";
   } catch (err: any) {
     logger.warn(
@@ -225,44 +314,55 @@ export async function restoreDueSoldOutItems(nowMs: number = Date.now()): Promis
   let posSynced = 0;
   let posFailed = 0;
 
-  let docs: any[] = [];
-  try {
-    // Range on ONE field: Firestore's automatic single-field index serves this,
-    // so the timer needs no composite index in firestore.indexes.json.
-    const snap = await db
-      .collection("products")
-      .where("disabledUntil", "<=", cutoffValue(nowMs))
-      .limit(SOLD_OUT_RESTORE_BATCH)
-      .get();
-    docs = (snap.docs || []) as any[];
-  } catch (err: any) {
-    logger.warn("[SoldOutTimer] scan failed, skipping tick:", err?.message || err);
-    return { restoredCount, skippedCount, posSynced, posFailed };
-  }
+  // P2: page past rows instead of re-reading the same first 40 due timestamps
+  // every tick. A datastore shim without `startAfter` degrades to one page, but
+  // the transactional stale-timer clearing below still frees the queue.
+  const cutoff = cutoffValue(nowMs);
+  const probe: any = db.collection("products").where("disabledUntil", "<=", cutoff);
+  const canPage = typeof probe?.startAfter === "function";
+  const maxPages = canPage ? SOLD_OUT_MAX_SCAN_PAGES : 1;
+  let cursor: any = null;
+  let anyDocs = false;
 
-  if (docs.length === 0) {
-    return { restoredCount, skippedCount, posSynced, posFailed };
-  }
-
-  for (let i = 0; i < docs.length; i += RESTORE_CHUNK_SIZE) {
-    const chunk = docs.slice(i, i + RESTORE_CHUNK_SIZE);
-    const results = await Promise.allSettled(
-      chunk.map(async (doc) => ({ doc, outcome: await restoreOne(doc, nowMs) }))
-    );
-    for (let j = 0; j < results.length; j++) {
-      const res = results[j];
-      const doc = chunk[j];
-      if (res.status !== "fulfilled" || !res.value.outcome.restored) {
-        skippedCount++;
-        continue;
-      }
-      restoredCount++;
-      const product = res.value.outcome.product;
-      const sync = await pushRestoredStockToPos(product);
-      if (sync === "synced") posSynced++;
-      if (sync === "failed") posFailed++;
-      await recordPosSyncOutcome(doc.id, sync);
+  for (let page = 0; page < maxPages; page++) {
+    let query: any = db.collection("products").where("disabledUntil", "<=", cutoff);
+    if (cursor && canPage) query = query.startAfter(cursor);
+    let snap: any;
+    try {
+      snap = await query.limit(SOLD_OUT_RESTORE_BATCH).get();
+    } catch (err: any) {
+      logger.warn("[SoldOutTimer] scan failed, skipping tick:", err?.message || err);
+      break;
     }
+    const docs = (snap?.docs || []) as any[];
+    if (docs.length === 0) break;
+    anyDocs = true;
+    cursor = docs[docs.length - 1];
+
+    for (let i = 0; i < docs.length; i += RESTORE_CHUNK_SIZE) {
+      const chunk = docs.slice(i, i + RESTORE_CHUNK_SIZE);
+      const results = await Promise.allSettled(
+        chunk.map(async (doc) => ({ doc, outcome: await restoreOne(doc, nowMs) }))
+      );
+      for (let j = 0; j < results.length; j++) {
+        const res = results[j];
+        if (res.status !== "fulfilled" || !res.value.outcome.restored) {
+          skippedCount++;
+          continue;
+        }
+        restoredCount++;
+        const product = res.value.outcome.product;
+        const sync = await pushRestoredStockToPos(product);
+        if (sync === "synced") posSynced++;
+        if (sync === "failed") posFailed++;
+        await recordPosSyncOutcome(chunk[j].id, sync);
+      }
+    }
+    if (docs.length < SOLD_OUT_RESTORE_BATCH) break;
+  }
+
+  if (!anyDocs) {
+    return { restoredCount, skippedCount, posSynced, posFailed };
   }
 
   if (restoredCount > 0) {

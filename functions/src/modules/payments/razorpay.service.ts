@@ -15,6 +15,7 @@ import {
   claimCapturedPaymentInTx,
   isMoneyClaimFresh,
 } from "./reconciliation";
+import { receiptEvidenceStamp } from "./receiptEvidence";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import {
   markPaymentVerificationInFlight,
@@ -25,6 +26,7 @@ import { calculateOrderPricing, assertCatalogLinesSellable, CalculateOrderPricin
 // transaction below, committed when the payment is confirmed, released on
 // cancel/failure (see modules/orders/cancelSideEffects.ts).
 import {
+  couponRedemptionId,
   commitCouponRedemption,
   isCouponRefusal,
   reserveCouponInTx,
@@ -1424,6 +1426,34 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           )
           .digest("hex")
           .slice(0, 40)}`;
+  const checkReturn = async (candidate:any, fresh?:any) => {
+    await assertOutletOpenForOnlineOrders({storeId:docStoreId,branchId});
+    if (!(couponCode || candidate?.pricing?.discount > 0)) return candidate;
+    const slotId = couponRedemptionId(params.orderId!);
+    const slotRef = db.collection('coupon_redemptions').doc(slotId);
+    const keyRef = db.collection('payment_intents').doc(idempotencyKey);
+    const refused = () => Object.assign(new Error('This discount is no longer bound to this payment attempt.'), {statusCode:409,code:'COUPON_GATEWAY_MISMATCH'});
+    return db.runTransaction(async tx => {
+      const existing = (await tx.get(keyRef)).data();
+      const slot = (await tx.get(slotRef)).data();
+      const intent = existing || fresh;
+      if (!intent || !slot || slot.status !== 'reserved' || slot.orderId !== params.orderId || slot.customerId !== params.customerId || slot.paymentIntentId !== idempotencyKey || slot.code !== couponCode?.trim().toUpperCase() || intent.orderId !== slot.orderId || intent.cartFingerprint !== fingerprint || intent.expiresAtMs <= Date.now() || Math.round(slot.discount*100) !== Math.round(intent.pricing.discount*100)) throw refused();
+      const gatewayOrderId = intent.razorpayOrderId;
+      const generation = {slotId,orderId:slot.orderId,gatewayOrderId,version:slot.version,code:slot.code,customerId:slot.customerId};
+      const bindingRef = db.collection('coupon_gateway_bindings').doc(gatewayOrderId);
+      if (existing) {
+        const binding = (await tx.get(bindingRef)).data();
+        if (!binding || slot.gatewayOrderId !== gatewayOrderId || binding.version !== slot.version || binding.slotId !== slotId || binding.gatewayOrderId !== gatewayOrderId || (!fresh && gatewayOrderId !== candidate.razorpayOrderId)) throw refused();
+      } else {
+        if (slot.gatewayOrderId || !fresh || !Number.isSafeInteger(slot.version)) throw refused();
+        tx.create(bindingRef,generation);
+        tx.set(slotRef,{gatewayOrderId},{merge:true});
+        tx.set(db.collection('coupon_obligations').doc(slotId),generation,{merge:true});
+        tx.create(keyRef,{...intent,couponSlot:generation});
+      }
+      return intent;
+    });
+  };
   if (db && typeof db.collection === "function") {
     // The binding refusal is decided OUTSIDE the lookup try/catch: a mismatch
     // is a proven 409, not an unavailable-service 503.
@@ -1498,7 +1528,10 @@ export async function createPaymentOrder(params: CreateOrderParams) {
         orderType,
         orderId: params.orderId,
       });
-      return reusedIntentResponse(reusableIntent);
+      // M2: a declined attempt is NOT a terminal resolution — the gateway order
+      // stays payable, so its coupon slot must still be held. Never hand the
+      // discounted amount back after that slot was released or expired.
+      return reusedIntentResponse(await checkReturn(reusableIntent));
     }
     if (corruptIntent) {
       // No key in the log/snapshot: the idempotency key is a client basket
@@ -1577,6 +1610,10 @@ export async function createPaymentOrder(params: CreateOrderParams) {
             foodSubtotal: pricing.foodSubtotal,
             expectedDiscount: pricing.discount,
             nowMs: Date.now(),
+            // Bind the slot to THIS payment intent. A later decline callback
+            // cannot free a slot a retry of the same intent still needs (M2),
+            // and the durable obligation records the owed commit (M3).
+            paymentIntentId: idempotencyKey,
           });
         }
         tx.set(
@@ -1586,6 +1623,9 @@ export async function createPaymentOrder(params: CreateOrderParams) {
             // Stamp the coupon the bill was actually priced with, so the KOT,
             // receipt and support trail name the same code the customer used.
             ...(couponCode ? { couponCode } : {}),
+            // M2: the capture/webhook path must prove the SAME intent holds the
+            // slot. Store the binding on the server-owned order doc only.
+            ...(couponCode ? { couponIntentId: idempotencyKey } : {}),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
@@ -1619,6 +1659,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   }
 
   let razorpayOrderId: string;
+  await assertOutletOpenForOnlineOrders({storeId:docStoreId,branchId});
 
   if (config.mock.paymentGateway) {
     // Unique per mint: a millisecond-only id collided for two checkouts starting
@@ -1673,6 +1714,9 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       // doc (legacy client verifying before creating it) can rebuild the doc
       // from SERVER-owned data only (spec §2 ghost-order guard).
       branchId,
+      // A4: the SAME storefront the close gate admitted. Admission and pricing
+      // therefore bind to one outlet; a stale store card cannot swap branches.
+      storeId: docStoreId || null,
       orderType,
       customerId: params.customerId,
       // PAY-13: the fingerprint of the DOC-derived cart this amount was priced
@@ -1682,6 +1726,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       createdAtMs: nowMs,
       expiresAtMs: nowMs + INTENT_TTL_MS,
     };
+    if (couponCode) return reusedIntentResponse(await checkReturn(intentDoc,intentDoc));
     // No coin reservation is created: redemption is refused before this point
     // (D31-D33), so a payable intent never holds coins and never needs funding
     // reconciliation. That removes an entire class of stuck-lock states.
@@ -1745,7 +1790,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           if (durable.cartFingerprint !== fingerprint) {
             throw paymentIntentCartMismatchError();
           }
-          return reusedIntentResponse(durable);
+          return reusedIntentResponse(await checkReturn(durable));
         }
         throw reconciled.thrown;
       } else {
@@ -1764,7 +1809,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           if (resolution.intent.cartFingerprint !== fingerprint) {
             throw paymentIntentCartMismatchError();
           }
-          return reusedIntentResponse(resolution.intent);
+          return reusedIntentResponse(await checkReturn(resolution.intent));
         }
         if (resolution.kind === "superseded") {
           // Our intent doc REPLACED the expired winner, so it is persisted and
@@ -2020,6 +2065,9 @@ export async function verifyPayment(
     gatewayCreatedAtMs = gatewayTruth.createdAtMs;
   }
 
+  if (intent?.couponSlot || orderData?.couponIntentId) {
+    await commitCouponRedemption(orderId, razorpayOrderId);
+  }
   // R06 corrective: terminal orders (cancelled/refunded) must be detected
   // before any external Route split/payment settlement. This read is performed
   // transactionally so a race that cancels the order after the amount check
@@ -2864,7 +2912,12 @@ async function finishVerifiedPayment(args: {
         // an unknown gateway time is flagged unresolved, never guessed.
         ...settlementCapturePending(),
         ...(capturedPaiseStamp !== undefined
-          ? { "payment.capturedAmountPaise": capturedPaiseStamp }
+          ? {
+              "payment.capturedAmountPaise": capturedPaiseStamp,
+              // M8 r4: receipt evidence is stamped in the SAME transaction as
+              // the captured amount. Without it the receipt stays neutral.
+              receiptEvidence: receiptEvidenceStamp("capture", capturedPaiseStamp),
+            }
           : {}),
         // Mirror the same truth into the nested object the apps actually read.
         // CANONICAL nested payment map (the queryable shape) — the refund.processed
@@ -2999,18 +3052,6 @@ async function finishVerifiedPayment(args: {
       transferResult,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-
-    // The order is paid: the coupon slot it held becomes a permanent use.
-    // Idempotent (a replay is a no-op) and non-fatal — the customer is already
-    // charged, and an uncommitted redemption only ever frees a slot early.
-    try {
-      await commitCouponRedemption(orderId);
-    } catch (err: any) {
-      console.warn(
-        `[Payments] coupon commit failed for confirmed order ${orderId}:`,
-        err?.message || err
-      );
-    }
 
     // No Grill-Coins debit runs here any more: redemption is refused at intent
     // creation (D31-D33), so no captured order can carry a coin discount. The

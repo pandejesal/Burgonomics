@@ -161,6 +161,7 @@ function seedPreparing(id: string, extra: Record<string, any> = {}) {
     // already-cooking order, so the payment lane must be explicit. COD
     // (collected at the door) is the admissible non-gateway lane; the
     // server-only `paymentChannel: "razorpay"` capture marker is never fabricated.
+    paymentChannel: "cash",
     paymentMethod: "cod",
     paymentStatus: "CASH_PENDING",
     payment: { method: "cod", status: "CASH_PENDING" },

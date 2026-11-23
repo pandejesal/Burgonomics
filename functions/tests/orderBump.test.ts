@@ -92,6 +92,7 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
     savedDocs["orders/ord_1"] = {
       branchId: "b1",
       status: { code: "PLACED" },
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -225,6 +226,7 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       fulfillmentType: "dinein",
       status: { code: "CONFIRMED" },
       // F04: bump-mechanics fixture, explicit counter cash lane (see beforeEach).
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -247,6 +249,7 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       fulfillmentType: "dinein",
       status: { code: "CONFIRMED" },
       // F04: bump-mechanics fixture, explicit counter cash lane.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -266,6 +269,7 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       fulfillmentType: "takeaway",
       status: { code: "READY_FOR_PICKUP" },
       // F04: bump-mechanics fixture, explicit counter cash lane.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -283,6 +287,7 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       branchId: "b1",
       status: { code: "OUT_FOR_DELIVERY" },
       // F04: bump-mechanics fixture, explicit counter cash lane.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -327,6 +332,7 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       status: { code: "OUT_FOR_DELIVERY", terminal: false },
       // F04: brand-override handover fixture, explicit COD lane (cash collected
       // at the door); no fabricated gateway capture marker.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -358,6 +364,7 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       orderType: "takeaway",
       status: { code: "READY_FOR_PICKUP", terminal: false },
       // F04: completion-vocabulary fixture, explicit counter cash lane.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },
@@ -374,6 +381,7 @@ describe("bumpOrderStatus (server-side KDS bump)", () => {
       orderType: "dinein",
       status: { code: "READY_TO_SERVE", terminal: false },
       // F04: completion-vocabulary fixture, explicit counter cash lane.
+      paymentChannel: "cash",
       paymentMethod: "cod",
       paymentStatus: "CASH_PENDING",
       payment: { method: "cod", status: "CASH_PENDING" },

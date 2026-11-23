@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { serviceError } from "../../core/errors";
 import { applyCancelSideEffects } from "./cancelSideEffects";
+import { posCancelIntentPatch } from "../petpooja/orderCancel";
 
 /**
  * F24 — the server-owned CUSTOMER cancellation path.
@@ -180,6 +181,13 @@ export async function cancelOrderAsCustomer(
     };
     const reason = typeof input.reason === "string" ? input.reason.trim() : "";
     if (reason) payload.cancellationReason = reason.slice(0, 500);
+    // r2 P1: the durable POS-cancel intent lives in THIS transaction, not in a
+    // best-effort post-commit hop. A crash before the first claim cannot strand
+    // a cancelled order with a live kitchen ticket.
+    Object.assign(
+      payload,
+      posCancelIntentPatch("order_cancelled", `customer:${uid}`, Date.now())
+    );
     tx.update(orderRef as any, payload);
     return false;
   });
