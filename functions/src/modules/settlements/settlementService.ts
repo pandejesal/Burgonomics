@@ -188,7 +188,7 @@ async function readBranchMonthOrders(
  * the statement is never complete (and never payable) while one exists. We never
  * guess a month for these rows.
  */
-async function readUnresolvedCaptureCount(branchId: string, month: SettlementMonthBounds): Promise<number> {
+async function readUnresolvedCaptureCount(branchId: string, month: SettlementMonthBounds): Promise<{ count: number; truncated: boolean }> {
   const snap: any = await db
     .collection("orders")
     .where("branchId", "==", branchId)
@@ -209,7 +209,8 @@ async function readUnresolvedCaptureCount(branchId: string, month: SettlementMon
     // counted conservatively; no month is ever guessed for the capture itself.
     if (!Number.isFinite(created) || created <= 0 || created < month.endMs) count += 1;
   }
-  return count;
+  // Fail closed: 2,000 rows from later months must not hide an in-month row.
+  return { count, truncated: (snap?.docs ?? []).length >= 2000 };
 }
 
 /** M6: the branch/month ledger, shared by every statement version. */
@@ -319,7 +320,9 @@ export async function generateSettlementStatement(
 
   const { orders, truncated } = await readBranchMonthOrders(branchId, month);
   const summary = summarizeSettlementOrders(orders, { branchId, ...month }, { truncated });
-  summary.captureUnresolved = await readUnresolvedCaptureCount(branchId, month);
+  const unresolved = await readUnresolvedCaptureCount(branchId, month);
+  summary.captureUnresolved = unresolved.count;
+  summary.unresolvedTruncated = unresolved.truncated;
 
   const fee = resolveSettlementFeePaise(branchData);
   const feeApplicable = isBranchFeeApplicable(

@@ -1054,6 +1054,39 @@ describe("cycle 9c: provider-confirmed capture is terminal", () => {
     expect(after.settlementCaptureUnresolved).toBe(false);
   });
 
+  const orderPaidPayload = (eventId: string) => ({
+    id: eventId,
+    event: "order.paid",
+    created_at: Math.floor(Date.now() / 1000),
+    payload: { order: { entity: {
+      id: "order_c9c", amount: 21900, currency: "INR",
+      payments: ["pay_c9c"],
+      notes: { orderId: "order_c9c", branchId: "branch_surat_01" },
+    } } },
+  });
+
+  it("payment.captured then order.paid stays confirmed and resolved", async () => {
+    seed();
+    const captured = mockReqRes(capturedPayloadNow("evt_c9c_cap_first"));
+    await handleRazorpayWebhook(captured.req, captured.res);
+    const paid = mockReqRes(orderPaidPayload("evt_c9c_paid_second"));
+    await handleRazorpayWebhook(paid.req, paid.res);
+    const order = docs.get("orders/order_c9c")!.data;
+    expect(order.settlementCaptureState).toBe("confirmed");
+    expect(order.settlementCaptureUnresolved).toBe(false);
+  });
+
+  it("order.paid then payment.captured ends confirmed and resolved", async () => {
+    seed();
+    const paid = mockReqRes(orderPaidPayload("evt_c9c_paid_first"));
+    await handleRazorpayWebhook(paid.req, paid.res);
+    const captured = mockReqRes(capturedPayloadNow("evt_c9c_cap_second"));
+    await handleRazorpayWebhook(captured.req, captured.res);
+    const order = docs.get("orders/order_c9c")!.data;
+    expect(order.settlementCaptureState).toBe("confirmed");
+    expect(order.settlementCaptureUnresolved).toBe(false);
+  });
+
   it("replays of both channels keep the confirmed capture", async () => {
     seed();
     const one = mockReqRes(capturedPayloadNow("evt_c9c_3"));

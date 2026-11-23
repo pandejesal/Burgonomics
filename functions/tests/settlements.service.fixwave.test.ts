@@ -414,3 +414,27 @@ describe("cycle 9c unresolved capture month scope", () => {
     expect((await generateAt("2026-11", endOf(2026, 10) + 86400000))!.complete).toBe(false);
   });
 });
+
+
+describe("cycle 9c-r2 unresolved scan fails closed", () => {
+  it("2000 later-month rows cannot hide an in-month unresolved capture", async () => {
+    for (let i = 0; i < 2000; i += 1) {
+      savedDocs[`orders/unres_nov_${String(i).padStart(4, "0")}`] = {
+        id: `unres_nov_${i}`, branchId: BRANCH, paymentChannel: "razorpay",
+        payment: { capturedAmountPaise: 10000 }, settlementCaptureUnresolved: true,
+        createdAt: new Date(Date.UTC(2026, 10, 10)).toISOString(),
+      };
+    }
+    savedDocs["orders/unres_oct"] = {
+      id: "unres_oct", branchId: BRANCH, paymentChannel: "razorpay",
+      payment: { capturedAmountPaise: 10000 }, settlementCaptureUnresolved: true,
+      createdAt: new Date(Date.UTC(2026, 9, 10)).toISOString(),
+    };
+    const oct = await generateSettlementStatement({
+      branchId: BRANCH, monthKey: "2026-10", caller: OWNER, source: "on_demand",
+      now: Date.UTC(2026, 10, 2),
+    });
+    expect(oct!.complete).toBe(false);
+    expect(oct!.notes.join(" ")).toMatch(/truncat|incomplete/i);
+  });
+});

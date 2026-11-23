@@ -225,6 +225,8 @@ export interface SettlementOrderSummary {
   truncated: boolean;
   /** Online captures whose gateway time is unknown; payment stays blocked. */
   captureUnresolved: number;
+  /** The unresolved scan hit its cap; count is a floor, statement incomplete. */
+  unresolvedTruncated: boolean;
 }
 
 function toMillis(value: unknown): number {
@@ -524,6 +526,7 @@ export function summarizeSettlementOrders(
     excludedOrders,
     outOfScopeOrders,
     captureUnresolved,
+    unresolvedTruncated: false,
     ordersScanned: (orders || []).length,
     truncated: opts?.truncated === true,
   };
@@ -640,11 +643,17 @@ export function buildSettlementStatement(input: BuildSettlementStatementInput): 
   // M6: outstanding is revised net minus the ledger's settled net. It is a
   // SIGNED delta: a late refund can leave a negative (collect-back) balance.
   const outstandingPaise = netPayablePaise - priorSettledNetPaise;
-  const complete = !input.summary.truncated && input.summary.captureUnresolved === 0;
+  const complete =
+    !input.summary.truncated &&
+    !input.summary.unresolvedTruncated &&
+    input.summary.captureUnresolved === 0;
   const carried = Array.isArray(input.priorPaymentRecords) ? [...input.priorPaymentRecords] : [];
   const paidStatus: SettlementPaidStatus = carried.length > 0 ? "paid" : "unpaid";
 
   const notes: string[] = [];
+  if (input.summary.unresolvedTruncated) {
+    notes.push("Unresolved-capture scan hit its cap; the statement is incomplete until it is re-scanned in pages.");
+  }
   if (input.summary.captureUnresolved > 0) {
     notes.push(`${input.summary.captureUnresolved} online capture(s) have no known gateway time; payment is blocked.`);
   }

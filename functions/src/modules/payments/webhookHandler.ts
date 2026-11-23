@@ -796,7 +796,9 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
          // /my/webhooks/payments.mdx, "Payment Captured").
          const providerCapturedAt = providerCapturedAtMs(payload);
          const basePayload = {
-          ...settlementCaptureStamp(providerCapturedAt),
+          // No event type (including order.paid, which has no capture time)
+          // may downgrade a capture already confirmed by payment.captured.
+          ...(isProviderConfirmedCapture(orderData) ? {} : settlementCaptureStamp(providerCapturedAt)),
           paymentStatus: "completed",
           // CANONICAL nested payment map — the shape the refund.processed
           // branch can QUERY (`payment.razorpayPaymentId`). The dotted literals
@@ -954,6 +956,15 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
                 deliveryOtpHash: mintedOtp.deliveryOtpHash,
                 deliveryOtpVersion: mintedOtp.deliveryOtpVersion,
               } : {}),
+              // No event type (including order.paid) may downgrade a
+              // provider-confirmed capture seen in this transaction.
+              ...(isProviderConfirmedCapture(fresh)
+                ? {
+                    settlementEffectiveAtMs: fresh.settlementEffectiveAtMs,
+                    settlementCaptureState: "confirmed",
+                    settlementCaptureUnresolved: false,
+                  }
+                : {}),
             },
             { merge: true }
           );
