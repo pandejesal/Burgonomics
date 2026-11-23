@@ -214,16 +214,6 @@ service cloud.firestore {
     // refundedTotalPaise accounting that a later refund claim trusted.
     function orderServerOwnedKeys() {
       return [
-        // r2 P1: the POS-cancel queue (lease, attempts, outcome and reason) is
-        // server-only. A client must not plant a 'cancelled' outcome to silence
-        // a live kitchen ticket, nor clear a lease to double-send a cancel.
-        'petpoojaCancelStatus', 'petpoojaCancelReason', 'petpoojaCancelReasonClass',
-        'petpoojaCancelRequestedBy', 'petpoojaCancelRequestedAtMs', 'petpoojaCancelRequestedAt',
-        'petpoojaCancelNextRetryAtMs', 'petpoojaCancelClaimedAt', 'petpoojaCancelAttemptCount',
-        'petpoojaCancelCompletedAt', 'petpoojaCancelAckMessage', 'petpoojaCancelPosOrderId',
-        'petpoojaCancelSkippedReason', 'lastPetpoojaCancelError', 'kotCancelFailed',
-        // The POS binding is the identity the cancel queue fences against.
-        'petpoojaOrderId',
         'totals', 'pricingSnapshot', 'pricing', 'customerId', 'userId', 'branchId',
         // Walk-in retries trust this original server receipt and request binding.
         // No client, including brand/developer, may plant, edit or remove them.
@@ -285,6 +275,16 @@ service cloud.firestore {
         // diff().affectedKeys() reports leaf paths, so naming only `payment`
         // does NOT cover `payment.capturedAmountPaise` (nested or literal).
         'cashCollectedPaise', 'payment.capturedAmountPaise', 'receiptEvidence',
+        // r2 P1: the POS-cancel queue (lease, attempts, outcome and reason) is
+        // server-only. A client must not plant a 'cancelled' outcome to silence
+        // a live kitchen ticket, nor clear a lease to double-send a cancel.
+        'petpoojaCancelStatus', 'petpoojaCancelReason', 'petpoojaCancelReasonClass',
+        'petpoojaCancelRequestedBy', 'petpoojaCancelRequestedAtMs', 'petpoojaCancelRequestedAt',
+        'petpoojaCancelNextRetryAtMs', 'petpoojaCancelClaimedAt', 'petpoojaCancelAttemptCount',
+        'petpoojaCancelCompletedAt', 'petpoojaCancelAckMessage', 'petpoojaCancelPosOrderId',
+        'petpoojaCancelSkippedReason', 'lastPetpoojaCancelError', 'kotCancelFailed',
+        // The POS binding is the identity the cancel queue fences against.
+        'petpoojaOrderId',
       ];
     }
 
