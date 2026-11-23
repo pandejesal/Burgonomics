@@ -144,15 +144,18 @@ describe("order aggregation", () => {
     {
       branchId: "b1",
       createdAt: at(3600),
+      settlementEffectiveAtMs: month.startMs + 3600 * 1000,
       paymentChannel: "razorpay",
       payment: { capturedAmountPaise: 100000 },
       refundedTotalPaise: 20000,
+          settlementProcessedRefunds: { rf_test: 20000 },
       status: { code: "DELIVERED" },
     },
     // Captured online, no refund, still in the kitchen: money is collected.
     {
       branchId: "b1",
       createdAt: at(7200),
+      settlementEffectiveAtMs: month.startMs + 7200 * 1000,
       paymentChannel: "razorpay",
       payment: { capturedAmountPaise: 50000 },
       status: { code: "PREPARING" },
@@ -161,6 +164,7 @@ describe("order aggregation", () => {
     {
       branchId: "b1",
       createdAt: at(1000),
+      settlementEffectiveAtMs: month.startMs + 1000 * 1000,
       status: { code: "PLACED" },
       pricing: { grandTotal: 300 },
     },
@@ -168,6 +172,7 @@ describe("order aggregation", () => {
     {
       branchId: "b1",
       createdAt: at(2000),
+      settlementEffectiveAtMs: month.startMs + 2000 * 1000,
       customerId: "cust_walkin",
       paymentMethod: "cod",
       status: { code: "COMPLETED" },
@@ -177,6 +182,7 @@ describe("order aggregation", () => {
     {
       branchId: "b1",
       createdAt: at(9000),
+      settlementEffectiveAtMs: month.startMs + 9000 * 1000,
       customerId: "cust_walkin",
       paymentMethod: "cod",
       status: { code: "PREPARING" },
@@ -186,6 +192,7 @@ describe("order aggregation", () => {
     {
       branchId: "b1",
       createdAt: at(3000),
+      settlementEffectiveAtMs: month.startMs + 3000 * 1000,
       paymentMethod: "cod",
       status: { code: "DELIVERED" },
       pricing: { grandTotal: 400 },
@@ -194,6 +201,7 @@ describe("order aggregation", () => {
     {
       branchId: "b1",
       createdAt: at(4000),
+      settlementEffectiveAtMs: month.startMs + 4000 * 1000,
       paymentMethod: "cod",
       status: { code: "CANCELLED" },
       pricing: { grandTotal: 700 },
@@ -202,6 +210,7 @@ describe("order aggregation", () => {
     {
       branchId: "b2",
       createdAt: at(5000),
+      settlementEffectiveAtMs: month.startMs + 5000 * 1000,
       paymentChannel: "razorpay",
       payment: { capturedAmountPaise: 90000 },
       status: { code: "DELIVERED" },
@@ -209,6 +218,7 @@ describe("order aggregation", () => {
     {
       branchId: "b1",
       createdAt: new Date(month.endMs + DAY).toISOString(),
+      settlementEffectiveAtMs: month.endMs + DAY,
       paymentChannel: "razorpay",
       payment: { capturedAmountPaise: 70000 },
       status: { code: "DELIVERED" },
@@ -242,6 +252,7 @@ describe("order aggregation", () => {
         {
           branchId: "b1",
           createdAt: at(100),
+      settlementEffectiveAtMs: month.startMs + 100 * 1000,
           paymentChannel: "razorpay",
           pricing: { split: { totalAmountPaise: 42000 }, grandTotal: 420 },
           status: { code: "DELIVERED" },
@@ -258,9 +269,11 @@ describe("order aggregation", () => {
         {
           branchId: "b1",
           createdAt: at(100),
+      settlementEffectiveAtMs: month.startMs + 100 * 1000,
           paymentChannel: "razorpay",
           payment: { capturedAmountPaise: 42000 },
           refundedTotalPaise: 60000,
+          settlementProcessedRefunds: { rf_test: 60000 },
           status: { code: "DELIVERED" },
         },
       ],

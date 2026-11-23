@@ -18,15 +18,47 @@ function matchBlock(path: string): string {
   return source.slice(start, end === -1 ? source.length : end);
 }
 
+function fnBody(name: string): string {
+  const start = source.indexOf(`function ${name}(`);
+  expect(start).toBeGreaterThan(-1);
+  const end = source.indexOf("\n    }", start);
+  return source.slice(start, end === -1 ? start + 800 : end);
+}
+
 describe("settlement rules pins", () => {
-  it("branch_settlements: server-write-only, brand reads all, a branch owner only its own", () => {
+  it("branch_settlements: server-write-only, brand reads all, a branch OWNER only its own (never staff)", () => {
     const block = matchBlock("branch_settlements/{docId}");
     expect(block).toContain(
-      "allow read: if isBrandOwner() || ownsBranch(resource.data.branchId);"
+      "allow read: if isBrandOwner() || ownsBranchAsOwner(resource.data.branchId);"
     );
     expect(block).toContain("allow write: if false;");
     // No client create/update arm may sneak in (immutability is structural).
     expect(block).not.toMatch(/allow (create|update|delete)/);
+  });
+
+  it("A1: ownsBranchAsOwner requires branch_owner, and the staff arm never sees owner statements", () => {
+    const strict = fnBody("ownsBranchAsOwner");
+    expect(strict).toContain("hasRole(['branch_owner'])");
+    expect(strict).not.toContain("branch_staff");
+    const loose = fnBody("ownsBranch");
+    expect(loose).toContain("isBranchOwner()");
+  });
+
+  it("A1: settlementFee is protected beside monthlyFee in the branch write mask", () => {
+    const branches = matchBlock("branches/{branchId}");
+    const branchArm = branches.slice(branches.indexOf("ownsBranch(branchId)"));
+    for (const key of ["monthlyFee", "settlementFee"]) {
+      expect(branchArm).toContain(`'${key}'`);
+    }
+  });
+
+  it("M7/A1: the authoritative capture stamp is a server-owned order field", () => {
+    const create = fnBody("orderCreateForbiddenKeys");
+    const update = fnBody("orderServerOwnedKeys");
+    for (const key of ["settlementEffectiveAtMs", "settlementCaptureUnresolved", "settlementProcessedRefunds"]) {
+      expect(update).toContain(`'${key}'`);
+      expect(create).toContain(`'${key}'`);
+    }
   });
 
   it("settlement_versions: brand read only, never client-writable", () => {

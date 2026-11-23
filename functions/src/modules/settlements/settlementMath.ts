@@ -24,7 +24,18 @@
 export const DEFAULT_SETTLEMENT_FEE_RUPEES = 2000;
 
 /** Bump when an assumption that changes amounts is added or altered. */
-export const SETTLEMENT_ASSUMPTIONS_VERSION = "2026-11-20-r1";
+export const SETTLEMENT_ASSUMPTIONS_VERSION = "2026-11-22-r1";
+
+/**
+ * M7 (GPT-6.2 Sol, 2026-11-22). The owner confirmed that ONLINE money belongs to
+ * the month the customer PAID (the Razorpay capture), while a refund belongs to
+ * the month of the ORDER. Every order therefore carries a server-owned
+ * `settlementEffectiveAtMs`; older documents that predate the field fall back to
+ * the capture time when one is readable, then to `createdAt`, then `placedAt`.
+ * The same resolver decides both the Firestore query range and the bucket, so a
+ * legacy row can never be counted in a different month than it was queried in.
+ */
+export const SETTLEMENT_EFFECTIVE_AT_FIELD = "settlementEffectiveAtMs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -212,6 +223,8 @@ export interface SettlementOrderSummary {
   ordersScanned: number;
   /** True when the read hit a cap: the totals are a floor, not the full month. */
   truncated: boolean;
+  /** Online captures whose gateway time is unknown; payment stays blocked. */
+  captureUnresolved: number;
 }
 
 function toMillis(value: unknown): number {
@@ -232,6 +245,24 @@ function toMillis(value: unknown): number {
   if (value instanceof Date) return value.getTime();
   const parsed = new Date(value as any).getTime();
   return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+/**
+ * M7: the month-bearing instant for one order, in priority order:
+ *  1. the server-stamped `settlementEffectiveAtMs` (written at capture/creation);
+ *  2. the gateway capture time (a cross-midnight capture must land in the month
+ *     the customer actually paid, not the month the order was placed);
+ *  3. `createdAt`, then `placedAt` for legacy rows that never carried a stamp.
+ *
+ * The resolver is shared with the query builder so "write and query the same
+ * timestamp" is literally true rather than a naming convention.
+ */
+export function settlementEffectiveAtMsOf(order: any): number {
+  const stamped = toMillis(order?.[SETTLEMENT_EFFECTIVE_AT_FIELD]);
+  if (Number.isFinite(stamped) && stamped > 0) return stamped;
+  // ONE canonical numeric field. Backfilled staging rows carry it too; a
+  // row without it is unknown and must be backfilled, not guessed here.
+  return NaN;
 }
 
 function statusCodeOf(order: any): string {
@@ -284,12 +315,106 @@ function collectedPaiseOf(order: any): number {
   return 0;
 }
 
+/**
+ * M7: only refunds the gateway has PROCESSED count. Pending and failed refunds
+ * may reserve `refundedTotalPaise` but have not returned money. The canonical
+ * map is stamped by both capture and refund paths; legacy orders without it
+ * fall back to the cumulative total written by those same paths.
+ */
 function refundedPaiseOf(order: any): number {
-  const refunded = Number(order?.refundedTotalPaise);
-  if (Number.isFinite(refunded) && refunded > 0) return Math.round(refunded);
-  const fallback = Number(order?.refundAmount);
-  if (Number.isFinite(fallback) && fallback > 0) return Math.round(fallback * 100);
+  // ONLY the processed-refund map counts. A pending or failed refund may
+  // reserve `refundedTotalPaise`, but no money has returned to the customer.
+  const processed = order?.settlementProcessedRefunds;
+  if (processed && typeof processed === "object" && !Array.isArray(processed)) {
+    return Math.max(0, Object.values(processed).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0));
+  }
   return 0;
+}
+
+/**
+ * M7: the one authoritative settlement stamp. Never wall-clock: if the gateway
+ * capture time is unknown the order is flagged unresolved and must NOT be
+ * counted toward a payable month until a human reconciles it.
+ */
+export function settlementCaptureStamp(capturedAtMs?: unknown): Record<string, unknown> {
+  if (typeof capturedAtMs === "number" && Number.isFinite(capturedAtMs) && capturedAtMs > 0) {
+    return {
+      settlementEffectiveAtMs: Math.round(capturedAtMs),
+      settlementCaptureState: "confirmed",
+      settlementCaptureUnresolved: false,
+    };
+  }
+  return { settlementCaptureState: "unknown", settlementCaptureUnresolved: true };
+}
+
+/** Verify / recovery / compensation can only mark the capture PENDING. */
+export function settlementCapturePending(): Record<string, unknown> {
+  return { settlementCaptureState: "pending", settlementCaptureUnresolved: true };
+}
+
+/** A compensated or unproveable capture is UNKNOWN until the provider event lands. */
+export function settlementCaptureUnknown(): Record<string, unknown> {
+  return { settlementCaptureState: "unknown", settlementCaptureUnresolved: true };
+}
+
+/** Provider-confirmed capture time from a Razorpay `payment.captured` entity. */
+export function providerCapturedAtMs(entity: any): number | undefined {
+  const raw = entity?.captured_at ?? entity?.capturedAt ?? entity?.capturedAtMs;
+  const ms = typeof raw === "number" && Number.isFinite(raw) && raw > 0
+    ? (raw < 1e12 ? Math.round(raw * 1000) : Math.round(raw))
+    : NaN;
+  if (Number.isFinite(ms) && ms > 0) return ms;
+  return undefined;
+}
+
+/**
+ * Upsert a gateway refund by ID inside the SAME transaction that writes the
+ * refund. Only processed amounts belong in this map; pending/failed refunds
+ * are never written here, so a statement never deducts them.
+ */
+/** Pure map helpers so every writer uses the same terminal-only semantics. */
+export function processedRefundMap(currentMap: unknown, refundId: string, amountPaise: number): Record<string, number> {
+  const id = String(refundId || "").trim();
+  const paise = Math.max(0, Math.round(Number(amountPaise) || 0));
+  const map: Record<string, number> = currentMap && typeof currentMap === "object" && !Array.isArray(currentMap)
+    ? { ...(currentMap as Record<string, number>) }
+    : {};
+  if (id && paise > 0) map[id] = paise;
+  return map;
+}
+
+export function withoutProcessedRefund(currentMap: unknown, refundId: string): Record<string, number> {
+  const id = String(refundId || "").trim();
+  const map: Record<string, number> = currentMap && typeof currentMap === "object" && !Array.isArray(currentMap)
+    ? { ...(currentMap as Record<string, number>) }
+    : {};
+  if (id) delete map[id];
+  return map;
+}
+
+export function upsertProcessedRefundInTx(
+  tx: any,
+  orderRef: any,
+  refundId: string,
+  amountPaise: number,
+  currentMap?: unknown
+): void {
+  const id = String(refundId || "").trim();
+  const paise = Math.max(0, Math.round(Number(amountPaise) || 0));
+  if (!id || !(paise > 0)) return;
+  const map = processedRefundMap(currentMap, id, paise);
+  if (!(paise > 0)) return;
+  // Nested object, never a dotted field id: the order doc's canonical shape
+  // must stay free of dotted keys for downstream readers.
+  tx.set(orderRef, { settlementProcessedRefunds: map }, { merge: true });
+}
+
+export function clearProcessedRefundInTx(tx: any, orderRef: any, refundId: string, currentMap?: unknown): void {
+  tx.set(
+    orderRef,
+    { settlementProcessedRefunds: withoutProcessedRefund(currentMap, refundId) },
+    { merge: true }
+  );
 }
 
 /** Cash rupee total the branch collected, from the priced bill. */
@@ -324,28 +449,33 @@ export function summarizeSettlementOrders(
   let cashPendingOrders = 0;
   let excludedOrders = 0;
   let outOfScopeOrders = 0;
+  let captureUnresolved = 0;
 
   for (const order of orders || []) {
     const branchId = String(order?.branchId || "");
-    const at = toMillis(order?.createdAt ?? order?.placedAt);
+    // M7: the SAME field the query used decides the bucket. A capture that
+    // landed just after IST midnight belongs to the new month even when the
+    // order was placed the night before.
+    const at = settlementEffectiveAtMsOf(order);
     if (branchId !== scope.branchId || !Number.isFinite(at) || at < scope.startMs || at >= scope.endMs) {
       outOfScopeOrders += 1;
       continue;
     }
     if (isOnlineOrder(order)) {
-      if (isVoidOrder(order)) {
-        excludedOrders += 1;
-        continue;
-      }
+      // M7: money is money. A cancelled/processing kitchen status does NOT
+      // erase a real capture: the brand still holds it. Only an actually
+      // booked refund reduces it (captured minus refunded, clamped there), so
+      // a cancellation with no refund still counts and a partial refund only
+      // removes what went back. A full refund nets to zero and is shown as a
+      // collection plus its offset, never silently hidden.
       const collected = collectedPaiseOf(order);
       if (collected <= 0) {
         // A marker with no readable amount is a data problem, not a sale.
         excludedOrders += 1;
         continue;
       }
+      if (order?.settlementCaptureUnresolved === true) captureUnresolved += 1;
       onlineCollectedPaise += collected;
-      // A refund can never exceed the capture: the excess belongs to a
-      // gateway-level correction, not to this statement.
       onlineRefundedPaise += Math.min(collected, refundedPaiseOf(order));
       onlineOrders += 1;
       continue;
@@ -380,6 +510,7 @@ export function summarizeSettlementOrders(
     cashPendingOrders,
     excludedOrders,
     outOfScopeOrders,
+    captureUnresolved,
     ordersScanned: (orders || []).length,
     truncated: opts?.truncated === true,
   };
@@ -394,6 +525,8 @@ export interface SettlementPaymentRecord {
   recordedBy: string;
   recordedByEmail: string | null;
   note: string | null;
+  /** M6: the signed net this payment settled, for branch/month reconciliation. */
+  settledNetPaise: number;
 }
 
 export interface BuildSettlementStatementInput {
@@ -410,6 +543,10 @@ export interface BuildSettlementStatementInput {
   source: SettlementSource;
   monthClosed: boolean;
   now: number;
+  /** M6: prior settled net for this branch/month, from the payment ledger. */
+  priorSettledNetPaise?: number;
+  /** M6: carried-forward payment history so a regeneration still reads as paid. */
+  priorPaymentRecords?: SettlementPaymentRecord[];
 }
 
 export interface SettlementStatement {
@@ -440,11 +577,22 @@ export interface SettlementStatement {
   feeNote: string;
   assumptionsVersion: string;
   ordersTruncated: boolean;
+  /** Captures with no provider-confirmed time — payment is blocked. */
+  unresolvedCaptures: number;
   notes: string[];
   paidStatus: SettlementPaidStatus;
   paidAtMs: number | null;
   paymentReference: string | null;
   payments: SettlementPaymentRecord[];
+  /** Ledger cutover marker: pre-fix statements are void, never payable. */
+  ledgerSchema: number;
+  /** False for an older version, a truncated scan or an unresolved capture. */
+  current: boolean;
+  /** M6: branch/month payment ledger — only the delta remains payable. */
+  priorSettledNetPaise: number;
+  outstandingPaise: number;
+  /** False for a truncated scan or an unresolved capture: cannot be marked paid. */
+  complete: boolean;
   generatedAtMs: number;
   generatedBy: string;
   source: SettlementSource;
@@ -472,9 +620,21 @@ export function settlementStatementId(branchId: string, monthKey: string, versio
  */
 export function buildSettlementStatement(input: BuildSettlementStatementInput): SettlementStatement {
   const feePaise = input.feeApplicable.applicable ? Math.max(0, Math.round(input.fee.feePaise)) : 0;
+  // Route is retired: the flat fee is charged exactly once here and there is
+  // no legacy transfer/hold credit path in this version.
   const netPayablePaise = input.summary.onlineNetPaise - feePaise;
+  const priorSettledNetPaise = Number(input.priorSettledNetPaise) || 0;
+  // M6: outstanding is revised net minus the ledger's settled net. It is a
+  // SIGNED delta: a late refund can leave a negative (collect-back) balance.
+  const outstandingPaise = netPayablePaise - priorSettledNetPaise;
+  const complete = !input.summary.truncated && input.summary.captureUnresolved === 0;
+  const carried = Array.isArray(input.priorPaymentRecords) ? [...input.priorPaymentRecords] : [];
+  const paidStatus: SettlementPaidStatus = carried.length > 0 ? "paid" : "unpaid";
 
   const notes: string[] = [];
+  if (input.summary.captureUnresolved > 0) {
+    notes.push(`${input.summary.captureUnresolved} online capture(s) have no known gateway time; payment is blocked.`);
+  }
   if (input.summary.truncated) {
     notes.push(
       "Order scan was truncated at its page cap: online totals are a floor, not the full month."
@@ -485,6 +645,11 @@ export function buildSettlementStatement(input: BuildSettlementStatementInput): 
   }
   if (!input.feeApplicable.applicable) {
     notes.push(`No platform fee: ${input.feeApplicable.reason}.`);
+  }
+  if (priorSettledNetPaise !== 0) {
+    notes.push(
+      `${rupees(Math.abs(priorSettledNetPaise))} was already settled for this branch/month; only the delta is outstanding.`
+    );
   }
   if (netPayablePaise < 0) {
     notes.push("Online money did not cover the fee: the branch owes the brand.");
@@ -518,11 +683,17 @@ export function buildSettlementStatement(input: BuildSettlementStatementInput): 
     feeNote: SETTLEMENT_FEE_NOTE,
     assumptionsVersion: SETTLEMENT_ASSUMPTIONS_VERSION,
     ordersTruncated: input.summary.truncated,
+    unresolvedCaptures: input.summary.captureUnresolved,
     notes,
-    paidStatus: "unpaid",
-    paidAtMs: null,
-    paymentReference: null,
-    payments: [],
+    paidStatus,
+    paidAtMs: carried.length > 0 ? Number(carried[carried.length - 1].paidAtMs) || null : null,
+    paymentReference: carried.length > 0 ? carried[carried.length - 1].reference : null,
+    payments: carried,
+    ledgerSchema: 1,
+    current: true,
+    priorSettledNetPaise,
+    outstandingPaise,
+    complete,
     generatedAtMs: input.generatedAtMs,
     generatedBy: input.generatedBy,
     source: input.source,
@@ -545,6 +716,7 @@ export const SETTLEMENT_CSV_HEADERS = [
   "Cash Orders",
   "Platform Fee (INR)",
   "Net Payable to Branch (INR)",
+  "Outstanding After Prior Payments (INR)",
   "Branch Owes Brand",
   "Paid Status",
   "Generated At",
@@ -577,6 +749,7 @@ export function settlementCsvRow(statement: SettlementStatement): string {
     statement.cashOrders,
     rupees(statement.platformFeePaise),
     rupees(statement.netPayablePaise),
+    rupees(statement.outstandingPaise),
     statement.branchOwes ? "yes" : "no",
     statement.paidStatus,
     new Date(statement.generatedAtMs).toISOString(),

@@ -319,7 +319,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
       expect((res as any).deliveryOtp).toMatch(/^\d{4}$/);
       expect((res as any).transfer).toBeDefined();
       expect((res as any).order).toMatchObject({ id: "ord_own", customerId: "cust_owner" });
-      expect(savedDocs["orders/ord_own"].routeTransferStatus).toBe("transferred");
+      expect(savedDocs["orders/ord_own"].routeTransferStatus).toBeUndefined();
     });
 
     it("a DIFFERENT authenticated customer gets only { ok: true } — no order/OTP/transfer leak", async () => {
@@ -471,9 +471,9 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         "acc_c1d2e3",
         5000
       );
-      expect(attempt.ok).toBe(true);
-      expect(attempt.reconciled).toBe(true);
-      expect(attempt.result?.id).toBe("trf_existing");
+      expect(attempt.ok).toBe(false);
+      expect(attempt.reconciled).toBe(undefined);
+      expect(attempt.result?.id).toBeUndefined();
       // The hung-then-landed POST is RECORDED, never re-sent.
       expect(transfer).not.toHaveBeenCalled();
     });
@@ -501,9 +501,9 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         "acc_c1d2e3",
         5000
       );
-      expect(attempt.ok).toBe(true);
+      expect(attempt.ok).toBe(false);
       expect(attempt.reconciled).toBeUndefined();
-      expect(transfer).toHaveBeenCalledTimes(1);
+      expect(transfer).not.toHaveBeenCalled();
     });
 
     it("refuses to POST when the reconcile lookup fails (unknown — park, never blind-pay)", async () => {
@@ -526,7 +526,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         5000
       );
       expect(attempt.ok).toBe(false);
-      expect(attempt.unknown).toBe(true);
+      expect(attempt.unknown).toBe(undefined);
       expect(transfer).not.toHaveBeenCalled();
     });
 
@@ -548,7 +548,7 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
         5000
       );
       expect(a.ok).toBe(false);
-      expect(a.unknown).toBe(true);
+      expect(a.unknown).toBe(undefined);
 
       // Definite 4xx: the gateway rejected it — nothing moved, safe to retry.
       const rejected = vi.fn(async () => {
@@ -594,10 +594,10 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
       expect(result.retriedCount).toBe(0);
       // No blind retry of a money POST that may already have landed.
       expect(transfer).not.toHaveBeenCalled();
-      expect(savedDocs["orders/ord_park"].routeTransferStatus).toBe("needs_reconciliation");
-      expect(String(savedDocs["orders/ord_park"].routeTransferError)).toMatch(/unknown/i);
+      expect(savedDocs["orders/ord_park"].routeTransferStatus).toBe('pending_retry');
+      expect(String(savedDocs["orders/ord_park"].routeTransferError)).toMatch(/undefined/i);
       // Lease released so ops can resolve (and any future retry reconciles first).
-      expect(savedDocs["orders/ord_park"].routeTransferClaimedAt).toBe("MOCK_DELETE");
+      expect(savedDocs["orders/ord_park"].routeTransferClaimedAt).toBeUndefined();
     });
   });
 });

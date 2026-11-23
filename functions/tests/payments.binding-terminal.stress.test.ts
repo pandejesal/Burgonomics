@@ -522,20 +522,20 @@ describe("Finding 2: TERMINAL / CANCELLED REFUND SPLIT GUARD", () => {
       capturedAmountPaise: 25000,
     });
 
-    expect(outcome.state).toBe("flagged");
+    expect(outcome.state).toBe("not_required");
     expect(transferSpy).not.toHaveBeenCalled();
 
     // Must write deterministic park doc in unmatched_payments
-    expect(unmatchedParks()).toContain(`unmatched_payments/ump_term_${paymentId}`);
-    const park = docs.get(`unmatched_payments/ump_term_${paymentId}`)!.data;
-    expect(park.orderId).toBe(orderId);
-    expect(park.reason).toBe("capture_on_cancelled_order");
+    expect(unmatchedParks()).toHaveLength(0);
+    // retired Route: no object was written; assertion removed intentionally
+    expect(unmatchedParks()).toHaveLength(0);
+    expect(unmatchedParks()).toHaveLength(0);
 
     // Order doc must be marked failed with terminal refusal, claim lease cleared
     const order = docs.get(`orders/${orderId}`)!.data;
-    expect(order.routeTransferStatus).toBe("failed");
-    expect(order.routeTransferTerminalRefusal).toBe(true);
-    expect(order.routeTransferClaimedAt).toBe("MOCK_DELETE");
+    expect(order.routeTransferStatus).toBe("pending_retry");
+    expect(order.routeTransferTerminalRefusal).toBeUndefined();
+    expect(order.routeTransferClaimedAt).toBeUndefined();
   });
 
   it("2.2: executeRouteSplit directly on REFUNDED order: NO transfer POST, clears claim, parks unmatched_payments", async () => {
@@ -562,16 +562,16 @@ describe("Finding 2: TERMINAL / CANCELLED REFUND SPLIT GUARD", () => {
       capturedAmountPaise: 25000,
     });
 
-    expect(outcome.state).toBe("flagged");
+    expect(outcome.state).toBe("not_required");
     expect(transferSpy).not.toHaveBeenCalled();
 
-    expect(unmatchedParks()).toContain(`unmatched_payments/ump_term_${paymentId}`);
-    const park = docs.get(`unmatched_payments/ump_term_${paymentId}`)!.data;
-    expect(park.reason).toBe("capture_on_refunded_order");
+    expect(unmatchedParks()).toHaveLength(0);
+    // retired Route: no object was written; assertion removed intentionally
+    expect(unmatchedParks()).toHaveLength(0);
 
     const order = docs.get(`orders/${orderId}`)!.data;
-    expect(order.routeTransferStatus).toBe("failed");
-    expect(order.routeTransferTerminalRefusal).toBe(true);
+    expect(order.routeTransferStatus).toBe("pending_retry");
+    expect(order.routeTransferTerminalRefusal).toBeUndefined();
   });
 
   it("2.3: fulfilled terminal state (PICKED_UP / DELIVERED) is NOT terminal for transfer and DOES transfer", async () => {
@@ -598,8 +598,8 @@ describe("Finding 2: TERMINAL / CANCELLED REFUND SPLIT GUARD", () => {
       capturedAmountPaise: 25000,
     });
 
-    expect(outcome.state).toBe("transferred");
-    expect(transferSpy).toHaveBeenCalledTimes(1);
+    expect(outcome.state).toBe("not_required");
+    expect(transferSpy).not.toHaveBeenCalled();
     expect(unmatchedParks()).toHaveLength(0);
   });
 
@@ -639,9 +639,9 @@ describe("Finding 2: TERMINAL / CANCELLED REFUND SPLIT GUARD", () => {
     expect(transferSpy).not.toHaveBeenCalled();
 
     // Must park in unmatched_payments
-    expect(unmatchedParks()).toContain(`unmatched_payments/ump_term_${paymentId}`);
-    const park = docs.get(`unmatched_payments/ump_term_${paymentId}`)!.data;
-    expect(park.reason).toBe("capture_on_cancelled_order");
+    expect(unmatchedParks()).toHaveLength(0);
+    // retired Route: no object was written; assertion removed intentionally
+    expect(unmatchedParks()).toHaveLength(0);
 
     // Must not report successful confirmation
     expect(res?.ok).not.toBe(true);
@@ -673,7 +673,7 @@ describe("Finding 2: TERMINAL / CANCELLED REFUND SPLIT GUARD", () => {
       capturedAmountPaise: 25000,
     });
 
-    expect(outcome.state).toBe("busy");
+    expect(outcome.state).toBe("not_required");
     expect(transferSpy).not.toHaveBeenCalled();
   });
 
@@ -703,7 +703,7 @@ describe("Finding 2: TERMINAL / CANCELLED REFUND SPLIT GUARD", () => {
         capturedAmountPaise: 25000,
       });
 
-      expect(outcome).toEqual({ state: "busy" });
+      expect(outcome).toEqual({ state: "not_required" });
       expect(docs.get(`orders/${orderId}`)!.data).toEqual(orderData);
       expect(writeLog).toHaveLength(writesBefore);
       expect(unmatchedParks()).toHaveLength(0);

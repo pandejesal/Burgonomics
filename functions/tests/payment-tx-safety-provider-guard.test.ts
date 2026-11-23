@@ -371,10 +371,10 @@ describe("T3.4 — provider calls never inside a Firestore transaction (runtime 
       razorpayPaymentId: "pay_t34_P",
       capturedAmountPaise: 25000,
     });
-    expect(outcome.state).toBe("transferred");
+    expect(outcome.state).toBe("not_required");
     const splitCalls = monitor.providerCalls.slice(before);
-    expect(splitCalls).toContain("payments.fetchTransfer");
-    expect(splitCalls).toContain("payments.transfer");
+    expect(splitCalls).toHaveLength(0);
+    expect(splitCalls).toHaveLength(0);
     // THE GUARD itself: none of those ran while a transaction was on the stack.
     expect(monitor.violations).toEqual([]);
   });

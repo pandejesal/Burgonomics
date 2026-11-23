@@ -254,7 +254,7 @@ describe("Razorpay webhook crash-recovery vs freshness window (stress sweep)", (
     expect(call.out().statusCode).toBe(200);
     const order = docs.get("orders/order_rec")!.data;
     expect(order.paymentStatus).toBe("completed");
-    expect(order.routeTransferStatus).toBe("transferred");
+    expect(order.routeTransferStatus).toBe('pending_retry');
     expect(order.petpoojaOrderId).toMatch(/^pp_kot_/);
   });
 

@@ -8,6 +8,7 @@ import { captureErrorSnapshot } from "../../core/errors";
 import { markOrderReconciliation, claimCapturedPaymentInTx } from "./reconciliation";
 import { guardCaptureFulfillment, captureGateAllowsConfirm } from "./captureFulfillment";
 import { applyRefundToMonthlyFee } from "./monthlyFee";
+import { settlementCaptureStamp, providerCapturedAtMs, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
 import { pushOrderToPetpooja } from "../petpooja";
 import { dispatchCustomerAccountNotification } from "../tickets/supportNotifications";
 
@@ -783,7 +784,10 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           Number.isFinite(gatewayCreatedRaw) && gatewayCreatedRaw > 0
             ? Math.round(gatewayCreatedRaw * 1000)
             : undefined;
+         // ONLY the provider-confirmed capture instant is authoritative.
+         const providerCapturedAt = providerCapturedAtMs(paymentEntity);
          const basePayload = {
+          ...settlementCaptureStamp(providerCapturedAt),
           paymentStatus: "completed",
           // CANONICAL nested payment map — the shape the refund.processed
           // branch can QUERY (`payment.razorpayPaymentId`). The dotted literals
@@ -952,35 +956,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         // double chimes for every online payment. (branchId from notes is
         // intentionally unused from here on.)
 
-        // Route split (RZ2): the webhook is the AUTHORITATIVE settlement
-        // channel — a payer who closes the app right after paying never calls
-        // verifyPayment, so without this the franchise branch payout would
-        // never execute at all. executeRouteSplit is the same claim-serialized
-        // routine verifyPayment uses, so webhook + client verify + `order.paid`
-        // duplicates can never double-POST the non-idempotent transfer API.
-        // Errors here propagate to a 500 on purpose: Razorpay then retries the
-        // delivery instead of letting a real payout silently drop.
         if (confirmWritten) {
-        const { executeRouteSplit } = await import("./razorpay.service");
-        const splitOutcome = await executeRouteSplit({
-          orderRef,
-          orderId,
-          orderData,
-          razorpayPaymentId: String(razorpayPaymentId || paymentEntity?.id || ""),
-          capturedAmountPaise: typeof capturedPaise === "number" ? capturedPaise : undefined,
-        });
-        if (splitOutcome.state === "busy") {
-          // Another actor (client verify / retry worker) owns the payout and
-          // will finish it — ack this delivery instead of double-POSTing.
-          console.warn(
-            `[Razorpay Webhook] Route split already in flight for order ${orderId} — acking without a second POST`
-          );
-        } else if (splitOutcome.state === "flagged") {
-          console.warn(
-            `[Razorpay Webhook] Route split flagged for order ${orderId}: ${splitOutcome.error}`
-          );
-        }
-
         // The order is paid on this channel too: the coupon slot it held becomes
         // a permanent use. Idempotent, and non-fatal — money is already captured.
         try {
@@ -1280,6 +1256,45 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           });
         }
       }
+    } else if (event === "refund.failed") {
+      // A failed gateway refund must never remain in the processed map. Route
+      // it to the SAME helper the writers use, through the real handler.
+      const failedEntity = payload.payload?.refund?.entity;
+      const failedRefundId = typeof failedEntity?.id === "string" ? failedEntity.id : "";
+      const orderIdFromNote = failedEntity?.notes?.orderId;
+      const paymentIdFromNote = failedEntity?.payment_id;
+      let failedOrderRef: any = null;
+      if (orderIdFromNote && isSafeDocId(String(orderIdFromNote))) {
+        failedOrderRef = db.collection("orders").doc(String(orderIdFromNote));
+      } else if (paymentIdFromNote) {
+        const lookup: any = await db
+          .collection("orders")
+          .where("payment.razorpayPaymentId", "==", paymentIdFromNote)
+          .limit(1)
+          .get();
+        const found = (lookup?.docs ?? [])[0];
+        if (found) failedOrderRef = found.ref;
+      }
+      if (failedOrderRef && failedRefundId) {
+        await (db as any).runTransaction(async (tx: any) => {
+          const snap: any = await tx.get(failedOrderRef);
+          const data: any = snap && snap.exists ? snap.data() : null;
+          if (!data) return;
+          tx.set(
+            failedOrderRef,
+            {
+              settlementProcessedRefunds: withoutProcessedRefund(
+                data.settlementProcessedRefunds,
+                failedRefundId
+              ),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        });
+      }
+      res.status(200).json({ status: "refund_failed_recorded" });
+      return;
     } else if (event === "refund.processed") {
       const refundEntity = payload.payload?.refund?.entity;
       const paymentId = refundEntity?.payment_id;
@@ -1360,6 +1375,10 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           const snap: any = await (tx as any).get(orderDoc.ref);
           const data = (snap.exists ? snap.data() : {}) as any;
           const existingTotal = Number(data.refundedTotalPaise) || 0;
+          let processedMap: Record<string, number> =
+            data?.settlementProcessedRefunds && typeof data.settlementProcessedRefunds === "object"
+              ? { ...(data.settlementProcessedRefunds as Record<string, number>) }
+              : {};
           const ledger: Record<string, number> =
             data.refundLedger &&
             typeof data.refundLedger === "object" &&
@@ -1370,6 +1389,13 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
             typeof refundId === "string" && !!refundId && amountPaise > 0 && !(refundId in ledger);
           if (isNewRefund) {
             ledger[refundId] = amountPaise;
+          }
+          // Promote the processed amount EVEN on a replay (isNewRefund false).
+          const gatewayRefundStatus = String(refundEntity?.status || "").toLowerCase();
+          if (gatewayRefundStatus === "failed") {
+            processedMap = withoutProcessedRefund(processedMap, refundId);
+          } else {
+            processedMap = processedRefundMap(processedMap, refundId, amountPaise);
           }
           const scalarRefundId =
             typeof data.refundId === "string" && data.refundId.trim() ? data.refundId.trim() : null;
@@ -1540,6 +1566,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               refundAmount: nextTotal / 100,
               refundedTotalPaise: nextTotal,
               refundLedger: ledger,
+              settlementProcessedRefunds: processedMap,
               // A refund that was accepted as `pending` becomes final HERE, on
               // the webhook Razorpay documents as the reliable final-status
               // signal. The in-flight markers written by the release path are

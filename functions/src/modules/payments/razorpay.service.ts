@@ -37,6 +37,7 @@ import {
 import { PAYMENT_INTENT_TTL_MS } from "./lifetimes";
 import { resolveBranchId } from "./branchResolver";
 import { assertOutletOpenForOnlineOrders } from "./outletStatus";
+import { settlementCapturePending, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
 import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } from "./monthlyFee";
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
@@ -47,6 +48,7 @@ import {
   isOrderTerminalForRouteTransfer,
   recordTerminalRefusalInTx,
 } from "./routeTransfers";
+
 
 export { retryPendingRouteTransfersWorker, calculateRouteSplit } from "./routeTransfers";
 export { getOtpHmacSecret };
@@ -2147,53 +2149,7 @@ export async function verifyPayment(
     });
   }
 
-  // 4. Execute the Razorpay Route split. Claim-then-work lives inside
-  // executeRouteSplit, which is SHARED with the authoritative
-  // `payment.captured` webhook — both channels can fire for one payment and
-  // the underlying `payments.transfer` POST is not idempotent.
-  const splitOutcome = await executeRouteSplit({
-    orderRef,
-    orderId,
-    orderData,
-    razorpayPaymentId,
-    razorpayOrderId,
-    capturedAmountPaise,
-  });
-
-  if (splitOutcome.state === "conflict") {
-    await parkSecondCaptureMismatch({
-      orderId,
-      razorpayOrderId,
-      razorpayPaymentId,
-      expectedPaise,
-      capturedAmountPaise,
-      recordedPaymentId: splitOutcome.recordedPaymentId,
-      recordedRazorpayOrderId: splitOutcome.recordedRazorpayOrderId,
-      orderStatus: splitOutcome.orderStatus,
-    });
-  }
-
-  if (splitOutcome.state === "busy") {
-    // Winner still mid-flight: return a 202 retry signal IMMEDIATELY (no
-    // blocking poll — the old 4x500ms serial loop stalled checkout ~2s per
-    // M32). The client retries verify with the same key; by then the
-    // transfer has settled. Posting our own transfer here is exactly the
-    // double-spend this guards. NOTE: /payments/verifyPayment route mapping
-    // to HTTP 202 is batch-4 owned — the message below carries the retry
-    // instruction so clients retry even while the route degrades this to 400.
-    const retry: any = new Error(
-      "Transfer in progress elsewhere — please retry payment verification in a couple of seconds (you will not be charged twice)."
-    );
-    retry.statusCode = 202;
-    retry.code = "TRANSFER_IN_PROGRESS";
-    retry.retryAfterMs = 2000;
-    throw retry;
-  }
-
-  // Flagged (manual settlement / pending_retry) and no_split both leave the
-  // transfer unresolved on purpose: the customer's PAID order still confirms
-  // below — a payout bookkeeping problem must never fail a charged customer.
-  const transferResult = splitOutcome.state === "transferred" ? splitOutcome.transfer : null;
+  const transferResult = null;
 
   // 5+6. Confirm state + audit (shared by the normal and race-loser paths),
   // then gate the response on ownership (spec §2).
@@ -2463,26 +2419,7 @@ export async function completeRecoveredCapture(args: {
         ? Math.round(Number(orderData.pricing.grandTotal) * 100)
         : undefined);
 
-    // A payout failure must never fail the recovery of a paid customer: the
-    // existing retry worker owns settlement.
-    let transferResult: any = null;
-    try {
-      const split = await executeRouteSplit({
-        orderRef,
-        orderId,
-        orderData,
-        razorpayPaymentId,
-        razorpayOrderId,
-        capturedAmountPaise: capturedPaise,
-      });
-      transferResult = split.state === "transferred" ? split.transfer : null;
-    } catch (err: any) {
-      console.warn(
-        `[Capture Recovery] route split skipped for order ${orderId}:`,
-        err?.message || err
-      );
-    }
-
+    const transferResult = null;
     const finished: any = await finishVerifiedPayment({
       orderRef,
       orderData,
@@ -2520,417 +2457,8 @@ export async function executeRouteSplit(args: {
   razorpayOrderId?: string;
   capturedAmountPaise?: number;
 }): Promise<RouteSplitOutcome> {
-  const { orderRef, orderId, orderData, razorpayPaymentId, razorpayOrderId, capturedAmountPaise } = args;
-
-  if (orderData.routeTransferStatus === "transferred") {
-    // Already settled — reuse the receipt. A missing receipt here is a data
-    // anomaly, NOT permission to re-POST money that already moved.
-    return {
-      state: "transferred",
-      transfer: orderData.payment?.routeTransfer ?? orderData["payment.routeTransfer"] ?? null,
-    };
-  }
-
-  const branchId = orderData.branchId;
-  const pricingSplit = orderData.pricing?.split;
-  const earningsPaise = Number(pricingSplit?.branchTransferPaise);
-  const courierFeePaise = Number(pricingSplit?.courierFeePaise) || 0;
-  if (!Number.isFinite(earningsPaise)) {
-    // Nothing to split (legacy/no-pricing doc): no claim, no write, no POST.
-    return { state: "no_split" };
-  }
-
-  const flagManualSettlement = async (error: string): Promise<RouteSplitOutcome> => {
-    await captureErrorSnapshot({
-      source: "payments",
-      severity: "high",
-      message: `Route split needs manual settlement for order ${orderId}: ${error}`,
-      orderId,
-      branchId,
-      razorpayPaymentId,
-    }).catch(() => undefined);
-    await orderRef.set(
-      {
-        routeTransferStatus: "failed",
-        routeTransferNeedsManualSettlement: true,
-        routeTransferError: error,
-        // Release the claim lease so a human-fixable order is re-claimable
-        // as soon as ops links the branch (a live lease would block it).
-        routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    return { state: "flagged", error };
-  };
-
-  /**
-   * F5/F7 ordering (review): a REFUNDED-before-transfer order still gets its
-   * ZERO hold stamped, so the order carries one payout truth (`monthlyFeeHold`)
-   * and no earnings are ever counted. Non-refunded terminal refusals are left
-   * unstamped — there is no refunded money to reconcile. The hold helper itself
-   * recognises the refunded shape and never touches the month ledger.
-   */
-  const stampRefundedHold = async (): Promise<void> => {
-    const refunded = Number(orderData?.refundedTotalPaise);
-    const hasRefundMarker =
-      (Number.isFinite(refunded) && refunded > 0) ||
-      (orderData?.refundStatus !== undefined &&
-        orderData?.refundStatus !== null &&
-        orderData?.refundStatus !== "");
-    if (!hasRefundMarker || !branchId) return;
-    try {
-      await ensureMonthlyFeeHold({
-        orderRef,
-        orderId,
-        branchId: branchId as string,
-        earnedPaise: 0,
-        courierFeePaise: 0,
-        gatewayCreatedAtMs:
-          Number(orderData?.payment?.gatewayCreatedAtMs) ||
-          Number(orderData?.["payment.gatewayCreatedAtMs"]) ||
-          undefined,
-      });
-    } catch (err: any) {
-      // The refusal itself already parks the payment; the stamp is best effort.
-      console.warn(
-        `[Payments] zero monthly-fee hold stamp failed for ${orderId}:`,
-        err?.message || err
-      );
-    }
-  };
-
-  if (!branchId) {
-    return flagManualSettlement("Order has no branchId — cannot execute Route split");
-  }
-
-  let racedTransfer: any = null;
-
-  if (db && typeof (db as any).runTransaction === "function") {
-    type ClaimResult =
-      | { kind: "claimed" }
-      | { kind: "done" }
-      | { kind: "busy" }
-      | {
-          kind: "conflict";
-          recordedPaymentId?: string | null;
-          recordedRazorpayOrderId?: string | null;
-          orderStatus?: string | null;
-        }
-      | {
-          kind: "terminal_refusal";
-          reason: string;
-          orderStatus: string;
-        };
-
-    const claimResult: ClaimResult = await (db as any).runTransaction(
-      async (tx: any) => {
-        const fresh = await tx.get(orderRef as any);
-        if (!fresh || !fresh.exists) {
-          // Fail closed: never use stale snapshot if fresh read fails!
-          return { kind: "busy" };
-        }
-        const freshData = fresh.data() as any;
-        if (!freshData) {
-          return { kind: "busy" };
-        }
-
-        if (
-          freshData.routeTransferStatus === "transferred" ||
-          freshData.payment?.routeTransfer ||
-          freshData["payment.routeTransfer"]
-        ) {
-          racedTransfer =
-            freshData.payment?.routeTransfer ?? freshData["payment.routeTransfer"] ?? null;
-          return { kind: "done" };
-        }
-
-        // 1. FRESH SNAPSHOT BINDING CHECK (Finding 1)
-        const provenCaptured =
-          typeof capturedAmountPaise === "number" || config.mock.paymentGateway === true;
-        const recordedPaymentId =
-          readRecordedPaymentField(freshData, "razorpayPaymentId") ||
-          readRecordedPaymentField(freshData, "capturedPaymentId");
-        const recordedRazorpayOrderId =
-          readRecordedPaymentField(freshData, "razorpayOrderId");
-        const foreignPayment =
-          !!recordedPaymentId && !!razorpayPaymentId && recordedPaymentId !== razorpayPaymentId;
-        const incomingGatewayOrderId =
-          razorpayOrderId ||
-          orderData.payment?.razorpayOrderId ||
-          orderData.razorpayOrderId ||
-          null;
-        const foreignGatewayOrder =
-          !!recordedRazorpayOrderId &&
-          !!incomingGatewayOrderId &&
-          recordedRazorpayOrderId !== incomingGatewayOrderId;
-
-        if (provenCaptured && (foreignPayment || foreignGatewayOrder)) {
-          // Return conflict: NO writes, NO transfer claim!
-          return {
-            kind: "conflict",
-            recordedPaymentId,
-            recordedRazorpayOrderId,
-            orderStatus:
-              typeof freshData.status === "string"
-                ? freshData.status
-                : freshData.status?.code,
-          };
-        }
-
-        // Another worker may already have a payout POST in flight. Preserve
-        // its live lease even if cancellation arrived meanwhile; recording a
-        // refusal here would falsely imply that no payout was sent.
-        if (freshData.routeTransferStatus === "transferring") {
-          const claimedAt = freshData.routeTransferClaimedAt;
-          const claimedMs =
-            typeof claimedAt === "number" && Number.isFinite(claimedAt)
-              ? claimedAt
-              : claimedAt && typeof claimedAt.toMillis === "function"
-                ? claimedAt.toMillis()
-                : 0;
-          if (Date.now() - claimedMs < TRANSFER_CLAIM_TTL_MS) return { kind: "busy" };
-        }
-
-        // T3.3 — REFUND-SIDE-EFFECT SERIALIZATION (Phase 3 MONEY): a FRESH
-        // refund claim (refundActiveClaim / legacy refundClaimedAt, < the
-        // shared TTL in reconciliation.ts) means a reverse_all refund may
-        // already be on the wire — claiming a payout behind it would race a
-        // reversal at the provider. Yield (busy): after the refund settles
-        // the order reads refunded and the terminal check refuses it, or a
-        // new attempt re-claims. A STALE refund lease is a dead claim — the
-        // recovery takeover proceeds (never held hostage by a crashed claim).
-        {
-          const refundClaimActive =
-            freshData.refundActiveClaim && typeof freshData.refundActiveClaim === "object"
-              ? freshData.refundActiveClaim.claimedAt
-              : freshData.refundClaimedAt ?? null;
-          if (refundClaimActive != null && isMoneyClaimFresh(refundClaimActive)) {
-            return { kind: "busy" };
-          }
-        }
-
-        // 2. TERMINAL / CANCELLED REFUND SPLIT GUARD (Finding 2)
-        const termCheck = isOrderTerminalForRouteTransfer(freshData);
-        if (termCheck.isTerminal) {
-          recordTerminalRefusalInTx(tx, db, {
-            orderRef,
-            orderId,
-            paymentId: razorpayPaymentId,
-            razorpayOrderId:
-              razorpayOrderId ||
-              recordedRazorpayOrderId ||
-              freshData.payment?.razorpayOrderId ||
-              freshData.razorpayOrderId ||
-              null,
-            capturedAmountPaise:
-              typeof capturedAmountPaise === "number"
-                ? capturedAmountPaise
-                : typeof freshData.payment?.capturedAmountPaise === "number"
-                  ? freshData.payment.capturedAmountPaise
-                  : typeof freshData.pricing?.grandTotal === "number"
-                    ? Math.round(freshData.pricing.grandTotal * 100)
-                    : undefined,
-            reason: termCheck.reason!,
-            orderStatus: termCheck.orderStatus || "TERMINAL",
-            source: "route_transfers_verify",
-          });
-          return {
-            kind: "terminal_refusal",
-            reason: termCheck.reason!,
-            orderStatus: termCheck.orderStatus || "TERMINAL",
-          };
-        }
-
-        // Claim a new or expired lease only after the fresh guards.
-        tx.set(
-          orderRef as any,
-          {
-            routeTransferStatus: "transferring",
-            routeTransferClaimedAt: Date.now(),
-          },
-          { merge: true }
-        );
-        return { kind: "claimed" };
-      }
-    );
-
-    if (claimResult.kind === "busy") return { state: "busy" };
-    if (claimResult.kind === "done") return { state: "transferred", transfer: racedTransfer };
-    if (claimResult.kind === "conflict") {
-      return {
-        state: "conflict",
-        recordedPaymentId: claimResult.recordedPaymentId,
-        recordedRazorpayOrderId: claimResult.recordedRazorpayOrderId,
-        orderStatus: claimResult.orderStatus,
-      };
-    }
-    if (claimResult.kind === "terminal_refusal") {
-      const refusalError = `Refused route transfer: order is ${claimResult.orderStatus} (${claimResult.reason})`;
-      await stampRefundedHold();
-      await captureErrorSnapshot({
-        source: "payments",
-        severity: "high",
-        message: `Route transfer refused for order ${orderId}: order is ${claimResult.orderStatus} (${claimResult.reason}) — parked in unmatched_payments`,
-        orderId,
-        branchId,
-        razorpayPaymentId,
-      }).catch(() => undefined);
-      return { state: "flagged", error: refusalError };
-    }
-  } else {
-    const termCheck = isOrderTerminalForRouteTransfer(orderData);
-    if (termCheck.isTerminal) {
-      await parkTerminalPaymentCapture(db, {
-        orderId,
-        razorpayPaymentId,
-        razorpayOrderId,
-        amountPaise: capturedAmountPaise,
-        reason: termCheck.reason!,
-        orderStatus: termCheck.orderStatus || "TERMINAL",
-        source: "route_transfers_verify",
-      });
-      await orderRef.set(
-        {
-          routeTransferStatus: "failed",
-          routeTransferTerminalRefusal: true,
-          routeTransferError: `Refused route transfer: order is ${termCheck.orderStatus} (${termCheck.reason})`,
-          routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      await stampRefundedHold();
-      return {
-        state: "flagged",
-        error: `Refused route transfer: order is ${termCheck.orderStatus} (${termCheck.reason})`,
-      };
-    }
-  }
-
-  // F5: hold the monthly fee in its OWN transaction, after the lease is won
-  // and before any transfer POST. Independently idempotent, so a crash between
-  // the lease and the POST is harmless: the next caller re-reads the stamp.
-  let hold: MonthlyFeeHold;
-  try {
-    const held = await ensureMonthlyFeeHold({
-      orderRef,
-      orderId,
-      branchId: branchId as string,
-      earnedPaise: earningsPaise,
-      courierFeePaise,
-      gatewayCreatedAtMs:
-        Number(orderData?.payment?.gatewayCreatedAtMs) ||
-        Number(orderData?.["payment.gatewayCreatedAtMs"]) ||
-        undefined,
-    });
-    hold = held.hold;
-    if (held.manualSettlement) {
-      // A payout bookkeeping problem must never fail the charged customer.
-      return flagManualSettlement(held.reason || "monthly fee hold could not be applied");
-    }
-  } catch (err: any) {
-    return flagManualSettlement(
-      `monthly fee hold failed (${err?.message || err}) — settle manually`
-    );
-  }
-
-  // F6: nothing to pay the branch. This is a successful outcome, not a
-  // failure: never retried, never flagged.
-  if (hold.branchTransferPaise <= 0) {
-    await orderRef.set(
-      {
-        routeTransferStatus: "not_required",
-        routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    return { state: "not_required" };
-  }
-
-  const attempt = await attemptRouteTransfer(
-    razorpayPaymentId,
-    branchId,
-    {
-      branchTransferPaise: hold.branchTransferPaise,
-      monthlyFeeHoldPaise: hold.holdPaise,
-    },
-    orderId,
-    undefined,
-    capturedAmountPaise
-  );
-
-  if (attempt.ok && attempt.result) {
-    await orderRef.set(
-      {
-        routeTransferStatus: "transferred",
-        "payment.routeTransfer": attempt.result,
-        routeTransferNeedsManualSettlement: admin.firestore.FieldValue.delete(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    return { state: "transferred", transfer: attempt.result };
-  }
-
-  if ((attempt as any).unknown) {
-    // Outcome UNKNOWN (gateway timeout, ambiguous network failure, or the
-    // pre-POST reconcile lookup itself failed): a blind retry could double-
-    // pay the branch. Park for ops reconciliation — the claim lease is
-    // released so the order is not wedged, and attemptRouteTransfer always
-    // reconciles existing transfers before any future POST.
-    const unknownError = attempt.error || "Route transfer outcome unknown";
-    await captureErrorSnapshot({
-      source: "payments",
-      severity: "high",
-      message: `Razorpay Route transfer outcome UNKNOWN for order ${orderId}: ${unknownError} — parked in needs_reconciliation (no blind retry)`,
-      orderId,
-      branchId,
-      razorpayPaymentId,
-    }).catch(() => undefined);
-    await orderRef.set(
-      {
-        routeTransferStatus: "needs_reconciliation",
-        routeTransferError: unknownError,
-        routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    return { state: "flagged", error: unknownError };
-  }
-
-  if (attempt.skipped) {
-    return flagManualSettlement(
-      `${attempt.error || "No linked Razorpay account for branch"} — link the branch in the Razorpay dashboard and settle this payout manually`
-    );
-  }
-
-  const error = attempt.error || "Route transfer failed";
-  await captureErrorSnapshot({
-    source: "payments",
-    severity: "high",
-    message: `Razorpay Route transfer failed for order ${orderId}: ${error}`,
-    orderId,
-    branchId,
-    razorpayPaymentId,
-  }).catch(() => undefined);
-  await orderRef.set(
-    {
-      routeTransferStatus: "pending_retry",
-      routeTransferError: error,
-      routeTransferRetryAt: admin.firestore.FieldValue.serverTimestamp(),
-      routeTransferRetryCount: 0,
-      // Release the claim lease: the POST already failed, so the scheduled
-      // retry worker may claim this order on its next tick instead of
-      // idling out the full lease.
-      routeTransferClaimedAt: admin.firestore.FieldValue.delete(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
-  return { state: "flagged", error };
+  // Retired compatibility entrypoint: no claims, holds, or provider calls.
+  return { state: "not_required" };
 }
 
 /**
@@ -3331,6 +2859,10 @@ async function finishVerifiedPayment(args: {
         ...(typeof gatewayCreatedAtMs === "number" && Number.isFinite(gatewayCreatedAtMs)
           ? { "payment.gatewayCreatedAtMs": gatewayCreatedAtMs }
           : {}),
+        // M7: ONE authoritative capture instant, stamped by verify AND the
+        // recovery path (this function is shared by both). Never wall-clock:
+        // an unknown gateway time is flagged unresolved, never guessed.
+        ...settlementCapturePending(),
         ...(capturedPaiseStamp !== undefined
           ? { "payment.capturedAmountPaise": capturedPaiseStamp }
           : {}),
@@ -4580,6 +4112,7 @@ export async function autoRefund(
       refundResult.status.toLowerCase() === "pending";
     if (gatewaySaysPending) {
       const inFlightData: Record<string, any> = {
+        settlementProcessedRefunds: withoutProcessedRefund(fresh?.settlementProcessedRefunds, refundId),
         refundAmount: amountRupees ?? null,
         // The gateway accepted the amount, so count it against the cap to block
         // an over-refund, while keeping the status explicitly non-terminal.
@@ -4848,7 +4381,18 @@ export async function autoRefund(
       return { nextTotal, fullyRefunded: false };
     }
 
+    // A 2xx POST whose gateway status is NOT `processed` is not proof of money
+    // returned. Only a proven processed status may enter the statement map.
+    const gatewayRefundStatus = String(refundResult?.status || "").toLowerCase();
+    const gatewaySaysProcessed = gatewayRefundStatus === "processed";
     const orderCompleteData: Record<string, any> = {
+      settlementProcessedRefunds: gatewaySaysProcessed
+        ? processedRefundMap(
+            fresh?.settlementProcessedRefunds,
+            refundId,
+            Number(refundResult.amount) || 0
+          )
+        : withoutProcessedRefund(fresh?.settlementProcessedRefunds, refundId),
       refundAmount: amountRupees ?? null,
       refundedTotalPaise: nextTotal,
       refundLedger: freshLedger,

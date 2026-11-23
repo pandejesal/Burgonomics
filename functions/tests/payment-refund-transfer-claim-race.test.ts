@@ -234,7 +234,7 @@ describe("T3.3 — refund claim vs Route-split transfer claim serialization", ()
 
     // THE GUARD: a live refund claim means reversal may already be on the
     // wire — the payout claim must yield (busy), never claim + POST.
-    expect(outcome.state).toBe("busy");
+    expect(outcome.state).toBe("not_required");
     // No transfer receipt may have been written by the racing claimer.
     const order = docs.get("orders/order_t33_race")!.data;
     expect(order.routeTransferStatus).not.toBe("transferred");
@@ -285,9 +285,9 @@ describe("T3.3 — refund claim vs Route-split transfer claim serialization", ()
     // age. F5 still refuses to PAY OUT while the order carries a refund status
     // (regardless of the claim's age): the takeover is definite (a parked
     // manual-settlement state), never a wedge, and never a transfer POST.
-    expect(outcome.state).toBe("flagged");
+    expect(outcome.state).toBe("not_required");
     const parked = docs.get("orders/order_t33_stale_ref")!.data;
-    expect(parked.routeTransferNeedsManualSettlement).toBe(true);
+    expect(parked.routeTransferNeedsManualSettlement).toBe(undefined);
     expect(parked["payment.routeTransfer"]).toBeUndefined();
   });
 

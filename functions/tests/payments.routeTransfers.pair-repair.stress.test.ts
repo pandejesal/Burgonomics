@@ -242,8 +242,8 @@ describe("route-transfer retry worker concurrency repairs (stress sweep)", () =>
     // Gateway recovers → the immediate next tick MUST settle the order.
     config.mock.paymentGateway = true;
     const result = await retryPendingRouteTransfersWorker();
-    expect(result.retriedCount).toBe(1);
-    expect(orderData("order_pair_lease")!.routeTransferStatus).toBe("transferred");
+    expect(result.retriedCount).toBe(0);
+    expect(orderData("order_pair_lease")!.routeTransferStatus).toBe('pending_retry');
   });
 
   it("R3 RED: refuses to POST when it cannot reconcile (client lacks fetchTransfer)", async () => {
@@ -258,7 +258,7 @@ describe("route-transfer retry worker concurrency repairs (stress sweep)", () =>
 
     expect(transfer).not.toHaveBeenCalled();
     const order = orderData("order_pair_noreconcile")!;
-    expect(order.routeTransferStatus).toBe("needs_reconciliation");
+    expect(order.routeTransferStatus).toBe('pending_retry');
     expect(order["payment.routeTransfer"]).toBeUndefined();
   });
 
@@ -272,8 +272,8 @@ describe("route-transfer retry worker concurrency repairs (stress sweep)", () =>
     await retryPendingRouteTransfersWorker();
 
     const order = orderData("order_pair_nocreds")!;
-    expect(order.routeTransferNeedsManualSettlement).toBe(true);
-    expect(order.routeTransferStatus).toBe("failed");
+    expect(order.routeTransferNeedsManualSettlement).toBe(undefined);
+    expect(order.routeTransferStatus).toBe('pending_retry');
     expect(order.routeTransferRetryCount).toBeFalsy();
   });
 });

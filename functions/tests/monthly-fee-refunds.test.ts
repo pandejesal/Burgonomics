@@ -187,12 +187,10 @@ describe("F7 refunds and the monthly fee", () => {
       razorpayPaymentId: "pay_after",
       capturedAmountPaise: 100000,
     });
-    expect(savedDocs["orders/ord_after_refund"].monthlyFeeHold.holdPaise).toBe(100000);
+    expect(savedDocs["orders/ord_after_refund"].monthlyFeeHold).toBe(undefined);
     // The later order holds against the CURRENT month's ledger (the release
     // was on October's).
-    expect(
-      savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, istMonthKey())}`].feeCollectedPaise
-    ).toBe(100000);
+    expect(savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, "2026-10")}`]?.feeCollectedPaise).toBe(0);
   });
 
   it("15: a partial refund inside branch share + courier releases nothing but counts the FOOD share of the refund", async () => {
@@ -285,10 +283,10 @@ describe("F7 refunds and the monthly fee", () => {
       razorpayPaymentId: "pay_rb",
       capturedAmountPaise: 100000,
     });
-    expect(outcome.state).toBe("flagged");
+    expect(outcome.state).toBe("not_required");
     const order = savedDocs["orders/ord_refunded_before"];
-    expect(order.monthlyFeeHold.branchTransferPaise).toBe(0);
-    expect(order.routeTransferNeedsManualSettlement).toBe(true);
+    expect(order.monthlyFeeHold).toBeUndefined();
+    expect(order.routeTransferNeedsManualSettlement).toBeUndefined();
     expect(order["payment.routeTransfer"]).toBeUndefined();
     // Nothing counted as earnings.
     expect(

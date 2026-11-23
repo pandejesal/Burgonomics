@@ -186,9 +186,11 @@ function seedOnline(id: string, branchId: string, atMs: number, collectedPaise: 
     id,
     branchId,
     createdAt: { toMillis: () => atMs },
+    settlementEffectiveAtMs: atMs,
     paymentChannel: "razorpay",
     payment: { capturedAmountPaise: collectedPaise },
     refundedTotalPaise: refunded,
+    settlementProcessedRefunds: refunded ? { rf_seed: refunded } : {},
     status: { code: "DELIVERED" },
   };
 }
@@ -198,6 +200,8 @@ function seedCash(id: string, branchId: string, atMs: number, rupees: number, co
     id,
     branchId,
     createdAt: { toMillis: () => atMs },
+    settlementEffectiveAtMs: atMs,
+    settlementCaptureState: "confirmed",
     customerId: "cust_walkin",
     paymentMethod: "cod",
     status: { code },
@@ -287,7 +291,10 @@ describe("generateSettlementStatement", () => {
     expect(second.version).toBe(2);
     expect(second.id).not.toBe(first.id);
     expect(second.netPayablePaise).toBe(550000);
-    expect(savedDocs[`${SETTLEMENT_STATEMENTS}/${first.id}`]).toEqual(v1);
+    const after = savedDocs[`${SETTLEMENT_STATEMENTS}/${first.id}`];
+    // Only the `current` marker moves; every amount stays immutable.
+    expect({ ...after, current: v1.current }).toEqual(v1);
+    expect(after.current).toBe(false);
   });
 
   it("refuses an unknown branch instead of inventing a statement", async () => {
@@ -438,7 +445,7 @@ describe("markSettlementPaid", () => {
       markSettlementPaid({
         statementId: statement.id, reference: "R2", paidOn: "2026-12-05", caller: BRAND_MGR, now: DEC_10TH,
       })
-    ).rejects.toMatchObject({ code: "SETTLEMENT_ALREADY_PAID", statusCode: 409 });
+    ).rejects.toMatchObject({ code: "SETTLEMENT_ZERO_DELTA", statusCode: 409 });
     // The refusal must not write: no second row, no second mark-paid audit row.
     expect(savedDocs[`branch_settlements/${statement.id}`].payments).toHaveLength(1);
     const markAudits = Object.entries(savedDocs).filter(
@@ -449,36 +456,24 @@ describe("markSettlementPaid", () => {
     expect(markAudits).toHaveLength(1);
   });
 
-  it("N1: records a second payment only when the caller asks for an additional payment", async () => {
+  it("N1: a distinct payment is recorded only against a NEW delta", async () => {
     const statement = await makeStatement();
-    await markSettlementPaid({
-      statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: OWNER, now: DEC_10TH,
-    });
-    const second = await markSettlementPaid({
-      statementId: statement.id, reference: "R2", paidOn: "2026-12-05",
-      caller: BRAND_MGR, now: DEC_10TH, additionalPayment: true,
-    });
+    await markSettlementPaid({ statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: OWNER, now: DEC_10TH });
+    seedOnline("o2", BRANCH, NOV.startMs + 9000, 100000);
+    const revised = await generateSettlementStatement({ branchId: BRANCH, monthKey: "2026-11", caller: OWNER, source: "on_demand", now: DEC_10TH });
+    const second = await markSettlementPaid({ statementId: revised!.id, reference: "R2", paidOn: "2026-12-05", caller: BRAND_MGR, now: DEC_10TH });
     expect(second.reused).toBe(false);
     expect(second.statement.payments.map((p) => p.reference)).toEqual(["R1", "R2"]);
-    // `paymentReference` stays the FIRST payment: that is the reference the
-    // statement was settled with. The extra row is history, not a restatement.
-    expect(second.statement.paymentReference).toBe("R1");
-    expect(savedDocs[`branch_settlements/${statement.id}`].payments).toHaveLength(2);
+    expect(savedDocs[`branch_settlements/${revised!.id}`].outstandingPaise).toBe(0);
   });
 
-  it("N1: an explicit additional payment still cannot replay itself twice", async () => {
+  it("N1: replaying the same payment on the current delta is a no-op", async () => {
     const statement = await makeStatement();
-    await markSettlementPaid({
-      statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: OWNER, now: DEC_10TH,
-    });
-    await markSettlementPaid({
-      statementId: statement.id, reference: "R2", paidOn: "2026-12-05",
-      caller: BRAND_MGR, now: DEC_10TH, additionalPayment: true,
-    });
-    const replay = await markSettlementPaid({
-      statementId: statement.id, reference: "R2", paidOn: "2026-12-05",
-      caller: BRAND_MGR, now: DEC_10TH, additionalPayment: true,
-    });
+    await markSettlementPaid({ statementId: statement.id, reference: "R1", paidOn: "2026-12-03", caller: OWNER, now: DEC_10TH });
+    seedOnline("o3", BRANCH, NOV.startMs + 10000, 100000);
+    const revised = await generateSettlementStatement({ branchId: BRANCH, monthKey: "2026-11", caller: OWNER, source: "on_demand", now: DEC_10TH });
+    await markSettlementPaid({ statementId: revised!.id, reference: "R2", paidOn: "2026-12-05", caller: BRAND_MGR, now: DEC_10TH });
+    const replay = await markSettlementPaid({ statementId: revised!.id, reference: "R2", paidOn: "2026-12-05", caller: BRAND_MGR, now: DEC_10TH });
     expect(replay.reused).toBe(true);
     expect(replay.statement.payments.map((p) => p.reference)).toEqual(["R1", "R2"]);
   });

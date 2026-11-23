@@ -9,10 +9,14 @@ import {
   resolveSettlementFeePaise,
   settlementCsv,
   settlementMonthBounds,
+  settlementStatementId,
+  settlementEffectiveAtMsOf,
   summarizeSettlementOrders,
+  SETTLEMENT_EFFECTIVE_AT_FIELD,
   type SettlementMonthBounds,
   type SettlementStatement,
   type SettlementSource,
+  type SettlementPaymentRecord,
 } from "./settlementMath";
 
 /**
@@ -34,6 +38,8 @@ import {
 export const SETTLEMENT_STATEMENTS = "branch_settlements";
 export const SETTLEMENT_VERSIONS = "settlement_versions";
 export const SETTLEMENT_AUDIT = "admin_audit_logs";
+/** M6: one payment ledger per branch and month, independent of statement versions. */
+export const SETTLEMENT_PAYMENTS = "settlement_payments";
 
 /** Orders per page, and pages per statement, before the scan is declared partial. */
 const SETTLEMENT_PAGE_SIZE = 500;
@@ -123,45 +129,89 @@ function millisOf(value: unknown, fallback: number): number {
 }
 
 /**
- * Reads a branch's orders for the month in bounded pages. Returns the raw docs
- * plus whether the page cap was hit, so a partial read is never reported as a
- * complete month.
+ * ONE query key: the server-normalised numeric `settlementEffectiveAtMs`.
+ * Legacy rows are backfilled by the reviewed staging step; no guessed fallback
+ * field is queried. Both bounds are numeric, and the composite index covers
+ * (branchId, settlementEffectiveAtMs).
+ */
+const SETTLEMENT_TIME_FIELD = SETTLEMENT_EFFECTIVE_AT_FIELD;
+const SETTLEMENT_ORDER_CAP = SETTLEMENT_PAGE_SIZE * SETTLEMENT_MAX_PAGES;
+
+/**
+ * Pages the single canonical field, de-duplicates by doc id, filters to the
+ * month, and probes for the 4,001st UNIQUE ELIGIBLE row. Later-month orders are
+ * excluded by the query itself and cannot consume the cap.
  */
 async function readBranchMonthOrders(
   branchId: string,
   month: SettlementMonthBounds
 ): Promise<{ orders: any[]; truncated: boolean }> {
   const col = db.collection("orders");
-  // A JS Date is the portable form: Firestore converts it to a Timestamp for
-  // the comparison, and a test shim needs no Timestamp class.
-  const start = new Date(month.startMs);
-  const orders: any[] = [];
-  let truncated = false;
+  const start = month.startMs;
+  const end = month.endMs;
+  const byId = new Map<string, any>();
   let cursor: any = null;
 
   for (let page = 0; page < SETTLEMENT_MAX_PAGES; page += 1) {
+    // +1 is the probe for an eligible row beyond the 4,000-row cap.
     let q: any = col
       .where("branchId", "==", branchId)
-      .where("createdAt", ">=", start)
-      .orderBy("createdAt", "asc")
-      .limit(SETTLEMENT_PAGE_SIZE);
+      .where(SETTLEMENT_TIME_FIELD, ">=", start)
+      .where(SETTLEMENT_TIME_FIELD, "<", end)
+      .orderBy(SETTLEMENT_TIME_FIELD, "asc")
+      .limit(SETTLEMENT_PAGE_SIZE + 1);
     if (cursor) q = q.startAfter(cursor);
     const snap = await q.get();
     const docs = snap?.docs ?? [];
     for (const doc of docs) {
-      orders.push({ id: doc.id, ...(typeof doc.data === "function" ? doc.data() : {}) });
+      if (!byId.has(doc.id)) {
+        byId.set(doc.id, { id: doc.id, ...(typeof doc.data === "function" ? doc.data() : {}) });
+      }
     }
-    if (docs.length < SETTLEMENT_PAGE_SIZE) {
-      cursor = null;
-      break;
-    }
-    cursor = docs[docs.length - 1];
-    if (page === SETTLEMENT_MAX_PAGES - 1) truncated = true;
+    if (docs.length <= SETTLEMENT_PAGE_SIZE) break;
+    cursor = docs[SETTLEMENT_PAGE_SIZE - 1];
   }
 
-  // The query is bounded at the left edge only; the right edge (this month's
-  // end) is enforced by the summarizer so the same rule always decides.
-  return { orders, truncated };
+  const eligible = [...byId.values()].filter((order) => {
+    const at = settlementEffectiveAtMsOf(order);
+    return Number.isFinite(at) && at >= month.startMs && at < month.endMs;
+  });
+  return {
+    orders: eligible.slice(0, SETTLEMENT_ORDER_CAP),
+    truncated: eligible.length > SETTLEMENT_ORDER_CAP,
+  };
+}
+
+/**
+ * Unresolved captures carry NO numeric month key, so the canonical month query
+ * cannot see them. Count them separately and inject the count into the statement:
+ * the statement is never complete (and never payable) while one exists. We never
+ * guess a month for these rows.
+ */
+async function readUnresolvedCaptureCount(branchId: string): Promise<number> {
+  const snap: any = await db
+    .collection("orders")
+    .where("branchId", "==", branchId)
+    .where("settlementCaptureUnresolved", "==", true)
+    .limit(2000)
+    .get();
+  return (snap?.docs ?? []).length;
+}
+
+/** M6: the branch/month ledger, shared by every statement version. */
+export interface PaymentLedger {
+  settledNetPaise: number;
+  payments: SettlementPaymentRecord[];
+}
+
+export async function readPaymentLedger(branchId: string, monthKey: string): Promise<PaymentLedger> {
+  const ref = db.collection(SETTLEMENT_PAYMENTS).doc(`${branchId}_${monthKey}`);
+  const snap: any = await ref.get();
+  const data = snap && snap.exists ? (snap.data() as any) : null;
+  return {
+    settledNetPaise: Number(data?.settledNetPaise) || 0,
+    payments: Array.isArray(data?.payments) ? (data.payments as SettlementPaymentRecord[]) : [],
+  };
 }
 
 async function nextVersion(branchId: string, monthKey: string): Promise<number> {
@@ -255,6 +305,7 @@ export async function generateSettlementStatement(
 
   const { orders, truncated } = await readBranchMonthOrders(branchId, month);
   const summary = summarizeSettlementOrders(orders, { branchId, ...month }, { truncated });
+  summary.captureUnresolved = await readUnresolvedCaptureCount(branchId);
 
   const fee = resolveSettlementFeePaise(branchData);
   const feeApplicable = isBranchFeeApplicable(
@@ -267,49 +318,75 @@ export async function generateSettlementStatement(
     month
   );
 
-  // A branch with no fee applicable and no trade in the month is skipped by the
-  // scheduler: an always-empty statement per dormant branch would be noise, and
-  // nothing is owed. An explicit owner request still gets its zero statement.
   if (input.omitWhenEmpty && !feeApplicable.applicable && summary.onlineOrders === 0 && summary.cashOrders === 0) {
     return null;
   }
 
-  const version = await nextVersion(branchId, monthKey);
-  const statement = buildSettlementStatement({
-    branchId,
-    branchName:
-      String(branchData?.name || "").trim() || input.branchNameHint || branchId,
-    monthKey,
-    month,
-    version,
-    summary,
-    fee,
-    feeApplicable,
-    generatedAtMs: now,
-    generatedBy: String(caller?.email || caller?.uid || input.source),
-    source,
-    monthClosed: true,
-    now,
+  // The ledger, version counter, statement and previous-version `current`
+  // flags are all published in ONE transaction. A payment that lands between
+  // the read and the write therefore cannot be silently overwritten.
+  const ledgerRef = db.collection(SETTLEMENT_PAYMENTS).doc(`${branchId}_${monthKey}`);
+  const versionsRef = db.collection(SETTLEMENT_VERSIONS).doc(`${branchId}_${monthKey}`);
+  let statement: SettlementStatement | undefined;
+  await (db as any).runTransaction(async (tx: any) => {
+    const [ledgerSnap, versionsSnap]: any[] = await Promise.all([
+      tx.get(ledgerRef),
+      tx.get(versionsRef),
+    ]);
+    const ledgerData = ledgerSnap && ledgerSnap.exists ? (ledgerSnap.data() as any) : null;
+    const version =
+      Math.max(0, Number(versionsSnap?.exists ? (versionsSnap.data() as any)?.latestVersion : 0) || 0) + 1;
+    statement = buildSettlementStatement({
+      branchId,
+      branchName: String(branchData?.name || "").trim() || input.branchNameHint || branchId,
+      monthKey,
+      month,
+      version,
+      summary,
+      fee,
+      feeApplicable,
+      generatedAtMs: now,
+      generatedBy: String(caller?.email || caller?.uid || input.source),
+      source,
+      monthClosed: true,
+      now,
+      priorSettledNetPaise: Number(ledgerData?.settledNetPaise) || 0,
+      priorPaymentRecords: Array.isArray(ledgerData?.payments) ? ledgerData.payments : [],
+    });
+    tx.set(versionsRef, {
+      branchId,
+      monthKey,
+      latestVersion: version,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    tx.set(db.collection(SETTLEMENT_STATEMENTS).doc(statement.id), statement);
+    // Retire earlier versions deterministically by known document IDs.
+    for (let prior = 1; prior < version; prior += 1) {
+      const priorRef = db.collection(SETTLEMENT_STATEMENTS).doc(settlementStatementId(branchId, monthKey, prior));
+      const priorSnap: any = await tx.get(priorRef);
+      if (priorSnap && priorSnap.exists && (priorSnap.data() as any)?.current !== false) {
+        tx.set(priorRef, { current: false }, { merge: true });
+      }
+    }
   });
 
   if (fee.invalid) {
     await captureErrorSnapshot({
       source: "system",
       severity: "medium",
-      message: `Settlement ${statement.id}: configured fee for ${branchId} was unusable; default applied`,
+      message: `Settlement ${statement!.id}: configured fee for ${branchId} was unusable; default applied`,
       branchId,
     }).catch(() => undefined);
   }
-
-  await db.collection(SETTLEMENT_STATEMENTS).doc(statement.id).create(statement);
-  await writeSettlementAudit(caller, "settlement_generated", statement.id, {
+  await writeSettlementAudit(caller, "settlement_generated", statement!.id, {
     branchId,
     monthKey,
-    version,
-    netPayablePaise: statement.netPayablePaise,
+    version: statement!.version,
+    netPayablePaise: statement!.netPayablePaise,
+    outstandingPaise: statement!.outstandingPaise,
     source,
   });
-  return statement;
+  return statement!;
 }
 
 async function writeSettlementAudit(
@@ -428,6 +505,12 @@ export interface MarkSettlementPaidInput {
    * allowed — but only when asked for, never by a double tap.
    */
   additionalPayment?: boolean;
+  /**
+   * M6: the signed net this payment settles. Defaults to the statement's net
+   * payable, which is what "mark as paid" has always meant. Override only for a
+   * true part-payment so a regeneration exposes exactly the unpaid delta.
+   */
+  settledNetPaise?: number;
   caller: CallerShape | null | undefined;
   now?: number;
 }
@@ -511,6 +594,51 @@ export async function markSettlementPaid(
           409
         );
       }
+      // M6 cutover: a statement written before the payment ledger existed has
+      // no verified balance. It is VOID — never payable, no data step needed.
+      if (current.ledgerSchema !== 1 || typeof current.outstandingPaise !== "number") {
+        throw new SettlementError(
+          "SETTLEMENT_VOID",
+          `Settlement ${input.statementId} predates the payment ledger and is void; regenerate the month before recording a payment`,
+          409
+        );
+      }
+      // M6: an incomplete statement is never actionable. A truncated order
+      // scan means the totals are a floor; marking it paid would over-pay on
+      // numbers we know are wrong.
+      if (current.ordersTruncated === true || current.complete === false) {
+        throw new SettlementError(
+          "SETTLEMENT_INCOMPLETE",
+          `Settlement ${input.statementId} has an incomplete order scan; regenerate after raising the scan cap before marking it paid`,
+          409
+        );
+      }
+      // M6: verify this is still the current version. A stale paid version
+      // hides a regenerated delta behind an old "paid" badge.
+      const versionsSnap: any = await tx.get(
+        db.collection(SETTLEMENT_VERSIONS).doc(`${current.branchId}_${current.monthKey}`)
+      );
+      const latestVersion = Number(versionsSnap?.exists ? (versionsSnap.data() as any)?.latestVersion : 0) || 0;
+      if (latestVersion > Number(current.version || 0)) {
+        throw new SettlementError(
+          "SETTLEMENT_STALE_VERSION",
+          `Settlement ${input.statementId} is no longer the current version (latest v${latestVersion}); mark the current statement paid instead`,
+          409
+        );
+      }
+
+      // M6: read the ledger INSIDE this transaction, then compute the signed
+      // delta against the fresh value. A payment interleaved with regeneration
+      // can never add the same net twice.
+      const ledgerRef = db
+        .collection(SETTLEMENT_PAYMENTS)
+        .doc(`${current.branchId}_${current.monthKey}`);
+      const ledgerSnap: any = await tx.get(ledgerRef);
+      const ledgerData = ledgerSnap && ledgerSnap.exists ? (ledgerSnap.data() as any) : null;
+      const ledgerNet = Number(ledgerData?.settledNetPaise) || 0;
+      const ledgerPayments: SettlementPaymentRecord[] = Array.isArray(ledgerData?.payments)
+        ? ledgerData.payments
+        : [];
       const payments = Array.isArray(current.payments) ? [...current.payments] : [];
       const already = payments.find(
         (p) => p.reference === reference && Number(p.paidAtMs) === paidAtMs
@@ -518,25 +646,36 @@ export async function markSettlementPaid(
       if (already) {
         return { statement: current, reused: true };
       }
-      // N1: a second, different payment is a separate accounting event. It is
-      // recorded only when the caller says so explicitly. Without that flag a
-      // double tap on "mark as paid" would add a second UTR to a statement that
-      // was already settled, which is what staging saw on two statements.
-      if (payments.length > 0 && input.additionalPayment !== true) {
+      // Delta is recomputed against the FRESH ledger read inside this tx.
+      const settledNetPaise = (Number(current.netPayablePaise) || 0) - ledgerNet;
+      if (settledNetPaise === 0) {
         throw new SettlementError(
-          "SETTLEMENT_ALREADY_PAID",
-          `Settlement ${input.statementId} is already marked paid as ${current.paymentReference ?? payments[0]?.reference ?? "unknown"}. Record another payment only if this is an additional payment.`,
+          "SETTLEMENT_ZERO_DELTA",
+          `Settlement ${input.statementId} has no outstanding delta; nothing to record`,
           409
         );
       }
       const isAdditionalPayment = payments.length > 0;
-      const record = {
+      const record: SettlementPaymentRecord = {
         paidAtMs,
         reference,
         recordedBy: String(caller.uid),
         recordedByEmail: caller.email ? String(caller.email) : null,
         note: input.note ? String(input.note).trim().slice(0, 500) : null,
+        settledNetPaise,
       };
+      tx.set(
+        ledgerRef,
+        {
+          branchId: current.branchId,
+          monthKey: current.monthKey,
+          // Explicit new total (not increment): retry-safe after a fresh read.
+          settledNetPaise: ledgerNet + settledNetPaise,
+          payments: [...ledgerPayments, record],
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
       // The FIRST payment is the one that settles the statement; any further row
       // is additional history. Overwriting `paymentReference`/`paidAtMs` on a top
       // up would silently restate when the statement was settled.
@@ -548,6 +687,7 @@ export async function markSettlementPaid(
         paidAtMs: settledAtMs,
         paymentReference: settledReference,
         payments: [...payments, record],
+        outstandingPaise: 0,
       };
       tx.set(
         ref,
@@ -559,6 +699,7 @@ export async function markSettlementPaid(
           // array is the same read-modify-write Firestore's arrayUnion would do,
           // and it keeps the stored history in one canonical order.
           payments: paid.payments,
+          outstandingPaise: 0,
           paidUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }

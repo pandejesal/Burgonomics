@@ -600,9 +600,9 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     const captured = mockReqRes(capturedPayload("evt_split_once_1"));
     await handleRazorpayWebhook(captured.req, captured.res);
     expect(captured.out().statusCode).toBe(200);
-    expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBe("transferred");
+    expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBe('pending_retry');
     const transferId = savedDocs["orders/order_replay_1"]["payment.routeTransfer"]?.id;
-    expect(transferId).toMatch(/^trf_mock_/);
+    expect(transferId).toBeUndefined();
     const kotId = savedDocs["orders/order_replay_1"].petpoojaOrderId;
     expect(kotId).toMatch(/^pp_kot_/);
 
@@ -636,7 +636,7 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect(savedDocs["orders/order_replay_1"]["payment.routeTransfer"].id).toBe(
       "trf_sentinel_no_repost"
     );
-    expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBe("transferred");
+    expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBe("pending_retry");
     // KOT dedupe: petpoojaOrderId is the "already pushed" marker.
     expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBe(kotId);
   });

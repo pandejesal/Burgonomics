@@ -110,6 +110,16 @@ service cloud.firestore {
       );
     }
 
+    // A1: owner-only money documents are not readable by branch_staff.
+    function ownsBranchAsOwner(branchId) {
+      return isBrandOwner() || (
+        hasRole(['branch_owner']) && (
+          (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && getAdminDoc().data.branchId == branchId) ||
+          (request.auth.token != null && branchId in request.auth.token.branchIds)
+        )
+      );
+    }
+
     // Loop 12: delivery handover needs OTP proof — POST
     // /orders/verifyDeliveryOtp flips to DELIVERED server-side (lockout +
     // timing-safe compare). A direct client status write to DELIVERED on a
@@ -191,7 +201,7 @@ service cloud.firestore {
         'routeTransferStatus', 'routeTransferNeedsManualSettlement',
         'routeTransferRetryCount', 'routeTransferClaimedAt',
         'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
-        'paymentChannel', 'monthlyFeeHold',
+        'paymentChannel', 'monthlyFeeHold', 'settlementEffectiveAtMs', 'settlementCaptureUnresolved', 'settlementProcessedRefunds',
         'petpoojaAcceptedNoId', 'petpoojaAcceptedNoIdAt', 'petpoojaAcceptedNoIdAck',
         'petpoojaAcceptedNoIdSource', 'petpoojaAcceptedUnrecorded', 'petpoojaAcceptedAck',
         'petpoojaStatus', 'petpoojaSyncStatus', 'petpoojaRetryCount',
@@ -226,7 +236,7 @@ service cloud.firestore {
         'routeTransferStatus', 'routeTransferNeedsManualSettlement',
         'routeTransferRetryCount', 'routeTransferClaimedAt',
         'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
-        'paymentChannel', 'monthlyFeeHold',
+        'paymentChannel', 'monthlyFeeHold', 'settlementEffectiveAtMs', 'settlementCaptureUnresolved', 'settlementProcessedRefunds',
         // Courier COD money and readiness are server-written. Branch staff
         // must not rewrite the cash due or forge a courier-collection flag.
         'cashDuePaise', 'cashOnDelivery',
@@ -527,7 +537,7 @@ service cloud.firestore {
           'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'servicedRadiusKm',
           // F9: money config is brand-only. A branch may not move its own
           // monthly fee or packaging price.
-          'monthlyFee', 'packaging', 'packagingFee', 'royaltyPercentage', 'brandRoyaltyPercent'
+          'monthlyFee', 'settlementFee', 'packaging', 'packagingFee', 'royaltyPercentage', 'brandRoyaltyPercent'
         ])
       );
       allow delete: if isBrandOwner();
@@ -1321,7 +1331,7 @@ service cloud.firestore {
     // through the authenticated API), so this stays read-only and denies every
     // other identity by default.
     match /branch_settlements/{docId} {
-      allow read: if isBrandOwner() || ownsBranch(resource.data.branchId);
+      allow read: if isBrandOwner() || ownsBranchAsOwner(resource.data.branchId);
       allow write: if false;
     }
 

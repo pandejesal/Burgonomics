@@ -1,3 +1,4 @@
+import { settlementCaptureUnknown } from "../settlements/settlementMath";
 import { db } from "../../core/firebase";
 import * as admin from "firebase-admin";
 import { captureErrorSnapshot } from "../../core/errors";
@@ -325,6 +326,7 @@ async function claimGate(args: {
     tx.set(
       args.orderRef,
       {
+        ...settlementCaptureUnknown(),
         captureFulfillment: {
           state: "checking",
           paymentId: args.razorpayPaymentId,
@@ -445,6 +447,7 @@ async function claimResumeLease(args: {
     tx.set(
       args.orderRef,
       {
+        ...settlementCaptureUnknown(),
         captureFulfillment: {
           state: "refund_pending",
           paymentId: args.razorpayPaymentId,

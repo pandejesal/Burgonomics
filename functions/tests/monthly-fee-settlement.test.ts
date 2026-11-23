@@ -190,19 +190,16 @@ describe("F5a durable settlement marker", () => {
     };
 
     const first = await retryPendingRouteTransfersWorker();
-    expect(first.retriedCount).toBe(1);
+    expect(first.retriedCount).toBe(0);
     const order = savedDocs["orders/ord_dead_webhook"];
-    expect(order.monthlyFeeHold).toMatchObject({
-      earnedPaise: 100000,
-      holdPaise: 50000,
-      branchTransferPaise: 50000,
-    });
-    expect(order["payment.routeTransfer"].amount).toBe(50000);
-    expect(order.routeTransferStatus).toBe("transferred");
+    expect(order?.monthlyFeeHold).toBeUndefined();
+    expect(order?.["payment.routeTransfer"]).toBeUndefined();
+    expect(order?.routeTransferStatus).toBe("pending_retry");
+    // The retired rail cannot mutate the fee ledger: it stays at its seeded state.
     expect(savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, monthKey)}`]).toMatchObject({
-      feeCollectedPaise: 250000,
-      razorpayOrders: 5,
-      razorpayEarnedPaise: 300000,
+      feeCollectedPaise: 200000,
+      razorpayOrders: 4,
+      razorpayEarnedPaise: 200000,
     });
     // The customer's order keeps its later state.
     expect(order.status.code).toBe("PREPARING");
@@ -211,7 +208,7 @@ describe("F5a durable settlement marker", () => {
     // second transfer.
     const second = await retryPendingRouteTransfersWorker();
     expect(second.retriedCount).toBe(0);
-    expect(savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, monthKey)}`].feeCollectedPaise).toBe(250000);
-    expect(savedDocs["orders/ord_dead_webhook"]["payment.routeTransfer"].amount).toBe(50000);
+    expect(savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, monthKey)}`].feeCollectedPaise).toBe(200000);
+    expect(savedDocs["orders/ord_dead_webhook"]["payment.routeTransfer"]).toBeUndefined();
   });
 });

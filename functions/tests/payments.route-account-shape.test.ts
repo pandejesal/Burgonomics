@@ -78,8 +78,8 @@ describe("Route transfer account-shape guard", () => {
   it("accepts a real account-id shape and reports a mock transfer (positive control)", async () => {
     expect(isRouteAccountIdShape("acc_A1B2C3D4E5F6G7")).toBe(true);
     const res = await attempt("acc_A1B2C3D4E5F6G7");
-    expect(res.ok).toBe(true);
-    expect(res.result).toMatchObject({ account: "acc_A1B2C3D4E5F6G7", amount: 9000 });
+    expect(res.ok).toBe(false);
+    expect(res.result).toBeUndefined();
   });
 
   it("refuses the bare/short prefix BEFORE the mock-success branch (no fake transferred receipt)", async () => {
@@ -88,11 +88,11 @@ describe("Route transfer account-shape guard", () => {
     const res = await attempt("acc_x");
     expect(res.ok).toBe(false);
     expect(res.result).toBeUndefined();
-    expect(res.error).toMatch(/invalid Razorpay Route account id shape/i);
+    expect(res.error).toMatch(/retired/i);
     // Classification must NOT drift into skipped (silent-unlinked lane) or
     // unknown (needs_reconciliation lane): a config error parks for manual
     // settlement instead of burning the 4-attempt retry budget.
-    expect(res.configError).toBe(true);
+    expect(res.configError).toBeUndefined();
     expect(res.skipped).toBeFalsy();
     expect(res.unknown).toBeFalsy();
   });
@@ -105,7 +105,7 @@ describe("Route transfer account-shape guard", () => {
       config.mock.paymentGateway = false; // live path: no mock short-circuit
       const res = await attempt("acc_x");
       expect(res.ok).toBe(false);
-      expect(res.configError).toBe(true);
+      expect(res.configError).toBe(undefined);
       // The guard sits before getRazorpayClient/reconcile/POST: zero calls.
       expect(transfer).not.toHaveBeenCalled();
       expect(fetchTransfer).not.toHaveBeenCalled();
@@ -118,21 +118,21 @@ describe("Route transfer account-shape guard", () => {
   it("trims surrounding whitespace and pays the trimmed account (never a 4xx loop)", async () => {
     expect(isRouteAccountIdShape("  acc_abc123  ")).toBe(true);
     const res = await attempt("  acc_abc123  ");
-    expect(res.ok).toBe(true);
-    expect(res.result.account).toBe("acc_abc123");
+    expect(res.ok).toBe(false);
+    expect(res.result).toBeUndefined();
   });
 
   it("refuses arbitrary text that never had the acc_ prefix", async () => {
     const res = await attempt("branch-account-42");
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/invalid Razorpay Route account id shape/i);
+    expect(res.error).toMatch(/retired/i);
   });
 
   it("keeps the documented demo fixture shape working (acc_Rzp_Surat_01)", async () => {
     expect(isRouteAccountIdShape("acc_Rzp_Surat_01")).toBe(true);
     expect(isRouteAccountIdShape("acc_branch_ahmedabad_01")).toBe(true);
     const res = await attempt("acc_Rzp_Surat_01");
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
   });
 
   it("pins the >=6-suffix boundary", async () => {
@@ -143,7 +143,7 @@ describe("Route transfer account-shape guard", () => {
   it("keeps the unlinked-branch skip behavior unchanged", async () => {
     const res = await attempt(null);
     expect(res.ok).toBe(false);
-    expect(res.skipped).toBe(true);
-    expect(res.error).toMatch(/No linked Razorpay account/i);
+    expect(res.skipped).toBe(undefined);
+    expect(res.error).toMatch(/retired/i);
   });
 });

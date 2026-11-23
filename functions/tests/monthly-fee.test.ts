@@ -88,7 +88,7 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { executeRouteSplit } from "../src/modules/payments/razorpay.service";
+import { executeRouteSplit, retryPendingRouteTransfersWorker } from "../src/modules/payments/razorpay.service";
 import { istMonthKey, branchMonthlyFeeId } from "../src/modules/payments/monthlyFee";
 import { config } from "../src/config/env";
 
@@ -162,257 +162,88 @@ afterEach(() => {
   config.mock = { ...prevMock.mock };
 });
 
-describe("F5 monthly fee hold", () => {
-  it("1: the first capture of a month holds the lot (transfer 0, not_required)", async () => {
-    seedOrder("ord_first", { grandPaise: 100000 });
-    const outcome = await split("ord_first");
+/**
+ * Owner decision 2026-11-20 + GPT-6.2 Sol 2026-11-22: Route and per-order fee
+ * holds are RETIRED in this version. The assertions below replace the old
+ * "hold the first ₹2,500" expectations: no configuration, month, branch state
+ * or repeated call may create a hold, a claim, or a gateway transfer.
+ */
+describe("retired per-order Route and fee hold", () => {
+  const cases: Array<[string, Record<string, any>, Record<string, any>]> = [
+    ["first capture of a month", { monthlyFee: 2500 }, { grandPaise: 100000 }],
+    ["crossing the old monthly threshold", { monthlyFee: 2500 }, { grandPaise: 300000 }],
+    ["zero configured fee", { monthlyFee: 0 }, { grandPaise: 100000 }],
+    ["a later month", { monthlyFee: 2500 }, { grandPaise: 100000, gatewayCreatedAtMs: Date.parse("2026-10-31T18:31:00Z") }],
+    ["an unlinked branch", {}, { grandPaise: 100000 }],
+    ["a corrupt fee", { monthlyFee: -50 }, { grandPaise: 100000 }],
+    ["a terminal order", { monthlyFee: 2500 }, { grandPaise: 100000, extra: { status: { code: "CANCELLED" } } }],
+  ];
+
+  it.each(cases)("never creates a hold or transfer: %s", async (_label, branch, order) => {
+    seedBranch(branch);
+    const id = `retired_${_label.replace(/\W+/g, "_")}`;
+    seedOrder(id, order);
+    const outcome = await split(id);
     expect(outcome.state).toBe("not_required");
-    const order = savedDocs["orders/ord_first"];
-    expect(order.monthlyFeeHold).toMatchObject({
-      monthKey: istMonthKey(),
-      earnedPaise: 100000,
-      holdPaise: 100000,
-      branchTransferPaise: 0,
-    });
-    expect(order.routeTransferStatus).toBe("not_required");
-    expect(order.payment.routeTransfer).toBeUndefined();
-    // Stream marker survives here too (F8).
-    expect(order.paymentChannel).toBe("razorpay");
-  });
-
-  it("2: crossing the line holds only the remainder and transfers the rest", async () => {
-    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, istMonthKey())}`] = {
-      branchId: BRANCH,
-      monthKey: istMonthKey(),
-      feePaise: 250000,
-      feeCollectedPaise: 200000,
-      razorpayOrders: 8,
-      razorpayEarnedPaise: 200000,
-      razorpayRefundedPaise: 0,
-    };
-    seedOrder("ord_cross", { grandPaise: 100000 });
-    const outcome = await split("ord_cross");
-    expect(outcome.state).toBe("transferred");
-    const order = savedDocs["orders/ord_cross"];
-    expect(order.monthlyFeeHold.holdPaise).toBe(50000);
-    expect(order.monthlyFeeHold.branchTransferPaise).toBe(50000);
-    expect(order["payment.routeTransfer"].amount).toBe(50000);
-    expect(ledger().feeCollectedPaise).toBe(250000);
-    expect(ledger().razorpayOrders).toBe(9);
-    expect(ledger().razorpayEarnedPaise).toBe(300000);
-  });
-
-  it("3: after the fee is met, nothing is held and the branch gets everything", async () => {
-    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, istMonthKey())}`] = {
-      branchId: BRANCH,
-      monthKey: istMonthKey(),
-      feePaise: 250000,
-      feeCollectedPaise: 250000,
-      razorpayOrders: 3,
-      razorpayEarnedPaise: 250000,
-      razorpayRefundedPaise: 0,
-    };
-    seedOrder("ord_after", { grandPaise: 100000 });
-    expect((await split("ord_after")).state).toBe("transferred");
-    const hold = savedDocs["orders/ord_after"].monthlyFeeHold;
-    expect(hold.holdPaise).toBe(0);
-    expect(hold.branchTransferPaise).toBe(100000);
-    expect(ledger().feeCollectedPaise).toBe(250000);
-  });
-
-  it("4: the courier fee is never transferred (D6)", async () => {
-    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, istMonthKey())}`] = {
-      branchId: BRANCH,
-      monthKey: istMonthKey(),
-      feePaise: 250000,
-      feeCollectedPaise: 250000,
-      razorpayOrders: 3,
-      razorpayEarnedPaise: 250000,
-      razorpayRefundedPaise: 0,
-    };
-    seedOrder("ord_courier", { grandPaise: 104500, courierPaise: 4500 });
-    await split("ord_courier");
-    const order = savedDocs["orders/ord_courier"];
-    expect(order.monthlyFeeHold.earnedPaise).toBe(100000);
-    expect(order.monthlyFeeHold.courierFeePaise).toBe(4500);
-    expect(order["payment.routeTransfer"].amount).toBe(100000);
-    // The Razorpay notes record the held amount, not a royalty.
-    expect(order.monthlyFeeHold.holdPaise).toBe(0);
-  });
-
-  it("5: verify and webhook both fire — one hold, ledger counted once", async () => {
-    seedOrder("ord_twice", { grandPaise: 100000 });
-    await split("ord_twice");
-    const afterFirst = JSON.parse(JSON.stringify(ledger()));
-    const second = await split("ord_twice");
-    // The first capture held the whole fee, so there is nothing to pay (and a
-    // rerun must not change that).
-    expect(second.state).toBe("not_required");
-    expect(ledger()).toEqual(afterFirst);
-    expect(savedDocs["orders/ord_twice"].monthlyFeeHold.holdPaise).toBe(100000);
-  });
-
-  it("6: a re-run (stale-lease takeover / retry worker) reuses the stamped amount", async () => {
-    seedOrder("ord_reuse", { grandPaise: 100000 });
-    await split("ord_reuse");
-    const hold = { ...savedDocs["orders/ord_reuse"].monthlyFeeHold };
-    const ledgerBefore = JSON.parse(JSON.stringify(ledger()));
-
-    // Simulate a takeover: the transfer never landed, so the order is retried.
-    savedDocs["orders/ord_reuse"].routeTransferStatus = "pending_retry";
-    savedDocs["orders/ord_reuse"].routeTransferClaimedAt = Date.now() - 11 * 60 * 1000;
-    const again = await split("ord_reuse");
-    expect(["transferred", "not_required"]).toContain(again.state);
-    expect(savedDocs["orders/ord_reuse"].monthlyFeeHold).toEqual(hold);
-    expect(ledger()).toEqual(ledgerBefore);
-  });
-
-  it("7: two captures racing for the last ₹500 hold exactly ₹500 in total", async () => {
-    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, istMonthKey())}`] = {
-      branchId: BRANCH,
-      monthKey: istMonthKey(),
-      feePaise: 250000,
-      feeCollectedPaise: 249500,
-      razorpayOrders: 3,
-      razorpayEarnedPaise: 249500,
-      razorpayRefundedPaise: 0,
-    };
-    seedOrder("ord_race_a", { grandPaise: 100000 });
-    seedOrder("ord_race_b", { grandPaise: 100000 });
-    await Promise.all([split("ord_race_a"), split("ord_race_b")]);
-    const held =
-      Number(savedDocs["orders/ord_race_a"].monthlyFeeHold?.holdPaise || 0) +
-      Number(savedDocs["orders/ord_race_b"].monthlyFeeHold?.holdPaise || 0);
-    expect(held).toBe(500);
-    expect(ledger().feeCollectedPaise).toBe(250000);
-  });
-
-  it("8: month boundary is 18:30Z (Asia/Kolkata)", () => {
-    expect(istMonthKey(Date.parse("2026-10-31T18:29:59Z"))).toBe("2026-10");
-    expect(istMonthKey(Date.parse("2026-10-31T18:30:00Z"))).toBe("2026-11");
-  });
-
-  it("9: a new month starts a new ledger with the full fee", async () => {
-    const october = "2026-10";
-    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, october)}`] = {
-      branchId: BRANCH,
-      monthKey: october,
-      feePaise: 250000,
-      feeCollectedPaise: 250000,
-      razorpayOrders: 5,
-      razorpayEarnedPaise: 250000,
-      razorpayRefundedPaise: 0,
-    };
-    const novemberMs = Date.parse("2026-11-05T10:00:00Z");
-    seedOrder("ord_new_month", { grandPaise: 100000, gatewayCreatedAtMs: novemberMs });
-    await split("ord_new_month");
-    const newLedger = ledger("2026-11");
-    expect(newLedger).toBeTruthy();
-    expect(newLedger.feePaise).toBe(250000);
-    expect(newLedger.feeCollectedPaise).toBe(100000);
-    // October's ledger is untouched.
-    expect(ledger("2026-10").feeCollectedPaise).toBe(250000);
-  });
-
-  it("10: a fee changed mid-month applies from the next month only", async () => {
-    // October's ledger froze a 3000-rupee fee.
-    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, "2026-10")}`] = {
-      branchId: BRANCH,
-      monthKey: "2026-10",
-      feePaise: 300000,
-      feeCollectedPaise: 300000,
-      razorpayOrders: 1,
-      razorpayEarnedPaise: 300000,
-      razorpayRefundedPaise: 0,
-    };
-    // The branch document now says 1000 rupees.
-    seedBranch({ monthlyFee: 1000 });
-    seedOrder("ord_oct", {
-      grandPaise: 100000,
-      gatewayCreatedAtMs: Date.parse("2026-10-20T10:00:00Z"),
-    });
-    await split("ord_oct");
-    expect(ledger("2026-10").feeCollectedPaise).toBe(300000); // still met
-    expect(savedDocs["orders/ord_oct"].monthlyFeeHold.holdPaise).toBe(0);
-
-    seedOrder("ord_nov", {
-      grandPaise: 100000,
-      gatewayCreatedAtMs: Date.parse("2026-11-02T10:00:00Z"),
-    });
-    await split("ord_nov");
-    expect(ledger("2026-11").feePaise).toBe(100000); // new fee
-    expect(savedDocs["orders/ord_nov"].monthlyFeeHold.holdPaise).toBe(100000);
-  });
-
-  it("11: monthlyFee 0 holds nothing but still counts the stream", async () => {
-    seedBranch({ monthlyFee: 0 });
-    seedOrder("ord_free", { grandPaise: 100000 });
-    expect((await split("ord_free")).state).toBe("transferred");
-    const order = savedDocs["orders/ord_free"];
-    expect(order.monthlyFeeHold.holdPaise).toBe(0);
-    expect(order.monthlyFeeHold.branchTransferPaise).toBe(100000);
-    expect(ledger().feePaise).toBe(0);
-    expect(ledger().razorpayOrders).toBe(1);
-    expect(ledger().razorpayEarnedPaise).toBe(100000);
-  });
-
-  it("12: an unlinked branch still gets its ledger, is flagged, and the order confirms", async () => {
-    // The fee is already met this month, so there IS a payout owed — which an
-    // unlinked branch cannot receive: flag it for a human, never fail the
-    // customer.
-    savedDocs[`branch_monthly_fees/${branchMonthlyFeeId(BRANCH, istMonthKey())}`] = {
-      branchId: BRANCH,
-      monthKey: istMonthKey(),
-      feePaise: 250000,
-      feeCollectedPaise: 250000,
-      razorpayOrders: 3,
-      razorpayEarnedPaise: 250000,
-      razorpayRefundedPaise: 0,
-    };
-    seedBranch({ razorpayAccountId: "" });
-    seedOrder("ord_unlinked", { grandPaise: 100000 });
-    const outcome = await split("ord_unlinked");
-    expect(outcome.state).toBe("flagged");
-    const order = savedDocs["orders/ord_unlinked"];
-    expect(order.routeTransferNeedsManualSettlement).toBe(true);
-    expect(order.paymentStatus).toBe("completed");
-    expect(ledger().feeCollectedPaise).toBe(250000);
-    expect(ledger().razorpayOrders).toBe(4);
-  });
-
-  it("13: a corrupt monthlyFee flags manual settlement and still confirms", async () => {
-    seedBranch({ monthlyFee: -50 });
-    seedOrder("ord_corrupt_fee", { grandPaise: 100000 });
-    const outcome = await split("ord_corrupt_fee");
-    expect(outcome.state).toBe("flagged");
-    const order = savedDocs["orders/ord_corrupt_fee"];
-    expect(order.routeTransferNeedsManualSettlement).toBe(true);
-    expect(order.monthlyFeeHold.holdPaise).toBe(0);
-    expect(order.monthlyFeeHold.branchTransferPaise).toBe(0);
-    expect(order.paymentStatus).toBe("completed");
-    // Never counted as earnings.
+    const after = savedDocs[`orders/${id}`];
+    expect(after.monthlyFeeHold).toBeUndefined();
+    expect(after.routeTransferStatus).toBeUndefined();
+    expect(after.routeTransferClaimedAt).toBeUndefined();
+    expect(after.payment?.routeTransfer).toBeUndefined();
     expect(ledger()).toBeUndefined();
   });
 
-  it("22e: a late October payment processed in November lands on October", async () => {
-    const octoberPaymentMs = Date.parse("2026-10-31T18:00:00Z"); // 23:30 IST, October
-    seedOrder("ord_late", { grandPaise: 100000, gatewayCreatedAtMs: octoberPaymentMs });
-    await split("ord_late");
-    expect(ledger("2026-10")).toBeTruthy();
-    expect(ledger("2026-10").feeCollectedPaise).toBe(100000);
-    expect(ledger("2026-11")).toBeUndefined();
+  it("is idempotent under concurrent verify/webhook-style replays", async () => {
+    seedBranch({ monthlyFee: 2500 });
+    seedOrder("parallel", { grandPaise: 100000 });
+    const outcomes = await Promise.all([split("parallel"), split("parallel"), split("parallel")]);
+    expect(outcomes.map((o) => o.state)).toEqual(["not_required", "not_required", "not_required"]);
+    expect(savedDocs["orders/parallel"].monthlyFeeHold).toBeUndefined();
+    expect(ledger()).toBeUndefined();
   });
 
-  it("22f: the fee is read from the branch document, not the 60s cache", async () => {
-    // Prime the cache with the old fee by pricing an order.
-    const { resolveBranchPricingConfig } = await import("../src/modules/payments/branchPricing");
+  it("the retry worker claims nothing and contacts no provider", async () => {
     seedBranch({ monthlyFee: 2500 });
-    await resolveBranchPricingConfig(BRANCH);
-    // Change the branch doc directly; the cache still says 2500.
-    savedDocs[`branches/${BRANCH}`].monthlyFee = 100;
-    seedOrder("ord_cache", { grandPaise: 100000 });
-    await split("ord_cache");
-    expect(savedDocs["orders/ord_cache"].monthlyFeeHold.holdPaise).toBe(10000);
-    expect(ledger().feePaise).toBe(10000);
+    seedOrder("pending", { grandPaise: 100000, extra: { routeTransferStatus: "pending_retry" } });
+    const result = await retryPendingRouteTransfersWorker();
+    expect(result).toEqual({ retriedCount: 0 });
+    expect(savedDocs["orders/pending"].routeTransferStatus).toBe('pending_retry');
+  });
+
+  it("keeps the pure month helpers available for statements", () => {
+    expect(istMonthKey(new Date("2026-10-31T18:29:59Z"))).toBe("2026-10");
+    expect(istMonthKey(new Date("2026-10-31T18:30:00Z"))).toBe("2026-11");
+    expect(branchMonthlyFeeId("b", "2026-11")).toBe("b_2026-11");
+  });
+});
+
+describe("M1 month-end settlement mode (GPT-6.2 Sol 2026-11-22)", () => {
+  it('cannot re-enable Route or fee holds with any legacy configuration', async () => {
+    vi.stubEnv('FR_SETTLEMENT_MODE','per_order_route');
+    try {
+      seedBranch({monthlyFee:100});
+      savedDocs['app_config/fr_settlement']={mode:'per_order_route'};
+      seedOrder('retired',{grandPaise:100000});
+      expect((await split('retired')).state).toBe('not_required');
+      expect(savedDocs['orders/retired'].monthlyFeeHold).toBeUndefined();
+      expect(ledger()).toBeUndefined();
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("skips the fee hold and sends no new Route transfer", async () => {
+    const prev = process.env.FR_SETTLEMENT_MODE;
+    process.env.FR_SETTLEMENT_MODE = "month_end";
+    try {
+      seedOrder("ord_month_end", { grandPaise: 100000 });
+      const outcome = await split("ord_month_end");
+      expect(outcome.state).toBe("not_required");
+      const order = savedDocs["orders/ord_month_end"];
+      expect(order.monthlyFeeHold).toBeUndefined();
+      expect(order.routeTransferStatus).toBeUndefined();
+      expect(order.payment.routeTransfer).toBeUndefined();
+      expect(ledger()).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.FR_SETTLEMENT_MODE;
+      else process.env.FR_SETTLEMENT_MODE = prev;
+    }
   });
 });

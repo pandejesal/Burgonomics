@@ -141,6 +141,9 @@ export interface CashOrderReceipt {
   cashDuePaise: number;
   totals: PricingBreakdown;
   status: { code: "PLACED"; label: "Order placed"; kind: "upcoming"; terminal: false };
+  settlementEffectiveAtMs: number;
+  settlementCaptureState: "confirmed";
+  settlementCaptureUnresolved: false;
 }
 
 export class CashOrderError extends Error {
@@ -511,11 +514,16 @@ export async function createCashOrder(
       const cashDuePaise = totals.split.totalAmountPaise;
       const paymentLabel =
         input.orderType === "delivery" ? "Cash on Delivery" : "Pay at Store";
+      const placedAtMs = Date.now();
       const receipt: CashOrderReceipt = {
         orderId: input.orderId,
         replayed: false,
         paymentMethod: "cod",
         paymentChannel: "cash",
+        // One canonical numeric settlement key on every money path.
+        settlementEffectiveAtMs: placedAtMs,
+        settlementCaptureState: "confirmed",
+        settlementCaptureUnresolved: false,
         cashDuePaise,
         totals,
         status: placed,
@@ -525,7 +533,7 @@ export async function createCashOrder(
       // quarantines docs without an ISO `placedAt` string. The paid path writes
       // both at create; cash must have the same customer-readable shape or a
       // valid order is invisible in Orders and Track.
-      const placedAtIso = new Date().toISOString();
+      const placedAtIso = new Date(placedAtMs).toISOString();
       const storeId = resolvedStoreId;
       const address = input.deliveryAddress ?? input.address;
       // An API caller may omit the display snapshot (the app's own cash path
