@@ -188,14 +188,28 @@ async function readBranchMonthOrders(
  * the statement is never complete (and never payable) while one exists. We never
  * guess a month for these rows.
  */
-async function readUnresolvedCaptureCount(branchId: string): Promise<number> {
+async function readUnresolvedCaptureCount(branchId: string, month: SettlementMonthBounds): Promise<number> {
   const snap: any = await db
     .collection("orders")
     .where("branchId", "==", branchId)
     .where("settlementCaptureUnresolved", "==", true)
     .limit(2000)
     .get();
-  return (snap?.docs ?? []).length;
+  let count = 0;
+  for (const doc of snap?.docs ?? []) {
+    const d: any = typeof doc.data === "function" ? doc.data() : null;
+    let created = millisOf(d?.createdAt, NaN);
+    if (!Number.isFinite(created) && typeof d?.createdAt === "string") {
+      created = Date.parse(d.createdAt);
+    }
+    if (!Number.isFinite(created) && typeof d?.placedAt === "string") {
+      created = Date.parse(d.placedAt);
+    }
+    // Creation month on or before the statement month. Unknown creation is
+    // counted conservatively; no month is ever guessed for the capture itself.
+    if (!Number.isFinite(created) || created <= 0 || created < month.endMs) count += 1;
+  }
+  return count;
 }
 
 /** M6: the branch/month ledger, shared by every statement version. */
@@ -305,7 +319,7 @@ export async function generateSettlementStatement(
 
   const { orders, truncated } = await readBranchMonthOrders(branchId, month);
   const summary = summarizeSettlementOrders(orders, { branchId, ...month }, { truncated });
-  summary.captureUnresolved = await readUnresolvedCaptureCount(branchId);
+  summary.captureUnresolved = await readUnresolvedCaptureCount(branchId, month);
 
   const fee = resolveSettlementFeePaise(branchData);
   const feeApplicable = isBranchFeeApplicable(

@@ -9,7 +9,7 @@ import { markOrderReconciliation, claimCapturedPaymentInTx } from "./reconciliat
 import { receiptEvidenceStamp } from "./receiptEvidence";
 import { guardCaptureFulfillment, captureGateAllowsConfirm } from "./captureFulfillment";
 import { applyRefundToMonthlyFee } from "./monthlyFee";
-import { settlementCaptureStamp, providerCapturedAtMs, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
+import { settlementCaptureStamp, providerCapturedAtMs, isProviderConfirmedCapture, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
 import { pushOrderToPetpooja } from "../petpooja";
 import { dispatchCustomerAccountNotification } from "../tickets/supportNotifications";
 
@@ -959,6 +959,18 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           );
           return { written: true, reason: null, recordedPaymentId, fresh, otpMinted: !!mintedOtp };
          });
+         // A signed payment.captured is terminal even when verify/recovery
+         // already confirmed the order (written:false). Resolve inside its own
+         // transaction with a fresh read so no later writer can downgrade it.
+         if (providerCapturedAt) {
+           await (db as any).runTransaction(async (tx: any) => {
+             const freshCaptureSnap: any = await tx.get(orderRef);
+             const freshCapture = freshCaptureSnap && freshCaptureSnap.exists ? (freshCaptureSnap.data() as any) : null;
+             if (!isProviderConfirmedCapture(freshCapture)) {
+               tx.set(orderRef, settlementCaptureStamp(providerCapturedAt), { merge: true });
+             }
+           });
+         }
          confirmWritten = !!txOutcome?.written;
          suppressedReason = txOutcome?.reason ?? suppressedReason;
          otpMinted = !!txOutcome?.otpMinted;

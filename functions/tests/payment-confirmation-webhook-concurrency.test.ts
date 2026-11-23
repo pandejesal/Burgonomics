@@ -976,3 +976,93 @@ describe("payment confirmation concurrency (webhook path)", () => {
     }
   });
 });
+
+
+describe("cycle 9c: provider-confirmed capture is terminal", () => {
+  let prevPg: boolean;
+  beforeEach(() => {
+    prevPg = config.mock.paymentGateway;
+    config.mock.paymentGateway = true;
+  });
+  afterEach(() => { config.mock.paymentGateway = prevPg; });
+  const capturedPayloadNow = (eventId: string) => ({
+    id: eventId,
+    event: "payment.captured",
+    created_at: Math.floor(Date.now() / 1000),
+    payload: { payment: { entity: {
+      id: "pay_c9c", amount: 21900, currency: "INR", captured: true,
+      created_at: Math.floor(Date.now() / 1000) - 30,
+      notes: { orderId: "order_c9c", branchId: "branch_surat_01" },
+    } } },
+  });
+  const verify = () => verifyPayment({
+    orderId: "order_c9c", razorpayOrderId: "order_c9c",
+    razorpayPaymentId: "pay_c9c", razorpaySignature: "mock_signature_valid",
+  });
+  const seed = () => {
+    control.seed("orders/order_c9c", {
+      id: "order_c9c", branchId: "branch_surat_01",
+      status: { code: "PLACED" }, paymentStatus: "pending", payment: { status: "pending" },
+      pricing: { grandTotal: 219, split: { branchTransferPaise: 21900 } },
+    });
+    control.seed("payment_intents/intent_order_c9c", {
+      orderId: "order_c9c", razorpayOrderId: "order_c9c", amountPaise: 21900,
+      branchId: "branch_surat_01", createdAtMs: Date.now(), expiresAtMs: Date.now() + 60000,
+    });
+  };
+
+  it("webhook then verify: verify never downgrades the resolved capture", async () => {
+    seed();
+    const call = mockReqRes(capturedPayloadNow("evt_c9c_1"));
+    await handleRazorpayWebhook(call.req, call.res);
+    const first = docs.get("orders/order_c9c")!.data;
+    expect(first.settlementCaptureState).toBe("confirmed");
+    expect(first.settlementCaptureUnresolved).toBe(false);
+    const stamp = first.settlementEffectiveAtMs;
+    await verify();
+    const after = docs.get("orders/order_c9c")!.data;
+    expect(after.settlementEffectiveAtMs).toBe(stamp);
+    expect(after.settlementCaptureState).toBe("confirmed");
+    expect(after.settlementCaptureUnresolved).toBe(false);
+  });
+
+  it("verify then webhook: the provider event resolves the pending capture", async () => {
+    seed();
+    await verify();
+    const pending = docs.get("orders/order_c9c")!.data;
+    expect(pending.settlementCaptureUnresolved).toBe(true);
+    const call = mockReqRes(capturedPayloadNow("evt_c9c_2"));
+    await handleRazorpayWebhook(call.req, call.res);
+    const after = docs.get("orders/order_c9c")!.data;
+    expect(after.settlementCaptureState).toBe("confirmed");
+    expect(after.settlementCaptureUnresolved).toBe(false);
+    expect(typeof after.settlementEffectiveAtMs).toBe("number");
+  });
+
+  it("a confirmed stamp survives a later verify that still performs confirmation", async () => {
+    seed();
+    const stamp = Math.floor(Date.now() / 1000) * 1000;
+    control.seed("orders/order_c9c", {
+      settlementEffectiveAtMs: stamp,
+      settlementCaptureState: "confirmed",
+      settlementCaptureUnresolved: false,
+    }, true);
+    await verify();
+    const after = docs.get("orders/order_c9c")!.data;
+    expect(after.settlementEffectiveAtMs).toBe(stamp);
+    expect(after.settlementCaptureState).toBe("confirmed");
+    expect(after.settlementCaptureUnresolved).toBe(false);
+  });
+
+  it("replays of both channels keep the confirmed capture", async () => {
+    seed();
+    const one = mockReqRes(capturedPayloadNow("evt_c9c_3"));
+    await handleRazorpayWebhook(one.req, one.res);
+    const two = mockReqRes(capturedPayloadNow("evt_c9c_4"));
+    await handleRazorpayWebhook(two.req, two.res);
+    await verify();
+    const after = docs.get("orders/order_c9c")!.data;
+    expect(after.settlementCaptureState).toBe("confirmed");
+    expect(after.settlementCaptureUnresolved).toBe(false);
+  });
+});

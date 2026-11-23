@@ -347,6 +347,15 @@ export function settlementCaptureStamp(capturedAtMs?: unknown): Record<string, u
   return { settlementCaptureState: "unknown", settlementCaptureUnresolved: true };
 }
 
+/** A provider-confirmed capture is terminal: later writers must not downgrade it. */
+export function isProviderConfirmedCapture(order: any): boolean {
+  return order?.settlementCaptureState === "confirmed" &&
+    typeof order?.settlementEffectiveAtMs === "number" &&
+    Number.isFinite(order.settlementEffectiveAtMs) &&
+    order.settlementEffectiveAtMs > 0 &&
+    order?.settlementCaptureUnresolved !== true;
+}
+
 /** Verify / recovery / compensation can only mark the capture PENDING. */
 export function settlementCapturePending(): Record<string, unknown> {
   return { settlementCaptureState: "pending", settlementCaptureUnresolved: true };

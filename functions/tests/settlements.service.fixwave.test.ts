@@ -384,3 +384,33 @@ describe('r4 unresolved captures and terminal refunds', () => {
     expect((await generate())!.onlineRefundedPaise).toBe(0);
   });
 });
+
+
+describe("cycle 9c unresolved capture month scope", () => {
+  const generateAt = (monthKey: string, now: number) =>
+    generateSettlementStatement({ branchId: BRANCH, monthKey, caller: OWNER, source: "on_demand", now });
+  const endOf = (y: number, m: number) => Date.UTC(y, m + 1, 1) - 19800000;
+
+  it("a November-created unresolved row blocks November and later, not September or October", async () => {
+    savedDocs["orders/unres_nov"] = {
+      id: "unres_nov", branchId: BRANCH, paymentChannel: "razorpay",
+      payment: { capturedAmountPaise: 10000 }, settlementCaptureUnresolved: true,
+      createdAt: new Date(Date.UTC(2026, 10, 10)).toISOString(),
+    };
+    expect((await generateAt("2026-09", endOf(2026, 8) + 86400000))!.complete).toBe(true);
+    expect((await generateAt("2026-10", endOf(2026, 9) + 86400000))!.complete).toBe(true);
+    expect((await generateAt("2026-11", endOf(2026, 10) + 86400000))!.complete).toBe(false);
+    expect((await generateAt("2026-12", endOf(2026, 11) + 86400000))!.complete).toBe(false);
+  });
+
+  it("an order created at 23:59 IST on 31 October blocks October and November", async () => {
+    savedDocs["orders/unres_oct"] = {
+      id: "unres_oct", branchId: BRANCH, paymentChannel: "razorpay",
+      payment: { capturedAmountPaise: 10000 }, settlementCaptureUnresolved: true,
+      createdAt: new Date(Date.UTC(2026, 9, 31, 18, 29, 0)).toISOString(),
+    };
+    expect((await generateAt("2026-09", endOf(2026, 8) + 86400000))!.complete).toBe(true);
+    expect((await generateAt("2026-10", endOf(2026, 9) + 86400000))!.complete).toBe(false);
+    expect((await generateAt("2026-11", endOf(2026, 10) + 86400000))!.complete).toBe(false);
+  });
+});
