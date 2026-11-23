@@ -6,6 +6,7 @@ import { config, assertLivePaymentsContext } from "../../config/env";
 import { verifyRazorpayWebhookSignature, isSafeDocId } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
 import { markOrderReconciliation, claimCapturedPaymentInTx } from "./reconciliation";
+import { receiptEvidenceStamp } from "./receiptEvidence";
 import { guardCaptureFulfillment, captureGateAllowsConfirm } from "./captureFulfillment";
 import { applyRefundToMonthlyFee } from "./monthlyFee";
 import { pushOrderToPetpooja } from "../petpooja";
@@ -814,7 +815,12 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           // Live gateway truth in paise for the Route split over-transfer
           // guard and the retry worker's transfer-cap check.
           ...(typeof capturedPaise === "number"
-            ? { "payment.capturedAmountPaise": capturedPaise }
+            ? {
+                "payment.capturedAmountPaise": capturedPaise,
+                // M8 r4: the receipt may claim a capture only with this stamp,
+                // written in the same confirm transaction as the amount.
+                receiptEvidence: receiptEvidenceStamp("capture", capturedPaise),
+              }
             : {}),
           // Canonical object form (see verifyPayment): both apps + triggers
           // accept it; bare-string writes break Delivery tracking.

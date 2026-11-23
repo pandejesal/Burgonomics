@@ -15,6 +15,7 @@ import {
   claimCapturedPaymentInTx,
   isMoneyClaimFresh,
 } from "./reconciliation";
+import { receiptEvidenceStamp } from "./receiptEvidence";
 import { assertOrderBranchAccess } from "../../core/middleware";
 import {
   markPaymentVerificationInFlight,
@@ -3332,7 +3333,12 @@ async function finishVerifiedPayment(args: {
           ? { "payment.gatewayCreatedAtMs": gatewayCreatedAtMs }
           : {}),
         ...(capturedPaiseStamp !== undefined
-          ? { "payment.capturedAmountPaise": capturedPaiseStamp }
+          ? {
+              "payment.capturedAmountPaise": capturedPaiseStamp,
+              // M8 r4: receipt evidence is stamped in the SAME transaction as
+              // the captured amount. Without it the receipt stays neutral.
+              receiptEvidence: receiptEvidenceStamp("capture", capturedPaiseStamp),
+            }
           : {}),
         // Mirror the same truth into the nested object the apps actually read.
         // CANONICAL nested payment map (the queryable shape) — the refund.processed

@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { assertOrderBranchAccess, isBrandAdminClaim, type StaffCaller } from "../../core/middleware";
 import { computeHmacSha256, getOtpHmacSecret, timingSafeEqual } from "../../core/security";
 import { captureErrorSnapshot } from "../../core/errors";
+import { receiptEvidenceStamp } from "../payments/receiptEvidence";
 import {
   assertDeliveryOrderId, assertDeliveryOtpOrderActive, computeDeliveryOtpHash, DeliveryOtpError, readVersionedDeliveryOtp,
 } from "./deliveryOtp";
@@ -84,6 +85,9 @@ export function cashCollectedPatch(order: Record<string, any>): Record<string, a
     paymentStatus: "paid",
     cashCollectedPaise: due,
     cashCollectedAt: collectedAt,
+    // M8 r4: receipt may claim "Collected" only with the server stamp written
+    // in the same patch as the collected amount.
+    receiptEvidence: receiptEvidenceStamp("cash", due),
   };
 }
 
