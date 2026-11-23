@@ -269,7 +269,27 @@ service cloud.firestore {
         // feed cash reconciliation, POS financials and customer-facing totals.
         'subtotal', 'tax', 'deliveryFee', 'total', 'tipAmount',
         'promo', 'loyaltyPointsRedeemed', 'paymentMethod', 'deliveryQuoteId',
+        // M8 r3 — receipt money proof. The customer receipt prints the amount
+        // actually moved from these fields; a staff/owner client must never be
+        // able to plant or edit them. The literal dotted name is required:
+        // diff().affectedKeys() reports leaf paths, so naming only `payment`
+        // does NOT cover `payment.capturedAmountPaise` (nested or literal).
+        'cashCollectedPaise', 'payment.capturedAmountPaise', 'receiptEvidence',
       ];
+    }
+
+    // M8 r4 — receipt evidence must stay UNCHANGED on client writes. Staff may
+    // still edit unrelated order fields (status via the server endpoint, notes,
+    // etc.); only the server merge-set that stamps capture/collection may
+    // introduce or change these fields. get() resolves dotted paths inside
+    // maps, which is exactly the nested payment.capturedAmountPaise shape.
+    function orderReceiptEvidenceServerOwned() {
+      return request.resource.data.get('receiptEvidence', null) ==
+          resource.data.get('receiptEvidence', null) &&
+        request.resource.data.get('cashCollectedPaise', null) ==
+          resource.data.get('cashCollectedPaise', null) &&
+        request.resource.data.get('payment', {}).get('capturedAmountPaise', null) ==
+          resource.data.get('payment', {}).get('capturedAmountPaise', null);
     }
 
     // Nested payment display marker at birth. The customer lane is
@@ -476,7 +496,8 @@ service cloud.firestore {
         // SEC-04 applies to EVERY client role: status moves only through
         // POST /orders/bumpStatus (scope check + audit record).
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys()) &&
+        orderReceiptEvidenceServerOwned()
       ) || (
         isBranchOwner() &&
         ownsBranch(resource.data.branchId) &&
@@ -486,7 +507,8 @@ service cloud.firestore {
         // scope check + audit record). No partner client writes an order's
         // status directly; letting the rule allow it bypassed that audit.
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys())
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(orderServerOwnedKeys()) &&
+        orderReceiptEvidenceServerOwned()
       ) || (
         // F24: customers may NOT write order status at all. A direct
         // `{status: CANCELLED}` client write skipped the server-owned
