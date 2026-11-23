@@ -161,13 +161,17 @@ describe("r5 real-webhook settlement proofs", () => {
     config.mock.petpoojaPos = prevPp;
   });
 
-  it("payment.captured with captured_at resolves a pending capture through the real handler", async () => {
+  it("payment.captured resolves a pending capture from the signed event time", async () => {
+    // Razorpay docs /my/webhooks/payments.mdx, "Payment Captured": the provider
+    // signs a top-level created_at; the payment entity only has created_at.
+    const eventSec = Math.floor(Date.now() / 1000);
     const payload = {
       id: "evt_r5_capture",
       event: "payment.captured",
+      created_at: eventSec,
       payload: { payment: { entity: {
-        id: "pay_r5", amount: 25000, currency: "INR",
-        captured_at: 1767225600,
+        id: "pay_r5", amount: 25000, currency: "INR", captured: true,
+        created_at: 1767225590,
         notes: { orderId: "order_r5_capture", branchId: "branch_surat_01" },
       } } },
     };
@@ -181,7 +185,7 @@ describe("r5 real-webhook settlement proofs", () => {
     await handleRazorpayWebhook(r.req, r.res);
     expect(r.out().statusCode).toBe(200);
     const doc = savedDocs["orders/order_r5_capture"];
-    expect(doc.settlementEffectiveAtMs).toBe(1767225600000);
+    expect(doc.settlementEffectiveAtMs).toBe(eventSec * 1000);
     expect(doc.settlementCaptureUnresolved).toBe(false);
   });
 

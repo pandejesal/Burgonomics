@@ -357,14 +357,18 @@ export function settlementCaptureUnknown(): Record<string, unknown> {
   return { settlementCaptureState: "unknown", settlementCaptureUnresolved: true };
 }
 
-/** Provider-confirmed capture time from a Razorpay `payment.captured` entity. */
-export function providerCapturedAtMs(entity: any): number | undefined {
-  const raw = entity?.captured_at ?? entity?.capturedAt ?? entity?.capturedAtMs;
-  const ms = typeof raw === "number" && Number.isFinite(raw) && raw > 0
-    ? (raw < 1e12 ? Math.round(raw * 1000) : Math.round(raw))
-    : NaN;
-  if (Number.isFinite(ms) && ms > 0) return ms;
-  return undefined;
+/**
+ * Razorpay docs /my/webhooks/payments.mdx "Payment Captured": the payment
+ * entity has `created_at` (authorisation) and `captured: true`, but there is NO
+ * `captured_at` field. The EVENT has its own top-level `created_at`, inside the
+ * HMAC-signed body, which is the provider-authenticated capture instant.
+ * `payment.authorized` describes authorisation only and is never accepted.
+ */
+export function providerCapturedAtMs(event: any): number | undefined {
+  if (String(event?.event || "") !== "payment.captured") return undefined;
+  const raw = event?.created_at;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
+  return raw < 1e12 ? Math.round(raw * 1000) : Math.round(raw);
 }
 
 /**

@@ -791,8 +791,10 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
           Number.isFinite(gatewayCreatedRaw) && gatewayCreatedRaw > 0
             ? Math.round(gatewayCreatedRaw * 1000)
             : undefined;
-         // ONLY the provider-confirmed capture instant is authoritative.
-         const providerCapturedAt = providerCapturedAtMs(paymentEntity);
+         // ONLY the provider-confirmed capture instant is authoritative: the
+         // signed event's top-level created_at (Razorpay docs
+         // /my/webhooks/payments.mdx, "Payment Captured").
+         const providerCapturedAt = providerCapturedAtMs(payload);
          const basePayload = {
           ...settlementCaptureStamp(providerCapturedAt),
           paymentStatus: "completed",

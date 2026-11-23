@@ -50,10 +50,14 @@ function ms(source: any): number | undefined {
 }
 
 /** Provider-confirmed capture time ONLY: seconds -> ms, or already ms. */
-export function providerCapturedAtMs(order: any): number | undefined {
-  const raw = order?.payment?.captured_at ?? order?.payment?.capturedAtMs;
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
-  return raw < 1e12 ? Math.round(raw * 1000) : Math.round(raw);
+/**
+ * A Firestore-only backfill has NO signed payment.captured event. Razorpay docs
+ * /my/webhooks/payments.mdx contain no `captured_at` field at all, so no
+ * stored document can prove a capture instant. Returning undefined keeps the
+ * online row unresolved (never a guessed month).
+ */
+export function providerCapturedAtMs(_order: any): number | undefined {
+  return undefined;
 }
 
 export function planSettlementPatch(order: any): { skip?: string; patch: Patch } {

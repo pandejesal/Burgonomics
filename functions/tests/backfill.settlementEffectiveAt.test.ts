@@ -97,16 +97,18 @@ describe("settlementEffectiveAt backfill", () => {
     expect(plan.patch.settlementCaptureUnresolved).toBe(true);
   });
 
-  it("online with a provider capture gets that instant", async () => {
+  it("an online legacy row never gets a guessed backfill month", async () => {
     const m = await mod();
+    // Razorpay never sends captured_at; no signed event is available to a
+    // Firestore-only backfill, so no numeric key may be invented.
     const plan = m.planSettlementPatch({
       paymentChannel: "razorpay",
-      payment: { capturedAmountPaise: 50000, captured_at: 1763642400 },
+      payment: { capturedAmountPaise: 50000, gatewayCreatedAtMs: 1763642400000 },
       createdAt: "2026-11-20T10:00:00.000Z",
     });
-    expect(plan.patch.settlementEffectiveAtMs).toBe(1763642400000);
-    expect(plan.patch.settlementCaptureState).toBe("confirmed");
-    expect(plan.patch.settlementCaptureUnresolved).toBe(false);
+    expect(plan.patch.settlementEffectiveAtMs).toBeUndefined();
+    expect(plan.patch.settlementCaptureState).toBe("unknown");
+    expect(plan.patch.settlementCaptureUnresolved).toBe(true);
   });
 
   it("cash uses the live cash-collection semantics, never unresolved", async () => {

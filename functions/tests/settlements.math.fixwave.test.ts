@@ -138,10 +138,24 @@ describe("M7 — only processed refunds and a known capture are payable", () => 
     expect(settlementCaptureUnknown()).toEqual({ settlementCaptureState: "unknown", settlementCaptureUnresolved: true });
   });
 
-  it("uses the provider capture instant, not the payment authorisation time", () => {
-    const entity = { created_at: 1767000000, captured_at: 1767240000 };
-    expect(providerCapturedAtMs(entity)).toBe(1767240000000);
-    expect(providerCapturedAtMs({ created_at: 1767000000 })).toBeUndefined();
+  it("uses the signed payment.captured event time, never the entity authorisation time", () => {
+    // Exact shape from Razorpay docs /my/webhooks/payments.mdx "Payment Captured":
+    // entity.created_at is authorisation; top-level created_at is the event.
+    const event = {
+      event: "payment.captured",
+      created_at: 1767674606,
+      payload: { payment: { entity: { created_at: 1767674599, captured: true } } },
+    };
+    expect(providerCapturedAtMs(event)).toBe(1767674606000);
+    expect(providerCapturedAtMs({ ...event, event: "payment.authorized" })).toBeUndefined();
+    expect(providerCapturedAtMs({ ...event, created_at: undefined })).toBeUndefined();
+    // IST month boundary is 18:30Z; event time lands in the next month.
+    const boundary = Date.UTC(2026, 10, 30, 18, 30, 0) / 1000;
+    const at = providerCapturedAtMs({ ...event, created_at: boundary })!;
+    const nov = settlementMonthBounds("2026-11");
+    const dec = settlementMonthBounds("2026-12");
+    expect(at).toBeGreaterThanOrEqual(nov.endMs);
+    expect(at).toBeLessThan(dec.endMs);
   });
 
   it("deducts only the processed refund map", () => {

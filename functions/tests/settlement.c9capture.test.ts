@@ -158,7 +158,7 @@ describe("cycle-9 staging capture resolution (real webhook handler)", () => {
   });
   afterEach(() => { config.mock.paymentGateway = prevPg; config.mock.petpoojaPos = prevPp; });
 
-  it("a payment.captured with captured_at resolves an already-confirmed order", async () => {
+  it("a signed payment.captured event resolves an already-confirmed order", async () => {
     savedDocs["orders/c9_capture"] = {
       id: "c9_capture", branchId: "branch_surat_01",
       status: { code: "CONFIRMED" }, paymentStatus: "completed",
@@ -166,11 +166,14 @@ describe("cycle-9 staging capture resolution (real webhook handler)", () => {
       settlementCaptureState: "unknown", settlementCaptureUnresolved: true,
       pricing: { grandTotal: 219 }, currency: "INR",
     };
+    // Razorpay docs /my/webhooks/payments.mdx "Payment Captured" sample shape.
+    const eventSec = Math.floor(Date.now() / 1000);
     const payload = {
       id: "evt_c9_capture", event: "payment.captured",
+      created_at: eventSec,
       payload: { payment: { entity: {
         id: "pay_c9", order_id: "order_c9", amount: 21900, currency: "INR",
-        captured_at: 1795463364,
+        captured: true, created_at: 1795463360,
         notes: { orderId: "c9_capture", branchId: "branch_surat_01" },
       } } },
     };
@@ -178,7 +181,7 @@ describe("cycle-9 staging capture resolution (real webhook handler)", () => {
     await handleRazorpayWebhook(r.req, r.res);
     expect(r.out().statusCode).toBe(200);
     const doc = savedDocs["orders/c9_capture"];
-    expect(doc.settlementEffectiveAtMs).toBe(1795463364000);
+    expect(doc.settlementEffectiveAtMs).toBe(eventSec * 1000);
     expect(doc.settlementCaptureState).toBe("confirmed");
     expect(doc.settlementCaptureUnresolved).toBe(false);
   });
