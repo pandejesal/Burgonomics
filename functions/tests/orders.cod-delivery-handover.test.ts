@@ -191,7 +191,7 @@ describe("F6: a COD delivery order gets its hand-over code at confirmation", () 
     );
   });
 
-  it("leaves COD takeaway, walk-in and a client-typed 'cod' without the server marker alone", async () => {
+  it("leaves COD takeaway and walk-in alone, and refuses a client-typed 'cod' without the server marker", async () => {
     await createCodDelivery(ORDER, { orderType: "takeaway", deliveryQuoteId: undefined, expectedTotalPaise: 11500, address: undefined, deliveryAddress: undefined });
     await bumpOrderStatus({ orderId: ORDER, status: "accepted", caller: STAFF });
     expect(documentOf().status.code).toBe("CONFIRMED");
@@ -211,7 +211,11 @@ describe("F6: a COD delivery order gets its hand-over code at confirmation", () 
       status: { code: "PLACED", terminal: false },
       paymentMethod: "cod", paymentStatus: "pending", payment: { method: "cod", status: "pending" },
     });
-    await bumpOrderStatus({ orderId: "ord_client_cod", status: "accepted", caller: STAFF });
+    // A2: a client-writable `method: "cod"` is not proof of cash. The kitchen
+    // gate refuses the bump outright instead of admitting a fake cash order.
+    await expect(
+      bumpOrderStatus({ orderId: "ord_client_cod", status: "accepted", caller: STAFF })
+    ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_NOT_PAID" });
     expect(h.docs.get("orders/ord_client_cod").deliveryOtpHash).toBeUndefined();
   });
 

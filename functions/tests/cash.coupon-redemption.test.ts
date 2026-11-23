@@ -181,6 +181,7 @@ beforeEach(() => {
   });
   h.docs.set("stores/s1", { partnerBranchId: "branch_a" });
   h.docs.set("admins/staff_1", { role: "brand_owner", branchIds: ["branch_a"] });
+  h.docs.set("users/staff_1", { active: true });
   seedCoupon();
   seedQuote();
 });

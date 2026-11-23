@@ -227,6 +227,10 @@ service cloud.firestore {
         'routeTransferRetryCount', 'routeTransferClaimedAt',
         'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
         'paymentChannel', 'monthlyFeeHold',
+        // A2: the cash receipt and its request binding are server-issued proof
+        // of a real cash sale; staff must not plant or edit them (they used to
+        // be writable, which let a forged receipt impersonate legacy cash).
+        'cashReceipt', 'cashRequestHash', 'couponIntentId',
         // Courier COD money and readiness are server-written. Branch staff
         // must not rewrite the cash due or forge a courier-collection flag.
         'cashDuePaise', 'cashOnDelivery',

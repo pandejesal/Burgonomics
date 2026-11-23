@@ -25,6 +25,14 @@ export function hasServerPaymentChannel(order: any): boolean {
   return order?.paymentChannel === "razorpay";
 }
 
+/** The server-only proof that this is a real cash order (never a client label). */
+export function hasServerCashChannel(order: any): boolean {
+  // A2: ONLY the server-owned marker admits customer cash. `paymentMethod` and
+  // `cashReceipt` were staff-writable in firestore.rules, so the old legacy
+  // exception could be forged by an operator; a bare "cod" label is refused.
+  return order?.paymentChannel === "cash";
+}
+
 export function hasCapturedPayment(order: any): boolean {
   const captured =
     order?.payment?.capturedAmountPaise ?? order?.["payment.capturedAmountPaise"];
@@ -185,14 +193,15 @@ export function assertOnlineOrderPaid(order: any): void {
  * only exemption. A missing, empty, non-string or unknown method is NOT proof
  * of cash — it fails closed.
  */
-const CASH_METHODS = new Set(["cod", "cash"]);
-
 export function requiresServerCaptureForKitchen(order: any): boolean {
   // The walk-in counter stream is tendered at the counter and has its own gate
   // (orderStatus.ts refuses pending walk-in UPI); it is never gated here.
   if (order?.customerId === "cust_walkin") return false;
-  const method = order?.payment?.method ?? order?.paymentMethod ?? order?.orderPaymentMethod;
-  if (typeof method === "string" && CASH_METHODS.has(method.trim().toLowerCase())) return false;
+  // A client-writable `payment.method: "cod"` is NOT proof of cash — that label
+  // is exactly how a fake order could reach the kitchen without money (A2/F04).
+  // Only the server cash marker (or a server-issued legacy cash receipt) admits
+  // the customer cash lane.
+  if (hasServerCashChannel(order)) return false;
   return true;
 }
 

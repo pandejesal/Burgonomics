@@ -50,6 +50,7 @@ beforeEach(() => {
   for (const key of Object.keys(state.docs)) delete state.docs[key];
   state.setFailAudit(false);
   state.docs["admins/staff"] = { role: "branch_staff", branchIds: ["b1"] };
+  state.docs["users/staff"] = { active: true };
   state.docs["branches/b1"] = {};
   state.docs["products/p1"] = { name: "Burger", branchId: "b1", price: 100, inStock: true, petpoojaItemId: "pos1" };
 });

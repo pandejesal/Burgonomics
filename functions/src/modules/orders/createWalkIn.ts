@@ -121,6 +121,13 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
   const auditRef = db.collection("admin_audit_logs").doc(orderId);
   try {
     return await db.runTransaction(async (tx) => {
+      // F06 — read the authoritative activation flag INSIDE the create
+      // transaction, not from the token (an already-issued token outlives a
+      // suspension). A suspended operator cannot book a counter sale.
+      const actorUserSnap = await tx.get(db.collection("users").doc(actorUid));
+      if (!actorUserSnap.exists || (actorUserSnap.data() as any)?.active !== true) {
+        throw new WalkInError(403, "ACCOUNT_INACTIVE", "This account is not active.");
+      }
       const adminSnap = await tx.get(db.collection("admins").doc(actorUid));
       assertWalkInScope(adminSnap.exists ? adminSnap.data() : undefined, input.branchId, "create");
       const branchSnap = await tx.get(db.collection("branches").doc(input.branchId));

@@ -45,6 +45,7 @@ import { COUPON_RESERVATION_TTL_MS } from "../payments/lifetimes";
 
 export const COUPONS = "coupons";
 export const COUPON_REDEMPTIONS = "coupon_redemptions";
+export const COUPON_OBLIGATIONS = "coupon_obligations";
 export const COUPON_STATS = "coupon_stats";
 export const COUPON_CUSTOMER_USAGE = "coupon_customer_usage";
 export const COUPON_ISSUES = "coupon_issues";
@@ -416,16 +417,16 @@ export function evaluateCoupon(
 
 interface UsageCounter {
   committed: number;
-  reservations: Record<string, { expiresAtMs: number }>;
+  reservations: Record<string, { expiresAtMs: number; held?: boolean }>;
 }
 
 function counterFrom(data: any): UsageCounter {
-  const reservations: Record<string, { expiresAtMs: number }> = {};
+  const reservations: UsageCounter['reservations'] = {};
   const raw = data?.reservations;
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     for (const [key, value] of Object.entries(raw as Record<string, any>)) {
       const expiresAtMs = Number((value as any)?.expiresAtMs);
-      if (Number.isFinite(expiresAtMs)) reservations[key] = { expiresAtMs };
+      if (Number.isFinite(expiresAtMs)) reservations[key] = { expiresAtMs, held: (value as any)?.held === true };
     }
   }
   return {
@@ -438,9 +439,37 @@ function counterFrom(data: any): UsageCounter {
 export function liveUsage(counter: UsageCounter, nowMs: number): number {
   let live = 0;
   for (const entry of Object.values(counter.reservations)) {
-    if (entry.expiresAtMs > nowMs) live += 1;
+    if (entry.held || entry.expiresAtMs > nowMs) live += 1;
   }
   return counter.committed + live;
+}
+
+/**
+ * Pending obligations whose reservation is no longer live still hold a slot
+ * until the worker resolves them (M3). Already-live reservations are counted by
+ * `liveUsage`, so they are excluded here to avoid double counting.
+ */
+async function unpaidPendingObligations(
+  code: string,
+  stats: UsageCounter,
+  nowMs: number
+): Promise<number> {
+  const col: any = db.collection(COUPON_OBLIGATIONS);
+  if (typeof col?.where !== "function") return 0;
+  try {
+    const snap = await col.where("code", "==", code).limit(100).get();
+    let count = 0;
+    for (const doc of Array.isArray(snap?.docs) ? snap.docs : []) {
+      const obligation = doc.data() as any;
+      if (!obligation || obligation.status !== "pending" || !obligation.orderId) continue;
+      const entry = stats.reservations[couponRedemptionId(obligation.orderId)];
+      if (entry && entry.expiresAtMs > nowMs) continue; // already counted as live
+      count += 1;
+    }
+    return count;
+  } catch {
+    return 0;
+  }
 }
 
 export function couponStatsRef(code: string): any {
@@ -452,9 +481,29 @@ export function couponUsageRef(code: string, customerId: string): any {
   return db.collection(COUPON_CUSTOMER_USAGE).doc(`${normalizeCouponCode(code)}__${safe}`);
 }
 
+/**
+ * Collision-free redemption key (M2). Sanitising with `_` merged distinct order
+ * ids (`ord/A`, `ord:A`) into one redemption, so two sales could share a slot.
+ * Base64url is injective over UTF-8 and safe in a Firestore document id.
+ */
 export function couponRedemptionId(orderId: string): string {
-  return String(orderId || "").replace(/[^A-Za-z0-9_-]/g, "_");
+  const raw = String(orderId ?? "");
+  if (!raw) return "";
+  // Already-safe ids keep their legacy key (all production order ids are of
+  // this form). Unsafe ids are base64url-encoded with a `~` prefix — a char
+  // outside the safe alphabet — so the mapping is injective and no two order
+  // ids can ever share a redemption.
+  if (/^[A-Za-z0-9_-]+$/.test(raw)) return raw;
+  return `~${Buffer.from(raw, "utf8").toString("base64url")}`;
 }
+
+/** How long an ONLINE obligation keeps its slot held until the worker resolves it (M3). */
+export const COUPON_OBLIGATION_HOLD_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * r5: a gateway-bound slot is only released this long AFTER the hold window,
+ * so a capture landing near the boundary can never be pre-empted by a release.
+ */
+export const GATEWAY_RELEASE_SAFETY_MARGIN_MS = 60 * 60 * 1000;
 
 function deleteField(): any {
   const fieldValue: any = (admin as any)?.firestore?.FieldValue;
@@ -575,11 +624,33 @@ export interface CouponReservation {
   branchId: string | null;
   discount: number;
   status: "reserved" | "committed" | "released";
+  /**
+   * The payment intent this slot is bound to (online: the idempotency key;
+   * cash: the order id itself). A decline is NOT terminal for the intent — the
+   * gateway order stays payable — so this binding is what stops a failed
+   * attempt from returning a slot that a successful retry still needs (M2).
+   */
+  paymentIntentId?: string;
+  /** The Razorpay gateway order id this slot is priced for (M2 r3). */
+  gatewayOrderId?: string;
+  version?: number;
   reservedAtMs: number;
   expiresAtMs: number;
   committedAtMs?: number;
   releasedAtMs?: number;
   releaseReason?: string;
+}
+
+/** A durable record that a sale which used a coupon still owes its commit (M3). */
+export interface CouponObligation {
+  code: string;
+  orderId: string;
+  customerId: string;
+  paymentIntentId: string;
+  status: "pending" | "settled" | "released";
+  createdAtMs: number;
+  resolvedAtMs?: number;
+  reason?: string;
 }
 
 function couponError(
@@ -614,6 +685,19 @@ export async function reserveCouponInTx(
     /** The discount the caller already priced the order with, in rupees. */
     expectedDiscount: number;
     nowMs?: number;
+    /**
+     * Bind the held slot to a specific payment intent. Online checkout passes
+     * its idempotency key; cash passes its (already final) order id. A release
+     * that does not name the SAME intent is refused (M2).
+     */
+    paymentIntentId?: string;
+    gatewayOrderId?: string;
+    /**
+     * Cash has no payment callback: commit the redemption and BOTH counters in
+     * this same transaction, atomically with the order write (M3). Online
+     * leaves the slot held and records a durable obligation instead.
+     */
+    commitNow?: boolean;
   }
 ): Promise<CouponReservation> {
   const code = normalizeCouponCode(params.code);
@@ -630,6 +714,9 @@ export async function reserveCouponInTx(
   // enforced for it, and the authority refuses such a coupon instead of giving
   // every guest a shared quota.
   const customerId = normalizeCouponCustomer(params.customerId);
+  // Declared before the idempotent-retry check below: every reservation is
+  // bound to an intent, even legacy callers that omit it (they bind to orderId).
+  const intentId = String(params.paymentIntentId || orderId);
 
   const statsRef = couponStatsRef(code);
   const statsSnap = await tx.get(statsRef);
@@ -647,7 +734,9 @@ export async function reserveCouponInTx(
     | CouponReservation
     | null;
 
-  // Idempotent retry: this order already holds (or spent) a slot.
+  // Idempotent retry: this order already holds (or spent) a slot — but ONLY
+  // for the SAME intent, and only while that reservation is still live. A
+  // different intent must never inherit another checkout's discount (M2).
   if (existing && existing.status !== "released") {
     if (existing.code !== code) {
       throw couponError(
@@ -656,9 +745,31 @@ export async function reserveCouponInTx(
         409
       );
     }
+    if (existing.paymentIntentId !== intentId) {
+      throw couponError(
+        "COUPON_SLOT_WRONG_INTENT",
+        "This coupon slot belongs to a different payment attempt — refresh checkout.",
+        409
+      );
+    }
+    if (
+      existing.status === "reserved" &&
+      typeof existing.expiresAtMs === "number" &&
+      existing.expiresAtMs <= nowMs
+    ) {
+      throw couponError(
+        "COUPON_SLOT_EXPIRED",
+        "The coupon hold on this checkout expired — please refresh and try again.",
+        409
+      );
+    }
     return existing;
   }
 
+  // M3 r3: ALL usage comes from the transactional counters on the per-coupon
+  // and per-customer docs. Online reservations carry a long TTL until the
+  // obligation worker verifies a terminal outcome, so no non-transactional
+  // scan is needed to hold a slot for an in-flight sale.
   const evaluation = evaluateCoupon(coupon, {
     foodSubtotal: params.foodSubtotal,
     branchId: params.branchId,
@@ -680,48 +791,97 @@ export async function reserveCouponInTx(
     );
   }
 
+  const redemptionId = couponRedemptionId(orderId);
+  const commitNow = params.commitNow === true;
   const reservation: CouponReservation = {
     code,
     orderId,
     customerId: customerId ?? "",
     branchId: params.branchId ? String(params.branchId) : null,
     discount: evaluation.discount,
-    status: "reserved",
+    // Cash records its committed redemption here, in the SAME transaction as
+    // the order (M3): there is no later callback that could be lost.
+    status: commitNow ? "committed" : "reserved",
+    paymentIntentId: intentId,
+    version: (existing?.version ?? 0) + 1,
+    ...(params.gatewayOrderId ? { gatewayOrderId: params.gatewayOrderId } : {}),
     reservedAtMs: nowMs,
-    expiresAtMs: nowMs + COUPON_RESERVATION_TTL_MS,
+    // Online slots stay held until the durable obligation is resolved by the
+    // worker (M3); the short checkout TTL must not free a slot that a captured
+    // order still owes.
+    expiresAtMs: nowMs + (commitNow ? COUPON_RESERVATION_TTL_MS : COUPON_OBLIGATION_HOLD_MS),
+    ...(commitNow ? { committedAtMs: nowMs } : {}),
   };
 
   const expiresAtMs = reservation.expiresAtMs;
-  tx.set(
-    statsRef,
-    {
-      code,
-      committed: stats.committed,
-      reservations: {
-        ...stats.reservations,
-        [couponRedemptionId(orderId)]: { expiresAtMs },
-      },
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
-  if (usageRef) {
+  if (commitNow) {
+    // The reservation becomes a permanent use immediately: drop the live entry
+    // and bump BOTH counters in the same write. Total usage is unchanged.
     tx.set(
-      usageRef,
+      statsRef,
       {
         code,
-        customerId: reservation.customerId,
-        committed: usage.committed,
-        reservations: {
-          ...usage.reservations,
-          [couponRedemptionId(orderId)]: { expiresAtMs },
-        },
+        committed: stats.committed + 1,
+        reservations: { [redemptionId]: deleteField() },
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
     );
+    if (usageRef) {
+      tx.set(
+        usageRef,
+        {
+          code,
+          customerId: reservation.customerId,
+          committed: usage.committed + 1,
+          reservations: { [redemptionId]: deleteField() },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  } else {
+    tx.set(
+      statsRef,
+      {
+        code,
+        committed: stats.committed,
+        reservations: { ...stats.reservations, [redemptionId]: { expiresAtMs, held: !!params.paymentIntentId } },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    if (usageRef) {
+      tx.set(
+        usageRef,
+        {
+          code,
+          customerId: reservation.customerId,
+          committed: usage.committed,
+          reservations: { ...usage.reservations, [redemptionId]: { expiresAtMs, held: !!params.paymentIntentId } },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
   }
   tx.set(redemptionRef, reservation, { merge: true });
+
+  // A durable obligation records that a charged sale still owes its commit.
+  // It is written in the SAME transaction as the reservation, so a crash after
+  // capture cannot silently lose the usage: the obligation survives and a
+  // waiter can settle it (M3). Cash has no waiter, so it is settled inline.
+  const obligation: CouponObligation = {
+    code,
+    orderId,
+    customerId: reservation.customerId,
+    paymentIntentId: intentId,
+    status: commitNow ? "settled" : "pending",
+    createdAtMs: nowMs,
+    ...(commitNow ? { resolvedAtMs: nowMs } : {}),
+  };
+  tx.set(db.collection(COUPON_OBLIGATIONS).doc(redemptionId), obligation, { merge: true });
+
   return reservation;
 }
 
@@ -743,16 +903,27 @@ export async function reserveCoupon(params: {
  * released redemption is never resurrected (the slot was returned).
  */
 export async function commitCouponRedemption(
-  orderId: string
+  orderId: string,
+  capturedGateway?: string,
 ): Promise<"committed" | "noop" | "none"> {
   const id = couponRedemptionId(orderId);
   if (!id) return "none";
   return db.runTransaction(async (tx: any) => {
     const ref = db.collection(COUPON_REDEMPTIONS).doc(id);
     const snap = await tx.get(ref);
-    if (!snap.exists) return "none";
+    const binding = capturedGateway ? (await tx.get(db.collection('coupon_gateway_bindings').doc(capturedGateway))).data() : null;
+    if (capturedGateway && (!binding || binding.orderId !== orderId || binding.slotId !== id || binding.gatewayOrderId !== capturedGateway)) {
+      if (snap.exists) throw couponError('COUPON_CAPTURE_BINDING', 'Capture does not match the reserved gateway order.', 409);
+      return 'none';
+    }
+    if (!snap.exists) {
+      if (binding) throw couponError('COUPON_SLOT_MISSING','Capture has a binding but no redemption.',409);
+      return "none";
+    }
     const redemption = snap.data() as CouponReservation;
-    if (!redemption || redemption.status !== "reserved") return "noop";
+    if (redemption.gatewayOrderId && (!binding || redemption.gatewayOrderId !== capturedGateway || binding.version !== redemption.version || binding.code !== redemption.code || binding.customerId !== redemption.customerId)) throw couponError('COUPON_CAPTURE_BINDING','Coupon generation mismatch.',409);
+    const late = !!binding && redemption.status === 'released';
+    if (!late && redemption.status !== "reserved") return "noop";
 
     const statsRef = couponStatsRef(redemption.code);
     const statsSnap = await tx.get(statsRef);
@@ -764,12 +935,21 @@ export async function commitCouponRedemption(
     const usageSnap = usageRef ? await tx.get(usageRef) : null;
     const usage = counterFrom(usageSnap?.exists ? usageSnap.data() : null);
 
+    const resolvedAtMs = Date.now();
+    if (late) tx.set(db.collection('coupon_conflicts').doc(capturedGateway!), {...binding, reason:'capture_after_release', state:'review', detectedAtMs:resolvedAtMs});
     tx.set(
       ref,
       {
         status: "committed",
-        committedAtMs: Date.now(),
+        committedAtMs: resolvedAtMs,
       },
+      { merge: true }
+    );
+    // Close the durable obligation in the same commit, so a settled sale never
+    // looks like outstanding work to a reconciler (M3).
+    tx.set(
+      db.collection(COUPON_OBLIGATIONS).doc(id),
+      { status: "settled", resolvedAtMs },
       { merge: true }
     );
     // The reservation becomes a committed use: the live entry is dropped and
@@ -813,7 +993,13 @@ export async function commitCouponRedemption(
 export async function releaseCouponRedemption(params: {
   orderId: string;
   reason: string;
-}): Promise<{ released: boolean; code: string | null }> {
+  /**
+   * Only the intent that OWNS the slot may return it. A late callback from a
+   * superseded/decline attempt must not free a slot that a live intent still
+   * needs (M2). Legacy rows have no binding and remain releasable.
+   */
+  paymentIntentId?: string;
+}): Promise<{ released: boolean; code: string | null; reason?: string }> {
   const id = couponRedemptionId(params.orderId);
   if (!id) return { released: false, code: null };
   try {
@@ -822,8 +1008,20 @@ export async function releaseCouponRedemption(params: {
       const snap = await tx.get(ref);
       if (!snap.exists) return { released: false, code: null };
       const redemption = snap.data() as CouponReservation;
+      // A failed payment, a local TTL and a cancelled kitchen ticket are not
+      // proof that Razorpay has stopped accepting payment on this gateway order.
+      if (redemption?.gatewayOrderId) return { released: false, code: redemption.code, reason: 'gateway_still_bound' };
       if (!redemption || redemption.status === "released") {
         return { released: false, code: redemption?.code ?? null };
+      }
+      // Intent-fenced release: a release naming a DIFFERENT intent is a stale
+      // callback, not a terminal resolution of the slot's real intent.
+      if (
+        params.paymentIntentId &&
+        redemption.paymentIntentId &&
+        params.paymentIntentId !== redemption.paymentIntentId
+      ) {
+        return { released: false, code: redemption.code, reason: "intent_mismatch" };
       }
 
       const statsRef = couponStatsRef(redemption.code);
@@ -837,13 +1035,19 @@ export async function releaseCouponRedemption(params: {
       const usage = counterFrom(usageSnap?.exists ? usageSnap.data() : null);
 
       const wasCommitted = redemption.status === "committed";
+      const resolvedAtMs = Date.now();
       tx.set(
         ref,
         {
           status: "released",
-          releasedAtMs: Date.now(),
+          releasedAtMs: resolvedAtMs,
           releaseReason: params.reason || "unknown",
         },
+        { merge: true }
+      );
+      tx.set(
+        db.collection(COUPON_OBLIGATIONS).doc(id),
+        { status: "released", resolvedAtMs, reason: params.reason || "unknown" },
         { merge: true }
       );
       tx.set(
@@ -880,6 +1084,57 @@ export async function releaseCouponRedemption(params: {
   }
 }
 
+/**
+ * r5 — atomically release a gateway-bound slot ONLY after the holder has been
+ * proven terminal by the caller (no captured/authorised gateway payments).
+ * Fenced on the exact gateway binding and generation; a version that moved is
+ * never released, and the obligation resolves in the SAME transaction.
+ */
+export async function releaseExpiredGatewaySlot(params: {
+  orderId: string;
+  gatewayOrderId: string;
+  slotId: string;
+  version: number;
+  nowMs?: number;
+}): Promise<"released" | "noop" | "mismatch"> {
+  const id = couponRedemptionId(params.orderId);
+  const resolvedAtMs = params.nowMs ?? Date.now();
+  return db.runTransaction(async (tx: any) => {
+    const [refSnap, bindingSnap, obligationSnap] = await Promise.all([
+      tx.get(db.collection(COUPON_REDEMPTIONS).doc(id)),
+      tx.get(db.collection("coupon_gateway_bindings").doc(params.gatewayOrderId)),
+      tx.get(db.collection(COUPON_OBLIGATIONS).doc(id)),
+    ]);
+    const redemption = refSnap.exists ? (refSnap.data() as CouponReservation) : null;
+    const binding = bindingSnap.exists ? (bindingSnap.data() as any) : null;
+    if (
+      !redemption || !binding ||
+      redemption.status !== "reserved" ||
+      redemption.gatewayOrderId !== params.gatewayOrderId ||
+      binding.slotId !== params.slotId || binding.slotId !== id ||
+      binding.orderId !== params.orderId ||
+      binding.gatewayOrderId !== params.gatewayOrderId ||
+      binding.version !== params.version || redemption.version !== params.version
+    ) return "mismatch";
+
+    const statsRef = couponStatsRef(redemption.code);
+    const stats = counterFrom((await tx.get(statsRef)).data());
+    const usageRef = redemption.customerId ? couponUsageRef(redemption.code, redemption.customerId) : null;
+    const usage = usageRef ? counterFrom((await tx.get(usageRef)).data()) : null;
+
+    tx.set(db.collection(COUPON_REDEMPTIONS).doc(id), {
+      status: "released", releasedAtMs: resolvedAtMs,
+      releaseReason: "gateway_non_capturable_after_ttl", version: params.version + 1,
+    }, { merge: true });
+    tx.set(db.collection(COUPON_OBLIGATIONS).doc(id), {
+      status: "released", resolvedAtMs, reason: "gateway_non_capturable_after_ttl",
+    }, { merge: true });
+    tx.set(statsRef, { code: redemption.code, committed: stats.committed, reservations: { [id]: deleteField() } }, { merge: true });
+    if (usageRef && usage) tx.set(usageRef, { code: redemption.code, customerId: redemption.customerId, committed: usage.committed, reservations: { [id]: deleteField() } }, { merge: true });
+    return "released";
+  });
+}
+
 /** The redemption attached to an order, if any. */
 export async function readCouponRedemption(
   orderId: string
@@ -888,4 +1143,111 @@ export async function readCouponRedemption(
   if (!id) return null;
   const snap = await db.collection(COUPON_REDEMPTIONS).doc(id).get();
   return snap.exists ? ((snap.data() as CouponReservation) ?? null) : null;
+}
+
+/**
+ * A reused payment intent must not hand out its old discounted amount after the
+ * coupon slot it was priced with has been released or expired (M2). No coupon
+ * on the order ⇒ no redemption ⇒ nothing to check. A released or timed-out slot
+ * is a typed 409: the customer must refresh checkout and reserve afresh.
+ */
+export async function assertCouponReservationLive(
+  orderId: string,
+  paymentIntentId: string,
+  nowMs: number = Date.now(),
+  /** True when the order was priced WITH a coupon: absence of a slot is fatal. */
+  expectCoupon: boolean = false,
+  gatewayOrderId?: string
+): Promise<void> {
+  const redemption = await readCouponRedemption(orderId);
+  if (!redemption) {
+    if (expectCoupon) {
+      throw couponError(
+        "COUPON_SLOT_MISSING",
+        "The coupon reservation for this checkout could not be found — refresh checkout.",
+        409
+      );
+    }
+    return;
+  }
+  // Exactly matching intent, always — reuse of an intent with another slot's
+  // discount is the double-sale this finding closes (M2).
+  if (gatewayOrderId && redemption.gatewayOrderId && redemption.gatewayOrderId !== gatewayOrderId) {
+    throw couponError(
+      "COUPON_SLOT_WRONG_GATEWAY",
+      "This coupon slot is bound to a different gateway order — refresh checkout.",
+      409
+    );
+  }
+  if (redemption.paymentIntentId && redemption.paymentIntentId !== paymentIntentId) {
+    throw couponError(
+      "COUPON_SLOT_WRONG_INTENT",
+      "This coupon slot belongs to a different payment attempt — refresh checkout.",
+      409
+    );
+  }
+  if (redemption.status === "committed") return;
+  if (redemption.status === "released") {
+    throw couponError(
+      "COUPON_SLOT_RELEASED",
+      "The coupon used by this checkout is no longer held — please refresh and try again.",
+      409
+    );
+  }
+  if (typeof redemption.expiresAtMs === "number" && redemption.expiresAtMs <= nowMs) {
+    throw couponError(
+      "COUPON_SLOT_EXPIRED",
+      "The coupon hold on this checkout expired — please refresh and try again.",
+      409
+    );
+  }
+}
+
+/**
+ * Reconcile the coupon obligation of a CAPTURED order (M2/M3).
+ *
+ * A capture is money that has moved: usage may never be silently lost. When the
+ * slot is still reserved we commit it. When the slot is gone (released by a
+ * stale decline callback, or expired) but a durable obligation exists, we flag
+ * the contradiction instead of calling `commitCouponRedemption` — which used to
+ * return a quiet no-op and let the last slot fund two sales.
+ */
+export async function reconcileCouponOnCapture(
+  orderId: string,
+  paymentIntentId: string
+): Promise<"committed" | "noop" | "flagged" | "none"> {
+  const id = couponRedemptionId(orderId);
+  if (!id) return "none";
+  const redemption = await readCouponRedemption(orderId);
+  if (redemption?.paymentIntentId && redemption.paymentIntentId !== paymentIntentId) {
+    console.error(
+      `[Coupons] capture for ${orderId} names intent ${paymentIntentId} but the slot is bound to ${redemption.paymentIntentId} — refusing to commit`
+    );
+    return "flagged";
+  }
+  if (!redemption) {
+    const obligationSnap = await db.collection(COUPON_OBLIGATIONS).doc(id).get();
+    if (obligationSnap?.exists) {
+      console.error(
+        `[Coupons] capture for ${orderId} has a coupon obligation but no redemption — usage cannot be proven; flag for reconciliation`
+      );
+      return "flagged";
+    }
+    return "none";
+  }
+  if (redemption.status === "released") {
+    console.error(
+      `[Coupons] capture for ${orderId} used a coupon whose slot was released — possible double sale; flag for reconciliation`
+    );
+    return "flagged";
+  }
+  if (redemption.status === "committed") return "noop";
+  // Never commit a slot that is no longer live: a capture must not resurrect
+  // usage that the obligation worker already released as expired/cancelled.
+  if (typeof redemption.expiresAtMs === "number" && redemption.expiresAtMs <= Date.now()) {
+    console.error(`[Coupons] capture for ${orderId} found an expired slot — flag for reconciliation`);
+    return "flagged";
+  }
+  const outcome = await commitCouponRedemption(orderId);
+  return outcome === "committed" ? "committed" : "flagged";
 }

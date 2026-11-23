@@ -70,6 +70,7 @@ const orders = () => Object.entries(state.docs).filter(([path]) => path.startsWi
 beforeEach(() => {
   for (const key of Object.keys(state.docs)) delete state.docs[key];
   state.docs["admins/staff"] = { role: "branch_staff", branchIds: ["hl-road"] };
+  state.docs["users/staff"] = { active: true };
   // HL Road charges ₹15 packaging, so ₹100 food bills at ₹115.
   state.docs["branches/hl-road"] = { name: "HL Road", city: "Ahmedabad", packagingFee: 15 };
   state.docs["products/p1"] = { name: "Burger", branchId: "hl-road", price: 100, inStock: true };
