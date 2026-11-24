@@ -16,7 +16,8 @@
     "test:storage-rules": "firebase emulators:exec --only storage --project demo-burgonomics-storage-rules \"npx vitest run tests/storage.rules.test.ts\"",
     "test:firestore-rules": "firebase emulators:exec --config ../firebase.json --only firestore --project demo-burgonomics-cod-courier \"npx vitest run tests/rules.cod-courier.emulator.test.ts\"",
     "test:firestore-rules:settlements": "firebase emulators:exec --config ../firebase.json --only firestore --project demo-burgonomics-settlement-rules \"npx vitest run tests/rules.settlements.emulator.test.ts\"",
-    "backfill:orders": "tsc -p ../scripts/backfill/tsconfig.json && set \"NODE_PATH=node_modules\" && node ../scripts/backfill/dist/backfillOrders.js"
+    "backfill:orders": "tsc -p ../scripts/backfill/tsconfig.json && set \"NODE_PATH=node_modules\" && node ../scripts/backfill/dist/backfillOrders.js",
+    "test:firestore-rules:capture": "firebase emulators:exec --config ../firebase.json --only firestore --project demo-burgonomics-settlement-rules \"npx vitest run tests/capture.recovery.rules.emulator.test.ts\""
   },
   "engines": {
     "node": "22"

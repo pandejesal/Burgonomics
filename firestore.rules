@@ -228,7 +228,7 @@ service cloud.firestore {
         // Walk-in retries trust this original server receipt and request binding.
         // No client, including brand/developer, may plant, edit or remove them.
         'walkInRequestHash', 'walkInReceipt',
-        'paymentStatus', 'payment', 'refundStatus', 'refundId', 'refundAmount',
+        'paymentStatus', 'payment', 'payment.razorpayPaymentId', 'refundStatus', 'refundId', 'refundAmount',
         'refundLedger', 'refundedTotalPaise', 'refundOverCapturedPaise', 'refundNeedsReview',
         'refundActiveClaim', 'refundClaimedAt', 'refundClaimedRequestId',
         'refundClaimedPaymentId', 'refundClaimedPaise', 'refundClaimedKey',
@@ -237,6 +237,7 @@ service cloud.firestore {
         'routeTransferRetryCount', 'routeTransferClaimedAt',
         'routeTransferRetryAt', 'routeTransferError', 'routeTransferTerminalRefusal',
         'paymentChannel', 'monthlyFeeHold', 'settlementEffectiveAtMs', 'settlementCaptureUnresolved', 'settlementProcessedRefunds',
+        'settlementCaptureState', 'settlementCreatedAtMs', 'settlementResolution', 'settlementResolutionVersion',
         // A2: the cash receipt and its request binding are server-issued proof
         // of a real cash sale; staff must not plant or edit them (they used to
         // be writable, which let a forged receipt impersonate legacy cash).
@@ -1411,6 +1412,23 @@ service cloud.firestore {
     match /coupon_issues/{issueId} {
       allow read: if isBrandOwner();
       allow write: if false;
+    }
+
+    // Stuck-capture recovery: server-only issue,
+    // conflict and resolution documents; brand-owner read only.
+    match /settlement_capture_issues/{docId} {
+      allow read: if isBrandOwner();
+      allow write: if false;
+    }
+
+    match /settlement_capture_resolutions/{docId} {
+      allow read: if isBrandOwner();
+      allow write: if false;
+    }
+
+    // Internal mark-paid interlock keyed by branch and month.
+    match /settlement_capture_regeneration/{docId} {
+      allow read, write: if false;
     }
 
     // Admin audit trail — immutable append-only

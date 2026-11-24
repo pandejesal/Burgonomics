@@ -36,6 +36,7 @@ export default defineConfig({
             "tests/rules.settlements.emulator.test.ts",
             "tests/fr-checkout.rules.emulator.test.ts",
             "tests/rules.counter.cash.emulator.test.ts",
+            "tests/capture.recovery.rules.emulator.test.ts",
           ]),
     ],
   },

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { db } from "./firebase";
 
 /**
@@ -23,9 +24,30 @@ import { db } from "./firebase";
 export async function withSchedulerLock<T>(
   name: string,
   ttlMs: number,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  mode?: "strict-operation"
 ): Promise<{ ran: boolean; result?: T }> {
   const ref = db.collection("scheduler_locks").doc(name);
+  // Money-adjacent operations must never run without the lease. Release only
+  // our own lease so manual and scheduled retries can start after a failure.
+  if (mode === "strict-operation") {
+    const owner = randomUUID();
+    const now = Date.now();
+    const acquired = await db.runTransaction(async tx => {
+      const lease = (await tx.get(ref)).data();
+      if (typeof lease?.claimedAtMs === "number" && now - lease.claimedAtMs < ttlMs) return false;
+      tx.set(ref, { owner, claimedAtMs: now });
+      return true;
+    });
+    if (!acquired) return { ran: false };
+    try {
+      return { ran: true, result: await fn() };
+    } finally {
+      await db.runTransaction(async tx => {
+        if ((await tx.get(ref)).data()?.owner === owner) tx.delete(ref);
+      }).catch(err => console.warn(`[Scheduler Lock] release failed for ${name}; lease expires`, err));
+    }
+  }
   // CAS acquire (stress sweep 2026-10-24, M1): the old read-then-set let two
   // Cloud Run instances both observe an absent lock inside the same instant
   // and both run the tick. The freshness check and the lease write now

@@ -225,6 +225,7 @@ export interface SettlementOrderSummary {
   truncated: boolean;
   /** Online captures whose gateway time is unknown; payment stays blocked. */
   captureUnresolved: number;
+  manuallyResolvedCaptures?: string[];
   /** The unresolved scan hit its cap; count is a floor, statement incomplete. */
   unresolvedTruncated: boolean;
 }
@@ -358,6 +359,12 @@ export function isProviderConfirmedCapture(order: any): boolean {
     order?.settlementCaptureUnresolved !== true;
 }
 
+export function isManuallyConfirmedCapture(order: any): boolean {
+  const instant = order?.settlementEffectiveAtMs;
+  return order?.settlementCaptureState === "confirmed_manual" && order.settlementCaptureUnresolved === false &&
+    Number.isSafeInteger(instant) && instant > 0;
+}
+
 /** Verify / recovery / compensation can only mark the capture PENDING. */
 export function settlementCapturePending(): Record<string, unknown> {
   return { settlementCaptureState: "pending", settlementCaptureUnresolved: true };
@@ -469,6 +476,7 @@ export function summarizeSettlementOrders(
   let excludedOrders = 0;
   let outOfScopeOrders = 0;
   let captureUnresolved = 0;
+  const manuallyResolvedCaptures: string[] = [];
 
   for (const order of orders || []) {
     const branchId = String(order?.branchId || "");
@@ -494,6 +502,7 @@ export function summarizeSettlementOrders(
         continue;
       }
       if (order?.settlementCaptureUnresolved === true) captureUnresolved += 1;
+      if (isManuallyConfirmedCapture(order) && typeof order.id === "string") manuallyResolvedCaptures.push(order.id);
       onlineCollectedPaise += collected;
       onlineRefundedPaise += Math.min(collected, refundedPaiseOf(order));
       onlineOrders += 1;
@@ -530,6 +539,7 @@ export function summarizeSettlementOrders(
     excludedOrders,
     outOfScopeOrders,
     captureUnresolved,
+    ...(manuallyResolvedCaptures.length ? { manuallyResolvedCaptures: manuallyResolvedCaptures.sort() } : {}),
     unresolvedTruncated: false,
     ordersScanned: (orders || []).length,
     truncated: opts?.truncated === true,
@@ -599,6 +609,7 @@ export interface SettlementStatement {
   ordersTruncated: boolean;
   /** Captures with no provider-confirmed time — payment is blocked. */
   unresolvedCaptures: number;
+  manuallyResolvedCaptures?: string[];
   notes: string[];
   paidStatus: SettlementPaidStatus;
   paidAtMs: number | null;
@@ -655,6 +666,10 @@ export function buildSettlementStatement(input: BuildSettlementStatementInput): 
   const paidStatus: SettlementPaidStatus = carried.length > 0 ? "paid" : "unpaid";
 
   const notes: string[] = [];
+  const manuallyResolvedCaptures = input.summary.manuallyResolvedCaptures ?? [];
+  if (manuallyResolvedCaptures.length) {
+    notes.push(`${manuallyResolvedCaptures.length} online capture(s) use a manually verified capture time.`);
+  }
   if (input.summary.unresolvedTruncated) {
     notes.push("Unresolved-capture scan hit its cap; the statement is incomplete until it is re-scanned in pages.");
   }
@@ -710,6 +725,7 @@ export function buildSettlementStatement(input: BuildSettlementStatementInput): 
     assumptionsVersion: SETTLEMENT_ASSUMPTIONS_VERSION,
     ordersTruncated: input.summary.truncated,
     unresolvedCaptures: input.summary.captureUnresolved,
+    ...(manuallyResolvedCaptures.length ? { manuallyResolvedCaptures } : {}),
     notes,
     paidStatus,
     paidAtMs: carried.length > 0 ? Number(carried[carried.length - 1].paidAtMs) || null : null,
