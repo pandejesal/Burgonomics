@@ -434,6 +434,10 @@ export function clearProcessedRefundInTx(tx: any, orderRef: any, refundId: strin
 
 /** Cash rupee total the branch collected, from the priced bill. */
 function cashTotalPaiseOf(order: any): number {
+  // counter-cash-c9: prefer the server's handover stamp, fall back to the
+  // priced bill for legacy rows. Never both — one order contributes once.
+  const stamped = Number(order?.cashCollectedPaise);
+  if (Number.isFinite(stamped) && stamped > 0) return Math.round(stamped);
   const grand = Number(order?.pricing?.grandTotal);
   if (Number.isFinite(grand) && grand > 0) return Math.round(grand * 100);
   const total = Number(order?.total);

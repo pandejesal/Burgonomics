@@ -14,6 +14,7 @@ import {
 import { mintCashDeliveryOtp } from "./deliveryOtp";
 import { applyCancelSideEffects } from "./cancelSideEffects";
 import { posCancelIntentPatch } from "../petpooja/orderCancel";
+import { counterCashCollectedPatch } from "./counterCash.service";
 
 /**
  * Server-side KDS order-status bump. Mirrors the partner
@@ -354,6 +355,12 @@ export async function bumpOrderStatus(params: BumpOrderStatusParams) {
         writePayload,
         posCancelIntentPatch("order_cancelled", staffNameForCancel(), Date.now())
       );
+    }
+    // counter-cash-c9: the counter handover IS the payment event. Written in
+    // this SAME transaction as the terminal status, from the server bill.
+    if (finalMeta.terminal === true && canonical === "delivered" && (finalMeta.code === "PICKED_UP" || finalMeta.code === "COMPLETED")) {
+      const cashPatch = counterCashCollectedPatch(freshOrder, caller, finalMeta.code as "PICKED_UP" | "COMPLETED");
+      if (cashPatch) Object.assign(writePayload, cashPatch);
     }
     tx.update(orderRef, writePayload);
   });

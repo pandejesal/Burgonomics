@@ -35,6 +35,7 @@ export default defineConfig({
             "tests/rules.cod-courier.emulator.test.ts",
             "tests/rules.settlements.emulator.test.ts",
             "tests/fr-checkout.rules.emulator.test.ts",
+            "tests/rules.counter.cash.emulator.test.ts",
           ]),
     ],
   },
