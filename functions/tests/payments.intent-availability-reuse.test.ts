@@ -159,6 +159,7 @@ vi.mock("../src/core/errors", async (io) => ({
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { computeHmacSha256 } from "../src/core/security";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const ITEMS = [
   { id: "p1", productId: "p1", name: "Burger", price: 500, unitPrice: 500, quantity: 1 },
@@ -180,17 +181,14 @@ const seedWorld = (inStock = true) => {
     customizations: [],
   });
   docs.set("customers/cust_1", { id: "cust_1", loyaltyPoints: 0 });
-  docs.set("orders/ord_1", {
+  docs.set("orders/ord_1", serverOnlineDraft({
     id: "ord_1",
     customerId: "cust_1",
     userId: "cust_1",
     branchId: "branch_a",
     orderType: "takeaway",
     items: ITEMS,
-    payment: { method: "online", status: "pending" },
-    paymentStatus: "pending",
-    status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
-  });
+  }));
 };
 
 const create = () =>

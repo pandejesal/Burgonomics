@@ -286,6 +286,7 @@ import { createPaymentOrder, verifyPayment, __setPaymentsFetchForTests, __setRef
 import { handleRazorpayWebhook } from "../src/modules/payments/webhookHandler";
 import { expireAbandonedUnpaidOrders, __setAfterGatewayLookupForTests } from "../src/modules/orders/expireUnpaidOrders";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const ITEMS = [
   { id: "p1", productId: "p1", name: "Burger", price: 100, unitPrice: 100, quantity: 1 },
@@ -326,7 +327,7 @@ function seedOrder(
   orderId: string,
   over: Record<string, any> = {}
 ) {
-  control.seed(`orders/${orderId}`, {
+  control.seed(`orders/${orderId}`, serverOnlineDraft({
     id: orderId,
     customerId: "cust_ms",
     userId: "cust_ms",
@@ -334,13 +335,10 @@ function seedOrder(
     orderType: "takeaway",
     fulfillmentType: "takeaway",
     items: ITEMS,
-    payment: { method: "online", status: "pending" },
-    paymentStatus: "pending",
     routeTransferStatus: "not_required",
-    status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
     createdAt: new Date().toISOString(),
     ...over,
-  });
+  }));
 }
 
 function seedIntent(
@@ -469,6 +467,7 @@ describe("ITEM 1 — intent reuse re-checks availability without re-pricing", ()
       fulfillmentType: "delivery",
       items: DELIVERY_ITEMS,
       deliveryAddress: DROP,
+      deliveryQuoteId: "dfq_ms",
     });
     control.seed("delivery_fee_quotes/dfq_ms", {
       uid: "cust_ms",

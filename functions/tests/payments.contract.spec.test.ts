@@ -135,6 +135,7 @@ import {
 } from "../src/modules/payments/razorpayClient";
 import { config } from "../src/config/env";
 import { branchMonthlyFeeId, istMonthKey } from "../src/modules/payments/monthlyFee";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 /** Marks this month's fixed fee as fully collected for a branch. */
 function seededMonthlyFeeMet(branchId: string): void {
@@ -239,16 +240,15 @@ describe("PAYMENTS_CONTRACT_SPEC server regressions (findings 1-3)", () => {
     });
 
     it("owner checkout stamps server pricing on the order + intent binding", async () => {
-      savedDocs["orders/ord_ok"] = {
+      savedDocs["orders/ord_ok"] = serverOnlineDraft({
         id: "ord_ok",
         customerId: "cust_a",
         orderType: "takeaway",
-        status: "pending_payment",
         // PAY-15: the doc names the branch.
         branchId: "branch_c1",
         // PAY-13: the doc is the cart.
         items: [{ id: "p1", productId: "p1", name: "Burger", price: 199, quantity: 1 }],
-      };
+      });
       const res = await createPaymentOrder({
         ...basket,
         orderId: "ord_ok",

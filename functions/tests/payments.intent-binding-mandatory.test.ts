@@ -190,6 +190,7 @@ import {
 } from "../src/modules/payments/razorpay.service";
 import { computeHmacSha256 } from "../src/core/security";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const SECRET = "p1f_secret";
 /** Real Razorpay signature shape: HMAC-SHA256("<order>|<payment>", secret). */
@@ -238,18 +239,15 @@ const seedBranch = () => {
 
 /** An owned expensive order with NO totals — exactly what the rules allow. */
 const seedExpensiveOrderWithoutTotals = (orderId: string) => {
-  docs.set(`orders/${orderId}`, {
+  docs.set(`orders/${orderId}`, serverOnlineDraft({
     id: orderId,
     customerId: "cust_1",
     userId: "cust_1",
     branchId: "branch_a",
     orderType: "takeaway",
     fulfillmentType: "takeaway",
-    payment: { method: "online", status: "pending" },
-    paymentStatus: "pending",
-    status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
     items: EXPENSIVE_ITEMS,
-  });
+  }));
 };
 
 /**
@@ -258,18 +256,15 @@ const seedExpensiveOrderWithoutTotals = (orderId: string) => {
  * else, so the attack's first step needs a real owned doc too.
  */
 const seedCheapOrder = (orderId: string) => {
-  docs.set(`orders/${orderId}`, {
+  docs.set(`orders/${orderId}`, serverOnlineDraft({
     id: orderId,
     customerId: "cust_1",
     userId: "cust_1",
     branchId: "branch_a",
     orderType: "takeaway",
     fulfillmentType: "takeaway",
-    payment: { method: "online", status: "pending" },
-    paymentStatus: "pending",
-    status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
     items: CHEAP_ITEMS,
-  });
+  }));
 };
 
 const livePayment = (over: Record<string, any> = {}) => ({

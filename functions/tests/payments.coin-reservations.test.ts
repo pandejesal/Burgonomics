@@ -164,6 +164,7 @@ vi.mock("../src/core/errors", async (importOriginal) => {
 
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const ITEMS = [
   { id: "p1", productId: "p1", name: "Burger", price: 500, unitPrice: 500, quantity: 1 },
@@ -182,17 +183,14 @@ const seedWorld = (loyaltyPoints = 100) => {
 };
 
 const seedOrder = (orderId: string) => {
-  docs.set(`orders/${orderId}`, {
+  docs.set(`orders/${orderId}`, serverOnlineDraft({
     id: orderId,
     customerId: "cust_1",
     userId: "cust_1",
     branchId: "branch_a",
     orderType: "takeaway",
     items: ITEMS,
-    payment: { method: "online", status: "pending" },
-    paymentStatus: "pending",
-    status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
-  });
+  }));
 };
 
 const createFor = (orderId: string, coins: number) => {

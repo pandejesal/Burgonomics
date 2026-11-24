@@ -116,6 +116,7 @@ import { quoteWalkIn } from "../src/modules/orders/walkInQuote";
 import { couponQuoteSchema, handleCouponQuote } from "../src/modules/coupons/couponRoutes";
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 import { clearBranchPricingCache } from "../src/modules/payments/branchPricing";
 
 const STORE = "demo";
@@ -157,22 +158,17 @@ const cashInput = (orderId: string, over: Record<string, any> = {}) => ({
   ...over,
 });
 
-/**
- * The order document the customer app writes before Razorpay opens: online,
- * pending, owned by this customer, pointing at the storefront under test.
- */
-function seedOrderForPayment(orderId: string) {
-  h.docs.set(`orders/${orderId}`, {
+/** Intact server-created online draft for the storefront under test. */
+function seedOrderForPayment(orderId: string, extra: Record<string, any> = {}) {
+  h.docs.set(`orders/${orderId}`, serverOnlineDraft({
     id: orderId,
     customerId: CUSTOMER,
     userId: CUSTOMER,
     storeId: STORE,
     orderType: "takeaway",
-    payment: { method: "online", status: "pending" },
-    paymentStatus: "pending",
-    status: { code: "PLACED", label: "Order placed", kind: "upcoming", terminal: false },
     items: [{ id: "p1", productId: "p1", name: "2 Jr. Hero Burger", price: 109, quantity: 1 }],
-  });
+    ...extra,
+  }));
 }
 
 beforeEach(() => {
@@ -201,8 +197,7 @@ it("deduplicates one uid/attempt across order IDs even after the storefront clos
 
 it("refuses a stale explicit store while its actual branch is closed", async () => {
   seedWorld(false);
-  seedOrderForPayment("ord_stale");
-  Object.assign(h.docs.get("orders/ord_stale"),{branchId:BRANCH,storeId:"removed_store"});
+  seedOrderForPayment("ord_stale", { branchId: BRANCH, storeId: "removed_store" });
   await expect(createPaymentOrder({orderId:"ord_stale",orderType:"takeaway",customerId:CUSTOMER} as never)).rejects.toMatchObject({statusCode:409});
   expect([...h.docs.keys()].filter(k=>k.startsWith("payment_intents/"))).toHaveLength(0);
 });
@@ -223,8 +218,7 @@ it("prices a paid modifier identically on coupon quote, cash and online", async 
   expect(res.json).toHaveBeenCalledWith(expect.objectContaining({subtotal:120,discount:12}));
   const cash = await createCashOrder(CUSTOMER,cashInput("cash_parity",{items:cashItems,couponCode:"PARITY",expectedTotalPaise:10800}));
   expect(cash.totals).toMatchObject({foodSubtotal:120,discount:12});
-  seedOrderForPayment("online_parity");
-  Object.assign(h.docs.get("orders/online_parity"),{items:cashItems,couponCode:"PARITY"});
+  seedOrderForPayment("online_parity", { items: cashItems, couponCode: "PARITY" });
   const paid= await createPaymentOrder({orderId:"online_parity",orderType:"takeaway",customerId:CUSTOMER} as never);
   expect(paid.pricing).toMatchObject({foodSubtotal:120,discount:12});
   const slot = h.docs.get("coupon_redemptions/online_parity");

@@ -108,6 +108,7 @@ vi.mock("firebase-admin", () => {
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { clearBranchPricingCache } from "../src/modules/payments/branchPricing";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const UID = "cust_branch";
 const BRANCH_A = "branch_a"; // doc branch: packaging 22, royalty 20
@@ -117,15 +118,14 @@ const DROP = { lat: 23.0338, lng: 72.5262 };
 let prevMock: boolean;
 
 function seedOrder(id: string, extra: Record<string, any> = {}) {
-  savedDocs[`orders/${id}`] = {
+  savedDocs[`orders/${id}`] = serverOnlineDraft({
     id,
     customerId: UID,
     userId: UID,
     orderType: "takeaway",
-    status: "pending_payment",
     items: [{ id: "l1", productId: "p1", name: "Burger", price: 500, quantity: 1 }],
     ...extra,
-  };
+  });
 }
 
 function request(extra: Record<string, any> = {}) {
@@ -199,6 +199,7 @@ describe("PAY-15 the branch comes from the order document", () => {
       branchId: BRANCH_A,
       orderType: "delivery",
       deliveryAddress: { lat: DROP.lat, lng: DROP.lng },
+      deliveryQuoteId: "dfq_branch_a",
     });
     savedDocs["delivery_fee_quotes/dfq_branch_a"] = {
       uid: UID,

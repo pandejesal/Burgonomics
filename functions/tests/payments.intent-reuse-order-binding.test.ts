@@ -116,6 +116,7 @@ vi.mock("firebase-admin", () => {
 
 import { createPaymentOrder, cartFingerprintForOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const basket = {
   items: [{ id: "p1", productId: "p1", name: "Burger", price: 199, quantity: 1 }],
@@ -129,16 +130,15 @@ const DOC_ITEMS = [{ id: "p1", productId: "p1", name: "Burger", price: 199, quan
 const DOC_FINGERPRINT = cartFingerprintForOrder(DOC_ITEMS, undefined, 0);
 
 function seedOrder(id: string, customerId = "cust_a", extra: Record<string, any> = {}) {
-  savedDocs[`orders/${id}`] = {
+  savedDocs[`orders/${id}`] = serverOnlineDraft({
     id,
     customerId,
     // PAY-15: the doc names the branch the money is priced against.
     branchId: "branch_c1",
     orderType: "takeaway",
-    status: "pending_payment",
     items: DOC_ITEMS.map((item) => ({ ...item })),
     ...extra,
-  };
+  });
 }
 
 function seedLiveIntent(key: string, overrides: Record<string, any> = {}) {
@@ -411,7 +411,7 @@ describe("createPaymentOrder — reused intent must stay bound to the same inter
     expect(savedDocs["payment_intents/k_reuse_same"].razorpayOrderId).toBe("order_mock_STALE");
   });
 
-  it("reuse fast path: a MUTATED order document is refused with 409 PAYMENT_INTENT_CART_MISMATCH, never the stale amount", async () => {
+  it("reuse fast path: a mutated server draft is refused before the stale intent can be handed back", async () => {
     const storedItems = [{ productId: "p1", quantity: 1, price: 199 }];
     seedOrder("ord_a", "cust_a", { items: storedItems });
     seedLiveIntent("k_reuse_mutated", { orderId: "ord_a", items: storedItems });
@@ -433,7 +433,7 @@ describe("createPaymentOrder — reused intent must stay bound to the same inter
       (e) => e
     );
 
-    expect(err.code).toBe("PAYMENT_INTENT_CART_MISMATCH");
+    expect(err.code).toBe("ORDER_DRAFT_INVALID");
     expect(err.statusCode).toBe(409);
     // The old intent amount is not handed to the caller…
     expect(err.amountPaise).toBeUndefined();

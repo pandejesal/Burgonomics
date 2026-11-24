@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // must never tell the customer the outlet stopped taking orders.
 const { state } = vi.hoisted(() => {
   process.env.OTP_HMAC_SECRET = "test_otp_payments_store_link";
-  const state: { mode: "unlinked" | "throw" } = { mode: "unlinked" };
+  const state: { mode: "unlinked" | "throw"; order: Record<string, any> } = { mode: "unlinked", order: {} };
   const storeDoc: any = {
     get: async () => {
       if (state.mode === "throw") throw new Error("firestore unavailable");
@@ -20,13 +20,7 @@ const { state } = vi.hoisted(() => {
   const orderDoc: any = {
     get: async () => ({
       exists: true,
-      data: () => ({
-        id: "ord_store_link",
-        customerId: "cust_unlinked",
-        orderType: "takeaway",
-        storeId: "store_unlinked_1",
-        items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
-      }),
+      data: () => state.order,
     }),
     set: async () => undefined,
     update: async () => undefined,
@@ -65,6 +59,7 @@ vi.mock("firebase-admin", () => {
 });
 
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const basket = {
   items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
@@ -77,6 +72,11 @@ const basket = {
 describe("D-01 createPaymentOrder store→branch resolution", () => {
   beforeEach(() => {
     state.mode = "unlinked";
+    state.order = serverOnlineDraft({
+      id: "ord_store_link", customerId: "cust_unlinked", orderType: "takeaway",
+      storeId: "store_unlinked_1",
+      items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
+    });
   });
 
   it("returns a typed 409 STORE_NOT_LINKED with customer-safe copy", async () => {

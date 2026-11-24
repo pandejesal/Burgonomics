@@ -118,6 +118,7 @@ import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { repriceOrderForVerification } from "../src/modules/payments/pricing.engine";
 import { clearBranchPricingCache } from "../src/modules/payments/branchPricing";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const ORDER_ID = "ord_quote_1";
 const UID = "uid_buyer_1";
@@ -128,7 +129,7 @@ const FEE = 42.55;
 let savedEnv: any = {};
 
 function seedOrder(id: string, extra: Record<string, any> = {}) {
-  savedDocs[`orders/${id}`] = {
+  savedDocs[`orders/${id}`] = serverOnlineDraft({
     id,
     branchId: BRANCH,
     customerId: UID,
@@ -136,8 +137,9 @@ function seedOrder(id: string, extra: Record<string, any> = {}) {
     orderType: "delivery",
     items: [{ id: "l1", productId: "p1", name: "Burger", price: 199, quantity: 1 }],
     deliveryAddress: { lat: DROP.lat, lng: DROP.lng },
+    deliveryQuoteId: "dfq_good_quote_1",
     ...extra,
-  };
+  });
 }
 
 function seedQuote(id: string, extra: Record<string, any> = {}) {
@@ -224,6 +226,7 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
       branchScope: "all",
       customerScope: null,
     };
+    seedOrder(ORDER_ID, { couponCode: "WELCOME20", deliveryQuoteId: "dfq_good_quote_1" });
     const res: any = await createPaymentOrder(
       baseOrderParams({ deliveryQuoteId: "dfq_good_quote_1", couponCode: "WELCOME20" })
     );
@@ -246,17 +249,19 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
     expect(inflated.pricing.deliveryFee).toBe(FEE);
   });
 
-  it("refuses a missing quote and never charges 0 or a default", async () => {
+  it("refuses a server draft with no resolved quote and never charges a default", async () => {
+    seedOrder(ORDER_ID, { deliveryQuoteId: undefined });
     const err: any = await createPaymentOrder(baseOrderParams()).then(
       () => null,
       (e) => e
     );
-    expect(err).toMatchObject({ statusCode: 409, code: "DELIVERY_QUOTE_REQUIRED" });
+    expect(err).toMatchObject({ statusCode: 409, code: "ORDER_DRAFT_INVALID" });
     expect(savedDocs[`orders/${ORDER_ID}`].pricing).toBeUndefined();
   });
 
   it("refuses a quote from another uid", async () => {
     seedQuote("dfq_other_uid", { uid: "uid_someone_else" });
+    seedOrder(ORDER_ID, { deliveryQuoteId: "dfq_other_uid" });
     await expect(
       createPaymentOrder(baseOrderParams({ deliveryQuoteId: "dfq_other_uid" }))
     ).rejects.toMatchObject({ statusCode: 409, code: "DELIVERY_QUOTE_EXPIRED" });
@@ -264,6 +269,7 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
 
   it("refuses an expired quote", async () => {
     seedQuote("dfq_expired", { expiresAt: Date.now() - 1 });
+    seedOrder(ORDER_ID, { deliveryQuoteId: "dfq_expired" });
     await expect(
       createPaymentOrder(baseOrderParams({ deliveryQuoteId: "dfq_expired" }))
     ).rejects.toMatchObject({ statusCode: 409, code: "DELIVERY_QUOTE_EXPIRED" });
@@ -271,6 +277,7 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
 
   it("refuses a quote quoted for another branch", async () => {
     seedQuote("dfq_other_branch", { branchId: "branch_other" });
+    seedOrder(ORDER_ID, { deliveryQuoteId: "dfq_other_branch" });
     await expect(
       createPaymentOrder(baseOrderParams({ deliveryQuoteId: "dfq_other_branch" }))
     ).rejects.toMatchObject({ statusCode: 409, code: "DELIVERY_QUOTE_EXPIRED" });
@@ -278,6 +285,7 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
 
   it("refuses a quote when the drop coordinates changed", async () => {
     seedQuote("dfq_other_drop", { dropLat: 23.5, dropLng: 72.9 });
+    seedOrder(ORDER_ID, { deliveryQuoteId: "dfq_other_drop" });
     await expect(
       createPaymentOrder(baseOrderParams({ deliveryQuoteId: "dfq_other_drop" }))
     ).rejects.toMatchObject({ statusCode: 409, code: "DELIVERY_QUOTE_EXPIRED" });
@@ -285,6 +293,7 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
 
   it("refuses a quote already used by a second order", async () => {
     seedQuote("dfq_used", { usedByOrderId: "ord_someone_else" });
+    seedOrder(ORDER_ID, { deliveryQuoteId: "dfq_used" });
     await expect(
       createPaymentOrder(baseOrderParams({ deliveryQuoteId: "dfq_used" }))
     ).rejects.toMatchObject({ statusCode: 409, code: "DELIVERY_QUOTE_EXPIRED" });
@@ -306,10 +315,7 @@ describe("createPaymentOrder charges the persisted courier quote (R6)", () => {
 
   it("does not require a quote for takeaway", async () => {
     // PAY-13: the order document's orderType governs the priced fulfillment.
-    savedDocs[`orders/${ORDER_ID}`] = {
-      ...savedDocs[`orders/${ORDER_ID}`],
-      orderType: "takeaway",
-    };
+    seedOrder(ORDER_ID, { orderType: "takeaway", deliveryQuoteId: undefined });
     const res = await createPaymentOrder(
       baseOrderParams({ orderType: "takeaway" as const })
     );

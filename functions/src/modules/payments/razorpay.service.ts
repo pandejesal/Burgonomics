@@ -42,6 +42,7 @@ import { assertOutletOpenForOnlineOrders } from "./outletStatus";
 import { settlementCapturePending, isProviderConfirmedCapture, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
 import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } from "./monthlyFee";
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
+import { assertServerOnlineDraft } from "../orders/createOnlineDraft";
 import { getRazorpayClient, getRazorpayKeyId } from "./razorpayClient";
 import {
   attemptRouteTransfer,
@@ -507,6 +508,9 @@ async function assertPayableOrderDoc(
     err.code = "ORDER_TERMINAL";
     throw err;
   }
+  // Client order creation is disabled. Only an intact server-created online
+  // draft may reach Razorpay; a lookalike or edited basket fails closed.
+  assertServerOnlineDraft(data, orderId, customerId);
   return data;
 }
 
@@ -1357,13 +1361,12 @@ export async function createPaymentOrder(params: CreateOrderParams) {
     | "takeaway"
     | "dinein";
   const cartItems = priceableDocItems(orderData);
-  // The doc is the offer too: a coupon written on the order is the coupon the
-  // customer saw. A body-only coupon is a fallback for legacy docs.
-  const docCoupon =
+  // The server draft is the offer authority too. A payment request cannot add
+  // a body-only coupon that the draft never validated or bound to this basket.
+  const couponCode =
     typeof orderData.couponCode === "string" && orderData.couponCode.trim()
       ? orderData.couponCode
       : undefined;
-  const couponCode = docCoupon ?? params.couponCode;
 
   // Grill-Coins redemption is DISABLED for launch (D31-D33). The customer app
   // pins `loyaltyPointsToRedeem` to 0, so a non-zero request can only come from
@@ -1556,7 +1559,9 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   const serverDeliveryFee =
     orderType === "delivery"
       ? await bindDeliveryQuoteForOrder({
-          quoteId: params.deliveryQuoteId,
+          // The server draft resolved and bound this quote. A payment request
+          // cannot substitute another quote or override the draft's address.
+          quoteId: orderData.deliveryQuoteId,
           orderId: params.orderId,
           uid: params.customerId,
           branchId,

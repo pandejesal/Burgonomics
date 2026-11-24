@@ -88,6 +88,7 @@ vi.mock("../src/modules/payments/razorpayClient", () => ({
 
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 describe("createPaymentOrder — pricing outage never opens a gateway order", () => {
   let prevMock: boolean;
@@ -104,18 +105,17 @@ describe("createPaymentOrder — pricing outage never opens a gateway order", ()
     config.razorpay.keyId = "rzp_live_unittest";
     config.razorpay.keySecret = "unittest_secret";
 
-    savedDocs["orders/ord_outage_1"] = {
+    savedDocs["orders/ord_outage_1"] = serverOnlineDraft({
       id: "ord_outage_1",
       customerId: "guest",
       // PAY-13/PAY-15: the doc is the cart and names its branch.
       branchId: "branch_o1",
       orderType: "takeaway",
-      status: "pending_payment",
       items: [
         { id: "l1", productId: "prod_ok", name: "Readable", price: 100, quantity: 1 },
         { id: "l2", productId: "prod_flaky", name: "Flaky", price: 70, quantity: 1 },
       ],
-    };
+    });
     savedDocs["branches/branch_o1"] = { royaltyPercentage: 5, packagingFee: 15 };
   });
 

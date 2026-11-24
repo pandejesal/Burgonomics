@@ -241,6 +241,8 @@ service cloud.firestore {
         // of a real cash sale; staff must not plant or edit them (they used to
         // be writable, which let a forged receipt impersonate legacy cash).
         'cashReceipt', 'cashRequestHash', 'couponIntentId',
+        // Online checkout proof: only the server draft creator may write it.
+        'onlineDraft', 'onlineDraftReceipt', 'checkoutFingerprint',
         // Courier COD money and readiness are server-written. Branch staff
         // must not rewrite the cash due or forge a courier-collection flag.
         'cashDuePaise', 'cashOnDelivery',
@@ -485,30 +487,11 @@ service cloud.firestore {
         ownsBranch(resource.data.branchId)
       );
 
-      // Loop-hardening: the old identity-only create (`customerId == uid ||
-      // userId == uid`) let any authenticated user birth an order with
-      // arbitrary totals/paymentStatus/status — or stamp a VICTIM's id in
-      // one identity field while owning the other. Two accepted shapes,
-      // both verified against the live client payloads:
-      //  1) Customer app (core ordersService.createOrder, src/features/
-      //     orders/services/ordersService.ts:331-351) stamps BOTH customerId
-      //     AND userId to request.auth.uid.
-      // Sentinel walk-ins are created only by the server, including when an
-      // authenticated UID happens to equal the sentinel.
-      allow create: if isAuthenticated() && (
-        (
-          request.resource.data.customerId != 'cust_walkin' &&
-          request.resource.data.customerId == request.auth.uid &&
-          request.resource.data.userId == request.auth.uid &&
-          orderCreateInitialStatus() &&
-          orderCreateKeysAllowlisted() &&
-          orderCreatePaymentPendingOnly() &&
-          (
-            !('paymentStatus' in request.resource.data) ||
-            request.resource.data.paymentStatus in ['pending', 'Pending', 'PENDING', 'CASH_PENDING', 'PAY_AT_STORE']
-          )
-        )
-      );
+      // Order birth is SERVER-ONLY. Cash, online drafts and walk-ins are
+      // created by authenticated Cloud Functions using the Admin SDK, which
+      // resolves ownership, storefront/branch state and server pricing. A
+      // client must never mint even an owned pending order with its own totals.
+      allow create: if false;
 
       allow update: if (
         isBrandOwner() &&

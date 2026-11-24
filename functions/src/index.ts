@@ -133,6 +133,8 @@ import { walkInQuoteSchema } from "./modules/orders/walkInSchema";
 import { handleWalkInQuote } from "./modules/orders/walkInQuoteRoute";
 import { createCashOrderSchema } from "./modules/orders/createCashOrder";
 import { handleCreateCashOrder } from "./modules/orders/createCashOrderRoute";
+import { createOnlineDraftSchema } from "./modules/orders/createOnlineDraft";
+import { handleCreateOnlineDraft } from "./modules/orders/createOnlineDraftRoute";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { recoverStuckCaptureFulfilments } from "./modules/payments/captureRecovery";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
@@ -417,6 +419,7 @@ app.use(
     "/orders/createWalkIn",
     "/orders/walkInQuote",
     "/orders/createCashOrder",
+    "/orders/createOnlineDraft",
     "/orders/bumpStatus",
     "/orders/verifyDeliveryOtp",
     "/orders/manualDispatch",
@@ -1319,6 +1322,16 @@ app.post(
   requireAuth,
   validateBody(createCashOrderSchema),
   handleCreateCashOrder
+);
+
+// Online checkout draft: the ONLY client-authorised way to birth an order.
+// The server resolves ownership, storefront/branch state, address, quote,
+// catalogue pricing and coupon eligibility before writing the pending doc.
+app.post(
+  "/orders/createOnlineDraft",
+  requireAuth,
+  validateBody(createOnlineDraftSchema),
+  handleCreateOnlineDraft
 );
 
 app.post(

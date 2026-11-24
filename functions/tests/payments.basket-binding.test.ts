@@ -148,6 +148,7 @@ vi.mock("../src/modules/payments/razorpayClient", () => ({
 
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const BRANCH = "branch_basket_1";
 
@@ -168,15 +169,14 @@ const cheapItems = () => [
 ];
 
 function seedOrder(id: string, overrides: Record<string, any> = {}) {
-  savedDocs[`orders/${id}`] = {
+  savedDocs[`orders/${id}`] = serverOnlineDraft({
     id,
     customerId: "guest",
     branchId: BRANCH,
     orderType: "delivery",
-    status: "pending_payment",
     items: expensiveItems(),
     ...overrides,
-  };
+  });
 }
 
 function intentKeys(): string[] {
@@ -248,7 +248,7 @@ describe("createPaymentOrder — PAY-13/PAY-15: the ORDER DOCUMENT is the cart",
 
   function deliverySeed(id: string) {
     const drop = { lat: 23.0225, lng: 72.5714 };
-    seedOrder(id, { orderType: "delivery", deliveryAddress: drop });
+    seedOrder(id, { orderType: "delivery", deliveryAddress: drop, deliveryQuoteId: `dfq_${id}` });
     seedQuote(`dfq_${id}`, drop);
     return `dfq_${id}`;
   }
@@ -375,7 +375,7 @@ describe("createPaymentOrder — PAY-13/PAY-15: the ORDER DOCUMENT is the cart",
     expect(savedDocs["orders/ord_pickup"].pricing.foodSubtotal).toBe(1960);
   });
 
-  it("refuses a legacy order doc that stores no items array instead of pricing the request (UNPRICEABLE)", async () => {
+  it("refuses a legacy client order doc with no server draft proof (ORDER_DRAFT_INVALID)", async () => {
     savedDocs["orders/ord_legacy"] = {
       id: "ord_legacy",
       customerId: "guest",
@@ -394,7 +394,7 @@ describe("createPaymentOrder — PAY-13/PAY-15: the ORDER DOCUMENT is the cart",
         customerId: "guest",
         idempotencyKey: "k_basket_legacy",
       })
-    ).rejects.toMatchObject({ statusCode: 422, code: "UNPRICEABLE" });
+    ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_DRAFT_INVALID" });
 
     expect(ordersCreate).not.toHaveBeenCalled();
     expect(intentKeys()).toEqual([]);

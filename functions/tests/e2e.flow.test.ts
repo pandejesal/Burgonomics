@@ -201,6 +201,7 @@ import {
   verifyDeliveryOtp,
 } from "../src/modules/porter/porter.service";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 import { computeHmacSha256 } from "../src/core/security";
 import { branchMonthlyFeeId, istMonthKey } from "../src/modules/payments/monthlyFee";
 
@@ -272,26 +273,26 @@ describe("End-to-End Platform Integration Flow", () => {
     );
 
     // Initialize mock order in Firestore
-    savedDocs[`orders/${orderId}`] = {
+    savedDocs[`orders/${orderId}`] = serverOnlineDraft({
       id: orderId,
       branchId,
       customerId: "cust_aarav_99",
       customerName: "Aarav Shah",
       customerPhone: "+91 98250 12345",
       orderType: "delivery",
+      deliveryQuoteId: "dfq_e2e_1",
       items: [
         { id: "pp_b1", name: "Classic Smash Cheese Burger", price: 199, quantity: 2, isVeg: true },
         { id: "pp_s1", name: "Cajun Seasoned Fries", price: 99, quantity: 1, isVeg: true },
       ],
       pricing,
-      status: "pending_payment",
       branchCoordinates: { lat: 23.0131, lng: 72.5085 },
       deliveryAddress: {
         full: "102, Shivalik Highstreet, Vastrapur, Ahmedabad",
         lat: 23.0338,
         lng: 72.5262,
       },
-    };
+    });
 
     // F5: this branch's fixed monthly fee is already met this month, so the
     // lifecycle below still exercises a real transfer (the first ₹2,500 of a
@@ -452,14 +453,13 @@ describe("End-to-End Platform Integration Flow", () => {
 
   it("reuses the open gateway order on idempotent retry (no double charge)", async () => {
     // PAY-13: the amount comes from the order document, so the retry needs one.
-    savedDocs["orders/ord_dup_retry"] = {
+    savedDocs["orders/ord_dup_retry"] = serverOnlineDraft({
       id: "ord_dup_retry",
       branchId: "branch_ahmedabad_cg_road",
       customerId: "cust_dup",
       orderType: "takeaway",
-      status: "pending_payment",
       items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
-    };
+    });
     const first = await createPaymentOrder({
       items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
       branchId: "branch_ahmedabad_cg_road",
@@ -484,14 +484,13 @@ describe("End-to-End Platform Integration Flow", () => {
     // Loop 4 (F2): read-hit falls through on a corrupt winner, the claim
     // loses (create throws 6), and the winner re-read is still corrupt —
     // the checkout must 503 (retry same key), never mint a second order.
-    savedDocs["orders/ord_race_corrupt"] = {
+    savedDocs["orders/ord_race_corrupt"] = serverOnlineDraft({
       id: "ord_race_corrupt",
       branchId: "branch_ahmedabad_cg_road",
       customerId: "cust_race",
       orderType: "takeaway",
-      status: "pending_payment",
       items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
-    };
+    });
     savedDocs["payment_intents/chk_race_corrupt_001"] = {
       razorpayOrderId: "",
       amountPaise: "garbage",
@@ -512,14 +511,13 @@ describe("End-to-End Platform Integration Flow", () => {
     // PAY-15: the branch is resolved from the ORDER (doc branch, else the
     // doc's store mapping) — never from the request. An order with neither is
     // refused rather than priced blind.
-    savedDocs["orders/ord_nobranch"] = {
+    savedDocs["orders/ord_nobranch"] = serverOnlineDraft({
       id: "ord_nobranch",
       customerId: "cust_nobranch",
       orderType: "takeaway",
-      status: "pending_payment",
       storeId: "store_unlinked",
       items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
-    };
+    });
     savedDocs["stores/store_unlinked"] = { id: "store_unlinked", name: "Unlinked outlet" };
     await expect(
       createPaymentOrder({
@@ -536,7 +534,7 @@ describe("End-to-End Platform Integration Flow", () => {
   });
 
   it("skips transfer when already transferred (no double payout)", async () => {
-    savedDocs["orders/order_already_split"] = {
+    savedDocs["orders/order_already_split"] = serverOnlineDraft({
       id: "order_already_split",
       branchId: "branch_ahmedabad_cg_road",
       customerId: "cust_split",
@@ -544,16 +542,15 @@ describe("End-to-End Platform Integration Flow", () => {
       // The catalog the pricing engine resolves (products are served by the
       // doc-ref fixture), so this order can be priced for real.
       items: [{ id: "pp_b1", productId: "pp_b1", name: "Burger", price: 199, quantity: 1 }],
-      status: "pending_payment",
       // Already paid out: this is what the test exists to protect. The split is
       // genuinely payable (positive branchTransferPaise + a linked account
       // below), so an order that lost its "already transferred" short-circuit
       // would really POST a SECOND payout here.
       routeTransferStatus: "transferred",
-      payment: { routeTransfer: { id: "trf_old" } },
+      payment: { method: "online", status: "pending", routeTransfer: { id: "trf_old" } },
       "payment.routeTransfer": { id: "trf_old" },
       pricing: { split: { branchTransferPaise: 16000, totalAmountPaise: 19900 } },
-    };
+    });
     // A linked payout account: without it the split-first ordering would only
     // FLAG the order; with it the mock gateway accepts and the duplicate payout
     // would really land — the double-pay this test forbids.

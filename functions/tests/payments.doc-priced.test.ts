@@ -112,6 +112,7 @@ vi.mock("firebase-admin", () => {
 
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { config } from "../src/config/env";
+import { serverOnlineDraft } from "./helpers/onlineDraft";
 
 const UID = "cust_doc";
 const BRANCH = "branch_doc";
@@ -119,16 +120,15 @@ const BRANCH = "branch_doc";
 let prevMock: boolean;
 
 function seedOrder(id: string, items: any[], extra: Record<string, any> = {}) {
-  savedDocs[`orders/${id}`] = {
+  savedDocs[`orders/${id}`] = serverOnlineDraft({
     id,
     customerId: UID,
     userId: UID,
     branchId: BRANCH,
     orderType: "takeaway",
-    status: "pending_payment",
     items,
     ...extra,
-  };
+  });
 }
 
 /** What the CLIENT claims in the request — deliberately cheap. */
@@ -248,6 +248,6 @@ describe("PAY-13 createPaymentOrder prices the order document", () => {
       createPaymentOrder(
         params({ orderId: "ord_changed", idempotencyKey: "k_doc_changed" })
       )
-    ).rejects.toMatchObject({ statusCode: 409, code: "PAYMENT_INTENT_CART_MISMATCH" });
+    ).rejects.toMatchObject({ statusCode: 409, code: "ORDER_DRAFT_INVALID" });
   });
 });

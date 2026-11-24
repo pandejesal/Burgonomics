@@ -199,7 +199,7 @@ function requestHashOf(input: CreateCashOrderRequest): string {
  * transaction so the switch, the ceiling and the packaging fee are all one
  * consistent snapshot with the order that is being created.
  */
-function branchConfigFromDoc(branch: any, branchId: string): BranchPricingConfig {
+export function branchConfigFromDoc(branch: any, branchId: string): BranchPricingConfig {
   const branchFee = branch?.packagingFee;
   if (branchFee !== undefined && (typeof branchFee !== "number" || !Number.isFinite(branchFee) || branchFee < 0)) {
     throw new CashOrderError(503, "BRANCH_UNAVAILABLE", "Branch pricing is unavailable.");

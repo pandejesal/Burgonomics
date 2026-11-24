@@ -90,10 +90,11 @@ vi.mock("firebase-admin", () => {
   };
 });
 
-import { createCashOrder } from "../src/modules/orders/createCashOrder";
+import { createCashOrder, createCashOrderSchema } from "../src/modules/orders/createCashOrder";
 import { handleCreateCashOrder } from "../src/modules/orders/createCashOrderRoute";
 import { createWalkIn } from "../src/modules/orders/createWalkIn";
 import { cancelOrderAsCustomer } from "../src/modules/orders/customerCancel";
+import { bumpOrderStatus } from "../src/modules/orders/orderStatus";
 
 const CUSTOMER = "customer_a";
 const ORDER = "ord_cash_coupon_1";
@@ -184,6 +185,54 @@ beforeEach(() => {
   h.docs.set("users/staff_1", { active: true });
   seedCoupon();
   seedQuote();
+});
+
+describe("Customer cash checkout → staff kitchen admission", () => {
+  const staff = { uid: "staff_1", role: "branch_staff", branchIds: ["branch_a"] };
+
+  it.each([['accepted', 'CONFIRMED'], ['preparing', 'PREPARING']] as const)(
+    "admits server-created counter cash on a fresh %s bump without claiming payment",
+    async (target, code) => {
+      const body = createCashOrderSchema.parse({
+        orderId: ORDER,
+        attemptId: "checkout_attempt_01",
+        storeId: "s1",
+        orderType: "takeaway",
+        items: [{ productId: "p1", quantity: 1 }],
+        expectedTotalPaise: 11500,
+      });
+      const status = vi.fn().mockReturnThis();
+      const json = vi.fn();
+      await handleCreateCashOrder({ user: { uid: CUSTOMER }, body } as any, { status, json } as any);
+      expect(status).toHaveBeenCalledWith(201);
+      const path = `orders/${ORDER}`;
+      expect(h.docs.get(path)).toMatchObject({
+        orderType: "takeaway", paymentChannel: "cash", paymentStatus: "pending",
+        payment: { method: "cod", status: "pending" }, cashDuePaise: 11500,
+      });
+      await bumpOrderStatus({ orderId: ORDER, status: target, expectedStatus: "pending", caller: staff });
+      expect(h.docs.get(path)).toMatchObject({ status: { code }, paymentStatus: "pending" });
+      expect(h.docs.get(path)).not.toHaveProperty("cashCollectedPaise");
+      expect(h.docs.get(path)).not.toHaveProperty("receiptEvidence");
+    },
+  );
+
+  it.each([
+    { method: "cod", status: "PAY_AT_STORE", label: "Pay at Pickup Counter" },
+    { method: "online", status: "pending" },
+  ])("refuses $method without server payment evidence", async (payment) => {
+    const path = `orders/${ORDER}`;
+    const order = {
+      branchId: "branch_a", customerId: CUSTOMER, fulfillment: "takeaway",
+      status: { code: "PLACED" }, payment,
+    };
+    h.docs.set(path, order);
+    for (const target of ["accepted", "preparing"] as const) {
+      await expect(bumpOrderStatus({ orderId: ORDER, status: target, caller: staff }))
+        .rejects.toMatchObject({ code: "ORDER_NOT_PAID", statusCode: 409 });
+    }
+    expect(h.docs.get(path)).toEqual(order);
+  });
 });
 
 describe("F9 — coupon redemption on cash orders", () => {
