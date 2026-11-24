@@ -1,4 +1,4 @@
-import { settlementCaptureUnknown, isProviderConfirmedCapture } from "../settlements/settlementMath";
+import { settlementCaptureUnknown, isProviderConfirmedCapture, isManuallyConfirmedCapture } from "../settlements/settlementMath";
 import { db } from "../../core/firebase";
 import * as admin from "firebase-admin";
 import { captureErrorSnapshot } from "../../core/errors";
@@ -326,7 +326,7 @@ async function claimGate(args: {
     tx.set(
       args.orderRef,
       {
-        ...(isProviderConfirmedCapture(fresh) ? {} : settlementCaptureUnknown()),
+        ...(isProviderConfirmedCapture(fresh) || isManuallyConfirmedCapture(fresh) ? {} : settlementCaptureUnknown()),
         captureFulfillment: {
           state: "checking",
           paymentId: args.razorpayPaymentId,
@@ -447,7 +447,7 @@ async function claimResumeLease(args: {
     tx.set(
       args.orderRef,
       {
-        ...(isProviderConfirmedCapture(fresh) ? {} : settlementCaptureUnknown()),
+        ...(isProviderConfirmedCapture(fresh) || isManuallyConfirmedCapture(fresh) ? {} : settlementCaptureUnknown()),
         captureFulfillment: {
           state: "refund_pending",
           paymentId: args.razorpayPaymentId,

@@ -92,8 +92,9 @@ export async function repairSettlementCaptureInTx(tx: FirebaseFirestore.Transact
     }, { merge: true });
     return snapshotId;
   }
-  // An open conflict can only be closed by the admin reconciliation command.
-  if (issue?.status === "conflict" || (manual && issue?.conflict && issue.status === "resolved")) return null;
+  // Only an active conflict requires admin reconciliation. A resolved
+  // cross-month duplicate returned above; a same-month event may still upgrade.
+  if (issue?.status === "conflict") return null;
   tx.set(order.ref, settlementCaptureStamp(atMs), { merge: true });
   if (issue?.status === "open") tx.update(ref, { status: "resolved", closedAtMs: Date.now(), closedBy: "provider_webhook" });
   return null;

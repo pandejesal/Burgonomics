@@ -364,6 +364,21 @@ describe('signed late-webhook and scheduler handlers', () => {
     expect(store.docs.get(orderPath)).toMatchObject({ settlementCaptureState: 'confirmed', settlementEffectiveAtMs: OLD + 60_000 });
     expect(store.docs.get(issuePath).status).toBe('resolved');
   });
+  it('upgrades from the held month after keep-month reconciliation without a second audit', async () => {
+    seedConflict();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 10, 15));
+    try {
+      expect((await reconcile(M)).status).toBe(200);
+      expect(store.docs.get(issuePath)).toMatchObject({ status: 'resolved', keepMonth: M, conflict: { manualMonthKey: M, webhookMonthKey: N } });
+      now.mockReturnValue(OLD + 60_000);
+      await withSignedClock(OLD + 60_000, async () => {
+        expect((await signedWebhook('evt_keep_then_same', OLD + 60_000)).status).toBe(200);
+      });
+    } finally { now.mockRestore(); }
+    expect(store.docs.get(orderPath)).toMatchObject({ settlementCaptureState: 'confirmed', settlementEffectiveAtMs: OLD + 60_000, settlementCaptureUnresolved: false });
+    expect(store.docs.get(issuePath).status).toBe('resolved');
+    expect(audit()).toHaveLength(1);
+  });
   it('updates the issue only, gates reminders, and does not abort when the alert channel fails', async () => {
     seedOrder();
     const instant = PROVIDER + 36_000_000;
