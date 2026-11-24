@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { checkoutEstimatedAt } from "./checkoutEta";
 import * as admin from "firebase-admin";
 import { z } from "zod";
 import { db } from "../../core/firebase";
@@ -115,6 +116,8 @@ export const createCashOrderSchema = z
     items: z.array(cashItemSchema).min(1).max(100),
     /** The bill the customer saw. A mismatch is refused, never silently moved. */
     expectedTotalPaise: z.number().int().nonnegative().safe(),
+    /** Online checkout with nothing to collect, never a positive cash order. */
+    zeroDueOnly: z.literal(true).optional(),
     deliveryQuoteId: z.string().trim().min(8).max(128).optional(),
     couponCode: z.string().trim().max(64).optional(),
     tipAmount: z.number().finite().min(0).max(100000).optional(),
@@ -141,6 +144,7 @@ export interface CashOrderReceipt {
   paymentChannel: "cash";
   /** What the rider/counter must collect, from the SERVER's own bill. */
   cashDuePaise: number;
+  estimatedAt?: string;
   totals: PricingBreakdown;
   status: { code: "PLACED"; label: "Order placed"; kind: "upcoming"; terminal: false };
   settlementEffectiveAtMs: number;
@@ -186,6 +190,8 @@ function requestHashOf(input: CreateCashOrderRequest): string {
       deliveryQuoteId: input.deliveryQuoteId ?? null,
       couponCode: input.couponCode ?? null,
       tipAmount: input.tipAmount ?? null,
+      // Distinct receipt authority, without changing existing cash hashes.
+      ...(input.zeroDueOnly ? { zeroDueOnly: true } : {}),
       // M4 privacy + reconfirmation: display-only fields (notes, contact,
       // instructions, table) and the confirmation total are NOT identity. They
       // are never persisted in the client replay record, so hashing them would
@@ -485,7 +491,10 @@ export async function createCashOrder(
 
       // 6. The customer agreed to a bill; if the menu moved, refuse and hand
       // back the server's number instead of charging a different one.
-      if (totals.split.totalAmountPaise !== input.expectedTotalPaise) {
+      // The zero-due lane never places an order with money due, even if a
+      // stale client has already recalculated and sent the new positive total.
+      const cashDuePaise = totals.split.totalAmountPaise;
+      if (cashDuePaise !== input.expectedTotalPaise || (input.zeroDueOnly && cashDuePaise !== 0)) {
         throw new CashOrderError(
           409,
           "PRICE_CHANGED",
@@ -494,19 +503,18 @@ export async function createCashOrder(
         );
       }
 
-      // 7. Branch switch + per-order cash ceiling, against the SERVER's total.
-      try {
-        assertCashOnDeliveryAllowed(
-          config.cashOnDelivery,
-          totals.split.totalAmountPaise,
-          input.orderType
-        );
-      } catch (err: any) {
-        throw new CashOrderError(
-          typeof err?.statusCode === "number" ? err.statusCode : 409,
-          typeof err?.code === "string" ? err.code : "COD_UNAVAILABLE",
-          err?.message || "Cash on delivery is not available for this order."
-        );
+      // Ordinary cash still requires COD approval, even if nothing is due.
+      // Only the explicitly zero-only lane can skip that tender check.
+      if (!input.zeroDueOnly) {
+        try {
+          assertCashOnDeliveryAllowed(config.cashOnDelivery, cashDuePaise, input.orderType);
+        } catch (err: any) {
+          throw new CashOrderError(
+            typeof err?.statusCode === "number" ? err.statusCode : 409,
+            typeof err?.code === "string" ? err.code : "COD_UNAVAILABLE",
+            err?.message || "Cash on delivery is not available for this order."
+          );
+        }
       }
 
       // 7. Coupon redemption + BOTH counters are committed INSIDE this same
@@ -546,10 +554,10 @@ export async function createCashOrder(
         );
       }
 
-      const cashDuePaise = totals.split.totalAmountPaise;
       const paymentLabel =
         input.orderType === "delivery" ? "Cash on Delivery" : "Pay at Store";
       const placedAtMs = Date.now();
+      const estimatedAt = checkoutEstimatedAt(storeData, input.orderType);
       const receipt: CashOrderReceipt = {
         orderId: input.orderId,
         replayed: false,
@@ -560,6 +568,7 @@ export async function createCashOrder(
         settlementCaptureState: "confirmed",
         settlementCaptureUnresolved: false,
         cashDuePaise,
+        ...(estimatedAt ? { estimatedAt } : {}),
         totals,
         status: placed,
       };
@@ -623,7 +632,7 @@ export async function createCashOrder(
           : {}),
         ...(input.tableNumber ? { tableNumber: input.tableNumber } : {}),
         whatsappOptIn: input.whatsappOptIn !== false,
-        ...(input.estimatedAt ? { estimatedAt: input.estimatedAt } : {}),
+        ...(estimatedAt ? { estimatedAt } : {}),
         ...(quoteId ? { deliveryQuoteId: quoteId } : {}),
         // Server-owned state.
         status: placed,

@@ -363,6 +363,7 @@ async function bindDeliveryQuoteForOrder(args: {
   orderId: string | undefined;
   uid: string;
   branchId: string;
+  requireExistingBinding?: boolean;
 }): Promise<number> {
   const { quoteId, orderId, uid, branchId } = args;
   if (!quoteId) {
@@ -380,7 +381,7 @@ async function bindDeliveryQuoteForOrder(args: {
   }
   // Shared transactional binder: same rules whether the order is paid online
   // (expiry judged now) or accepted as cash later (R6b, judged at creation).
-  return bindDeliveryQuote({ quoteId, orderId, uid, branchId, expiryMode: "now" });
+  return bindDeliveryQuote({ quoteId, orderId, uid, branchId, expiryMode: "now", requireExistingBinding: args.requireExistingBinding });
 }
 
 /**
@@ -1565,6 +1566,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           orderId: params.orderId,
           uid: params.customerId,
           branchId,
+          requireExistingBinding: typeof orderData.onlineDraft.paymentStarted === "boolean",
         })
       : undefined;
 
@@ -1606,6 +1608,19 @@ export async function createPaymentOrder(params: CreateOrderParams) {
   if (params.orderId && db && typeof db.collection === "function") {
     try {
       await db.runTransaction(async (tx: any) => {
+        const orderRef = db.collection("orders").doc(params.orderId as string);
+        let paymentFence: Record<string, unknown> = {};
+        if (typeof orderData.onlineDraft.paymentStarted === "boolean") {
+          // This read/write conflicts with retirement on the order. After it
+          // commits, even an ambiguous provider outcome remains non-retirable.
+          const live = (await tx.get(orderRef)).data();
+          assertServerOnlineDraft(live, params.orderId!, params.customerId);
+          if (live.onlineDraft.requestHash !== orderData.onlineDraft.requestHash ||
+              live.onlineDraft.attemptId !== orderData.onlineDraft.attemptId) {
+            throw Object.assign(new Error("Checkout draft changed before payment."), { code: "ORDER_DRAFT_INVALID", statusCode: 409 });
+          }
+          paymentFence = { onlineDraft: { ...live.onlineDraft, paymentStarted: true } };
+        }
         if (couponCode) {
           await reserveCouponInTx(tx, {
             code: couponCode,
@@ -1622,8 +1637,9 @@ export async function createPaymentOrder(params: CreateOrderParams) {
           });
         }
         tx.set(
-          db.collection("orders").doc(params.orderId as string),
+          orderRef,
           {
+            ...paymentFence,
             pricing,
             // Stamp the coupon the bill was actually priced with, so the KOT,
             // receipt and support trail name the same code the customer used.
@@ -1645,7 +1661,7 @@ export async function createPaymentOrder(params: CreateOrderParams) {
       // order/coupon conflict uses `COUPON_ORDER_CONFLICT`. Matching only the
       // prefix turned "add ₹99 more" into "payment service unavailable", so
       // `isCouponRefusal` matches the explicit reason set instead.
-      if (couponCode && isCouponRefusal(err)) {
+      if (err?.code === "ORDER_DRAFT_INVALID" || (couponCode && isCouponRefusal(err))) {
         throw err;
       }
       console.warn("[Payments] pricing stamp failed, refusing fresh order:", err?.message || err);

@@ -23,6 +23,7 @@ const h = vi.hoisted(() => {
   const ref = (collection: string, id: string) => ({
     id,
     path: `${collection}/${id}`,
+    collection: (name: string) => ({ doc: (childId: string) => ref(`${collection}/${id}/${name}`, childId) }),
     get: async () => ({
       exists: docs.has(`${collection}/${id}`),
       id,
@@ -232,6 +233,51 @@ describe("Customer cash checkout → staff kitchen admission", () => {
         .rejects.toMatchObject({ code: "ORDER_NOT_PAID", statusCode: 409 });
     }
     expect(h.docs.get(path)).toEqual(order);
+  });
+});
+
+describe("zero-due online checkout via the cash order handler", () => {
+  async function submit(body: unknown) {
+    const status = vi.fn().mockReturnThis();
+    const json = vi.fn();
+    await handleCreateCashOrder({ user: { uid: CUSTOMER }, body } as any, { status, json } as any);
+    return { status: status.mock.calls[0]?.[0], body: json.mock.calls[0]?.[0] };
+  }
+
+  it("places a catalog-priced zero-due order at an outlet that does not take COD", async () => {
+    h.docs.set("branches/branch_a", { packagingFee: 0, cashOnDelivery: { enabled: false } });
+    seedCoupon({ value: 100 });
+    const cash = input({ attemptId: "ordinary_cash", expectedTotalPaise: 0 });
+    expect(await submit(cash)).toMatchObject({ status: 409, body: { code: "COD_UNAVAILABLE" } });
+    expect(h.docs.has(`orders/${ORDER}`)).toBe(false);
+
+    const online = { ...cash, attemptId: "zero_due_online", zeroDueOnly: true };
+    expect(await submit(online)).toMatchObject({ status: 201, body: { cashDuePaise: 0 } });
+    expect(h.docs.get(`orders/${ORDER}`)).toMatchObject({ cashDuePaise: 0, paymentChannel: "cash" });
+    expect(redemptionDoc()).toMatchObject({ status: "committed" });
+    expect(await submit(online)).toMatchObject({ status: 200, body: { cashDuePaise: 0, replayed: true } });
+    expect(statsDoc().committed).toBe(1);
+  });
+
+  it.each([0, 14500])("never writes a newly positive zero-due order even with expected total %i", async (expectedTotalPaise) => {
+    // Coupon/menu changes now give this delivery a positive bill. In the
+    // second case the client has already recalculated the new positive price.
+    h.docs.set(`users/${CUSTOMER}/addresses/saved_home`, deliveryAddress);
+    const checkout = deliveryInput({ attemptId: "zero_due_stale", addressId: "saved_home", expectedTotalPaise });
+    const before = new Map(h.docs);
+    const result = await submit({ ...checkout, zeroDueOnly: true });
+    // No order, attempt, redemption, counter or quote claim.
+    expect(h.docs).toEqual(before);
+    expect(result).toMatchObject({
+      status: 409, body: { code: "PRICE_CHANGED", totals: { split: { totalAmountPaise: 14500 } } },
+    });
+    // Positive cash remains valid only through the ordinary cash lane.
+    expect(await submit({ ...checkout, expectedTotalPaise: 14500 })).toMatchObject({
+      status: 201, body: { cashDuePaise: 14500 },
+    });
+    expect(await submit({ ...checkout, zeroDueOnly: true })).toMatchObject({
+      status: 409, body: { code: "IDEMPOTENCY_CONFLICT" },
+    });
   });
 });
 

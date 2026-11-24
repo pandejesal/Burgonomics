@@ -222,6 +222,8 @@ export interface BindDeliveryQuoteInput {
    * cash orders accepted later); "now" is the checkout-time rule (R6).
    */
   expiryMode: "now" | "orderCreated";
+  /** A server draft already owns its quote; payment must not claim it anew. */
+  requireExistingBinding?: boolean;
 }
 
 /**
@@ -290,6 +292,9 @@ export async function bindDeliveryQuote(input: BindDeliveryQuoteInput): Promise<
 
     const current = (quoteSnap.data() as any) || {};
     if (current.usedByOrderId !== orderId) {
+      if (input.requireExistingBinding) {
+        throw deliveryQuoteError("DELIVERY_QUOTE_EXPIRED", "The attached delivery price is no longer bound to this order.");
+      }
       await tx.set(
         quoteRef,
         {

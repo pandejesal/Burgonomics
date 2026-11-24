@@ -74,11 +74,12 @@ vi.mock("../src/modules/payments/razorpayClient", () => ({
   getRazorpayKeyId: () => "rzp_live_unittest",
 }));
 
-import { createOnlineDraft, createOnlineDraftSchema } from "../src/modules/orders/createOnlineDraft";
+import { createOnlineDraft } from "../src/modules/orders/createOnlineDraft";
 import { handleCreateOnlineDraft } from "../src/modules/orders/createOnlineDraftRoute";
 import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { bumpOrderStatus } from "../src/modules/orders/orderStatus";
 import { config } from "../src/config/env";
+import { formatPetpoojaOrderPayload } from "../src/modules/petpooja/orderPush";
 
 const CUSTOMER = "customer_online";
 const OTHER = "customer_other";
@@ -115,17 +116,71 @@ beforeEach(() => {
   });
 });
 
-async function create(body = request()) {
+async function create(body: unknown = request()) {
   const status = vi.fn().mockReturnThis();
   const json = vi.fn();
   await handleCreateOnlineDraft(
-    { user: { uid: CUSTOMER }, body: createOnlineDraftSchema.parse(body) } as any,
+    { user: { uid: CUSTOMER }, body } as any,
     { status, json } as any,
   );
   return { status, json };
 }
 
 describe("server online draft creation", () => {
+  it("sends the line note to the KOT and allows a privacy-minimal replay without that note", async () => {
+    await create(request({ items: [{ productId: "p1", quantity: 1, notes: "Toast both sides" }] }));
+    const retry = await create();
+    expect(retry.status).toHaveBeenCalledWith(200);
+    const order = h.docs.get(`orders/${ORDER}`);
+    expect(order.items[0].notes).toBe("Toast both sides");
+    const captured = { ...order, paymentChannel: "razorpay", paymentStatus: "completed" };
+    const payload = formatPetpoojaOrderPayload(captured, { name: "Surat" }, "PP_B1", "branch_a", ORDER,
+      undefined, [{ posItemId: "PP-1", unitPrice: 100, addons: [] }]);
+    expect(payload.orderinfo.OrderInfo.OrderItem.details[0].description).toBe("Toast both sides");
+  });
+
+  it("fences a rejected attempt against late retries before using a corrected coupon", async () => {
+    const invalid = await create(request({ couponCode: "BAD" }));
+    expect(invalid.status).toHaveBeenCalledWith(400);
+    expect(h.docs.has(`orders/${ORDER}`)).toBe(false);
+    const retired = await create({ operation: "retire", orderId: ORDER, attemptId: "attempt_online_1" });
+    expect(retired.status).toHaveBeenCalledWith(200);
+    const late = await create();
+    expect(late.status).toHaveBeenCalledWith(409);
+    expect(late.json.mock.calls[0][0]).toMatchObject({ code: "DRAFT_RETIRED" });
+    expect(h.docs.has(`orders/${ORDER}`)).toBe(false);
+    expect((await create(request({ orderId: "ord_coupon_fixed", attemptId: "attempt_coupon_fixed", couponCode: "QA20" }))).status)
+      .toHaveBeenCalledWith(201);
+  });
+
+  it("replaces an unpayable delivery draft using the refreshed quote and refuses its predecessor", async () => {
+    const original = request({ orderType: "delivery", addressId: "addr_1", deliveryQuoteId: "quote_stale_123" });
+    h.docs.set(`users/${CUSTOMER}/addresses/addr_1`, { lat: 21.2, lng: 72.8, line1: "1 Main" });
+    const quote = { uid: CUSTOMER, branchId: "branch_a", dropLat: 21.2, dropLng: 72.8, fee: 50,
+      expiresAt: Date.now() + 600_000, usedByOrderId: null };
+    h.docs.set("delivery_fee_quotes/quote_stale_123", quote);
+    expect((await create(original)).status).toHaveBeenCalledWith(201);
+    h.docs.set("delivery_fee_quotes/quote_stale_123", { ...quote, usedByOrderId: ORDER, expiresAt: 1 });
+    const pay = (orderId: string, deliveryQuoteId?: string) => createPaymentOrder({
+      orderId, customerId: CUSTOMER, orderType: "delivery", deliveryQuoteId, items: [],
+    });
+    h.docs.set("delivery_fee_quotes/quote_fresh_123", { ...quote, fee: 65 });
+    await expect(pay(ORDER, "quote_fresh_123")).rejects.toMatchObject({ code: "DELIVERY_QUOTE_EXPIRED" });
+    expect((await create({ operation: "retire", orderId: ORDER, attemptId: original.attemptId })).status)
+      .toHaveBeenCalledWith(200);
+    expect(h.docs.get(`orders/${ORDER}`).status).toMatchObject({ code: "CANCELLED", terminal: true });
+    expect(h.docs.get("delivery_fee_quotes/quote_stale_123").usedByOrderId).toBeNull();
+    await expect(pay(ORDER)).rejects.toMatchObject({ statusCode: 409 });
+    expect(h.gatewayCreate).not.toHaveBeenCalled();
+    const refreshedId = "ord_quote_refreshed";
+    const refreshed = await create({ ...original, orderId: refreshedId, attemptId: "attempt_refreshed_1", deliveryQuoteId: "quote_fresh_123" });
+    expect(refreshed.status).toHaveBeenCalledWith(201);
+    await expect(pay(refreshedId)).resolves.toMatchObject({ amountPaise: 18000 });
+    const fenced = await create({ operation: "retire", orderId: refreshedId, attemptId: "attempt_refreshed_1" });
+    expect(fenced.json.mock.calls[0][0]).toMatchObject({ code: "DRAFT_PAYMENT_IN_PROGRESS" });
+    expect(h.gatewayCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves owner, store, branch, price and coupon in the real handler", async () => {
     const { status, json } = await create(request({ couponCode: "QA20" }));
     expect(status).toHaveBeenCalledWith(201);
@@ -144,12 +199,35 @@ describe("server online draft creation", () => {
     expect(h.docs.get(`orders/${ORDER}`)).not.toHaveProperty("cashDuePaise");
   });
 
-  it("derives the customer ETA from the server storefront, not the client", async () => {
+  function etaRequest(orderType: "delivery" | "takeaway" | "dinein") {
+    if (orderType === "delivery") {
+      h.docs.set(`users/${CUSTOMER}/addresses/addr_1`, { lat: 21.2, lng: 72.8 });
+      h.docs.set("delivery_fee_quotes/quote_eta_123", { uid: CUSTOMER, branchId: "branch_a", dropLat: 21.2,
+        dropLng: 72.8, fee: 50, expiresAt: Date.now() + 600_000, usedByOrderId: null });
+    }
+    return request({ orderType, ...(orderType === "delivery" ? { addressId: "addr_1", deliveryQuoteId: "quote_eta_123" } : {}),
+      ...(orderType === "dinein" ? { tableNumber: "7" } : {}) });
+  }
+
+  it.each([["delivery", 45], ["takeaway", 17], ["dinein", 17]] as const)("stores and returns the storefront's %s ETA", async (mode, minutes) => {
     const before = Date.now();
-    await create();
-    const estimated = Date.parse(h.docs.get(`orders/${ORDER}`).estimatedAt);
-    expect(estimated).toBeGreaterThanOrEqual(before + 17 * 60_000 - 1000);
-    expect(estimated).toBeLessThanOrEqual(Date.now() + 17 * 60_000 + 1000);
+    const result = await create(etaRequest(mode));
+    expect(result.status).toHaveBeenCalledWith(201);
+    const stored = h.docs.get(`orders/${ORDER}`).estimatedAt;
+    expect(result.json).toHaveBeenCalledWith(expect.objectContaining({ estimatedAt: stored }));
+    expect(Date.parse(stored)).toBeGreaterThanOrEqual(before + minutes * 60_000);
+    expect(Date.parse(stored)).toBeLessThanOrEqual(Date.now() + minutes * 60_000);
+  });
+
+  it.each([undefined, null, 0, -1, NaN, Infinity])("omits an unknown/invalid ETA (%s) in both the receipt and document", async (eta) => {
+    h.docs.set("stores/s1", { ...h.docs.get("stores/s1"), etaMinutes: eta, pickupEtaMinutes: eta });
+    for (const mode of ["delivery", "takeaway", "dinein"] as const) {
+      const orderId = `ord_eta_${mode}`;
+      const result = await create({ ...etaRequest(mode), orderId, attemptId: `attempt_eta_${mode}` });
+      expect(result.status).toHaveBeenCalledWith(201);
+      expect(result.json.mock.calls[0][0]).not.toHaveProperty("estimatedAt");
+      expect(h.docs.get(`orders/${orderId}`)).not.toHaveProperty("estimatedAt");
+    }
   });
 
   it("replays the same attempt from a second tab without a second order", async () => {
@@ -167,6 +245,27 @@ describe("server online draft creation", () => {
     expect(status).toHaveBeenCalledWith(409);
     expect(json.mock.calls[0][0]).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
     expect([...h.docs.keys()].filter((path) => path.startsWith("orders/"))).toHaveLength(1);
+  });
+
+  it("persists a retry fingerprint and refuses the same delivery attempt for a different address", async () => {
+    const original = etaRequest("delivery");
+    expect((await create(original)).status).toHaveBeenCalledWith(201);
+    const before = h.docs.get(`orders/${ORDER}`);
+    expect(before.checkoutFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    const response = await create({ ...original, addressId: "different_address" });
+    expect(response.status).toHaveBeenCalledWith(409);
+    expect(response.json.mock.calls[0][0]).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(h.docs.get(`orders/${ORDER}`)).toEqual(before);
+  });
+
+  it("fails closed without a checkout fingerprint, even with a matching sidecar receipt", async () => {
+    expect((await create()).status).toHaveBeenCalledWith(201);
+    const { checkoutFingerprint: _removed, ...stored } = h.docs.get(`orders/${ORDER}`);
+    h.docs.set(`orders/${ORDER}`, stored);
+    const response = await create();
+    expect(response.status).toHaveBeenCalledWith(409);
+    expect(response.json.mock.calls[0][0]).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(h.docs.get(`orders/${ORDER}`)).toEqual(stored);
   });
 
   it("reads the saved address and courier quote for delivery inside the transaction", async () => {

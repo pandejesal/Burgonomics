@@ -141,7 +141,7 @@ import { walkInQuoteSchema } from "./modules/orders/walkInSchema";
 import { handleWalkInQuote } from "./modules/orders/walkInQuoteRoute";
 import { createCashOrderSchema } from "./modules/orders/createCashOrder";
 import { handleCreateCashOrder } from "./modules/orders/createCashOrderRoute";
-import { createOnlineDraftSchema } from "./modules/orders/createOnlineDraft";
+import { onlineDraftRouteSchema } from "./modules/orders/createOnlineDraft";
 import { handleCreateOnlineDraft } from "./modules/orders/createOnlineDraftRoute";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { recoverStuckCaptureFulfilments } from "./modules/payments/captureRecovery";
@@ -1338,7 +1338,7 @@ app.post(
 app.post(
   "/orders/createOnlineDraft",
   requireAuth,
-  validateBody(createOnlineDraftSchema),
+  validateBody(onlineDraftRouteSchema),
   handleCreateOnlineDraft
 );
 

@@ -15,6 +15,7 @@ import {
   assertStorefrontOpenAndMatching,
 } from "../payments/outletStatus";
 import { staffCloseOverrideInForce } from "../stores/storeStatus";
+import { checkoutEstimatedAt } from "./checkoutEta";
 import { DELIVERY_FEE_QUOTES, assertDeliveryQuoteBindable } from "../payments/deliveryQuotes";
 import {
   evaluateCoupon,
@@ -65,11 +66,20 @@ export const createOnlineDraftSchema = z.object({
 
 export type CreateOnlineDraftRequest = z.infer<typeof createOnlineDraftSchema>;
 
+const retireOnlineDraftSchema = z.object({
+  operation: z.literal("retire"),
+  orderId: documentId,
+  attemptId: documentId,
+}).strict();
+
+export const onlineDraftRouteSchema = z.union([createOnlineDraftSchema, retireOnlineDraftSchema]);
+
 export interface OnlineDraftReceipt {
   orderId: string;
   attemptId: string;
   replayed: boolean;
   amountPaise: number;
+  estimatedAt?: string;
   totals: PricingBreakdown;
   status: { code: "PLACED"; label: "Order placed"; kind: "upcoming"; terminal: false };
 }
@@ -144,7 +154,54 @@ function requestHash(input: CreateOnlineDraftRequest, actorUid: string): string 
   // replay record intentionally omits them, so a second tab/reload must still
   // converge on the same attempt. The draft binding hash remains stricter.
   const { notes: _notes, fulfillmentInstructions: _instructions, whatsappOptIn: _optIn, ...identity } = input;
-  return digest({ actorUid, ...identity });
+  return digest({ actorUid, ...identity, items: identity.items.map(({ notes: _lineNote, ...item }) => item) });
+}
+
+const draftAttemptRef = (uid: string, attemptId: string) =>
+  db.collection("online_checkout_attempts").doc(digest([uid, attemptId]));
+
+/** Fence delayed creates and terminalize only a positively never-payable draft. */
+export async function retireOnlineDraft(actorUid: string, raw: unknown) {
+  if (!actorUid) throw new OnlineDraftError(401, "UNAUTHENTICATED", "Authentication required.");
+  const parsed = retireOnlineDraftSchema.safeParse(raw);
+  if (!parsed.success) throw new OnlineDraftError(400, "INVALID_INPUT", "Invalid checkout attempt.");
+  const { orderId, attemptId } = parsed.data;
+  const orderRef = db.collection("orders").doc(orderId);
+  const attemptRef = draftAttemptRef(actorUid, attemptId);
+  return db.runTransaction(async (tx) => {
+    const attempt = (await tx.get(attemptRef)).data();
+    if (attempt?.actorUid === actorUid && attempt?.retiredOrderId === orderId) return { retired: true, orderId, attemptId };
+    if (attempt && (attempt.actorUid !== actorUid || attempt.receipt?.orderId !== orderId)) {
+      throw new OnlineDraftError(409, "IDEMPOTENCY_CONFLICT", "This checkout attempt belongs to a different order.");
+    }
+    const order = (await tx.get(orderRef)).data();
+    if (order) {
+      assertServerOnlineDraft(order, orderId, actorUid);
+      if (order.onlineDraft.attemptId !== attemptId) {
+        throw new OnlineDraftError(409, "IDEMPOTENCY_CONFLICT", "This draft belongs to a different attempt.");
+      }
+      if (order.onlineDraft.paymentStarted !== false || order.paymentStatus !== "pending" ||
+          order.payment?.status !== "pending" || order.couponIntentId || order.razorpayOrderId || order.payment?.razorpayOrderId) {
+        throw new OnlineDraftError(409, "DRAFT_PAYMENT_IN_PROGRESS", "Finish the previous online payment before starting another checkout.");
+      }
+      const quoteRef = order.deliveryQuoteId ? db.collection(DELIVERY_FEE_QUOTES).doc(order.deliveryQuoteId) : null;
+      if (quoteRef && (await tx.get(quoteRef)).data()?.usedByOrderId === orderId) {
+        tx.set(quoteRef, { usedByOrderId: null, usedAt: null }, { merge: true });
+      }
+      const stamp = admin.firestore.FieldValue.serverTimestamp();
+      tx.update(orderRef, {
+        status: { code: "CANCELLED", label: "Cancelled", kind: "cancelled", terminal: true },
+        cancellationReason: "checkout_draft_replaced",
+        completedAt: stamp,
+        updatedAt: stamp,
+      });
+    } else if (attempt?.receipt) {
+      // A missing read does not disprove the previously recorded order.
+      throw new OnlineDraftError(503, "DRAFT_UNAVAILABLE", "The original checkout draft is unavailable.");
+    }
+    tx.set(attemptRef, { actorUid, retiredOrderId: orderId }, { merge: true });
+    return { retired: true, orderId, attemptId };
+  });
 }
 
 function receiptOf(order: any, replayed: boolean): OnlineDraftReceipt {
@@ -153,6 +210,7 @@ function receiptOf(order: any, replayed: boolean): OnlineDraftReceipt {
     attemptId: order.onlineDraft.attemptId,
     replayed,
     amountPaise: Math.round(Number(order.pricing.grandTotal) * 100),
+    ...(order.estimatedAt ? { estimatedAt: order.estimatedAt } : {}),
     totals: order.pricing,
     status: placed,
   };
@@ -165,19 +223,26 @@ export async function createOnlineDraft(actorUid: string, raw: unknown): Promise
   const input = parsed.data;
   const hash = requestHash(input, actorUid);
   const orderRef = db.collection("orders").doc(input.orderId);
-  const attemptRef = db.collection("online_checkout_attempts").doc(digest([actorUid, input.attemptId]));
+  const attemptRef = draftAttemptRef(actorUid, input.attemptId);
   const couponCode = input.couponCode?.trim().toUpperCase();
 
   try {
     return await db.runTransaction(async (tx) => {
       const attempt = (await tx.get(attemptRef)).data();
       if (attempt) {
+        if (attempt.actorUid === actorUid && attempt.retiredOrderId === input.orderId) {
+          throw new OnlineDraftError(409, "DRAFT_RETIRED", "This checkout attempt has been retired.");
+        }
         if (attempt.actorUid !== actorUid || attempt.requestHash !== hash || !attempt.receipt) {
           throw new OnlineDraftError(409, "IDEMPOTENCY_CONFLICT", "This checkout attempt already has a different draft.");
         }
         const existing = await tx.get(orderRef);
         if (!existing.exists) throw new OnlineDraftError(503, "DRAFT_UNAVAILABLE", "The original checkout draft is unavailable.");
-        assertServerOnlineDraft(existing.data(), input.orderId, actorUid);
+        const order = existing.data();
+        if (order?.checkoutFingerprint !== hash) {
+          throw new OnlineDraftError(409, "IDEMPOTENCY_CONFLICT", "The original checkout context could not be verified.");
+        }
+        assertServerOnlineDraft(order, input.orderId, actorUid);
         return { ...attempt.receipt, replayed: true } as OnlineDraftReceipt;
       }
 
@@ -311,10 +376,7 @@ export async function createOnlineDraft(actorUid: string, raw: unknown): Promise
         packingFee: totals.packagingFee,
         currency: "INR",
       };
-      const etaMinutes = input.orderType === "delivery" ? storeData.etaMinutes : storeData.pickupEtaMinutes;
-      const estimatedAt = typeof etaMinutes === "number" && Number.isFinite(etaMinutes) && etaMinutes > 0
-        ? new Date(Date.now() + etaMinutes * 60_000).toISOString()
-        : undefined;
+      const estimatedAt = checkoutEstimatedAt(storeData, input.orderType);
       const timestamp = admin.firestore.FieldValue.serverTimestamp();
       const order: Record<string, any> = {
         id: input.orderId, orderId: input.orderId, customerId: actorUid, userId: actorUid,
@@ -366,6 +428,8 @@ export async function createOnlineDraft(actorUid: string, raw: unknown): Promise
         customerId: actorUid,
         attemptId: input.attemptId,
         requestHash: onlineDraftBindingHash(order),
+        // Missing on older drafts is deliberately NOT proof of no payment.
+        paymentStarted: false,
         createdAtMs: Date.now(),
       };
       const receipt = receiptOf(order, false);
