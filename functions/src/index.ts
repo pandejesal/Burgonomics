@@ -21,6 +21,7 @@ import {
 } from "./core/middleware";
 import { corsOriginError } from "./core/cors";
 import { resolveClientAddress } from "./core/clientAddress";
+import { isJsonBodyMediaType, normalizeJsonMediaType } from "./core/jsonMediaType";
 
 // Modules
 import {
@@ -372,11 +373,21 @@ const jsonBodyErrorHandler = (err: any, _req: any, res: any, next: any) => {
 // definitions. An earlier revision registered `express.json()` after the routes,
 // so malformed JSON was rejected by the per-route parser and Express answered
 // with its default HTML page instead of this module's JSON contract.
+//
+// Cycle 10 (2026-11-24): a comma-joined media type (`application/json,
+// application/json`) makes `type-is` skip parsing, and every route then sees a
+// `{}` body - a field-level 400 on checkout for a pure transport fault. The
+// matcher below accepts a list made entirely of JSON media types, because
+// already-shipped APKs and cached bundles carry the defect and must keep working;
+// a list mixing JSON with another type is refused with a typed 415.
 const rawBodyCapture = (req: any, _res: any, buf: Buffer) => {
   req.rawBody = buf;
 };
 const apiBodyParsers = express.Router();
-apiBodyParsers.use(express.json({ limit: "2mb", verify: rawBodyCapture }));
+apiBodyParsers.use(normalizeJsonMediaType() as any);
+apiBodyParsers.use(
+  express.json({ limit: "2mb", verify: rawBodyCapture, type: isJsonBodyMediaType as any })
+);
 apiBodyParsers.use(jsonBodyErrorHandler as any);
 app.use(apiBodyParsers);
 

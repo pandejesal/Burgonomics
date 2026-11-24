@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import express from "express";
+import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * F9 (staging cycle 6, 2026-11-22): every cash order carrying a coupon returned
@@ -93,6 +97,10 @@ vi.mock("firebase-admin", () => {
 
 import { createCashOrder, createCashOrderSchema } from "../src/modules/orders/createCashOrder";
 import { handleCreateCashOrder } from "../src/modules/orders/createCashOrderRoute";
+import { onlineDraftRouteSchema } from "../src/modules/orders/createOnlineDraft";
+import { handleCreateOnlineDraft } from "../src/modules/orders/createOnlineDraftRoute";
+import { isJsonBodyMediaType } from "../src/core/jsonMediaType";
+import { validateBody } from "../src/core/validation";
 import { createWalkIn } from "../src/modules/orders/createWalkIn";
 import { handleCreateWalkIn } from "../src/modules/orders/createWalkInRoute";
 import { formatPetpoojaOrderPayload } from "../src/modules/petpooja/orderPush";
@@ -135,6 +143,62 @@ function seedQuote(id = "dfq_coupon_1") {
 }
 
 const deliveryAddress = { lat: 21.2, lng: 72.8, city: "Surat", line1: "1 Main Road" };
+
+describe("checkout JSON across the HTTP boundary", () => {
+  // Cycle 10: the deployed UI's exact header (two case-different keys joined by
+  // Fetch) and the canonical one must both produce a written order. The parser
+  // and validator are the production ones; only auth and the datastore are
+  // local fixtures, and nothing here parses the body on the test's behalf.
+  it.each([
+    ["cash", "application/json, application/json"],
+    ["cash", "application/json"],
+    ["online", "application/json, application/json"],
+    ["online", "application/json"],
+    ["zero", "application/json, application/json"],
+    ["zero", "application/json"],
+  ])("creates the %s order for the %s wire request", async (lane, contentType) => {
+    h.docs.set("stores/str_fulfill", { partnerBranchId: "branch_a", isOpen: true });
+    h.docs.set("branches/branch_a", { ...h.docs.get("branches/branch_a"), packagingFee: 0,
+      ...(lane === "zero" ? { cashOnDelivery: { enabled: false } } : {}),
+    });
+    h.docs.set("products/burger_1", { ...h.docs.get("products/p1"), price: 109 });
+    h.docs.set("coupons/FREE", { ...h.docs.get(`coupons/${CODE}`), code: "FREE", value: 100 });
+    const fixtureDir = process.env.CHECKOUT_WIRE_FIXTURES;
+    const orderFields = { orderId: ORDER, attemptId: "checkout_attempt_01", storeId: "str_fulfill",
+      orderType: "takeaway", items: [{ productId: "burger_1", quantity: 1, notes: "Toast both sides" }],
+      ...(lane === "online" ? {} : { expectedTotalPaise: lane === "zero" ? 0 : 10900 }),
+      ...(lane === "zero" ? { zeroDueOnly: true, couponCode: "FREE" } : {}),
+    };
+    const wire = fixtureDir
+      ? JSON.parse(readFileSync(join(fixtureDir, `${lane}.json`), "utf8")) as { contentType: string; body: string }
+      : { contentType, body: JSON.stringify(orderFields) };
+    const orderId = JSON.parse(wire.body).orderId as string;
+    const app = express();
+    app.use(express.json({ limit: "2mb", type: isJsonBodyMediaType as never }));
+    app.use((req, _res, next) => { Object.assign(req, { user: { uid: CUSTOMER } }); next(); });
+    app.post("/orders/createCashOrder", validateBody(createCashOrderSchema), handleCreateCashOrder);
+    app.post("/orders/createOnlineDraft", validateBody(onlineDraftRouteSchema), handleCreateOnlineDraft);
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback socket");
+      const route = lane === "online" ? "createOnlineDraft" : "createCashOrder";
+      const res = await fetch(`http://127.0.0.1:${address.port}/orders/${route}`, {
+        method: "POST", headers: { "content-type": wire.contentType }, body: wire.body,
+      });
+      const response = await res.json();
+      if (res.status === 400) expect(h.docs.has(`orders/${orderId}`)).toBe(false);
+      expect({ status: res.status, response }).toMatchObject({ status: 201, response: { orderId } });
+      expect(h.docs.get(`orders/${orderId}`)).toMatchObject({
+        orderType: "takeaway",
+        ...(lane === "online" ? { paymentMethod: "online" } : { cashDuePaise: lane === "zero" ? 0 : 10900 }),
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+});
 
 function input(extra: Record<string, any> = {}) {
   return {

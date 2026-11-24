@@ -1,0 +1,57 @@
+{
+  "//": "Captured wire shape of the Cycle 10 staging checkout failures (2026-11-24, Customer 67371ec, boot-CTrOTo_c.js).",
+  "//headers": "The deployed HttpClient merged its lowercase `content-type` default with the checkout services' capital `Content-Type`, and Fetch emitted ONE header whose value is the comma-joined pair below. Express/type-is rejects that value, so express.json() left req.body as {} and validateBody answered 400 with the missing-field list.",
+  "//privacy": "Synthetic ids and a synthetic customer only. No token, phone, address, or key is stored here.",
+  "deployedContentType": "application/json, application/json",
+  "canonicalContentType": "application/json",
+  "lanes": {
+    "cash": {
+      "path": "/orders/createCashOrder",
+      "body": {
+        "orderId": "ord_1795540784277_KLUhIe",
+        "storeId": "str_fulfill",
+        "orderType": "takeaway",
+        "items": [{ "productId": "burger_1", "quantity": 1 }],
+        "expectedTotalPaise": 10900,
+        "attemptId": "hzZoVLYXRc2zENfZD4wFwp"
+      }
+    },
+    "online": {
+      "path": "/orders/createOnlineDraft",
+      "body": {
+        "orderId": "ord_1795540784408_l2iNSA",
+        "attemptId": "eO3GIiFe16T7NUr5jRh4V3",
+        "storeId": "str_fulfill",
+        "orderType": "takeaway",
+        "items": [{ "productId": "burger_1", "quantity": 1 }]
+      }
+    },
+    "zero": {
+      "path": "/orders/createCashOrder",
+      "body": {
+        "orderId": "ord_1795540784529_Xfhioa",
+        "storeId": "str_fulfill",
+        "orderType": "takeaway",
+        "items": [{ "productId": "burger_1", "quantity": 1 }],
+        "expectedTotalPaise": 0,
+        "zeroDueOnly": true,
+        "couponCode": "FREE",
+        "attemptId": "Ka8v5N6s4TUJxkYSafXmuD"
+      }
+    }
+  },
+  "observed400": {
+    "cash": [
+      "orderType: Invalid option: expected one of \"delivery\"|\"takeaway\"|\"dinein\"",
+      "items: Invalid input: expected array, received undefined",
+      "expectedTotalPaise: Invalid input: expected number, received undefined"
+    ],
+    "online": [": Invalid input"],
+    "zero": [
+      "orderId: Invalid input: expected string, received undefined",
+      "orderType: Invalid option: expected one of \"delivery\"|\"takeaway\"|\"dinein\"",
+      "items: Invalid input: expected array, received undefined",
+      "expectedTotalPaise: Invalid input: expected number, received undefined"
+    ]
+  }
+}
