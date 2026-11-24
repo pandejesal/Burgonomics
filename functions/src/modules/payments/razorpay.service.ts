@@ -39,7 +39,7 @@ import {
 import { PAYMENT_INTENT_TTL_MS } from "./lifetimes";
 import { resolveBranchId } from "./branchResolver";
 import { assertOutletOpenForOnlineOrders } from "./outletStatus";
-import { settlementCapturePending, isProviderConfirmedCapture, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
+import { settlementCapturePending, isProviderConfirmedCapture, isManuallyConfirmedCapture, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
 import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } from "./monthlyFee";
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
 import { assertServerOnlineDraft } from "../orders/createOnlineDraft";
@@ -2915,9 +2915,9 @@ async function finishVerifiedPayment(args: {
         // M7: ONE authoritative capture instant, stamped by verify AND the
         // recovery path (this function is shared by both). Never wall-clock:
         // an unknown gateway time is flagged unresolved, never guessed.
-        // A provider-confirmed capture is terminal: a later verify or recovery
-        // must never downgrade it to pending/unknown.
-        ...(isProviderConfirmedCapture(fresh) ? {} : settlementCapturePending()),
+        // Provider-confirmed and manually resolved captures are terminal: a
+        // later verify or recovery must never downgrade either to pending/unknown.
+        ...(isProviderConfirmedCapture(fresh) || isManuallyConfirmedCapture(fresh) ? {} : settlementCapturePending()),
         ...(capturedPaiseStamp !== undefined
           ? {
               "payment.capturedAmountPaise": capturedPaiseStamp,

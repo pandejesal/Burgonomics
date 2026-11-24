@@ -45,22 +45,35 @@ const { mockDb, docs, control, snapshots } = vi.hoisted(() => {
       update: async (data: any) => applyWrite(path, data, true),
     };
   };
-  const nested = (d: any, f: string) =>
-    f.split(".").reduce((o: any, k) => (o == null ? undefined : o[k]), d);
+  const nested = (d: any, f: string | { documentId: boolean }) =>
+    typeof f === "string"
+      ? f.split(".").reduce((o: any, k) => (o == null ? undefined : o[k]), d)
+      : d.id;
 
   const mockDb: any = {
     collection: (col: string) => {
-      const filters: Array<[string, any]> = [];
+      const filters: Array<[string, string, any]> = [];
+      let cap = Infinity;
+      let orderField = "";
+      let cursor = "";
       const q: any = {
-        where: (f: string, _o: string, v: any) => {
-          filters.push([f, v]);
+        where: (f: string, op: string, v: any) => {
+          filters.push([f, op, v]);
           return q;
         },
-        limit: () => q,
+        orderBy: (f: string) => { orderField = f; return q; },
+        limit: (n: number) => { cap = n; return q; },
+        startAfter: (d: any) => { cursor = d.ref?.path ?? d.id ?? ""; return q; },
+        add: async (data: any) => applyWrite(`${col}/auto_${docs.size}`, data, false),
         get: async () => {
           const found = [...docs.entries()]
-            .filter(([p]) => p.startsWith(`${col}/`))
-            .filter(([, d]) => filters.every(([f, v]) => nested(d, f) === v))
+            .filter(([p]) => p.startsWith(`${col}/`) && (!cursor || p > cursor))
+            .filter(([, d]) => filters.every(([f, op, v]) => {
+              const actual = nested(d, f);
+              return op === "==" ? actual === v : op === ">=" ? actual >= v : op === "<" ? actual < v : false;
+            }))
+            .sort(([a], [b]) => orderField ? (nested(docs.get(a), orderField) < nested(docs.get(b), orderField) ? -1 : 1) : a.localeCompare(b))
+            .slice(0, cap)
             .map(([p, d]) => ({
               id: p.slice(col.length + 1),
               ref: docRef(col, p.slice(col.length + 1)),
@@ -113,6 +126,9 @@ vi.mock("firebase-admin", () => {
   };
   const f: any = vi.fn(() => mockDb);
   f.FieldValue = FieldValue;
+  f.FieldPath = class FieldPath {
+    static documentId() { return { documentId: true }; }
+  };
   return {
     default: {
       firestore: f,
@@ -152,6 +168,8 @@ import {
   __setRefundPostForTests,
 } from "../src/modules/payments/razorpay.service";
 import { computeHmacSha256 } from "../src/core/security";
+import { generateSettlementStatement } from "../src/modules/settlements/settlementService";
+import { CAPTURE_RECOVERY_AFTER_MS } from "../src/modules/payments/captureFulfillment";
 import { config } from "../src/config/env";
 
 const SECRET = "p1i_capture_secret";
@@ -282,6 +300,54 @@ describe("P1-I capture side — an unfulfillable capture is refunded, never conf
     expect(res.ok).toBe(true);
     expect(control.refundPosts).toHaveLength(0);
     expect(docs.get("orders/ord_p1i").paymentStatus).toBe("completed");
+  });
+
+  it("a PLACED manually resolved order survives stalled recovery and verify without losing its settlement proof", async () => {
+    seed(true);
+    const previousPosMock = config.mock.petpoojaPos;
+    config.mock.petpoojaPos = true;
+    const atMs = Date.UTC(2026, 10, 20, 10);
+    docs.set("orders/ord_p1i", {
+      ...docs.get("orders/ord_p1i"),
+      createdAt: new Date(Date.UTC(2026, 10, 1)).toISOString(),
+      payment: { ...docs.get("orders/ord_p1i").payment, razorpayPaymentId: "pay_p1i", razorpayOrderId: GW },
+      settlementCaptureState: "confirmed_manual",
+      settlementCaptureUnresolved: false,
+      settlementEffectiveAtMs: atMs,
+      settlementResolution: { uid: "brand_owner", atMs, istMonthKey: "2026-11", reason: "Provider dashboard evidence" },
+    });
+    const monthKey = "2026-11";
+    const first = await generateSettlementStatement({ branchId: "branch_a", monthKey,
+      caller: { uid: "brand_owner", role: "brand_owner" }, source: "on_demand", now: Date.UTC(2026, 11, 15) });
+    expect(first?.complete).toBe(true);
+
+    docs.set("orders/ord_p1i", {
+      ...docs.get("orders/ord_p1i"),
+      captureFulfillmentState: "fulfillable",
+      captureFulfillment: { state: "fulfillable", paymentId: "pay_p1i", atMs: Date.now() - CAPTURE_RECOVERY_AFTER_MS - 60_000 },
+    });
+    try {
+      const recovery = await import("../src/modules/payments/captureRecovery").then(m => m.recoverStuckCaptureFulfilments());
+      expect(recovery.failed).toBe(0);
+      expect(recovery.confirmed).toBe(1);
+      expect(docs.get("orders/ord_p1i")).toMatchObject({ status: { code: "CONFIRMED" }, settlementCaptureState: "confirmed_manual",
+        settlementCaptureUnresolved: false, settlementEffectiveAtMs: atMs });
+
+      const verified: any = await verifyPayment(
+        { orderId: "ord_p1i", razorpayOrderId: GW, razorpayPaymentId: "pay_p1i", razorpaySignature: sign() },
+        { uid: "cust_1" }
+      );
+      expect(verified.ok).toBe(true);
+      expect(control.refundPosts).toHaveLength(0);
+      expect(docs.get("orders/ord_p1i")).toMatchObject({ status: { code: "CONFIRMED" }, settlementCaptureState: "confirmed_manual",
+        settlementCaptureUnresolved: false, settlementEffectiveAtMs: atMs });
+
+      const regenerated = await generateSettlementStatement({ branchId: "branch_a", monthKey,
+        caller: { uid: "brand_owner", role: "brand_owner" }, source: "on_demand", now: Date.UTC(2026, 11, 16) });
+      expect(regenerated?.complete).toBe(true);
+      expect(regenerated?.unresolvedCaptures).toBe(0);
+      expect(regenerated?.manuallyResolvedCaptures).toEqual(["ord_p1i"]);
+    } finally { config.mock.petpoojaPos = previousPosMock; }
   });
 
   it("a failed automatic refund refuses the confirm and parks for ops", async () => {

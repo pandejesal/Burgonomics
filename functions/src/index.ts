@@ -49,7 +49,7 @@ import { resolveDiscrepancy } from "./modules/payments/discrepancies";
 // Franchise settlement (owner decision 2026-11-20): month-end statements.
 import {
   exportSettlementsCsv,
-  generateSettlementStatement,
+  generateSettlementStatementLocked,
   listSettlements,
   markSettlementPaid,
   runMonthlySettlementScheduler,
@@ -59,6 +59,14 @@ import {
   settlementCaller,
   settlementErrorResponse,
 } from "./modules/settlements/settlementRoutes";
+import { assertBrand } from "./modules/settlements/settlementService";
+import {
+  listCaptureIssues,
+  reconcileCaptureMonth,
+  resolveCaptureManually,
+  retryCaptureRegeneration,
+  runCaptureRecoverySweep,
+} from "./modules/payments/settlementCaptureRecovery";
 import {
   syncPetpoojaMenu,
   handlePetpoojaMenuWebhook,
@@ -1536,7 +1544,7 @@ app.post(
   validateBody(settlementGenerateSchema),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const statement = await generateSettlementStatement({
+      const statement = await generateSettlementStatementLocked({
         branchId: req.body.branchId,
         monthKey: req.body.monthKey,
         caller: settlementCaller(req.user),
@@ -1586,6 +1594,74 @@ app.post(
       const { status, body } = settlementErrorResponse(err);
       res.status(status).json(body);
     }
+  }
+);
+
+const recoveryOrderId = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id);
+const recoveryReason = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 500;
+
+app.get(
+  "/settlements/captureIssues",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      assertBrand(settlementCaller(req.user), "list capture issues");
+      res.status(200).json({ issues: await listCaptureIssues() });
+    } catch (err: any) { const { status, body } = settlementErrorResponse(err); res.status(status).json(body); }
+  }
+);
+
+app.post(
+  "/settlements/resolveCapture",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const caller = settlementCaller(req.user);
+      assertBrand(caller, "resolve a capture manually");
+      const { orderId, razorpayPaymentId, capturedAtMs, reason, istMonthKey } = req.body ?? {};
+      if (!recoveryOrderId(orderId) || typeof razorpayPaymentId !== "string" || !/^pay_[A-Za-z0-9_-]{1,100}$/.test(razorpayPaymentId) ||
+          typeof capturedAtMs !== "number" || !recoveryReason(reason) || (istMonthKey !== undefined && typeof istMonthKey !== "string")) {
+        return void res.status(400).json({ code: "invalid_request" });
+      }
+      const result = await resolveCaptureManually({
+        orderId, paymentId: razorpayPaymentId, capturedAtMs, istMonthKey, reason: reason.trim(), caller: caller!,
+      });
+      res.status(result.ok ? 200 : result.status ?? 400).json(result);
+    } catch (err: any) { const { status, body } = settlementErrorResponse(err); res.status(status).json(body); }
+  }
+);
+
+app.post(
+  "/settlements/reconcileCaptureMonth",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const caller = settlementCaller(req.user);
+      assertBrand(caller, "reconcile a capture month");
+      const { orderId, keepMonth, reason } = req.body ?? {};
+      if (!recoveryOrderId(orderId) || typeof keepMonth !== "string" || !/^\d{4}-\d{2}$/.test(keepMonth) || !recoveryReason(reason)) {
+        return void res.status(400).json({ code: "invalid_request" });
+      }
+      const result = await reconcileCaptureMonth({ orderId, keepMonth, reason: reason.trim(), caller: caller! });
+      res.status(result.ok ? (result.regenerationPending ? 202 : 200) : result.status ?? 400).json(result);
+    } catch (err: any) { const { status, body } = settlementErrorResponse(err); res.status(status).json(body); }
+  }
+);
+
+app.post(
+  "/settlements/retryCaptureRegeneration",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      assertBrand(settlementCaller(req.user), "retry capture regeneration");
+      if (!recoveryOrderId(req.body?.orderId)) return void res.status(400).json({ code: "invalid_request" });
+      const result = await retryCaptureRegeneration(req.body.orderId);
+      res.status(result.ok ? (result.regenerationPending ? 202 : 200) : result.status ?? 400).json(result);
+    } catch (err: any) { const { status, body } = settlementErrorResponse(err); res.status(status).json(body); }
   }
 );
 
@@ -2743,4 +2819,11 @@ export {
   onTicketEscalatedNotificationTrigger,
 } from "./modules/notifications";
 
-
+export const sweepStuckSettlementCapturesJob = onSchedule(
+  { region: REGION, schedule: "*/30 * * * *", timeZone: "Asia/Kolkata", timeoutSeconds: 300 },
+  async () => {
+    const { ran } = await withSchedulerLock("sweep-stuck-settlement-captures", 20 * 60 * 1000,
+      () => runCaptureRecoverySweep());
+    if (!ran) console.log("[Capture Recovery] previous tick still running — skipped");
+  }
+);

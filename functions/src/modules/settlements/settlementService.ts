@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { captureErrorSnapshot } from "../../core/errors";
+import { withSchedulerLock } from "../../core/schedulerLock";
 import type { StaffCaller } from "../../core/middleware";
 import {
   buildSettlementStatement,
@@ -40,6 +41,7 @@ export const SETTLEMENT_VERSIONS = "settlement_versions";
 export const SETTLEMENT_AUDIT = "admin_audit_logs";
 /** M6: one payment ledger per branch and month, independent of statement versions. */
 export const SETTLEMENT_PAYMENTS = "settlement_payments";
+export const CAPTURE_REGENERATION = "settlement_capture_regeneration";
 
 /** Orders per page, and pages per statement, before the scan is declared partial. */
 const SETTLEMENT_PAGE_SIZE = 500;
@@ -71,7 +73,7 @@ function isBrand(caller: CallerShape | null | undefined): boolean {
   return !!caller.role && BRAND_ROLES.has(caller.role);
 }
 
-function assertBrand(caller: CallerShape | null | undefined, action: string): void {
+export function assertBrand(caller: CallerShape | null | undefined, action: string): void {
   if (!caller || !caller.uid) {
     throw new SettlementError(
       "SETTLEMENT_UNAUTHENTICATED",
@@ -272,6 +274,20 @@ export interface GenerateSettlementInput {
    * owner/brand request always gets its statement, even a zero one.
    */
   omitWhenEmpty?: boolean;
+}
+
+// Serialize all publications for the same branch/month, including retries.
+// An older scan which began before a capture move must finish before its
+// compensating publication; it must not supersede the repaired statement.
+export function withSettlementPublicationLock<T>(branchId: string, monthKey: string, run: () => Promise<T>) {
+  return withSchedulerLock(`settlement-publish-${branchId}_${monthKey}`, 10 * 60_000, run, "strict-operation");
+}
+
+export async function generateSettlementStatementLocked(input: GenerateSettlementInput) {
+  assertBrand(input.source === "scheduler" ? { uid: "scheduler", role: "brand_owner" } : input.caller, "generate statements");
+  const result = await withSettlementPublicationLock(input.branchId, input.monthKey, () => generateSettlementStatement(input));
+  if (!result.ran) throw new SettlementError("SETTLEMENT_PUBLICATION_BUSY", "Statement publication already in progress; retry shortly", 409);
+  return result.result ?? null;
 }
 
 /**
@@ -617,6 +633,10 @@ export async function markSettlementPaid(
           409
         );
       }
+      const pending = await tx.get(db.collection(CAPTURE_REGENERATION).doc(`${current.branchId}_${current.monthKey}`));
+      if (pending.exists) {
+        throw new SettlementError("SETTLEMENT_REGENERATION_PENDING", "Capture reconciliation changed this month; regenerate before recording payment", 409);
+      }
       // M6 cutover: a statement written before the payment ledger existed has
       // no verified balance. It is VOID — never payable, no data step needed.
       if (current.ledgerSchema !== 1 || typeof current.outstandingPaise !== "number") {
@@ -829,7 +849,7 @@ export async function runMonthlySettlementScheduler(
     }
     const branchData = (typeof doc.data === "function" ? doc.data() : {}) as any;
     try {
-      const statement = await generateSettlementStatement({
+      const statement = await generateSettlementStatementLocked({
         branchId,
         monthKey,
         caller: input.caller ?? { uid: "settlement-scheduler", role: "brand_owner" },

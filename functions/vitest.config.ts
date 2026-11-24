@@ -37,6 +37,7 @@ export default defineConfig({
             "tests/fr-checkout.rules.emulator.test.ts",
             "tests/rules.counter.cash.emulator.test.ts",
             "tests/rules.order-create.emulator.test.ts",
+            "tests/capture.recovery.rules.emulator.test.ts",
           ]),
     ],
   },
