@@ -59,7 +59,9 @@ export function walkInIdentityHash(input: CreateWalkInRequest): string {
     branchId: input.branchId,
     orderType: input.orderType,
     tender: input.tender,
-    items: input.items.map(({ productId, quantity }) => ({ productId, quantity })),
+    items: input.items.map(({ productId, quantity, notes }) => ({
+      productId, quantity, ...(notes ? { notes } : {}),
+    })),
     tableNumber: input.tableNumber ?? null,
     notes: input.notes ?? null,
     customerName: input.customerName ?? null,
@@ -80,7 +82,9 @@ export function walkInLegacyHash(input: CreateWalkInRequest): string {
     branchId: input.branchId,
     orderType: input.orderType,
     tender: input.tender,
-    items: input.items.map(({ productId, quantity }) => ({ productId, quantity })),
+    items: input.items.map(({ productId, quantity, notes }) => ({
+      productId, quantity, ...(notes ? { notes } : {}),
+    })),
     expectedTotalPaise: input.expectedTotalPaise,
     tableNumber: input.tableNumber ?? null,
     notes: input.notes ?? null,
@@ -173,7 +177,7 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
           item.quantity
         );
         products.set(item.productId, product);
-        lines.push(line);
+        lines.push(item.notes ? { ...line, notes: item.notes } : line);
       }
       const branch = branchSnap.data() ?? {};
       const totals = priceWalkInLines({

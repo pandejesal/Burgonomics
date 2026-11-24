@@ -369,6 +369,7 @@ export async function createCashOrder(
           // at all (the schema refuses one), so this is never a client number.
           price: product.price,
           quantity: item.quantity,
+          ...(item.notes ? { notes: item.notes } : {}),
           ...(item.customizations ? { customizations: item.customizations as any } : {}),
           ...(item.modifiers ? { modifiers: item.modifiers as any } : {}),
         });
@@ -474,6 +475,7 @@ export async function createCashOrder(
           price: Number(line.price) || 0,
           quantity: line.quantity,
           modifiers: line.modifiers ?? [],
+          ...(line.notes ? { notes: line.notes } : {}),
           availability: "available",
           ...(line.customizations ? { customizations: line.customizations } : {}),
         };

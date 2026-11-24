@@ -22,7 +22,11 @@ export const createWalkInSchema = z
     items: z
       .array(
         z
-          .object({ productId: documentId, quantity: z.number().int().min(1).max(99) })
+          .object({
+            productId: documentId,
+            quantity: z.number().int().min(1).max(99),
+            notes: z.string().trim().max(240).optional(),
+          })
           .strict()
       )
       .min(1)

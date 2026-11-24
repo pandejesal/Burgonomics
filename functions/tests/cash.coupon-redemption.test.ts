@@ -94,6 +94,9 @@ vi.mock("firebase-admin", () => {
 import { createCashOrder, createCashOrderSchema } from "../src/modules/orders/createCashOrder";
 import { handleCreateCashOrder } from "../src/modules/orders/createCashOrderRoute";
 import { createWalkIn } from "../src/modules/orders/createWalkIn";
+import { handleCreateWalkIn } from "../src/modules/orders/createWalkInRoute";
+import { formatPetpoojaOrderPayload } from "../src/modules/petpooja/orderPush";
+import { checkoutCookingNoteBody } from "./helpers/checkoutCookingNotes";
 import { cancelOrderAsCustomer } from "../src/modules/orders/customerCancel";
 import { bumpOrderStatus } from "../src/modules/orders/orderStatus";
 
@@ -278,6 +281,60 @@ describe("zero-due online checkout via the cash order handler", () => {
     expect(await submit({ ...checkout, zeroDueOnly: true })).toMatchObject({
       status: 409, body: { code: "IDEMPOTENCY_CONFLICT" },
     });
+  });
+});
+
+describe("cooking notes on cash kitchen tickets", () => {
+  const note = "Toast both sides";
+  function assertNote(orderId: string, unitPrice: number) {
+    const order = h.docs.get(`orders/${orderId}`);
+    expect(order.items[0].notes).toBe(note);
+    const payload = formatPetpoojaOrderPayload(order, { name: "Surat" }, "PP_B1", "branch_a", orderId,
+      undefined, [{ posItemId: "PP-1", unitPrice, addons: [] }]);
+    expect(payload.orderinfo.OrderInfo.OrderItem.details[0].description).toBe(note);
+  }
+
+  it.each(["cash", "zero-due", "dinein", "delivery"])("preserves the %s cash line note from request to order and KOT", async (mode) => {
+    const zeroDueOnly = mode === "zero-due";
+    h.docs.set("branches/branch_a", { ...h.docs.get("branches/branch_a"), packagingFee: 0,
+      ...(zeroDueOnly ? { cashOnDelivery: { enabled: false } } : {}) });
+    h.docs.set("stores/str_fulfill", { partnerBranchId: "branch_a" });
+    h.docs.set("products/burger_1", { ...h.docs.get("products/p1"), price: 109 });
+    h.docs.set("coupons/FREE", { ...h.docs.get(`coupons/${CODE}`), code: "FREE", value: 100 });
+    h.docs.set(`users/${CUSTOMER}/addresses/saved_home`, deliveryAddress);
+    const direct = {
+      orderId: ORDER, attemptId: "cash_note_attempt", storeId: "str_fulfill",
+      orderType: mode === "dinein" || mode === "delivery" ? mode : "takeaway",
+      items: [{ productId: "burger_1", quantity: 1, notes: note }],
+      expectedTotalPaise: zeroDueOnly ? 0 : mode === "delivery" ? 15900 : 10900,
+      ...(zeroDueOnly ? { zeroDueOnly: true, couponCode: "FREE" } : {}),
+      ...(mode === "dinein" ? { tableNumber: "5" } : {}),
+      ...(mode === "delivery" ? { addressId: "saved_home", deliveryQuoteId: "dfq_coupon_1" } : {}),
+    };
+    const body = mode === "cash" || zeroDueOnly
+      ? checkoutCookingNoteBody(mode, "/orders/createCashOrder", direct)
+      : direct;
+    const status = vi.fn().mockReturnThis();
+    await handleCreateCashOrder({ user: { uid: CUSTOMER }, body } as any, { status, json: vi.fn() } as any);
+    expect(status).toHaveBeenCalledWith(201);
+    assertNote(body.orderId, 109);
+    const replay = { ...body, items: body.items.map(({ notes: _notes, ...line }) => line) };
+    await expect(createCashOrder(CUSTOMER, replay)).resolves.toMatchObject({ orderId: body.orderId, replayed: true });
+    assertNote(body.orderId, 109);
+  });
+
+  it("preserves an optional walk-in item note without replacing the order note", async () => {
+    const status = vi.fn().mockReturnThis();
+    const json = vi.fn();
+    await handleCreateWalkIn({ user: { uid: "staff_1" }, body: {
+      requestId: "walkin_note_request", branchId: "branch_a", orderType: "takeaway", tender: "cash",
+      items: [{ productId: "p1", quantity: 1, notes: note }], expectedTotalPaise: 11500,
+      notes: "Counter order note",
+    } } as any, { status, json } as any);
+    expect(status).toHaveBeenCalledWith(201);
+    const { orderId } = json.mock.calls[0][0];
+    expect(h.docs.get(`orders/${orderId}`).notes).toBe("Counter order note");
+    assertNote(orderId, 100);
   });
 });
 

@@ -20,6 +20,8 @@ export interface PricingLineItem {
   name: string;
   price: number;
   quantity: number;
+  /** Cooking instruction; the pricing engine does not use free text. */
+  notes?: string;
   customizations?: Array<{ id: string; name: string; price: number }>;
   modifiers?: Array<{ id: string; name: string; priceDelta: number }>;
 }

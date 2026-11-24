@@ -80,6 +80,7 @@ import { createPaymentOrder } from "../src/modules/payments/razorpay.service";
 import { bumpOrderStatus } from "../src/modules/orders/orderStatus";
 import { config } from "../src/config/env";
 import { formatPetpoojaOrderPayload } from "../src/modules/petpooja/orderPush";
+import { checkoutCookingNoteBody } from "./helpers/checkoutCookingNotes";
 
 const CUSTOMER = "customer_online";
 const OTHER = "customer_other";
@@ -136,6 +137,23 @@ describe("server online draft creation", () => {
     const captured = { ...order, paymentChannel: "razorpay", paymentStatus: "completed" };
     const payload = formatPetpoojaOrderPayload(captured, { name: "Surat" }, "PP_B1", "branch_a", ORDER,
       undefined, [{ posItemId: "PP-1", unitPrice: 100, addons: [] }]);
+    expect(payload.orderinfo.OrderInfo.OrderItem.details[0].description).toBe("Toast both sides");
+  });
+
+  it("stores the first successful online retry's cooking note and sends it to the KOT", async () => {
+    h.docs.set("stores/str_fulfill", { partnerBranchId: "branch_a", isOpen: true });
+    h.docs.set("products/burger_1", { name: "Burger", branchId: "branch_a", price: 109, inStock: true });
+    const body = checkoutCookingNoteBody("online-retry", "/orders/createOnlineDraft", request({
+      storeId: "str_fulfill", items: [{ productId: "burger_1", quantity: 1, notes: "Toast both sides" }],
+    }));
+    const orderPath = `orders/${body.orderId}`;
+    expect(h.docs.has(orderPath)).toBe(false); // original POST never reached the handler
+    expect((await create(body)).status).toHaveBeenCalledWith(201);
+    const order = h.docs.get(orderPath);
+    expect(order.items[0].notes).toBe("Toast both sides");
+    const captured = { ...order, paymentChannel: "razorpay", paymentStatus: "completed" };
+    const payload = formatPetpoojaOrderPayload(captured, { name: "Surat" }, "PP_B1", "branch_a", body.orderId,
+      undefined, [{ posItemId: "PP-1", unitPrice: 109, addons: [] }]);
     expect(payload.orderinfo.OrderInfo.OrderItem.details[0].description).toBe("Toast both sides");
   });
 
