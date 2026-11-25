@@ -12,6 +12,7 @@ import {
 } from "./menuMapper";
 import * as admin from "firebase-admin";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
+import { loadBranchSecrets } from "../branches/branchSecrets";
 
 export interface PetpoojaMenuItem {
   itemid: string;
@@ -309,33 +310,44 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   // whether a feed is a genuine removal or a TRUNCATED payload.
   let previousItemCount = 0;
   let observedItemCount = 0;
+  // SEC-11: the outlet binding (and the vendor credential map) moved to the
+  // brand-only `branch_secrets/{branchId}`; `branches` remains the legacy
+  // fallback until the migration is applied.
+  const linkedStoreId = await loadBranchSecrets(branchId).then(
+    (s) => s.petpoojaStoreId,
+    (err: any) => {
+      console.warn(`[Petpooja Menu Sync] branch_secrets read failed for ${branchId}:`, err?.message || err);
+      return "";
+    }
+  );
   if (config.mock.petpoojaPos) {
     // Mock mode serves canned menu data (no outlet queried) — the strict
     // outlet binding below applies to live mode only.
     try {
       const branchSnap = await db.collection("branches").doc(branchId).get();
       const mockBranch = branchSnap.data() as any;
-      restId = mockBranch?.petpoojaStoreId || branchId;
+      restId = linkedStoreId || mockBranch?.petpoojaStoreId || branchId;
       previousItemCount = Number(mockBranch?.petpoojaItemCount) || 0;
     } catch {
-      restId = branchId;
+      restId = linkedStoreId || branchId;
     }
   } else
   try {
     const branchSnap = await db.collection("branches").doc(branchId).get();
     const b = branchSnap.data() as any;
-    if (!b?.petpoojaStoreId) {
+    const linked = linkedStoreId || b?.petpoojaStoreId;
+    if (!linked) {
       // Marker, not message-matching: the hourly scheduler reports all
       // unlinked outlets as ONE configuration warning per run instead of an
       // error per branch per hour.
       const unlinked: any = new Error(
-        `Branch ${branchId} has no linked Petpooja outlet (petpoojaStoreId) — refusing menu sync (ops must link it per Runbook §5)`
+        `Branch ${branchId} has no linked Petpooja outlet (branch_secrets.petpoojaStoreId) — refusing menu sync (ops must link it per Runbook §5)`
       );
       unlinked.unlinkedOutlet = true;
       throw unlinked;
     }
-    restId = b.petpoojaStoreId;
-    previousItemCount = Number(b.petpoojaItemCount) || 0;
+    restId = linked;
+    previousItemCount = Number(b?.petpoojaItemCount) || 0;
   } catch (err: any) {
     if (err?.unlinkedOutlet === true) throw err;
     throw new Error(

@@ -34,6 +34,19 @@ function routeStart(): number {
   return m ? m.index : -1;
 }
 
+/**
+ * The WHOLE registration body, from `app.post("/support/feedback"` to the next
+ * route registration. A fixed character window silently stops covering the
+ * handler the moment the route grows (SEC-11 added the order-ownership check),
+ * which made these pins pass or fail for the wrong reason.
+ */
+function routeSlice(): string {
+  const at = routeStart();
+  if (at < 0) return "";
+  const next = indexSrc.indexOf("\napp.", at + 1);
+  return next > at ? indexSrc.slice(at, next) : indexSrc.slice(at);
+}
+
 describe("support feedback schema", () => {
   it("is exported from core/validation.ts", () => {
     expect(validationSrc).toMatch(/export const supportFeedbackSchema\s*=/);
@@ -70,9 +83,7 @@ describe("support feedback schema", () => {
 describe("POST /support/feedback route wiring", () => {
   it("is registered with requireAuth and the feedback schema", () => {
     expect(indexSrc).toMatch(/app\.post\(\s*["']\/support\/feedback["']/);
-    const at = routeStart();
-    expect(at).toBeGreaterThan(-1);
-    const route = indexSrc.slice(at, at + 700);
+    const route = routeSlice();
     expect(route).toMatch(/requireAuth/);
     expect(route).toMatch(/validateBody\(\s*supportFeedbackSchema\s*\)/);
   });
@@ -85,9 +96,8 @@ describe("POST /support/feedback route wiring", () => {
   });
 
   it("writes customerId from the verified token, not req.body", () => {
-    const at = routeStart();
-    expect(at).toBeGreaterThan(-1);
-    const route = indexSrc.slice(at, at + 1200);
+    const route = routeSlice();
+    expect(route.length).toBeGreaterThan(0);
     // The uid must come from req.user.
     expect(route).toMatch(/req\.user\?\.uid/);
     // It must never read customerId out of the body for the write.
@@ -95,19 +105,29 @@ describe("POST /support/feedback route wiring", () => {
   });
 
   it("responds 201 with the created id", () => {
-    const at = routeStart();
-    expect(at).toBeGreaterThan(-1);
-    const route = indexSrc.slice(at, at + 1200);
+    const route = routeSlice();
+    expect(route.length).toBeGreaterThan(0);
     expect(route).toMatch(/status\(201\)/);
     expect(route).toMatch(/\bid\b/);
   });
 
   it("collects into support_feedback through the Admin SDK", () => {
-    const at = routeStart();
-    expect(at).toBeGreaterThan(-1);
-    const route = indexSrc.slice(at, at + 1200);
+    const route = routeSlice();
+    expect(route.length).toBeGreaterThan(0);
     expect(route).toMatch(/support_feedback/);
     expect(route).toMatch(/createdAt/);
+  });
+
+  // SEC-11 (A3 finding 6): the optional orderId must be proven to belong to the
+  // caller before it is recorded, and the refusal must not leak whether an id
+  // exists. Pinned at the source level here; the behavioural proof (wrong owner
+  // -> 403, nothing written) is tests/support.feedback.ownership.route.test.ts.
+  it("verifies the caller owns orderId before writing it", () => {
+    const route = routeSlice();
+    expect(route).toMatch(/db\.collection\("orders"\)\.doc\(requestedOrderId\)\.get\(\)/);
+    expect(route).toMatch(/order\.customerId === customerId/);
+    expect(route).toMatch(/order\.userId === customerId/);
+    expect(route).toMatch(/FEEDBACK_ORDER_FORBIDDEN/);
   });
 });
 

@@ -38,6 +38,7 @@ export default defineConfig({
             "tests/rules.counter.cash.emulator.test.ts",
             "tests/rules.order-create.emulator.test.ts",
             "tests/capture.recovery.rules.emulator.test.ts",
+            "tests/rules.branch-secrets.emulator.test.ts",
           ]),
     ],
   },

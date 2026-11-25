@@ -539,28 +539,49 @@ service cloud.firestore {
       return cod is map ? cod.get('courierCod', null) : null;
     }
 
+    // SEC-11 (A3 finding 1, owner-approved split): a branch document is now
+    // DISCOVERY DATA ONLY — name, city, address, phone, coordinates, hours and
+    // the customer gate. The POS/payment identifiers that used to sit here
+    // (`petpooja`, `petpoojaStoreId`, `restIDs`, and the retired
+    // `razorpayAccountId`) moved to `branch_secrets/{branchId}`, which is
+    // brand-only. Firestore rules cannot mask a field, so the only way a
+    // `branch_staff` could learn another outlet's payment routing or POS
+    // binding was to keep those keys on a document every operator role can
+    // read — that is what this split removes.
+    //
+    // The read grant therefore stays `isStaff()`: the Partner app queries the
+    // whole collection for the outlet picker, city-scoped tickets/analytics and
+    // the dispatch pickup pin (useBranches.ts:59, useTickets.ts:71,
+    // useAnalytics.ts:252/292), and a per-branch arm would break those
+    // collection queries. What those reads can reach is no longer sensitive.
+    // The keys themselves are refused on client writes below and stripped by
+    // the `branches` onWrite mirror trigger if a legacy caller still sends one.
     match /branches/{branchId} {
-      // Hardened: was `if true`, then `isAuthenticated()`. Grep evidence —
-      // the customer app NEVER reads branches/* (its store directory is
-      // stores/*, separately public); every branches reader is an
-      // authenticated partner hook (useBranches/useTickets/useAnalytics/
-      // useBranchMenu). SEC-06: branch docs carry restIDs and
-      // razorpayAccountId, so a signed-in CUSTOMER must not read them
-      // either — only operator roles (isStaff: brand + support/regional/
-      // branch) do.
       allow read: if isStaff();
       allow create: if isBrandOwner();
       allow update: if isBrandOwner() || (
         ownsBranch(branchId) &&
         courierCodSnapshot(request.resource.data) == courierCodSnapshot(resource.data) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'servicedRadiusKm',
+          // SEC-11: these never belong on a branch document any more. The
+          // retired Route account id is refused too, so it cannot be re-planted.
+          'razorpayAccountId', 'petpooja', 'petpoojaStoreId', 'restIDs', 'servicedRadiusKm',
           // F9: money config is brand-only. A branch may not move its own
           // monthly fee or packaging price.
           'monthlyFee', 'settlementFee', 'packaging', 'packagingFee', 'royaltyPercentage', 'brandRoyaltyPercent'
         ])
       );
       allow delete: if isBrandOwner();
+    }
+
+    // SEC-11: the brand-only half of an outlet — the Petpooja outlet binding,
+    // the vendor credential map and the legacy restID list. Nothing outside the
+    // brand roles may read OR write it; the customer app has no path to it and
+    // branch operators only ever needed the display fields above. Server code
+    // reads it through the Admin SDK (`modules/branches/branchSecrets.ts`,
+    // which keeps a legacy read of `branches/*` until the migration lands).
+    match /branch_secrets/{branchId} {
+      allow read, write: if isBrandOwner();
     }
 
     // Canonical menu (both apps read; branch staff 86-ing writes).

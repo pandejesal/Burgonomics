@@ -16,6 +16,7 @@ import {
   enqueuePosCancelSideEffects,
   processPosCancelSideEffectObligation,
 } from "./cancelSideEffectsObligation";
+import { loadBranchSecrets, findBranchIdByPetpoojaStoreId } from "../branches/branchSecrets";
 
 /** P2/r2: how long a stock-push claim blocks an overlapping vendor send. */
 const STOCK_PUSH_CLAIM_TTL_MS = 10 * 60 * 1000;
@@ -908,8 +909,9 @@ export async function pushItemStockToPetpooja(
   try {
     let linked: string | null = null;
     try {
-      const branchSnap = await db.collection("branches").doc(branchId).get();
-      linked = (branchSnap.data() as any)?.petpoojaStoreId || null;
+      // SEC-11: the outlet binding lives in the brand-only
+      // `branch_secrets/{branchId}`; `branches` stays the legacy fallback.
+      linked = (await loadBranchSecrets(branchId)).petpoojaStoreId || null;
     } catch (err: any) {
       console.warn(`[Petpooja Stock Push] Branch lookup failed for ${branchId}:`, err?.message || err);
       // Fail-closed AND loud: the KDS reports this toggle as not synced,
@@ -1361,24 +1363,10 @@ export async function pushItemStockToPetpooja(
  */
 export async function resolveBranchIdForRestId(restId: string): Promise<string | null> {
   if (!restId) return null;
-  try {
-    const col = db.collection("branches") as any;
-    // Indexed query ONLY (single-field petpoojaStoreId == restId, limit 1).
-    // The old bounded full-scan fallback read up to 100 branch docs per
-    // webhook on datastores without query support (H10/M30 cost + latency) —
-    // removed in B4-S1. Unlinked outlets resolve to null and callers skip
-    // loudly (menu webhook) or stage an orphan doc (86ing) instead.
-    if (typeof col.where !== "function") {
-      console.warn(`[Petpooja] branch reverse-lookup skipped for rest ${restId}: no indexed query support`);
-      return null;
-    }
-    const snap = await col.where("petpoojaStoreId", "==", restId).limit(1).get();
-    const docs = snap.docs || [];
-    if (docs.length > 0) return docs[0].id;
-  } catch (err) {
-    console.warn(`[Petpooja] branch reverse-lookup failed for rest ${restId}:`, (err as any)?.message || err);
-  }
-  return null;
+  // SEC-11: canonical source is `branch_secrets.petpoojaStoreId` (brand-only);
+  // the helper falls back to the legacy `branches` field until the migration
+  // lands. Both are single-field equality queries (limit 1), never a scan.
+  return findBranchIdByPetpoojaStoreId(restId);
 }
 
 /** Documented 200 body for Get Store Status (vendor 200 OK section). */
