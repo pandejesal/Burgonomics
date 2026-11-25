@@ -12,6 +12,35 @@ import { describe, it, expect, vi, afterEach } from "vitest";
  * config is built at module load from process.env, so each case re-imports.
  */
 
+/**
+ * COLD-IMPORT SEAM (flake fix c11). Nothing asserted below touches Firebase:
+ * the cases pin `config.porter.enabled` and porter.adapter.isEligible(), both of
+ * which read only env at module load. The adapter's import graph nonetheless
+ * reaches `core/dropContact`, which imports firebase-admin (and initialises
+ * db/auth/messaging) purely as a side effect — ~4.3 s of cold import on this host
+ * inside the test's 5 s budget (see FLAKE-NOTE-c10b / FLAKE-NOTE.md). Stubbing
+ * the SDK removes that cost without changing one assertion, and it keeps the
+ * test honest: the fail-closed default is still read from the real env module.
+ * Convention follows tests/env.failclosed.test.ts and tests/dispatch.router.test.ts.
+ */
+vi.mock("firebase-admin", () => {
+  const firestoreFn: any = vi.fn(() => ({}));
+  firestoreFn.FieldValue = {
+    serverTimestamp: () => "MOCK_TIMESTAMP",
+    increment: (n: number) => n,
+    arrayUnion: (item: any) => [item],
+  };
+  const stub = {
+    firestore: firestoreFn,
+    auth: vi.fn(() => ({})),
+    messaging: vi.fn(() => ({})),
+    initializeApp: vi.fn(),
+    apps: [{ name: "mock" }],
+    credential: { cert: vi.fn(() => ({})), applicationDefault: vi.fn(() => ({})) },
+  };
+  return { ...stub, default: stub };
+});
+
 const CORE = {
   RAZORPAY_KEY_ID: "rzp_test_unit_only",
   RAZORPAY_KEY_SECRET: "unit-only",
