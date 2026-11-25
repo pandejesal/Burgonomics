@@ -1357,7 +1357,10 @@ service cloud.firestore {
     // through the authenticated API), so this stays read-only and denies every
     // other identity by default.
     match /branch_settlements/{docId} {
-      allow read: if isBrandOwner() || ownsBranchAsOwner(resource.data.branchId);
+      // A branch owner reads its own statement through the authenticated API,
+      // which projects a branch-safe view (no staff e-mail, no internal notes).
+      // The raw document stays brand-only so that projection cannot be bypassed.
+      allow read: if isBrandOwner();
       allow write: if false;
     }
 
@@ -1411,6 +1414,12 @@ service cloud.firestore {
 
     // Internal mark-paid interlock keyed by branch and month.
     match /settlement_capture_regeneration/{docId} {
+      allow read, write: if false;
+    }
+
+    // Cycle 11: a refund or late capture after the month closed queues a
+    // correction job. Server-only, like the interlock it replaces.
+    match /settlement_corrections/{docId} {
       allow read, write: if false;
     }
 

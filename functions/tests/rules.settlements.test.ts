@@ -26,11 +26,14 @@ function fnBody(name: string): string {
 }
 
 describe("settlement rules pins", () => {
-  it("branch_settlements: server-write-only, brand reads all, a branch OWNER only its own (never staff)", () => {
+  it("branch_settlements: server-write-only, brand-only read (a branch owner uses the projected API view)", () => {
     const block = matchBlock("branch_settlements/{docId}");
-    expect(block).toContain(
-      "allow read: if isBrandOwner() || ownsBranchAsOwner(resource.data.branchId);"
-    );
+    // The raw statement carries the brand operator's e-mail and internal control
+    // notes; a franchisee reads the projected API view instead, so the document
+    // itself is brand-only and the projection cannot be bypassed. RULES-NOTES §9
+    // records the change and the owner-facing consequence.
+    expect(block).toContain("allow read: if isBrandOwner();");
+    expect(block).not.toContain("ownsBranchAsOwner(resource.data.branchId)");
     expect(block).toContain("allow write: if false;");
     // No client create/update arm may sneak in (immutability is structural).
     expect(block).not.toMatch(/allow (create|update|delete)/);
@@ -65,5 +68,10 @@ describe("settlement rules pins", () => {
     const block = matchBlock("settlement_versions/{docId}");
     expect(block).toContain("allow read: if isBrandOwner();");
     expect(block).toContain("allow write: if false;");
+  });
+
+  it("cycle 11: a correction job document is server-only like the interlock", () => {
+    const block = matchBlock("settlement_corrections/{docId}");
+    expect(block).toContain("allow read, write: if false;");
   });
 });

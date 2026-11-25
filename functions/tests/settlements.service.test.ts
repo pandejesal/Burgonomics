@@ -445,7 +445,10 @@ describe("markSettlementPaid", () => {
       markSettlementPaid({
         statementId: statement.id, reference: "R2", paidOn: "2026-12-05", caller: BRAND_MGR, now: DEC_10TH,
       })
-    ).rejects.toMatchObject({ code: "SETTLEMENT_ZERO_DELTA", statusCode: 409 });
+    ).rejects.toMatchObject({ code: "SETTLEMENT_ALREADY_PAID", statusCode: 409 });
+    // Cycle 11 (A4 §5): the specific refusal now exists and fires when the
+    // version is fully paid and the caller did not ask for an additional
+    // payment. It is still a 409 that writes nothing.
     // The refusal must not write: no second row, no second mark-paid audit row.
     expect(savedDocs[`branch_settlements/${statement.id}`].payments).toHaveLength(1);
     const markAudits = Object.entries(savedDocs).filter(

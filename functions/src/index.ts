@@ -65,6 +65,7 @@ import {
   listCaptureIssues,
   reconcileCaptureMonth,
   resolveCaptureManually,
+  resolveCaptureNotCaptured,
   retryCaptureRegeneration,
   runCaptureRecoverySweep,
 } from "./modules/payments/settlementCaptureRecovery";
@@ -1558,7 +1559,7 @@ app.post(
       const statement = await generateSettlementStatementLocked({
         branchId: req.body.branchId,
         monthKey: req.body.monthKey,
-        caller: settlementCaller(req.user),
+        caller: await settlementCaller(req.user),
         source: "on_demand",
       });
       res.status(201).json(statement);
@@ -1576,7 +1577,7 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const statements = await listSettlements({
-        caller: settlementCaller(req.user),
+        caller: await settlementCaller(req.user),
         monthKey: req.body.monthKey,
         branchId: req.body.branchId,
         allVersions: req.body.allVersions === true,
@@ -1596,7 +1597,7 @@ app.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { filename, csv } = await exportSettlementsCsv({
-        caller: settlementCaller(req.user),
+        caller: await settlementCaller(req.user),
         monthKey: req.body.monthKey,
         branchId: req.body.branchId,
       });
@@ -1617,7 +1618,7 @@ app.get(
   requireRole(["brand_owner", "developer"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      assertBrand(settlementCaller(req.user), "list capture issues");
+      assertBrand(await settlementCaller(req.user), "list capture issues");
       res.status(200).json({ issues: await listCaptureIssues() });
     } catch (err: any) { const { status, body } = settlementErrorResponse(err); res.status(status).json(body); }
   }
@@ -1629,7 +1630,7 @@ app.post(
   requireRole(["brand_owner", "developer"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const caller = settlementCaller(req.user);
+      const caller = await settlementCaller(req.user);
       assertBrand(caller, "resolve a capture manually");
       const { orderId, razorpayPaymentId, capturedAtMs, reason, istMonthKey } = req.body ?? {};
       if (!recoveryOrderId(orderId) || typeof razorpayPaymentId !== "string" || !/^pay_[A-Za-z0-9_-]{1,100}$/.test(razorpayPaymentId) ||
@@ -1645,12 +1646,30 @@ app.post(
 );
 
 app.post(
+  "/settlements/resolveNotCaptured",
+  requireAuth,
+  requireRole(["brand_owner", "developer"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const caller = await settlementCaller(req.user);
+      assertBrand(caller, "close a payment the provider did not capture");
+      const { orderId, razorpayPaymentId, reason } = req.body ?? {};
+      if (!recoveryOrderId(orderId) || typeof razorpayPaymentId !== "string" || !/^pay_[A-Za-z0-9_-]{1,100}$/.test(razorpayPaymentId) || !recoveryReason(reason)) {
+        return void res.status(400).json({ code: "invalid_request" });
+      }
+      const result = await resolveCaptureNotCaptured({ orderId, paymentId: razorpayPaymentId, reason: reason.trim(), caller: caller! });
+      res.status(result.ok ? 200 : result.status ?? 400).json(result);
+    } catch (err: any) { const { status, body } = settlementErrorResponse(err); res.status(status).json(body); }
+  }
+);
+
+app.post(
   "/settlements/reconcileCaptureMonth",
   requireAuth,
   requireRole(["brand_owner", "developer"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const caller = settlementCaller(req.user);
+      const caller = await settlementCaller(req.user);
       assertBrand(caller, "reconcile a capture month");
       const { orderId, keepMonth, reason } = req.body ?? {};
       if (!recoveryOrderId(orderId) || typeof keepMonth !== "string" || !/^\d{4}-\d{2}$/.test(keepMonth) || !recoveryReason(reason)) {
@@ -1668,7 +1687,7 @@ app.post(
   requireRole(["brand_owner", "developer"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      assertBrand(settlementCaller(req.user), "retry capture regeneration");
+      assertBrand(await settlementCaller(req.user), "retry capture regeneration");
       if (!recoveryOrderId(req.body?.orderId)) return void res.status(400).json({ code: "invalid_request" });
       const result = await retryCaptureRegeneration(req.body.orderId);
       res.status(result.ok ? (result.regenerationPending ? 202 : 200) : result.status ?? 400).json(result);
@@ -1689,7 +1708,8 @@ app.post(
         paidOn: req.body.paidOn,
         note: req.body.note,
         additionalPayment: req.body.additionalPayment,
-        caller: settlementCaller(req.user),
+        settledNetPaise: req.body.settledNetPaise,
+        caller: await settlementCaller(req.user),
       });
       res.status(200).json(result);
     } catch (err: any) {

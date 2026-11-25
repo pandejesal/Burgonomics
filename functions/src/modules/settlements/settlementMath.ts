@@ -111,39 +111,11 @@ export interface SettlementFeeResolution {
   invalid: boolean;
 }
 
-function readRupees(raw: unknown): { value: number; present: boolean; invalid: boolean } {
-  if (raw === undefined || raw === null) return { value: 0, present: false, invalid: false };
-  if (typeof raw === "string" && !raw.trim()) return { value: 0, present: false, invalid: false };
-  const rupees = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(rupees) || rupees < 0) return { value: 0, present: true, invalid: true };
-  return { value: Math.round(rupees * 100), present: true, invalid: false };
-}
-
-/**
- * The flat fee for a statement, in paise.
- *
- * Order of precedence: `branches/{id}.settlementFee` (the settlement-specific
- * knob), then `branches/{id}.monthlyFee` (the existing branch fee the Route
- * hold already reads), then the documented ₹2,000 default. ₹0 is a REAL value
- * (no fee) and is never replaced by the default. A negative or non-numeric
- * configured value is refused loudly and flagged, never silently charged.
- */
-export function resolveSettlementFeePaise(branchData: {
+/** Standing owner decision: no branch configuration can price this fee. */
+export function resolveSettlementFeePaise(_legacyBranchData?: {
   settlementFee?: unknown;
   monthlyFee?: unknown;
 } | null | undefined): SettlementFeeResolution {
-  const own = readRupees(branchData?.settlementFee);
-  if (own.invalid) {
-    return { feePaise: DEFAULT_SETTLEMENT_FEE_RUPEES * 100, source: "settlementFee", invalid: true };
-  }
-  if (own.present) return { feePaise: own.value, source: "settlementFee", invalid: false };
-
-  const legacy = readRupees(branchData?.monthlyFee);
-  if (legacy.invalid) {
-    return { feePaise: DEFAULT_SETTLEMENT_FEE_RUPEES * 100, source: "monthlyFee", invalid: true };
-  }
-  if (legacy.present) return { feePaise: legacy.value, source: "monthlyFee", invalid: false };
-
   return { feePaise: DEFAULT_SETTLEMENT_FEE_RUPEES * 100, source: "default", invalid: false };
 }
 
@@ -218,6 +190,8 @@ export interface SettlementOrderSummary {
   cashCollectedPaise: number;
   cashOrders: number;
   cashPendingOrders: number;
+  branchUpiCollectedPaise: number;
+  branchUpiOrders: number;
   excludedOrders: number;
   outOfScopeOrders: number;
   ordersScanned: number;
@@ -291,14 +265,10 @@ function isOnlineOrder(order: any): boolean {
   return order?.paymentChannel === "razorpay";
 }
 
-/** Cash: walk-in counter orders and COD orders. */
-function isCashOrder(order: any): boolean {
-  if (isOnlineOrder(order)) return false;
-  if (order?.customerId === WALK_IN_CUSTOMER_ID) return true;
-  const method = String(
+function tenderMethod(order: any): string {
+  return String(
     order?.payment?.method ?? order?.paymentMethod ?? order?.orderPaymentMethod ?? ""
   ).trim().toLowerCase();
-  return method === "cod" || method === "cash";
 }
 
 function isCashCompleted(order: any): boolean {
@@ -473,6 +443,8 @@ export function summarizeSettlementOrders(
   let cashCollectedPaise = 0;
   let cashOrders = 0;
   let cashPendingOrders = 0;
+  let branchUpiCollectedPaise = 0;
+  let branchUpiOrders = 0;
   let excludedOrders = 0;
   let outOfScopeOrders = 0;
   let captureUnresolved = 0;
@@ -489,6 +461,10 @@ export function summarizeSettlementOrders(
       continue;
     }
     if (isOnlineOrder(order)) {
+      if (order.settlementCaptureState === "not_captured") {
+        excludedOrders += 1;
+        continue;
+      }
       // M7: money is money. A cancelled/processing kitchen status does NOT
       // erase a real capture: the brand still holds it. Only an actually
       // booked refund reduces it (captured minus refunded, clamped there), so
@@ -508,7 +484,18 @@ export function summarizeSettlementOrders(
       onlineOrders += 1;
       continue;
     }
-    if (isCashOrder(order)) {
+    const tender = tenderMethod(order);
+    if (tender === "upi" && order?.customerId === WALK_IN_CUSTOMER_ID) {
+      if (isCashCompleted(order)) {
+        const priced = Number(order?.pricing?.grandTotal ?? order?.total);
+        if (Number.isFinite(priced) && priced > 0) branchUpiCollectedPaise += Math.round(priced * 100);
+        branchUpiOrders += 1;
+      } else {
+        excludedOrders += 1;
+      }
+      continue;
+    }
+    if (tender === "cod" || tender === "cash" || (!tender && order?.customerId === WALK_IN_CUSTOMER_ID)) {
       const code = statusCodeOf(order).toLowerCase();
       if (code === "cancelled" || code === "canceled") {
         excludedOrders += 1;
@@ -536,6 +523,8 @@ export function summarizeSettlementOrders(
     cashCollectedPaise,
     cashOrders,
     cashPendingOrders,
+    branchUpiCollectedPaise,
+    branchUpiOrders,
     excludedOrders,
     outOfScopeOrders,
     captureUnresolved,
@@ -596,6 +585,10 @@ export interface SettlementStatement {
   cashCollectedPaise: number;
   cashOrders: number;
   cashPendingOrders: number;
+  branchUpiCollectedPaise?: number;
+  branchUpiOrders?: number;
+  /** Signed change to the month total compared with the previous version. */
+  netAdjustmentPaise?: number;
   platformFeePaise: number;
   platformFeeSource: SettlementFeeSource;
   platformFeeInvalid: boolean;
@@ -663,7 +656,7 @@ export function buildSettlementStatement(input: BuildSettlementStatementInput): 
     !input.summary.unresolvedTruncated &&
     input.summary.captureUnresolved === 0;
   const carried = Array.isArray(input.priorPaymentRecords) ? [...input.priorPaymentRecords] : [];
-  const paidStatus: SettlementPaidStatus = carried.length > 0 ? "paid" : "unpaid";
+  const paidStatus: SettlementPaidStatus = complete && outstandingPaise === 0 && carried.length > 0 ? "paid" : "unpaid";
 
   const notes: string[] = [];
   const manuallyResolvedCaptures = input.summary.manuallyResolvedCaptures ?? [];
@@ -713,6 +706,8 @@ export function buildSettlementStatement(input: BuildSettlementStatementInput): 
     cashCollectedPaise: input.summary.cashCollectedPaise,
     cashOrders: input.summary.cashOrders,
     cashPendingOrders: input.summary.cashPendingOrders,
+    branchUpiCollectedPaise: input.summary.branchUpiCollectedPaise,
+    branchUpiOrders: input.summary.branchUpiOrders,
     platformFeePaise: feePaise,
     platformFeeSource: input.fee.source,
     platformFeeInvalid: input.fee.invalid,
@@ -728,8 +723,8 @@ export function buildSettlementStatement(input: BuildSettlementStatementInput): 
     ...(manuallyResolvedCaptures.length ? { manuallyResolvedCaptures } : {}),
     notes,
     paidStatus,
-    paidAtMs: carried.length > 0 ? Number(carried[carried.length - 1].paidAtMs) || null : null,
-    paymentReference: carried.length > 0 ? carried[carried.length - 1].reference : null,
+    paidAtMs: Number(carried[0]?.paidAtMs) || null,
+    paymentReference: carried[0]?.reference ?? null,
     payments: carried,
     ledgerSchema: 1,
     current: true,
@@ -756,9 +751,11 @@ export const SETTLEMENT_CSV_HEADERS = [
   "Online Orders",
   "Cash Collected - branch holds (INR)",
   "Cash Orders",
+  "Walk-in UPI - branch holds (INR)",
   "Platform Fee (INR)",
   "Net Payable to Branch (INR)",
   "Outstanding After Prior Payments (INR)",
+  "Net Adjustment From Previous Version (INR)",
   "Branch Owes Brand",
   "Paid Status",
   "Generated At",
@@ -789,11 +786,13 @@ export function settlementCsvRow(statement: SettlementStatement): string {
     statement.onlineOrders,
     rupees(statement.cashCollectedPaise),
     statement.cashOrders,
+    statement.branchUpiCollectedPaise === undefined ? "" : rupees(statement.branchUpiCollectedPaise),
     rupees(statement.platformFeePaise),
     rupees(statement.netPayablePaise),
     rupees(statement.outstandingPaise),
-    statement.branchOwes ? "yes" : "no",
-    statement.paidStatus,
+    statement.netAdjustmentPaise === undefined ? "" : rupees(statement.netAdjustmentPaise),
+    statement.outstandingPaise < 0 ? "yes" : "no",
+    statement.outstandingPaise !== 0 ? "unpaid" : statement.paidStatus,
     new Date(statement.generatedAtMs).toISOString(),
     statement.notes.join(" "),
   ]

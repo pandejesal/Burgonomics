@@ -576,6 +576,7 @@ export const settlementMarkPaidSchema = z.object({
   paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   note: z.string().max(500).optional(),
   additionalPayment: z.boolean().optional(),
+  settledNetPaise: z.number().int().safe().optional(),
 });
 
 // Franchise lead intake: customerId MUST equal the caller UID (rules bind it

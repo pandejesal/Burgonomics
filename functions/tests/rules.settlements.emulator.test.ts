@@ -100,7 +100,7 @@ describe("A1 settlement rules — real emulator", () => {
     expect(await patchAs('orders/settlement-month-test', OWNER, 'settlementEffectiveAtMs', int(1796063399999))).toBe(403);
   });
 
-  it("branch staff cannot read an owner-only statement; the owner can only read their own", async () => {
+  it("branch staff cannot read an owner-only statement; only brand reads the raw document", async () => {
     const [staff, otherOwner, owner, brand] = await Promise.all([
       readAs(`branch_settlements/${STATEMENT}`, STAFF),
       readAs(`branch_settlements/${STATEMENT}`, OTHER_OWNER),
@@ -109,7 +109,10 @@ describe("A1 settlement rules — real emulator", () => {
     ]);
     expect(staff).toBe(403); // same branch, but staff is not an owner
     expect(otherOwner).toBe(403); // owner of a DIFFERENT branch
-    expect(owner).toBe(200); // owner of THIS branch
+    // Cycle 11 §8: the raw statement holds the brand operator's e-mail and
+    // internal notes, so a branch owner now reads the projected API view
+    // (tests/settlements-route-rbac.test.ts) rather than the document.
+    expect(owner).toBe(403);
     expect(brand).toBe(200);
   });
 
