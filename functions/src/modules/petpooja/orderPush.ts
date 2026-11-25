@@ -7,6 +7,7 @@ import { captureErrorSnapshot } from "../../core/errors";
 import { getPetpoojaConfig, assertPetpoojaEnabled } from "./client";
 import { calculateOrderPricing, applyCatalogBasePrice, validateOptionSelections } from "../payments/pricing.engine";
 import { resolveKotCustomerPhone } from "../../core/dropContact";
+import { loadBranchSecrets } from "../branches/branchSecrets";
 import { petpoojaRetryScheduledAtMs } from "./retryBackoff";
 import * as admin from "firebase-admin";
 import { assertOrderBranchAccess, type StaffCaller } from "../../core/middleware";
@@ -2289,15 +2290,19 @@ export async function pushOrderToPetpooja(orderId: string, caller?: StaffCaller)
 
     const petpoojaConfig = getPetpoojaConfig();
 
-    // Fail-closed: resID must come from branch.petpoojaStoreId only.
+    // SEC-11: resID lives in `branch_secrets/{branchId}` (brand-only) since the
+    // branch document is readable by every operator role. `branches` is still
+    // consulted as the legacy fallback until the migration is applied.
+    // Fail-closed: resID must come from the linked outlet only.
     // Fallback chains (branch.id, order.branchId, order.store.*) could send
     // KOT to the wrong outlet — fail instead of guessing.
-    const resId = branchData?.petpoojaStoreId;
+    const secrets = branchId ? await loadBranchSecrets(branchId) : null;
+    const resId = secrets?.petpoojaStoreId || branchData?.petpoojaStoreId;
     if (!resId) {
       await captureErrorSnapshot({
         source: "petpooja",
         severity: "p0_critical",
-        message: `Order ${orderId} missing branch.petpoojaStoreId — cannot push KOT to unknown outlet`,
+        message: `Order ${orderId} has no linked Petpooja outlet (branch_secrets.petpoojaStoreId) — cannot push KOT to unknown outlet`,
         orderId,
         branchId,
       });

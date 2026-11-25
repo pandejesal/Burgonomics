@@ -4,6 +4,7 @@ import { db } from "../../core/firebase";
 import { assertBranchAccess } from "../../core/middleware";
 import { allocatePetpoojaTax, sumPetpoojaItemTax } from "./taxAmounts";
 import { petpoojaFinancials, petpoojaGstLiability, restaurantLiableItemTax } from "./financials";
+import { loadBranchSecrets, findBranchIdByPetpoojaStoreId } from "../branches/branchSecrets";
 
 /**
  * Branch-scope the QA relay. The request's `branchId` is the outlet's
@@ -926,17 +927,15 @@ export async function resolveRelayOutletMapping(
         }
       }
 
-      // 2. branches mapping (petpoojaStoreId -> branch doc id).
-      const branchCol = db.collection("branches") as any;
-      if (typeof branchCol.where === "function") {
-        const branchSnap = await branchCol.where("petpoojaStoreId", "==", trimmed).limit(1).get();
-        const branchDoc = branchSnap.docs?.[0];
-        if (branchDoc) {
-          return {
-            partnerBranchId: branchDoc.id,
-            petpoojaStoreId: String(branchDoc.data()?.petpoojaStoreId ?? trimmed),
-          };
-        }
+      // 2. branch mapping (petpoojaStoreId -> branch doc id). SEC-11: the
+      //    canonical binding is `branch_secrets/{branchId}.petpoojaStoreId`
+      //    (brand-only rules); legacy `branches` is still searched.
+      const branchId = await findBranchIdByPetpoojaStoreId(trimmed);
+      if (branchId) {
+        return {
+          partnerBranchId: branchId,
+          petpoojaStoreId: String((await loadBranchSecrets(branchId)).petpoojaStoreId || trimmed),
+        };
       }
       // No verbatim fallback: unmapped is UNMAPPED, whatever the caller is.
     }

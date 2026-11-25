@@ -15,6 +15,7 @@ import {
 } from "./retryBackoff";
 import { dispatchFCM } from "../notifications/fcm.service";
 import { processPendingPosCancelSideEffects } from "./cancelSideEffectsObligation";
+import { loadBranchSecrets } from "../branches/branchSecrets";
 
 /**
  * Petpooja "Update Order Status" — the CANCEL half of the POS bridge.
@@ -260,16 +261,22 @@ async function postPosCancel(
       `Order ${orderId} has no branchId — cannot resolve the Petpooja outlet for the cancel`
     );
   }
-  const branchSnap = await db.collection("branches").doc(branchId).get();
-  const restId = branchSnap.exists
-    ? ((branchSnap.data() as any)?.petpoojaStoreId as string | undefined) || ""
-    : "";
+  // SEC-11: the outlet binding lives in `branch_secrets/{branchId}` (brand-only
+  // rules); `branches` is the legacy fallback until the migration is applied.
+  const secrets = await loadBranchSecrets(branchId);
+  let restId = secrets.petpoojaStoreId;
+  if (!restId) {
+    const branchSnap = await db.collection("branches").doc(branchId).get();
+    restId = branchSnap.exists
+      ? ((branchSnap.data() as any)?.petpoojaStoreId as string | undefined) || ""
+      : "";
+  }
   if (!restId) {
     // Fail closed and loud: cancelling at the wrong outlet (or at a guessed
     // one) would close somebody else's order. Not retryable — the mapping is
     // an ops task.
     throw new PosCancelBlockedConfigurationError(
-      `Branch ${branchId} has no petpoojaStoreId — cannot cancel order ${orderId} at the POS`
+      `Branch ${branchId} has no linked Petpooja outlet (branch_secrets.petpoojaStoreId) — cannot cancel order ${orderId} at the POS`
     );
   }
 

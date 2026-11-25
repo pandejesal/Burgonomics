@@ -404,6 +404,18 @@ const REGION = "asia-south1";
 // `/orders/deliveryOtp`) attach the token through
 // `buildCheckoutFeesHeaders()` in the customer app.
 //
+// SEC-11 (A3 finding 4): `/notifications/registerToken`,
+// `/notifications/unregisterToken` and `/notifications/preferences` were
+// enrolled while the CUSTOMER app calls all three with only
+// `Authorization: Bearer <idToken>` (notificationsService.ts:399,461,139/214).
+// Turning `APP_CHECK_ENFORCEMENT=true` on would have 403'd device linking and
+// the whole notification-settings screen, silently. They are DE-ENROLLED until
+// the customer client sends the header, and `tests/appcheck.enrollment.test.ts`
+// pins that list so a route can never be enrolled ahead of its client again.
+// `/notifications/subscribe` and `/notifications/unsubscribe` stay enrolled:
+// their only caller is the Partner app's partnerFunctionsApi, which attaches
+// the header on every request (partnerFunctionsApi.ts:326).
+//
 // DELIBERATELY NOT ENROLLED: `/orders/customerCancel` (F24). Its only client
 // (`ordersService.cancelOrder`) posts through `httpClient` with the bearer
 // token from `authSetup` and no attestation header, so enrolling it now would
@@ -458,9 +470,9 @@ app.use(
     "/notifications/dispatch",
     "/notifications/subscribe",
     "/notifications/unsubscribe",
-    "/notifications/registerToken",
-    "/notifications/unregisterToken",
-    "/notifications/preferences",
+    // SEC-11: the customer app's device-token and preferences calls carry no
+    // attestation header yet, so these three stay OUT of the list until the
+    // client sends one (see the block comment above).
     "/auth/setClaims",
     "/auth/assignRole",
     "/auth/revokeRole",
@@ -1741,6 +1753,12 @@ app.post("/tickets/create", requireAuth, validateBody(createTicketSchema), async
 // ONLY (the body has no customerId field), so a caller cannot file feedback as
 // someone else. Written with the Admin SDK; firestore.rules default-denies
 // client access to support_feedback.
+//
+// SEC-11 (A3 finding 6): the optional `orderId` used to be written verbatim, so
+// any signed-in caller could attach feedback to ANY order id — polluting the
+// per-order support trail and probing which ids exist. It is now verified: the
+// order must exist and belong to the caller, otherwise the request is refused
+// with 403 and NOTHING is written. A missing orderId still records null.
 app.post(
   "/support/feedback",
   requireAuth,
@@ -1754,16 +1772,39 @@ app.post(
         res.status(401).json({ error: "Sign in required" });
         return;
       }
-      const id = `fb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       // Lazy import matches every other route here (see /config/app): the
       // Admin app is initialised once in core/firebase.
       const { db } = await import("./core/firebase");
+
+      const requestedOrderId =
+        typeof req.body.orderId === "string" && req.body.orderId.trim()
+          ? req.body.orderId.trim()
+          : null;
+
+      if (requestedOrderId) {
+        const orderSnap = await db.collection("orders").doc(requestedOrderId).get();
+        const order = orderSnap?.exists ? orderSnap.data() : null;
+        const owns =
+          !!order &&
+          (order.customerId === customerId || order.userId === customerId);
+        if (!owns) {
+          // Same answer for "no such order" and "someone else's order": the
+          // caller learns nothing about which ids exist.
+          res.status(403).json({
+            error: "That order is not on your account — feedback was not recorded.",
+            code: "FEEDBACK_ORDER_FORBIDDEN",
+          });
+          return;
+        }
+      }
+
+      const id = `fb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       await db.collection("support_feedback").doc(id).set({
         id,
         customerId,
         rating: req.body.rating,
         comment: req.body.comment ?? "",
-        orderId: req.body.orderId ?? null,
+        orderId: requestedOrderId,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       res.status(201).json({ id });
@@ -2849,6 +2890,11 @@ export {
   onTicketCreatedUrgentTrigger,
   onTicketEscalatedNotificationTrigger,
 } from "./modules/notifications";
+
+// SEC-11 (A3 finding 1): the safety net that mirrors POS/payment identifiers
+// from `branches/*` into the brand-only `branch_secrets/*` and strips them off
+// the branch document. See modules/branches/branchSecrets.ts.
+export { onBranchWrittenSecretsMirror } from "./modules/branches";
 
 export const sweepStuckSettlementCapturesJob = onSchedule(
   { region: REGION, schedule: "*/30 * * * *", timeZone: "Asia/Kolkata", timeoutSeconds: 300 },

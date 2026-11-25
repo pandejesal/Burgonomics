@@ -1,5 +1,6 @@
 import { db } from "../../core/firebase";
 import * as admin from "firebase-admin";
+import { anonymiseAndAuditDeletedUser } from "./accountAnonymisation";
 
 /**
  * Cleanup worker that purges stale guest carts older than 7 days.
@@ -129,10 +130,12 @@ async function deleteDeviceTokensForUser(uid: string): Promise<boolean> {
  *
  * SEC-02: erasure now covers the customer profile and its subcollections,
  * the retained user profile's subcollections, and the account's device tokens.
- * Order documents are deliberately retained for tax/accounting and live in the
- * top-level `orders` collection, which this never touches. Every step is
- * independently guarded: a partial failure is logged and the remaining deletes
- * still run.
+ * SEC-11 (owner decision 2026-11-25 #2): the retained business record is
+ * ANONYMISED, not deleted — the orders keep their amounts, dates and items for
+ * tax, while the name, phone, address and free-text notes are removed, together
+ * with the copies on delivery quotes, support tickets and chat messages. The
+ * scrub is idempotent and audited (`accountAnonymisation.ts`); it runs LAST so
+ * a failure there cannot stop the profile erasure that precedes it.
  */
 export async function onUserDeletedCleanup(uid: string): Promise<boolean> {
   if (!uid) return false;
@@ -205,6 +208,23 @@ export async function onUserDeletedCleanup(uid: string): Promise<boolean> {
   // addresses/notifications while keeping the sanitized parent doc.
   if (!(await purgeSubcollections(db.collection("users").doc(uid), `users/${uid}`))) {
     ok = false;
+  }
+
+  // 7. SEC-11: anonymise the personal data on the records we KEEP. Orders,
+  // delivery quotes, support tickets and chat messages are retained for
+  // tax/accounting/support history, but the person must not remain
+  // identifiable on them. Idempotent (a scrubbed doc is skipped) and audited;
+  // an incomplete run is reported, never silently swallowed, because the Auth
+  // account is already gone and this is the only remaining copy.
+  try {
+    const anonymised = await anonymiseAndAuditDeletedUser(uid);
+    if (anonymised.failed > 0 || anonymised.remaining > 0) ok = false;
+  } catch (err: any) {
+    ok = false;
+    console.warn(
+      `[Auth Cleanup] Error anonymising retained records for ${uid}:`,
+      (err as any)?.message || err
+    );
   }
 
   return ok;

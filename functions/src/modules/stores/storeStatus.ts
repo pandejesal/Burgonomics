@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
 import { assertBranchAccess, type StaffCaller } from "../../core/middleware";
+import { loadBranchSecrets } from "../branches/branchSecrets";
 
 /**
  * Staff open/close for an outlet — owner rule C (fix wave 2026-11-20).
@@ -132,8 +133,14 @@ export async function setStaffStoreStatus(
   const branchRef = db.collection("branches").doc(branchId);
   const branchSnap = await branchRef.get();
   const branchData = branchSnap?.exists ? branchSnap.data() || {} : {};
+  // SEC-11: the outlet binding is brand-only (`branch_secrets`); the branch
+  // document is only the legacy fallback until the migration is applied.
+  const linkedStoreId = await loadBranchSecrets(branchId)
+    .then((s) => s.petpoojaStoreId)
+    .catch(() => "");
   const restId =
-    typeof branchData.petpoojaStoreId === "string" ? branchData.petpoojaStoreId : "";
+    linkedStoreId ||
+    (typeof branchData.petpoojaStoreId === "string" ? branchData.petpoojaStoreId : "");
 
   const resolved = await resolveStorefrontForBranch(branchId, restId);
   if (resolved.ambiguous) {

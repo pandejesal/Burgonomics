@@ -19,19 +19,41 @@ const { mockDb, store, control, calls } = vi.hoisted(() => {
     return [...names];
   };
 
-  function collectionRef(path: string) {
-    return {
+  /**
+   * Chainable collection/query fake. SEC-11's anonymisation step queries
+   * `orders` (equality on customerId/userId), `delivery_fee_quotes` (uid),
+   * `support_tickets` (customerId) and `chats` (array-contains participantIds)
+   * with `.limit()`, `.orderBy()` and `.startAfter()`, so the fake must model
+   * those no-ops instead of throwing (a throw would mark the run incomplete).
+   */
+  function queryRef(path: string, filters: Array<[string, any]> = []) {
+    const api: any = {
       path,
+      doc: (id: string) => makeDoc(`${path}/${id}`),
+      orderBy: () => api,
+      limit: () => api,
+      startAfter: () => api,
+      where: (field: string, _op: string, value: any) =>
+        queryRef(path, [...filters, [field, value]]),
       get: async () => {
         const docs = [...store.keys()]
           .filter((p) => {
             if (!p.startsWith(`${path}/`)) return false;
             return !p.slice(path.length + 1).includes("/");
           })
-          .map((p) => makeDoc(p));
+          .filter((p) => filters.every(([field, value]) => store.get(p)?.[field] === value))
+          .map((p) => {
+            const ref = makeDoc(p);
+            return { ...ref, id: p.slice(path.length + 1), ref };
+          });
         return { docs };
       },
     };
+    return api;
+  }
+
+  function collectionRef(path: string) {
+    return queryRef(path);
   }
 
   function applySet(path: string, data: any, options?: any) {
@@ -53,30 +75,13 @@ const { mockDb, store, control, calls } = vi.hoisted(() => {
       delete: async () => {
         store.delete(path);
       },
+      collection: (name: string) => collectionRef(`${path}/${name}`),
       listCollections: async () => subcollectionNames(path).map((n) => collectionRef(`${path}/${n}`)),
     };
   }
 
   const mockDb: any = {
-    collection: (name: string) => ({
-      doc: (id: string) => makeDoc(`${name}/${id}`),
-      where: (field: string, _op: string, value: any) => ({
-        get: async () => {
-          const docs = [...store.keys()]
-            .filter(
-              (p) =>
-                p.startsWith(`${name}/`) &&
-                !p.slice(name.length + 1).includes("/") &&
-                store.get(p)?.[field] === value
-            )
-            .map((p) => {
-              const ref = makeDoc(p);
-              return { ...ref, id: p.slice(name.length + 1), ref };
-            });
-          return { docs };
-        },
-      }),
-    }),
+    collection: (name: string) => collectionRef(name),
     batch: () => {
       const ops: Array<() => void> = [];
       return {
@@ -111,8 +116,11 @@ vi.mock("firebase-admin", () => {
     serverTimestamp: () => "MOCK_SERVER_TIMESTAMP",
     delete: () => "MOCK_DELETE",
   };
+  // SEC-11's anonymisation pages orders with an orderBy on the document id.
+  const FieldPath = { documentId: () => "__name__" };
   const firestoreFn: any = vi.fn(() => mockDb);
   firestoreFn.FieldValue = FieldValue;
+  firestoreFn.FieldPath = FieldPath;
   return {
     default: {
       firestore: firestoreFn,
@@ -122,6 +130,8 @@ vi.mock("firebase-admin", () => {
       apps: [{ name: "mock" }],
     },
     firestore: firestoreFn,
+    FieldValue,
+    FieldPath,
     auth: vi.fn(() => ({ revokeRefreshTokens: vi.fn(async () => {}) })),
     initializeApp: vi.fn(),
     apps: [{ name: "mock" }],
