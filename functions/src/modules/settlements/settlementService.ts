@@ -69,7 +69,6 @@ interface CallerShape extends StaffCaller {
 
 function isBrand(caller: CallerShape | null | undefined): boolean {
   if (!caller) return false;
-  if (caller.isBrandAdmin === true) return true;
   return !!caller.role && BRAND_ROLES.has(caller.role);
 }
 
@@ -340,18 +339,19 @@ export async function generateSettlementStatement(
   summary.captureUnresolved = unresolved.count;
   summary.unresolvedTruncated = unresolved.truncated;
 
-  const fee = resolveSettlementFeePaise(branchData);
+  const fee = resolveSettlementFeePaise();
+  const traded = summary.onlineOrders > 0 || summary.cashOrders > 0 || summary.branchUpiOrders > 0;
   const feeApplicable = isBranchFeeApplicable(
     {
       active: branchData?.active,
       status: branchData?.status,
       createdAtMs: millisOf(branchData?.createdAt, month.startMs - 1),
     },
-    summary.onlineOrders > 0 || summary.cashOrders > 0,
+    traded,
     month
   );
 
-  if (input.omitWhenEmpty && !feeApplicable.applicable && summary.onlineOrders === 0 && summary.cashOrders === 0) {
+  if (input.omitWhenEmpty && !feeApplicable.applicable && !traded && !unresolved.count && !unresolved.truncated) {
     return null;
   }
 
@@ -392,6 +392,10 @@ export async function generateSettlementStatement(
     for (let prior = 1; prior < version; prior += 1) {
       const priorRef = db.collection(SETTLEMENT_STATEMENTS).doc(settlementStatementId(branchId, monthKey, prior));
       const priorSnap: any = await tx.get(priorRef);
+      const priorNet = priorSnap?.data()?.netPayablePaise;
+      if (prior === version - 1 && Number.isSafeInteger(priorNet)) {
+        statement.netAdjustmentPaise = statement.netPayablePaise - priorNet;
+      }
       if (priorSnap && priorSnap.exists && (priorSnap.data() as any)?.current !== false) {
         priorToRetire.push(priorRef);
       }
@@ -456,6 +460,29 @@ function asStatement(data: any): SettlementStatement | null {
   return data as SettlementStatement;
 }
 
+async function* pages(query: FirebaseFirestore.Query, size = 500) {
+  // Firestore's default order without an explicit sort is document ID.
+  const base = query.limit(size);
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+  do {
+    const { docs } = await (cursor ? base.startAfter(cursor) : base).get();
+    yield* docs;
+    cursor = docs.length === size ? docs[docs.length - 1] : undefined;
+  } while (cursor);
+}
+
+function branchSafe(statement: SettlementStatement): SettlementStatement {
+  const { manuallyResolvedCaptures: _internal, ...rest } = statement;
+  return {
+    ...rest,
+    generatedBy: "Brand team",
+    notes: statement.complete === false ? ["This statement is under review. Contact the brand team for details."] : [],
+    payments: (statement.payments ?? []).map(({ reference, paidAtMs, settledNetPaise }) => ({
+      reference, paidAtMs, settledNetPaise, recordedBy: "Brand team", recordedByEmail: null, note: null,
+    })),
+  };
+}
+
 export interface ListSettlementsInput {
   caller: CallerShape | null | undefined;
   monthKey: string;
@@ -498,25 +525,18 @@ export async function listSettlements(
     );
   }
 
-  const snap = await db
-    .collection(SETTLEMENT_STATEMENTS)
-    .where("monthKey", "==", input.monthKey)
-    .limit(2000)
-    .get();
-
-  const statements: SettlementStatement[] = [];
-  for (const doc of snap?.docs ?? []) {
+  const query = db.collection(SETTLEMENT_STATEMENTS).where("monthKey", "==", input.monthKey);
+  const byBranch = new Map<string, SettlementStatement[]>();
+  for await (const doc of pages(query)) {
     const statement = asStatement(typeof doc.data === "function" ? doc.data() : null);
     if (!statement) continue;
     if (scope !== null && !scope.includes(statement.branchId)) continue;
     if (input.branchId && statement.branchId !== input.branchId) continue;
-    statements.push(statement);
-  }
-
-  const byBranch = new Map<string, SettlementStatement[]>();
-  for (const statement of statements) {
     const list = byBranch.get(statement.branchId) || [];
-    list.push(statement);
+    if (input.allVersions || !list.length || Number(statement.version) > Number(list[0].version)) {
+      if (!input.allVersions) list.length = 0;
+      list.push(scope === null ? statement : branchSafe(statement));
+    }
     byBranch.set(statement.branchId, list);
   }
 
@@ -635,7 +655,7 @@ export async function markSettlementPaid(
       }
       const pending = await tx.get(db.collection(CAPTURE_REGENERATION).doc(`${current.branchId}_${current.monthKey}`));
       if (pending.exists) {
-        throw new SettlementError("SETTLEMENT_REGENERATION_PENDING", "Capture reconciliation changed this month; regenerate before recording payment", 409);
+        throw new SettlementError("SETTLEMENT_REGENERATION_PENDING", "Settlement money changed this month; wait for a corrected version before recording payment", 409);
       }
       // M6 cutover: a statement written before the payment ledger existed has
       // no verified balance. It is VOID — never payable, no data step needed.
@@ -662,7 +682,7 @@ export async function markSettlementPaid(
         db.collection(SETTLEMENT_VERSIONS).doc(`${current.branchId}_${current.monthKey}`)
       );
       const latestVersion = Number(versionsSnap?.exists ? (versionsSnap.data() as any)?.latestVersion : 0) || 0;
-      if (latestVersion > Number(current.version || 0)) {
+      if (current.current === false || latestVersion > Number(current.version || 0)) {
         throw new SettlementError(
           "SETTLEMENT_STALE_VERSION",
           `Settlement ${input.statementId} is no longer the current version (latest v${latestVersion}); mark the current statement paid instead`,
@@ -683,22 +703,38 @@ export async function markSettlementPaid(
         ? ledgerData.payments
         : [];
       const payments = Array.isArray(current.payments) ? [...current.payments] : [];
-      const already = payments.find(
+      const already = ledgerPayments.find(
         (p) => p.reference === reference && Number(p.paidAtMs) === paidAtMs
       );
       if (already) {
+        if (input.settledNetPaise !== undefined && input.settledNetPaise !== already.settledNetPaise) {
+          throw new SettlementError("SETTLEMENT_REFERENCE_CONFLICT", "This reference and date were recorded with a different amount", 409);
+        }
         return { statement: current, reused: true };
       }
-      // Delta is recomputed against the FRESH ledger read inside this tx.
-      const settledNetPaise = (Number(current.netPayablePaise) || 0) - ledgerNet;
-      if (settledNetPaise === 0) {
+      const residual = current.netPayablePaise - ledgerNet;
+      // Two distinct "nothing left" cases:
+      //  - this same document was already settled (its build-time
+      //    priorSettledNetPaise is the ledger total BEFORE that payment, so it
+      //    differs from the fresh ledger) → the audited ALREADY_PAID refusal;
+      //  - a regenerated version was already fully covered at build time
+      //    (priorSettledNetPaise === ledgerNet) → ZERO_DELTA, nothing to add.
+      if (residual === 0 && current.paidStatus === "paid" && current.priorSettledNetPaise !== ledgerNet && !input.additionalPayment) {
+        throw new SettlementError("SETTLEMENT_ALREADY_PAID", "This version has already been paid", 409);
+      }
+      if (residual === 0) {
         throw new SettlementError(
           "SETTLEMENT_ZERO_DELTA",
           `Settlement ${input.statementId} has no outstanding delta; nothing to record`,
           409
         );
       }
-      const isAdditionalPayment = payments.length > 0;
+      const settledNetPaise = input.settledNetPaise ?? residual;
+      if (!Number.isSafeInteger(settledNetPaise) || settledNetPaise === 0 || Math.sign(settledNetPaise) !== Math.sign(residual) || Math.abs(settledNetPaise) > Math.abs(residual)) {
+        throw new SettlementError("SETTLEMENT_INVALID_AMOUNT", "The amount must match the direction and not exceed the outstanding balance", 400);
+      }
+      const outstandingPaise = residual - settledNetPaise;
+      const paidStatus = outstandingPaise === 0 ? "paid" : "unpaid";
       const record: SettlementPaymentRecord = {
         paidAtMs,
         reference,
@@ -722,27 +758,27 @@ export async function markSettlementPaid(
       // The FIRST payment is the one that settles the statement; any further row
       // is additional history. Overwriting `paymentReference`/`paidAtMs` on a top
       // up would silently restate when the statement was settled.
-      const settledAtMs = isAdditionalPayment ? current.paidAtMs : paidAtMs;
-      const settledReference = isAdditionalPayment ? current.paymentReference : reference;
+      const settledAtMs = ledgerPayments[0]?.paidAtMs ?? paidAtMs;
+      const settledReference = ledgerPayments[0]?.reference ?? reference;
       const paid = {
         ...current,
-        paidStatus: "paid" as const,
+        paidStatus,
         paidAtMs: settledAtMs,
         paymentReference: settledReference,
         payments: [...payments, record],
-        outstandingPaise: 0,
+        outstandingPaise,
       };
       tx.set(
         ref,
         {
-          paidStatus: "paid",
+          paidStatus,
           paidAtMs: settledAtMs,
           paymentReference: settledReference,
           // The transaction already read the current list, so writing the full
           // array is the same read-modify-write Firestore's arrayUnion would do,
           // and it keeps the stored history in one canonical order.
           payments: paid.payments,
-          outstandingPaise: 0,
+          outstandingPaise,
           paidUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -757,6 +793,8 @@ export async function markSettlementPaid(
       monthKey: result.statement.monthKey,
       reference,
       paidAtMs,
+      settledNetPaise: result.statement.payments.at(-1)?.settledNetPaise,
+      outstandingPaise: result.statement.outstandingPaise,
     });
   }
   return result;
@@ -822,16 +860,10 @@ export async function runMonthlySettlementScheduler(
     throw new SettlementError("SETTLEMENT_BAD_MONTH", "Cannot resolve the previous month", 500);
   }
 
-  const branchesSnap = await db.collection("branches").limit(500).get();
   const wanted = input.branchIds && input.branchIds.length > 0 ? new Set(input.branchIds) : null;
 
-  const existing = await db
-    .collection(SETTLEMENT_STATEMENTS)
-    .where("monthKey", "==", monthKey)
-    .limit(2000)
-    .get();
   const already = new Set<string>();
-  for (const doc of existing?.docs ?? []) {
+  for await (const doc of pages(db.collection(SETTLEMENT_STATEMENTS).where("monthKey", "==", monthKey))) {
     const data = (typeof doc.data === "function" ? doc.data() : null) as any;
     if (data?.branchId) already.add(String(data.branchId));
   }
@@ -840,7 +872,7 @@ export async function runMonthlySettlementScheduler(
   const skipped: string[] = [];
   const failed: Array<{ branchId: string; error: string }> = [];
 
-  for (const doc of branchesSnap?.docs ?? []) {
+  for await (const doc of pages(db.collection("branches"))) {
     const branchId = doc.id;
     if (wanted && !wanted.has(branchId)) continue;
     if (already.has(branchId)) {

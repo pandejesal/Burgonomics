@@ -9,7 +9,7 @@ import { markOrderReconciliation, claimCapturedPaymentInTx } from "./reconciliat
 import { receiptEvidenceStamp } from "./receiptEvidence";
 import { guardCaptureFulfillment, captureGateAllowsConfirm } from "./captureFulfillment";
 import { applyRefundToMonthlyFee } from "./monthlyFee";
-import { deliverCaptureRecoveryAlert, repairSettlementCaptureInTx } from "./settlementCaptureRecovery";
+import { deliverCaptureRecoveryAlert, queueRefundCorrectionInTx, repairSettlementCaptureInTx } from "./settlementCaptureRecovery";
 import { settlementCaptureStamp, providerCapturedAtMs, isProviderConfirmedCapture, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
 import { pushOrderToPetpooja } from "../petpooja";
 import { dispatchCustomerAccountNotification } from "../tickets/supportNotifications";
@@ -1581,6 +1581,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               ? data.refundObligation
               : {};
 
+          await queueRefundCorrectionInTx(tx, orderDoc.id, data, refundId, processedMap);
           tx.set(
             orderDoc.ref,
             {

@@ -1,4 +1,5 @@
 import { db, admin } from "../../core/firebase";
+import { randomUUID } from "node:crypto";
 import { captureErrorSnapshot } from "../../core/errors";
 import { withSchedulerLock } from "../../core/schedulerLock";
 import { isProviderConfirmedCapture, settlementCaptureStamp, settlementMonthBounds } from "../settlements/settlementMath";
@@ -8,11 +9,14 @@ import { getRazorpayClient } from "./razorpayClient";
 
 export const CAPTURE_ISSUES = "settlement_capture_issues";
 export const CAPTURE_RESOLUTIONS = "settlement_capture_resolutions";
+/** Refund / late-capture publication jobs, separate from an order capture problem. */
+export const SETTLEMENT_CORRECTIONS = "settlement_corrections";
 const ALERT_TTL_MS = 86_400_000;
 const STALE_AFTER_MS = 7_200_000;
 const OPERATION_LEASE_MS = 10 * 60_000;
 const PAYMENT_FIELD = "payment.razorpayPaymentId";
 const issueFor = (id: string) => db.collection(CAPTURE_ISSUES).doc(id);
+const correctionFor = (id: string) => db.collection(SETTLEMENT_CORRECTIONS).doc(id);
 const orderFor = (id: string) => db.collection("orders").doc(id);
 type Actor = { uid: string; email?: string | null };
 type Pending = { branchId: string; publicationKey: string; months: string[] };
@@ -95,6 +99,9 @@ export async function repairSettlementCaptureInTx(tx: FirebaseFirestore.Transact
   // Only an active conflict requires admin reconciliation. A resolved
   // cross-month duplicate returned above; a same-month event may still upgrade.
   if (issue?.status === "conflict") return null;
+  if (data.settlementCaptureState === "not_captured") {
+    await queueMonthCorrectionInTx(tx, order.id, data.branchId, atMs, "late-capture");
+  }
   tx.set(order.ref, settlementCaptureStamp(atMs), { merge: true });
   if (issue?.status === "open") tx.update(ref, { status: "resolved", closedAtMs: Date.now(), closedBy: "provider_webhook" });
   return null;
@@ -142,13 +149,73 @@ export async function resolveCaptureManually(input: {
   });
 }
 
+/** No provider mutation: only independently verified noncapture evidence can close an unresolved row. */
+export async function resolveCaptureNotCaptured(input: {
+  orderId: string; paymentId: string; reason: string; caller: Actor;
+}): Promise<Result> {
+  const { orderId, paymentId, reason, caller } = input;
+  const ref = orderFor(orderId);
+  const issueRef = issueFor(orderId);
+  const eligible = (order: FirebaseFirestore.DocumentData | undefined) =>
+    order?.paymentChannel === "razorpay" && order.settlementCaptureUnresolved === true &&
+    paymentIdOf(order) === paymentId && !["confirmed", "confirmed_manual"].includes(order.settlementCaptureState);
+  if (!eligible((await ref.get()).data()) || !(await isBound(orderId, paymentId))) return refusal("unresolved_payment_required");
+  const provider = await fetchPayment(paymentId);
+  if (!provider) return refusal("fetch_failed", 503);
+  const now = Date.now();
+  const created = providerCreatedMs(provider);
+  // An authorization may still be captured. A newly created payment may still
+  // complete. Do not infer failure from unknown/missing provider fields.
+  if (provider.id !== paymentId || provider.captured !== false ||
+      !(provider.status === "failed" || (provider.status === "created" && created !== null && created <= now - STALE_AFTER_MS))) {
+    return refusal("not_proven_uncaptured");
+  }
+  return db.runTransaction(async tx => {
+    const fresh = (await tx.get(ref)).data();
+    const issue = (await tx.get(issueRef)).data();
+    if (!eligible(fresh) || issue?.status === "conflict" || !(await isBound(orderId, paymentId, tx))) return refusal("unresolved_payment_required");
+    const version = (Number(fresh?.settlementResolutionVersion) || 0) + 1;
+    const resolution = { uid: caller.uid, email: caller.email ?? null, atMs: now, reason,
+      providerStatus: provider.status, providerCaptured: false, providerCreatedAtMs: created, decision: "not_captured" };
+    tx.update(ref, { settlementCaptureState: "not_captured", settlementCaptureUnresolved: false,
+      settlementEffectiveAtMs: admin.firestore.FieldValue.delete(), settlementResolutionVersion: version, settlementResolution: resolution });
+    tx.create(db.collection(CAPTURE_RESOLUTIONS).doc(`${orderId}_${version}`), { orderId, paymentId, branchId: fresh?.branchId ?? null, ...resolution });
+    tx.set(issueRef, { orderId, paymentId, status: "resolved", closedAtMs: now, closedBy: caller.uid,
+      providerStatus: provider.status, providerCaptured: false }, { merge: true });
+    return { ok: true };
+  });
+}
+
 const monthMarker = (branchId: string, month: string) => db.collection(CAPTURE_REGENERATION).doc(`${branchId}_${month}`);
 const withOrderLock = <T>(id: string, fn: () => Promise<T>) => withSchedulerLock(`settlement-capture-${id}`, OPERATION_LEASE_MS, fn, "strict-operation");
+
+/** Writes only: the money change AND its publication job commit atomically with no extra read. */
+async function queueMonthCorrectionInTx(tx: FirebaseFirestore.Transaction, orderId: string, branchId: unknown, atMs: unknown, kind: "refund" | "late-capture") {
+  if (typeof branchId !== "string" || !branchId || branchId.includes("/") || typeof atMs !== "number" || !Number.isSafeInteger(atMs) || atMs <= 0) return;
+  const monthKey = istMonthKey(atMs);
+  if (settlementMonthBounds(monthKey).endMs > Date.now()) return;
+  const marker = monthMarker(branchId, monthKey);
+  const jobId = `${kind}-${randomUUID()}`;
+  // Unique job ids in a recursively-merged `pending` map: additive, so a refund
+  // never replaces a capture job or another in-flight correction, and the caller
+  // may already have written in this transaction (no read-after-write).
+  tx.set(marker, { branchId, monthKey, pending: { [jobId]: `settlement-correction:${jobId}` } }, { merge: true });
+  tx.set(correctionFor(jobId), { orderId, kind, branchId, monthKey, regenerationPending: true,
+    pendingRegeneration: { branchId, publicationKey: `settlement-correction:${jobId}`, months: [monthKey] } });
+}
+
+export async function queueRefundCorrectionInTx(tx: FirebaseFirestore.Transaction, orderId: string,
+  order: FirebaseFirestore.DocumentData, refundId: string, next: Record<string, number>) {
+  if (order.paymentChannel !== "razorpay" || !refundId || (order.settlementProcessedRefunds?.[refundId] ?? 0) === (next[refundId] ?? 0)) return;
+  await queueMonthCorrectionInTx(tx, orderId, order.branchId, order.settlementEffectiveAtMs, "refund");
+}
 
 /** Requires the order lock. The statement itself is the durable publication receipt. */
 async function finishPending(orderId: string): Promise<boolean> {
   const issueRef = issueFor(orderId);
-  const pending = (await issueRef.get()).data()?.pendingRegeneration as Pending | undefined;
+  const correctionRef = correctionFor(orderId);
+  const jobRef = (await issueRef.get()).exists ? issueRef : correctionRef;
+  const pending = (await jobRef.get()).data()?.pendingRegeneration as Pending | undefined;
   if (!pending) return false;
   let remaining = [...pending.months];
   for (const month of pending.months) {
@@ -161,7 +228,7 @@ async function finishPending(orderId: string): Promise<boolean> {
         }
         const marker = monthMarker(pending.branchId, month);
         await db.runTransaction(async tx => {
-          const current = (await tx.get(issueRef)).data()?.pendingRegeneration as Pending | undefined;
+          const current = (await tx.get(jobRef)).data()?.pendingRegeneration as Pending | undefined;
           const active = (await tx.get(marker)).data();
           if (current?.publicationKey !== pending.publicationKey || !current.months.includes(month)) return;
           if (active?.pending?.[orderId] !== pending.publicationKey) throw new Error("Regeneration marker identity changed");
@@ -170,7 +237,7 @@ async function finishPending(orderId: string): Promise<boolean> {
           delete jobs[orderId];
           if (Object.keys(jobs).length) tx.update(marker, { pending: jobs });
           else tx.delete(marker);
-          tx.update(issueRef, { pendingRegeneration: months.length ? { ...current, months } : admin.firestore.FieldValue.delete(), regenerationPending: months.length > 0 });
+          tx.update(jobRef, { pendingRegeneration: months.length ? { ...current, months } : admin.firestore.FieldValue.delete(), regenerationPending: months.length > 0 });
         });
       });
       if (lock.ran) remaining = remaining.filter(m => m !== month);
@@ -246,6 +313,8 @@ export async function listCaptureIssues() {
 export async function runCaptureRecoverySweep(now = Date.now()): Promise<void> {
   const retries = await db.collection(CAPTURE_ISSUES).where("regenerationPending", "==", true).limit(50).get();
   for (const issue of retries.docs) await retryCaptureRegeneration(issue.id).catch(err => console.warn("[Capture Recovery] retry failed", issue.id, err));
+  const corrections = await db.collection(SETTLEMENT_CORRECTIONS).where("regenerationPending", "==", true).limit(50).get();
+  for (const job of corrections.docs) await retryCaptureRegeneration(job.id).catch(err => console.warn("[Capture Recovery] correction retry failed", job.id, err));
   const query = db.collection("orders").where("paymentChannel", "==", "razorpay").where("settlementCaptureUnresolved", "==", true).orderBy("createdAt").limit(50);
   let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
   do {

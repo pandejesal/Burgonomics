@@ -40,6 +40,7 @@ import { PAYMENT_INTENT_TTL_MS } from "./lifetimes";
 import { resolveBranchId } from "./branchResolver";
 import { assertOutletOpenForOnlineOrders } from "./outletStatus";
 import { settlementCapturePending, isProviderConfirmedCapture, isManuallyConfirmedCapture, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
+import { queueRefundCorrectionInTx } from "./settlementCaptureRecovery";
 import { ensureMonthlyFeeHold, applyRefundToMonthlyFee, type MonthlyFeeHold } from "./monthlyFee";
 import { bindDeliveryQuote, deliveryQuoteError } from "./deliveryQuotes";
 import { assertServerOnlineDraft } from "../orders/createOnlineDraft";
@@ -4528,6 +4529,7 @@ export async function autoRefund(
       orderCompleteData.refundActiveClaim = admin.firestore.FieldValue.delete();
     }
 
+    await queueRefundCorrectionInTx(tx, orderId, fresh, refundId, orderCompleteData.settlementProcessedRefunds);
     tx.set(orderRef, orderCompleteData, { merge: true });
     // F7: release the held monthly fee (and count the refund) in the SAME
     // transaction as the refund record, so no recovery worker is needed. Runs

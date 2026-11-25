@@ -63,34 +63,23 @@ describe("flat monthly fee resolution", () => {
     expect(DEFAULT_SETTLEMENT_FEE_RUPEES).toBe(2000);
   });
 
-  it("a branch's own settlementFee wins, then monthlyFee, then the default", () => {
-    expect(resolveSettlementFeePaise({ settlementFee: 1500 })).toMatchObject({
-      feePaise: 150000,
-      source: "settlementFee",
-    });
-    expect(resolveSettlementFeePaise({ monthlyFee: 2500 })).toMatchObject({
-      feePaise: 250000,
-      source: "monthlyFee",
-    });
-    expect(resolveSettlementFeePaise({ settlementFee: 1200, monthlyFee: 2500 })).toMatchObject({
-      feePaise: 120000,
-      source: "settlementFee",
-    });
-  });
-
-  it("₹0 is a real configured value: no fee, not a fallback", () => {
-    const resolved = resolveSettlementFeePaise({ settlementFee: 0 });
-    expect(resolved.feePaise).toBe(0);
-    expect(resolved.source).toBe("settlementFee");
-    expect(resolved.invalid).toBe(false);
-  });
-
-  it("a negative or non-finite fee is refused loudly, not silently charged", () => {
-    const negative = resolveSettlementFeePaise({ settlementFee: -50 });
-    expect(negative.feePaise).toBe(DEFAULT_SETTLEMENT_FEE_RUPEES * 100);
-    expect(negative.invalid).toBe(true);
-    const nan = resolveSettlementFeePaise({ settlementFee: "not-a-number" as never });
-    expect(nan.invalid).toBe(true);
+  it("is the owner's flat ₹2,000 whatever a branch carries (retired fields never price it)", () => {
+    // Owner decision 2026-11-20/25: one flat fee. `monthlyFee` is the retired
+    // per-order hold knob and `settlementFee` is not a price list — neither may
+    // change the statement line, so every branch is charged the same ₹2,000.
+    for (const branch of [
+      { monthlyFee: 2500 },
+      { settlementFee: 1200, monthlyFee: 2500 },
+      { settlementFee: 0 },
+      { settlementFee: "not-a-number" as never },
+      { settlementFee: -50, monthlyFee: -1 },
+    ]) {
+      expect(resolveSettlementFeePaise(branch)).toMatchObject({
+        feePaise: 200000,
+        source: "default",
+        invalid: false,
+      });
+    }
   });
 });
 

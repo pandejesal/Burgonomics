@@ -137,6 +137,7 @@ beforeEach(() => {
   store.alert.mockReset().mockResolvedValue('alert');
   store.verify.mockReset().mockImplementation(async (role: string) => ({ uid: role, role: role === 'registry-only' ? undefined : role }));
   for (const role of ['brand_owner', 'developer', 'registry-only']) store.docs.set(`users/${role}`, { active: true });
+  for (const role of ['brand_owner', 'developer']) store.docs.set(`admins/${role}`, { active: true, role });
   store.docs.set('admins/registry-only', { active: true, role: 'brand_owner' });
   store.docs.set('branches/br', { name: 'Kitchen', active: true, settlementFee: 0, createdAt: OLD - 86_400_000 });
 });
@@ -176,13 +177,93 @@ const resolve = (extra = {}, token: string | null = 'brand_owner') => post('reso
 const retry = () => post('retryCaptureRegeneration', { orderId: ORDER });
 const pay = (version: number) => post('markPaid', { statementId: statement(M, version).split('/')[1], reference: 'settlement-adj-2026', paidOn: '2026-11-14', additionalPayment: true });
 
+describe('cycle 11 settlement HTTP handlers', () => {
+  const generate = () => post('generate', { branchId: 'br', monthKey: M });
+  const close = () => post('resolveNotCaptured', { orderId: ORDER, razorpayPaymentId: PAY, reason: 'Verified with provider' });
+  const payment = (statementId: string, reference: string, settledNetPaise: number, additionalPayment = false) =>
+    post('markPaid', { statementId, reference, paidOn: '2026-11-14', settledNetPaise, additionalPayment });
+
+  it('charges the owner’s flat fee even when legacy fields disagree and splits branch UPI from cash', async () => {
+    store.docs.set('branches/br', { name: 'Kitchen', active: true, monthlyFee: 2500, settlementFee: 3500, createdAt: OLD - 5000 });
+    for (const [id, paymentMethod, grandTotal] of [['cash', 'cod', 100], ['digital', 'upi', 200]] as const) {
+      store.docs.set(`orders/${id}`, { branchId: 'br', settlementEffectiveAtMs: OLD, status: { code: 'COMPLETED' }, customerId: 'cust_walkin', paymentMethod, pricing: { grandTotal } });
+    }
+    const response = await generate();
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ platformFeePaise: 200000, onlineCollectedPaise: 0, cashCollectedPaise: 10000, branchUpiCollectedPaise: 20000, netPayablePaise: -200000 });
+  });
+
+  it('records only the signed amount evidenced and carries the first reference across regeneration', async () => {
+    const s1 = await (await generate()).json();
+    const first = await payment(s1.id, 'UTR1', -50000);
+    expect(await first.json()).toMatchObject({ statement: { paidStatus: 'unpaid', outstandingPaise: -150000, payments: [{ settledNetPaise: -50000 }] } });
+    expect((await payment(s1.id, 'wrong-sign', 25000, true)).status).toBe(400);
+    expect((await payment(s1.id, 'over', -150001, true)).status).toBe(400);
+    expect((await payment(s1.id, 'UTR2', -25000, true)).status).toBe(200);
+    const s2 = await (await generate()).json();
+    expect(s2).toMatchObject({ paidStatus: 'unpaid', outstandingPaise: -125000, paymentReference: 'UTR1' });
+    expect((await payment(s2.id, 'UTR3', -125000, true)).status).toBe(200);
+    expect(store.docs.get(statement(M, 2))).toMatchObject({ paidStatus: 'paid', outstandingPaise: 0, paymentReference: 'UTR1' });
+    expect(await (await payment(s2.id, 'UTR4', -1)).json()).toMatchObject({ code: 'SETTLEMENT_ALREADY_PAID' });
+  });
+
+  it.each(['captured', 'refunded', 'authorized', 'failed', 'created'])('closes only provider-confirmed noncaptures (%s)', async status => {
+    seedOrder();
+    store.docs.set(issuePath, { orderId: ORDER, paymentId: PAY, status: 'open' });
+    const allowed = status === 'failed' || status === 'created';
+    store.payment.mockResolvedValue({ id: PAY, status, captured: ['captured', 'refunded'].includes(status), created_at: OLD / 1000 });
+    expect((await close()).status).toBe(allowed ? 200 : 400);
+    expect(store.payment).toHaveBeenCalledWith(PAY);
+    expect(audit()).toHaveLength(allowed ? 1 : 0);
+    if (allowed) {
+      expect(store.docs.get(audit()[0])).toMatchObject({ providerStatus: status, uid: 'brand_owner', reason: 'Verified with provider' });
+      expect(await (await generate()).json()).toMatchObject({ complete: true, unresolvedCaptures: 0, onlineCollectedPaise: 0 });
+    }
+  });
+
+  it('rejects demoted money actors and projects fresh branch scope without staff details', async () => {
+    const id = statement(M, 1).split('/')[1];
+    store.docs.set(statement(M, 1), { id, branchId: 'br', branchName: 'Kitchen', monthKey: M, version: 1, generatedBy: 'operator@example.test', notes: ['Internal reasoning'], payments: [{ note: 'internal note', recordedByEmail: 'operator@example.test', recordedBy: 'secret-uid' }] });
+    store.docs.set('admins/brand_owner', { active: true, role: 'branch_owner', branchIds: ['br'] });
+    expect((await generate()).status).toBe(403);
+    expect((await close()).status).toBe(403);
+    expect((await pay(1)).status).toBe(403);
+    const read = await post('list', { monthKey: M });
+    expect(read.status).toBe(200);
+    const body = await read.text();
+    expect(body).toContain(id);
+    for (const value of ['operator@example.test', 'Internal reasoning', 'internal note', 'secret-uid']) expect(body).not.toContain(value);
+  });
+
+  it('does not silently drop a branch beyond 2,000 existing versions in list, CSV or scheduler', async () => {
+    for (let i = 0; i < 2000; i++) {
+      const id = `aaa-${String(i).padStart(4, '0')}`;
+      store.docs.set(`branch_settlements/${id}`, { id, branchId: 'aaa', branchName: 'First', monthKey: M, version: i + 1, generatedAtMs: OLD, notes: [] });
+    }
+    const s = await (await generate()).json();
+    expect((await (await post('list', { monthKey: M })).json()).statements.map((r: any) => r.id)).toContain(s.id);
+    expect(await (await post('csv', { monthKey: M })).text()).toContain(s.id);
+    await (endpoints as Record<string, any>).monthlyBranchSettlements.run({});
+    expect(store.docs.get(versions(M)).latestVersion).toBe(1);
+  });
+});
+
 describe('capture recovery HTTP handlers', () => {
-  it.each([[null, 401], ['branch_staff', 403], ['branch_owner', 403], ['franchise', 403], ['support', 403], ['registry-only', 403]])('refuses caller %s on both commands before financial writes', async (role, status) => {
+  it.each([[null, 401], ['branch_staff', 403], ['branch_owner', 403], ['franchise', 403], ['support', 403]])('refuses caller %s on both commands before financial writes', async (role, status) => {
     seedConflict();
     expect((await reconcile(N, role)).status).toBe(status);
     expect((await resolve({}, role)).status).toBe(status);
     expect(store.writes).toEqual([]);
     expect(store.payment).not.toHaveBeenCalled();
+  });
+  it('admits a registry brand owner whose token claim has not refreshed, and refuses the demoted one', async () => {
+    // §9: the registry is the authority. A brand owner whose custom claim is
+    // still in flight can act; the moment the registry says branch_owner the
+    // same token is refused instead of keeping brand power for up to an hour.
+    seedConflict();
+    expect((await reconcile(N, 'registry-only')).status).toBe(200);
+    store.docs.set('admins/brand_owner', { active: true, role: 'branch_owner', branchIds: ['br'] });
+    expect((await resolve({}, 'brand_owner')).status).toBe(403);
   });
   it('rejects a third month without changing any financial record', async () => {
     seedConflict();
@@ -329,6 +410,15 @@ async function signedWebhook(id: string, instant: number, event = 'payment.captu
   }, body });
 }
 
+function signedRefund(id: string, instant: number) {
+  const body = JSON.stringify({ event: 'refund.processed', created_at: instant / 1000, payload: { refund: { entity: {
+    id: 'rfnd_late', amount: 5000, payment_id: PAY, status: 'processed', currency: 'INR',
+  } } } });
+  return fetch(`${url}/payments/webhook`, { method: 'POST', headers: {
+    'content-type': 'application/json', 'x-razorpay-event-id': id, 'x-razorpay-signature': createHmac('sha256', SECRET).update(body).digest('hex'),
+  }, body });
+}
+
 describe('signed late-webhook and scheduler handlers', () => {
   async function withSignedClock(instant: number, fn: () => Promise<void>) {
     const now = vi.spyOn(Date, 'now').mockReturnValue(instant + 1000);
@@ -338,6 +428,24 @@ describe('signed late-webhook and scheduler handlers', () => {
     config.mock.paymentGateway = false;
     try { await fn(); } finally { now.mockRestore(); config.razorpay.webhookSecret = previous; config.mock.paymentGateway = mock; }
   }
+  it('queues a closed-month refund atomically, blocks payment, then publishes exactly one signed correction', async () => {
+    seedOrder({ settlementEffectiveAtMs: OLD, settlementCaptureState: 'confirmed', settlementCaptureUnresolved: false, payment: { razorpayPaymentId: PAY, capturedAmountPaise: 300000 } });
+    const now = Date.UTC(2026, 10, 19);
+    await withSignedClock(now, async () => {
+      expect((await post('generate', { branchId: 'br', monthKey: M })).status).toBe(201);
+      expect((await pay(1)).status).toBe(200);
+      const before = store.docs.get(statement(M, 1));
+      expect((await signedRefund('refund-one', now)).status).toBe(200);
+      expect((await signedRefund('refund-two', now)).status).toBe(200);
+      expect(await (await pay(1)).json()).toMatchObject({ code: 'SETTLEMENT_REGENERATION_PENDING' });
+      const tick = (endpoints as Record<string, any>).sweepStuckSettlementCapturesJob;
+      await tick.run({});
+      await tick.run({});
+      expect(store.docs.get(statement(M, 1))).toStrictEqual({ ...before, current: false });
+      expect(store.docs.get(statement(M, 2))).toMatchObject({ onlineRefundedPaise: 5000, outstandingPaise: -5000, netAdjustmentPaise: -5000 });
+      expect(store.docs.get(versions(M)).latestVersion).toBe(2);
+    });
+  });
   it.each([false, true])('holds every settlement field and claims one alert across distinct concurrent signed events (delivery fails=%s)', async fail => {
     seedOrder({ settlementEffectiveAtMs: OLD, settlementCaptureState: 'confirmed_manual', settlementCaptureUnresolved: false });
     store.docs.set(issuePath, { status: 'resolved', lastAlertedAtMs: PROVIDER - 60_000 });

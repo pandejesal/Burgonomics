@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import type { AuthenticatedRequest } from "../../core/middleware";
 import { SettlementError } from "./settlementService";
+import { db } from "../../core/firebase";
 
 /**
  * HTTP mapping for the settlement routes. Kept separate from `index.ts` so the
@@ -33,22 +34,29 @@ export function sendCsvDownload(res: Response, filename: string, csv: string): v
 }
 
 /** The verified caller shape the settlement service expects. */
-export function settlementCaller(user: AuthenticatedRequest["user"]): {
+export async function settlementCaller(user: AuthenticatedRequest["user"]): Promise<{
   uid: string;
   role?: string;
   email?: string | null;
   branchIds?: string[];
-  isBrandAdmin?: boolean;
-} | null {
+} | null> {
   if (!user?.uid) return null;
   const token = user as any;
+  const staff = (await db.collection("admins").doc(user.uid).get()).data();
+  // §9: the registry is the AUTHORITY, the token is only an identity. A demoted
+  // owner loses generate/mark-paid/resolve immediately instead of when its token
+  // refreshes, and a stale brand claim cannot grant a role the registry removed.
+  // A suspended or missing registry row grants nothing (fail closed).
+  const role = staff?.active === false || staff?.suspended === true ? undefined : staff?.role;
+  const held = Array.isArray(staff?.branchIds)
+    ? staff.branchIds
+    : typeof staff?.branchId === "string"
+      ? [staff.branchId]
+      : [];
   return {
     uid: user.uid,
-    role: typeof token.role === "string" ? token.role : undefined,
+    role: typeof role === "string" ? role : undefined,
     email: typeof token.email === "string" ? token.email : null,
-    branchIds: Array.isArray(token.branchIds)
-      ? token.branchIds.filter((b: unknown): b is string => typeof b === "string")
-      : [],
-    isBrandAdmin: token.isBrandAdmin === true,
+    branchIds: held.filter((b: unknown): b is string => typeof b === "string" && !!b),
   };
 }
