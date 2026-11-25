@@ -19,8 +19,17 @@ import { writeAuditLog } from "../audit/auditLog";
  *     them), free-text order notes, per-line notes, and any PII an older
  *     `cashReceipt` snapshot may carry.
  *   - delivery_fee_quotes: the drop coordinates and the owning uid.
- *   - support_tickets: customerName / customerPhone.
- *   - chats/*\/messages: senderName.
+ *   - support_tickets: customerName / customerPhone, plus the customer's name
+ *     and uid on every timeline event they authored (the case history keeps
+ *     staff events untouched).
+ *   - chats/*: participantNames[uid], the DM title and lastMessageSender, and
+ *     every message's senderName.
+ *
+ * The customer's uid is kept on `support_tickets.customerId` (and
+ * `orders.customerId`, quotes, ledger): it is an opaque account reference that
+ * the client contract, the retention/audit trail and the deletion receipt all
+ * key on, and it identifies nobody once the Auth user and profile are gone. No
+ * NAME, phone, address, email or free text survives.
  *
  * What is KEPT (tax / accounting): ids, branch, store, order type, items and
  * their prices, every totals/pricing map, cash due, payment status, POS state,
@@ -75,6 +84,7 @@ export interface AnonymisationCounts {
   orders: number;
   quotes: number;
   tickets: number;
+  chats: number;
   messages: number;
   skipped: number;
   failed: number;
@@ -85,6 +95,7 @@ const ZERO: AnonymisationCounts = {
   orders: 0,
   quotes: 0,
   tickets: 0,
+  chats: 0,
   messages: 0,
   skipped: 0,
   failed: 0,
@@ -121,7 +132,6 @@ function scrubLineNotes(items: unknown): { changed: boolean; items: unknown } {
   });
   return { changed, items: next };
 }
-
 /**
  * The merge patch that anonymises ONE order.
  *
@@ -147,12 +157,13 @@ export function orderAnonymisationPatch(order: any): Record<string, any> {
     patch.customer = { anonymised: true };
   }
 
-  const lines = scrubLineNotes(order.items ?? order.customerLines);
-  if (lines.changed) {
-    // Both spellings exist in the retained history; rewrite whichever is there
-    // so a legacy reader cannot find the note in the copy it reads.
-    if (Array.isArray(order.items)) patch.items = lines.items;
-    if (Array.isArray(order.customerLines)) patch.customerLines = lines.items;
+  // `items` and `customerLines` are two DIFFERENT retained copies (a legacy
+  // reader may see either), so each is scrubbed on its own. Scrubbing one and
+  // writing the result into both would replace the other copy's lines with this
+  // one's — silently rewriting the order's contents.
+  for (const field of ["items", "customerLines"] as const) {
+    const scrubbed = scrubLineNotes(order[field]);
+    if (scrubbed.changed) patch[field] = scrubbed.items;
   }
 
   // The receipt is amounts only in the current writer, but an older snapshot
@@ -178,8 +189,46 @@ export function orderAnonymisationPatch(order: any): Record<string, any> {
   return patch;
 }
 
+/** True when a timeline event belongs to the deleted account. */
+function isDeletedActor(event: any, uid: string): boolean {
+  if (!isPlainObject(event)) return false;
+  if (uid && typeof event.actorId === "string" && event.actorId === uid) return true;
+  // Legacy events carry only the role. The customer is the ONLY party a
+  // deletion applies to; a staff/system name is never ours to rewrite.
+  return event.actorRole === "customer";
+}
+
+/**
+ * The ticket's conversation history is part of the retained case, but every
+ * event the CUSTOMER authored repeats their display name in `actorName`. The
+ * first pass only deleted the top-level fields, so a deleted user's name kept
+ * living in `timeline[].actorName` (and was still readable to support, brand
+ * and branch staff). Each customer event is rewritten to the placeholder and
+ * its uid reference is dropped; staff and system events are untouched.
+ */
+export function scrubTicketTimeline(timeline: unknown, uid: string): { changed: boolean; timeline: unknown } {
+  if (!Array.isArray(timeline)) return { changed: false, timeline };
+  let changed = false;
+  const next = timeline.map((event) => {
+    if (!isDeletedActor(event, uid)) return event;
+    const copy: Record<string, any> = { ...event };
+    if (copy.actorName !== ANONYMISED_NAME) {
+      copy.actorName = ANONYMISED_NAME;
+      changed = true;
+    }
+    // The raw uid is a personal identifier too: a reader must not be able to
+    // re-link the case to the deleted account through the timeline.
+    if ("actorId" in copy) {
+      delete copy.actorId;
+      changed = true;
+    }
+    return copy;
+  });
+  return { changed, timeline: next };
+}
+
 /** Same contract for a support ticket: who is gone, the case stays. */
-export function ticketAnonymisationPatch(ticket: any): Record<string, any> {
+export function ticketAnonymisationPatch(ticket: any, uid = ""): Record<string, any> {
   if (!isPlainObject(ticket)) return {};
   if (ticket.piiAnonymisedAt != null) return {};
   const patch: Record<string, any> = {};
@@ -187,6 +236,8 @@ export function ticketAnonymisationPatch(ticket: any): Record<string, any> {
   for (const field of ["customerPhone", "customerEmail"] as const) {
     if (field in ticket) patch[field] = DELETED();
   }
+  const timeline = scrubTicketTimeline(ticket.timeline, uid);
+  if (timeline.changed) patch.timeline = timeline.timeline;
   if (isPlainObject(ticket.diagnostics) && typeof ticket.diagnostics?.deviceInfo === "string") {
     patch.diagnostics = { ...ticket.diagnostics, deviceInfo: DELETED() };
   }
@@ -207,6 +258,47 @@ export function quoteAnonymisationPatch(quote: any): Record<string, any> {
     piiAnonymisedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
   if (mapHasContact(quote.dropContact)) patch.dropContact = DELETED();
+  return patch;
+}
+
+/**
+ * A chat THREAD keeps the display name of every participant in
+ * `participantNames[uid]`, repeats it inside a direct-message `title`
+ * ("<A> & <B>", written by the Partner chat service) and in
+ * `lastMessageSender`. The message subcollection was scrubbed in the first
+ * pass; these copies were not, so the name survived on the thread document.
+ *
+ * Only the deleted member's entries are rewritten; every other participant's
+ * name is somebody else's data.
+ */
+export function chatThreadAnonymisationPatch(chat: any, uid: string): Record<string, any> {
+  if (!isPlainObject(chat) || !uid) return {};
+  if (chat.piiAnonymisedAt != null) return {};
+
+  const names = isPlainObject(chat.participantNames) ? chat.participantNames : null;
+  const previous = names && typeof names[uid] === "string" ? names[uid] : "";
+  const patch: Record<string, any> = {};
+  let changed = false;
+
+  if (names && previous && previous !== ANONYMISED_NAME) {
+    patch.participantNames = { ...names, [uid]: ANONYMISED_NAME };
+    changed = true;
+  }
+  if (typeof chat.title === "string" && previous) {
+    const rewritten = chat.title.split(previous).join(ANONYMISED_NAME);
+    if (rewritten !== chat.title) {
+      patch.title = rewritten;
+      changed = true;
+    }
+  }
+  if (typeof chat.lastMessageSender === "string" && previous && chat.lastMessageSender === previous) {
+    patch.lastMessageSender = ANONYMISED_NAME;
+    changed = true;
+  }
+
+  if (!changed) return {};
+  patch.piiAnonymisedAt = admin.firestore.FieldValue.serverTimestamp();
+  patch.updatedAt = admin.firestore.FieldValue.serverTimestamp();
   return patch;
 }
 
@@ -300,11 +392,14 @@ export async function anonymiseDeletedUserPii(
     console.warn(`[AccountDeletion] quote scrub failed for ${uid}:`, err?.message || err);
   }
 
-  // ---- support tickets (name/phone on the retained case) ----
+  // ---- support tickets (name/phone on the retained case, plus the timeline) ----
   try {
     const snap = await db.collection("support_tickets").where("customerId", "==", uid).limit(500).get();
     for (const doc of snap?.docs || []) {
-      const patch = ticketAnonymisationPatch(typeof doc.data === "function" ? doc.data() : null);
+      const patch = ticketAnonymisationPatch(
+        typeof doc.data === "function" ? doc.data() : null,
+        uid
+      );
       if (Object.keys(patch).length === 0) {
         counts.skipped += 1;
         continue;
@@ -316,10 +411,16 @@ export async function anonymiseDeletedUserPii(
     console.warn(`[AccountDeletion] ticket scrub failed for ${uid}:`, err?.message || err);
   }
 
-  // ---- chat messages (the sender name the other party still sees) ----
+  // ---- chat threads (participant display names + DM title) and messages ----
   try {
     const threads = await db.collection("chats").where("participantIds", "array-contains", uid).limit(100).get();
     for (const thread of threads?.docs || []) {
+      const threadData = typeof thread.data === "function" ? thread.data() : null;
+      const threadPatch = chatThreadAnonymisationPatch(threadData, uid);
+      if (Object.keys(threadPatch).length > 0) {
+        if (await commit(thread.ref, threadPatch)) counts.chats += 1;
+      }
+
       const messages = await thread.ref.collection("messages").limit(500).get();
       for (const message of messages?.docs || []) {
         const data = typeof message.data === "function" ? message.data() : null;

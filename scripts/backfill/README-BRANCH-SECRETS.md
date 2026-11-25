@@ -54,7 +54,7 @@ keeps a receipt with the **removed values** per branch, so a rollback is exact.
 
 Re-running is safe: once the fields are gone the branch plans as `skip`.
 
-## ROLLBACK (restores only the branch fields this run removed)
+## ROLLBACK (restores the moved values into their canonical home)
 
 ```bash
 STAGING_BACKFILL_CONFIRM=yes BACKFIRE_PROJECT=burgonomics-7faa8 \
@@ -62,9 +62,17 @@ STAGING_BACKFILL_CONFIRM=yes BACKFIRE_PROJECT=burgonomics-7faa8 \
   NODE_PATH=node_modules node ../scripts/backfill/dist/branchSecretsMigration.js
 ```
 
-The secret document is deliberately left in place: it is the canonical home
-now, and deleting it during a rollback would break live KOT sends (the backend
-reads `branch_secrets` first and falls back to `branches`).
+Rollback writes the receipt's moved values back into `branch_secrets/{id}`
+(merge) — **not** onto `branches/{id}`. That is deliberate: the safety-net
+trigger `onBranchWrittenSecretsMirror` runs on every `branches` write, mirrors
+those keys into `branch_secrets` and strips them from the branch again, so a
+branch-document rollback is silently undone one trigger hop later while still
+exposing the identifiers to every `isStaff()` reader in between. Restoring the
+canonical document is trigger-safe and idempotent (verified in
+`functions/tests/backfill.branchSecretsMigration.test.ts`, "ROLLBACK mode").
+
+`razorpayAccountId` is never restored: it is retired (`DROPPED_FIELDS`, no
+reader in `functions/src`).
 
 Then delete `scripts/backfill/dist/` and the receipt (it holds removed values).
 

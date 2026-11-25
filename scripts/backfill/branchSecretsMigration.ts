@@ -16,7 +16,7 @@
  *       BACKFILL_MODE=apply BACKFILL_RECEIPT_PATH=./branch-secrets-receipt.json \
  *       npx ts-node scripts/backfill/branchSecretsMigration.ts
  *
- *   ROLLBACK (restores the branch fields this run removed):
+ *   ROLLBACK (restores the moved values into their canonical home):
  *     ... BACKFILL_MODE=rollback BACKFILL_ROLLBACK=./branch-secrets-receipt.json
  *
  * The rules on every write:
@@ -216,9 +216,21 @@ export async function applyBranchSecretsMigration(
 }
 
 /**
- * Puts back exactly the branch fields this run removed, from its own receipt.
- * The secret document is left in place: it is the canonical home now, and
- * deleting it during a rollback would break live KOT sends.
+ * Undoes a run by putting the moved values back where the backend READS them
+ * today: `branch_secrets/{branchId}`, never the branch document.
+ *
+ * Why not the branch document: `onBranchWrittenSecretsMirror` (SEC-11 safety
+ * net) fires on every `branches/{id}` write, copies `petpooja` /
+ * `petpoojaStoreId` / `restIDs` back into `branch_secrets` and strips them from
+ * the branch again. A rollback written to `branches` is therefore undone one
+ * trigger hop later — the stale mirrored copy wins, which is worse than a no-op
+ * because it looks successful. Restoring into the canonical doc is the same
+ * state the APPLY produced, is safe against the trigger (a `branch_secrets`
+ * write is not mirrored anywhere), and keeps the branch document free of
+ * identifiers `isStaff()` readers must not see.
+ *
+ * `razorpayAccountId` is never restored: it is retired (`DROPPED_FIELDS`, no
+ * reader in `functions/src`) and re-planting it would recreate the disclosure.
  */
 export async function rollbackBranchSecretsMigration(
   db: any,
@@ -227,9 +239,20 @@ export async function rollbackBranchSecretsMigration(
   const entries = Array.isArray(receipt) ? receipt : receipt.receipt ?? [];
   let reverted = 0;
   for (const entry of entries) {
-    const restore: Record<string, unknown> = { ...entry.removed };
+    const restore: Record<string, unknown> = {};
+    for (const field of MIGRATED_FIELDS) {
+      if (field in entry.removed) restore[field] = entry.removed[field];
+    }
     if (Object.keys(restore).length === 0) continue;
-    await db.collection("branches").doc(entry.branchId).set(restore, { merge: true });
+    await db.collection("branch_secrets").doc(entry.branchId).set(
+      {
+        ...restore,
+        branchId: entry.branchId,
+        restoredAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
     reverted += 1;
   }
   return reverted;

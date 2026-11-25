@@ -80,12 +80,21 @@ vi.mock("firebase-admin", () => {
   };
 });
 
+// The mirror trigger's module reads `db` from here; point it at the same fake so
+// the rollback test can run the REAL trigger logic against the REAL rollback.
+vi.mock("../src/core/firebase", () => ({
+  db: mockDb,
+  auth: { revokeRefreshTokens: vi.fn(async () => {}) },
+  messaging: { send: vi.fn(async () => "m") },
+}));
+
 import {
   planBranchMigration,
   planBranchSecretsMigration,
   applyBranchSecretsMigration,
   rollbackBranchSecretsMigration,
 } from "../../scripts/backfill/branchSecretsMigration";
+import { mirrorAndStripBranchSecrets } from "../src/modules/branches/branchSecrets";
 
 beforeEach(() => {
   for (const key of Object.keys(savedDocs)) delete savedDocs[key];
@@ -188,16 +197,99 @@ describe("APPLY mode", () => {
 });
 
 describe("ROLLBACK mode", () => {
-  it("restores exactly the removed branch fields and keeps the secret doc", async () => {
+  /**
+   * Runs the REAL mirror trigger (`onBranchWrittenSecretsMirror` ->
+   * `mirrorAndStripBranchSecrets`) the way the platform would after a write to
+   * `branches/{id}`: it sees the document as it now stands and does its
+   * mirror+strip. Used to prove the rollback survives the safety net.
+   */
+  async function fireBranchWriteTrigger(branchId: string) {
+    const current = savedDocs[`branches/${branchId}`];
+    return mirrorAndStripBranchSecrets(branchId, null, current ? { ...current } : null);
+  }
+
+  it("restores the receipt values into branch_secrets and leaves the branch stripped", async () => {
     seedBranching();
     const planned = await planBranchSecretsMigration(mockDb);
     const applied = await applyBranchSecretsMigration(mockDb, planned.entries);
+
+    // Between APPLY and the rollback the outlet rotated its token in the
+    // canonical doc — the state a rollback has to reason about, because the
+    // receipt's values are the OLD ones.
+    savedDocs["branch_secrets/b_linked"] = {
+      ...savedDocs["branch_secrets/b_linked"],
+      petpooja: { appKey: "k", appSecret: "s", accessToken: "ROTATED" },
+    };
+
     const reverted = await rollbackBranchSecretsMigration(mockDb, applied);
     expect(reverted).toBe(2);
+
+    // The moved fields are back where the backend reads them, exactly as the
+    // receipt recorded them.
+    const secret = savedDocs["branch_secrets/b_linked"];
+    expect(secret.petpoojaStoreId).toBe("PP_SURAT_01");
+    expect(secret.restIDs).toEqual(["PP_SURAT_01"]);
+    expect(secret.petpooja).toEqual({ appKey: "k", appSecret: "s", accessToken: "t" });
+
+    // ...and the world-readable branch document stays stripped. This is the
+    // whole point of SEC-11: no identifier may reappear under `isStaff()`.
     const branch = savedDocs["branches/b_linked"];
-    expect(branch.petpoojaStoreId).toBe("PP_SURAT_01");
-    expect(branch.razorpayAccountId).toBe("acc_retired_1");
-    // The canonical home survives a branch-field rollback (live KOTs depend on it).
+    for (const key of ["petpooja", "petpoojaStoreId", "restIDs", "razorpayAccountId"]) {
+      expect(branch[key]).toBeUndefined();
+    }
+    expect(branch.name).toBe("Surat Adajan");
+  });
+
+  it("never writes the secrets onto the branch document", async () => {
+    seedBranching();
+    const planned = await planBranchSecretsMigration(mockDb);
+    const applied = await applyBranchSecretsMigration(mockDb, planned.entries);
+    writes.length = 0;
+
+    await rollbackBranchSecretsMigration(mockDb, applied);
+
+    // Only `branch_secrets` writes: a `branches` write would hand the values to
+    // the mirror trigger, which re-strips them — the rollback would report
+    // success while exposing the identifiers for one hop and mutating the
+    // canonical copy from a stale receipt.
+    expect(writes.map((w) => w.path)).toEqual([
+      "branch_secrets/b_linked",
+      "branch_secrets/b_empty_binding",
+    ]);
+  });
+
+  it("survives the mirror trigger firing after the rollback", async () => {
+    seedBranching();
+    const planned = await planBranchSecretsMigration(mockDb);
+    const applied = await applyBranchSecretsMigration(mockDb, planned.entries);
+    await rollbackBranchSecretsMigration(mockDb, applied);
+
+    const result = await fireBranchWriteTrigger("b_linked");
+
+    // Nothing to mirror (the branch carries no secret keys) and nothing to
+    // strip, so the restored canonical values are untouched.
+    expect(result.mirrored).toEqual([]);
+    expect(result.stripped).toEqual([]);
+    expect(savedDocs["branch_secrets/b_linked"].petpooja).toEqual({
+      appKey: "k",
+      appSecret: "s",
+      accessToken: "t",
+    });
+    expect(savedDocs["branches/b_linked"].petpoojaStoreId).toBeUndefined();
+  });
+
+  it("keeps the canonical doc as the single source after the trigger pass", async () => {
+    seedBranching();
+    const planned = await planBranchSecretsMigration(mockDb);
+    const applied = await applyBranchSecretsMigration(mockDb, planned.entries);
+    await rollbackBranchSecretsMigration(mockDb, applied);
+
+    // A second rollback (a re-run after a partial failure) is idempotent and
+    // still leaves the branch clean.
+    const again = await rollbackBranchSecretsMigration(mockDb, applied);
+    expect(again).toBe(2);
+    await fireBranchWriteTrigger("b_linked");
     expect(savedDocs["branch_secrets/b_linked"].petpoojaStoreId).toBe("PP_SURAT_01");
+    expect(savedDocs["branches/b_linked"].petpoojaStoreId).toBeUndefined();
   });
 });
