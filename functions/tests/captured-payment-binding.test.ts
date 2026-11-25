@@ -843,7 +843,11 @@ describe("C03 B8 — webhook never blind-confirms an unknown stored amount", () 
     expect(order.paymentStatus).toBe("completed");
     expect(order.status).toMatchObject({ code: "CONFIRMED" });
     expect(order["payment.capturedAmountPaise"]).toBe(25000);
-    expect(order.petpoojaOrderId).toMatch(/^pp_kot_/);
+    // C11: the webhook QUEUES the POS sync (it must answer inside Razorpay's
+    // 5 s budget) and performs no POS call, so no acceptance marker exists yet.
+    // The existing retry worker drains this row.
+    expect(order.petpoojaStatus).toBe("pending_retry");
+    expect(order.petpoojaOrderId).toBeUndefined();
     expect(docs.get("unmatched_payments/ump_evt_c03_known")).toBeUndefined();
   });
 
@@ -876,7 +880,7 @@ describe("C03 B8 — webhook never blind-confirms an unknown stored amount", () 
     }
   });
 
-  it("idempotency unchanged: a replayed delivery is already_processed with no second KOT", async () => {
+  it("idempotency unchanged: a replayed delivery is already_processed and queues the KOT once", async () => {
     control.seed("orders/order_c03_wh_replay", {
       id: "order_c03_wh_replay",
       branchId: "branch_c03",
@@ -890,14 +894,15 @@ describe("C03 B8 — webhook never blind-confirms an unknown stored amount", () 
     );
     await handleRazorpayWebhook(first.req, first.res);
     expect(first.out().body).toMatchObject({ status: "ok" });
-    const kotId = docs.get("orders/order_c03_wh_replay")!.data.petpoojaOrderId;
-    expect(kotId).toMatch(/^pp_kot_/);
+    // C11: the POS sync is queued, not pushed in the request.
+    expect(docs.get("orders/order_c03_wh_replay")!.data.petpoojaStatus).toBe("pending_retry");
 
     const second = mockReqRes(
       capturedPayload("evt_c03_replay", "order_c03_wh_replay", "pay_c03_rp", 25000)
     );
     await handleRazorpayWebhook(second.req, second.res);
     expect(second.out().body).toMatchObject({ status: "already_processed" });
-    expect(docs.get("orders/order_c03_wh_replay")!.data.petpoojaOrderId).toBe(kotId);
+    expect(docs.get("orders/order_c03_wh_replay")!.data.petpoojaStatus).toBe("pending_retry");
+    expect(docs.get("orders/order_c03_wh_replay")!.data.petpoojaOrderId).toBeUndefined();
   });
 });

@@ -146,6 +146,7 @@ import { onlineDraftRouteSchema } from "./modules/orders/createOnlineDraft";
 import { handleCreateOnlineDraft } from "./modules/orders/createOnlineDraftRoute";
 import { expireAbandonedUnpaidOrders } from "./modules/orders/expireUnpaidOrders";
 import { recoverStuckCaptureFulfilments } from "./modules/payments/captureRecovery";
+import { sweepAwaitingCaptureOrders } from "./modules/payments/awaitingCaptureSweep";
 import { bumpStatusErrorResponse } from "./modules/orders/bumpRouteErrors";
 import { setStaffStoreStatus } from "./modules/stores/storeStatus";
 import { getOwnerDeliveryOtp } from "./modules/orders/deliveryHandover.service";
@@ -2836,5 +2837,42 @@ export const sweepStuckSettlementCapturesJob = onSchedule(
     const { ran } = await withSchedulerLock("sweep-stuck-settlement-captures", 20 * 60 * 1000,
       () => runCaptureRecoverySweep());
     if (!ran) console.log("[Capture Recovery] previous tick still running — skipped");
+  }
+);
+
+// C11 finding 4 (High): resolve orders parked in `awaiting_capture`.
+//
+// `verifyPayment` refuses an authorized-but-uncaptured payment and stamps that
+// state, which `isUnsafeToExpire` then treats as "money may be moving" — so
+// before this job those orders could never confirm, never expire and were never
+// swept. This ticks every 15 minutes: it re-reads the payment at the gateway,
+// releases the marker once the hold is provably gone (so the unpaid-order sweep
+// can cancel), keeps the block and pages ops while it is still `authorized`, and
+// escalates a hold that the gateway reports as captured. It is additive: no
+// other scheduler's lane, lease or cadence is touched.
+export const sweepAwaitingCaptureOrdersJob = onSchedule(
+  {
+    region: REGION,
+    schedule: "*/15 * * * *",
+    timeZone: "Asia/Kolkata",
+    // Up to 50 orders × one gateway read each.
+    timeoutSeconds: 300,
+  },
+  async () => {
+    const { ran, result } = await withSchedulerLock(
+      "sweep-awaiting-capture-orders",
+      10 * 60 * 1000,
+      () => sweepAwaitingCaptureOrders()
+    );
+    if (!ran) {
+      console.log("[Awaiting Capture] previous tick still running — skipped");
+      return;
+    }
+    console.log(
+      `[Awaiting Capture] scanned ${result!.scanned}, resolved ${result!.resolved}, ` +
+        `stillAuthorized ${result!.stillAuthorized}, ` +
+        `capturedNeedsReconcile ${result!.capturedNeedsReconcile}, ` +
+        `unknown ${result!.unknown}, failed ${result!.failed}`
+    );
   }
 );

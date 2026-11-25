@@ -598,7 +598,10 @@ describe("payment confirmation concurrency (webhook path)", () => {
     expect(order.status).toMatchObject({ code: "CONFIRMED" });
     expect(order.routeTransferStatus).toBe('pending_retry');
     expect(order).toBeDefined();
-    expect(order.petpoojaOrderId).toMatch(/^pp_kot_/);
+    // C11: the POS sync is QUEUED in the confirm transaction — the webhook must
+    // answer inside Razorpay's 5 s budget instead of awaiting the 15 s POS POST.
+    expect(order.petpoojaStatus).toBe("pending_retry");
+    expect(order.petpoojaOrderId).toBeUndefined();
   });
 
   // B4 contract guard. references/order_flow.md still describes a
@@ -671,7 +674,7 @@ describe("payment confirmation concurrency (webhook path)", () => {
     expect(order.reconciliation).toBeNull();
   });
 
-  it("serializes concurrent captured deliveries: one transfer, one KOT, no re-POST on repeat", async () => {
+  it("serializes concurrent captured deliveries: one queued KOT row, no re-POST on repeat", async () => {
     control.seed("orders/order_race_1", {
       id: "order_race_1",
       branchId: "branch_surat_01",
@@ -696,18 +699,22 @@ describe("payment confirmation concurrency (webhook path)", () => {
     expect(order.paymentStatus).toBe("completed");
     expect(order.status).toMatchObject({ code: "CONFIRMED" });
     expect(order.routeTransferStatus).toBe('pending_retry');
-    const kotId = order.petpoojaOrderId;
-    expect(kotId).toMatch(/^pp_kot_/);
+    // C11: both deliveries converge on ONE queued POS row (`pending_retry` is a
+    // single lane keyed by the order), and neither rings the kitchen.
+    expect(order.petpoojaStatus).toBe("pending_retry");
+    expect(order.petpoojaOrderId).toBeUndefined();
 
     // Swap the stored receipt for a sentinel: a further delivery that re-POSTed
-    // the non-idempotent transfer would overwrite it.
+    // the non-idempotent transfer would overwrite it. The recorded POS
+    // acceptance (written by the worker) must survive a redelivery untouched.
     control.seed("orders/order_race_1", { "payment.routeTransfer": { id: "trf_sentinel_no_repost" } }, true);
+    control.seed("orders/order_race_1", { petpoojaOrderId: "pp_queued_once" }, true);
     const third = mockReqRes(capturedPayload("evt_race_cc_3"));
     await handleRazorpayWebhook(third.req, third.res);
     expect(third.out().statusCode).toBe(200);
     const after = docs.get("orders/order_race_1")!.data;
     expect(after["payment.routeTransfer"].id).toBe("trf_sentinel_no_repost");
-    expect(after.petpoojaOrderId).toBe(kotId);
+    expect(after.petpoojaOrderId).toBe("pp_queued_once");
   });
 
   it("serializes concurrent webhook + verify on one order: one confirm audit, stable healed hash", async () => {

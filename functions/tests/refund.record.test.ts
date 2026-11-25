@@ -116,7 +116,14 @@ describe("Loop 64: refund record writes are Firestore-serializable", () => {
     const [, audit] = audits[0];
     expect((audit as any).action).toBe("refund_processed");
     expect((audit as any).amountRupees).toBeNull();
-    expect((audit as any).reason).toBeNull();
+    // C11 finding 6: the operator's free text is NOT copied into the
+    // brand-readable `payment_audits` row (it lives only on the client-denied
+    // `payment_refund_requests` record). The row keeps a length and a digest so
+    // it can still be correlated, and never an `undefined` field.
+    expect(Object.prototype.hasOwnProperty.call(audit as any, "reason")).toBe(false);
+    expect((audit as any).reasonRedacted).toBe(true);
+    expect((audit as any).reasonLength).toBe(0);
+    expect((audit as any).reasonHash).toBeNull();
     noUndefined(audit as any, "payment_audits row");
   });
 

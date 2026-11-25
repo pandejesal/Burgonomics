@@ -11,7 +11,7 @@ import { guardCaptureFulfillment, captureGateAllowsConfirm } from "./captureFulf
 import { applyRefundToMonthlyFee } from "./monthlyFee";
 import { deliverCaptureRecoveryAlert, repairSettlementCaptureInTx } from "./settlementCaptureRecovery";
 import { settlementCaptureStamp, providerCapturedAtMs, isProviderConfirmedCapture, processedRefundMap, withoutProcessedRefund } from "../settlements/settlementMath";
-import { pushOrderToPetpooja } from "../petpooja";
+import { releaseFailedRefund, announceFailedRefund } from "./refundFailureRelease";
 import { dispatchCustomerAccountNotification } from "../tickets/supportNotifications";
 
 /**
@@ -135,6 +135,55 @@ export function webhookConfirmSettlementFields(freshOrder: any): Record<string, 
 }
 
 /**
+ * C11 finding 1 (Critical) — the confirmation transaction QUEUES the POS sync
+ * instead of the handler ringing the kitchen inline.
+ *
+ * Razorpay gives this endpoint 5 seconds. The old code awaited
+ * `pushOrderToPetpooja` (15 s abort) AFTER the money transaction committed and
+ * BEFORE `res.status(200)`, so every slow/unreachable outlet made the delivery
+ * a failure: Razorpay retried it (each retry hit `500 Event is being processed`
+ * while the claim lease was live), and after 24 h of failures it DISABLED the
+ * webhook — silently stopping confirmation for every closed-app payer.
+ *
+ * The status write below is the queue the existing `retryPetpoojaOrders`
+ * worker already drains (5-min cron, its own lease, backoff 5/10/20/40 min,
+ * dead-letter to `failed` + branch alert), and `pushOrderToPetpooja` dedupes on
+ * the acceptance marker, so a redelivery cannot ring a second ticket.
+ *
+ * Never overwrites a row the retry machinery, a parked state, or a recorded POS
+ * acceptance already owns: a `synced` order must not be dragged back into the
+ * lane by a duplicate `order.paid`, and a dead-lettered (`failed`) or
+ * reconciliation-parked row must not be requeued behind the operator's back.
+ */
+export function webhookConfirmPosSyncFields(freshOrder: any): Record<string, any> {
+  if (!freshOrder || typeof freshOrder !== "object") return {};
+  if (freshOrder.petpoojaOrderId || freshOrder.petpoojaAcceptedNoId) return {};
+  if (freshOrder.petpoojaAmbiguousProcessing === true) return {};
+  const status = typeof freshOrder.petpoojaStatus === "string" ? freshOrder.petpoojaStatus : "";
+  if (
+    status === "processing" ||
+    status === "synced" ||
+    status === "reconciliation_required" ||
+    status === "blocked_configuration" ||
+    status === "pending_configuration" ||
+    status === "failed" ||
+    status === "not_applicable"
+  ) {
+    return {};
+  }
+  // `accepted_unconfirmed` is a RECORDED POS acceptance (the relay acked without
+  // a usable id) — `hasRecordedPosAcceptance` treats it as real POS knowledge, so
+  // requeueing it here would risk a second ticket at the outlet.
+  if (
+    status === "accepted_unconfirmed" ||
+    freshOrder.petpoojaSyncStatus === "accepted_unconfirmed"
+  ) {
+    return {};
+  }
+  return { petpoojaStatus: "pending_retry", petpoojaSyncStatus: "pending_retry" };
+}
+
+/**
  * Marks a delivery claim as HELD FOR RETRY instead of deleting it.
  *
  * The previous implementation deleted the claim, which destroyed the only proof
@@ -236,19 +285,19 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
     return;
   }
 
-  // Freshness window: Razorpay stamps top-level `created_at` (Unix seconds).
-  // Deliveries older than the window are stale replays — reject. Payloads
-  // without the stamp predate this check and stay accepted (the idempotency
-  // claim below still dedups them).
+  // Freshness rule: Razorpay stamps top-level `created_at` (Unix seconds).
+  // Payloads without the stamp predate this check and stay accepted (the
+  // idempotency claim below still dedups them).
   //
   // ORDERING (stress sweep 2026-10-24): the freshness check runs AFTER the
   // idempotency claim so a CRASHED delivery can be recovered by gateway
   // redelivery. Razorpay's retry cadence jumps past the 10–15 min takeover
   // band; a redelivery of a dead claim is by definition a recovery attempt,
   // and the claim doc — not the payload timestamp — is the replay defense.
-  // Only a genuinely-NEW claim (no prior attempt) is subject to the
-  // freshness reject, and the claim doc is released so a plain rejection
-  // leaves no phantom lease behind.
+  // Only a genuinely-NEW claim is subject to the freshness rule; a takeover
+  // and a claim we deliberately HELD FOR RETRY are exempt (see the block below,
+  // which answers 2xx for a bounded late delivery and parks anything absurdly
+  // old instead of the old permanent 401 — C11 finding 3).
   const auditDocRef = db.collection("payment_audits").doc(`aud_evt_${eventId}`);
   const CLAIM_TTL_MS = 10 * 60 * 1000;
   // Tri-state lease: "new" (we claimed it — process), "done" (a prior
@@ -333,33 +382,105 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   // claim handled above; here the lease has passed, so the retry proceeds.
   const provenRetry = claim === "retry_held";
 
-  // Freshness window (relocated: claim-first so dead claims stay recoverable —
-  // see the ordering note above). Applies ONLY to genuinely-new claims: a
-  // takeover already owns a dead lease, and rejecting it would strand real
-  // money forever (audit doc carries the evidence, claim released on reject).
+  // Freshness rule (relocated: claim-first so dead claims stay recoverable —
+  // see the ordering note above). It considers ONLY genuinely-new claims: a
+  // takeover already owns a dead lease, and a claim we HELD FOR RETRY is proof
+  // this server accepted the event, failed a retryable step, and asked for the
+  // delivery again. The signature above was verified in full in every case, so
+  // an attacker gains nothing by replaying our own held event.
+  // C11 finding 3 (High) — a signature-verified late FIRST delivery is an
+  // OPERATIONAL problem, not a forgery, and it must never be answered 401.
   //
-  // A claim HELD FOR RETRY is exempt for the same reason: this server accepted
-  // the event, failed a retryable step, and asked for the delivery again. The
-  // signature above was still verified in full, so an attacker gains nothing by
-  // replaying our own held event.
+  // The old code deleted the claim and answered 401 for any event older than
+  // the window. Razorpay stamps `created_at` at event creation, so EVERY
+  // redelivery is equally "stale": the next attempt was `new` again, was 401'd
+  // again, and the event was permanently dead — while 401 is exactly the code
+  // chosen so Razorpay does not retry. An ingress/deploy/Firestore outage
+  // longer than 15 minutes therefore lost every capture and every refund
+  // settlement created during it, and each of those failures counts toward the
+  // 24 h webhook disable.
+  //
+  // Contract now:
+  //   • within LATE_DELIVERY_BOUND_MS: process normally, and stamp
+  //     `lateDeliveryAt` on the claim so the lateness is evidence, not silence;
+  //   • beyond the bound: park visibly (`unmatched_payments`) and still answer
+  //     2xx, so the endpoint is never disabled by an event we simply cannot
+  //     trust the age of. The claim is COMPLETED (not deleted) so the park is
+  //     traceable and a later redelivery does not re-park.
+  // Auth never weakens: the HMAC above was already verified in full.
   const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
+  /** Absolute bound for a late first delivery we will still act on: 30 days. */
+  const LATE_DELIVERY_BOUND_MS = 30 * 24 * 60 * 60 * 1000;
   const createdAtSec = typeof payload.created_at === "number" ? payload.created_at : null;
-  if (
-    claim === "new" &&
-    createdAtSec !== null &&
-    Date.now() - createdAtSec * 1000 > FRESHNESS_WINDOW_MS
-  ) {
-    console.warn("[Razorpay Webhook] stale event delivery — rejecting", { eventId, event });
+  const eventAgeMs =
+    createdAtSec !== null ? Date.now() - createdAtSec * 1000 : null;
+  const lateFirstDelivery =
+    claim === "new" && eventAgeMs !== null && eventAgeMs > FRESHNESS_WINDOW_MS;
+  if (lateFirstDelivery && eventAgeMs !== null && eventAgeMs > LATE_DELIVERY_BOUND_MS) {
+    const ageDays = Math.floor(eventAgeMs / (24 * 60 * 60 * 1000));
+    console.warn("[Razorpay Webhook] late delivery beyond the absolute bound — parked", {
+      eventId,
+      event,
+      ageDays,
+    });
     try {
-      // Release the just-created claim: a plain rejection must not shadow
-      // the event with a phantom lease (no order writes happened).
-      await auditDocRef.delete();
-    } catch (e) {
-      // Best effort — the claim will age out via CLAIM_TTL_MS either way.
-      console.warn("[Razorpay Webhook] claim release after stale reject failed:", e);
+      await db.collection("unmatched_payments").doc(`ump_${eventId}`).set(
+        {
+          eventId,
+          event,
+          razorpayPaymentId:
+            payload.payload?.payment?.entity?.id ??
+            payload.payload?.refund?.entity?.payment_id ??
+            "unknown",
+          orderId: payload.payload?.payment?.entity?.notes?.orderId ?? null,
+          refundId: payload.payload?.refund?.entity?.id ?? null,
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          status: "needs_review",
+          reason: "late_delivery_beyond_bound",
+          eventAgeDays: ageDays,
+        },
+        { merge: true }
+      );
+    } catch (parkErr: any) {
+      console.warn(
+        "[Razorpay Webhook] late-delivery park write failed (still answering 2xx):",
+        parkErr?.message || parkErr
+      );
     }
-    res.status(401).json({ error: "Stale webhook event" });
+    try {
+      // COMPLETE the claim, never delete it: the delivery was seen, signature
+      // verified, and parked. Deleting it would make the next redelivery look
+      // brand new and park a second time.
+      await auditDocRef.set(
+        {
+          eventId,
+          event,
+          lateDeliveryAt: Date.now(),
+          lateDeliveryParkedAt: Date.now(),
+          lateDeliveryParkReason: "late_delivery_beyond_bound",
+          completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (claimErr: any) {
+      console.warn("[Razorpay Webhook] late-delivery claim completion failed:", claimErr?.message || claimErr);
+    }
+    // 2xx: Razorpay must stop retrying an event we have parked, and a stream of
+    // these must never disable the endpoint.
+    res.status(200).json({ status: "parked_late_delivery" });
     return;
+  }
+  if (lateFirstDelivery) {
+    console.warn("[Razorpay Webhook] late (but bounded) first delivery — processing", {
+      eventId,
+      event,
+      ageMinutes: Math.floor((eventAgeMs as number) / 60_000),
+    });
+    try {
+      await auditDocRef.set({ lateDeliveryAt: Date.now() }, { merge: true });
+    } catch {
+      // Evidence is best-effort; the event still processes.
+    }
   }
 
   try {
@@ -953,6 +1074,8 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
               // CONFIRMED, so a crash before the split leaves an order the
               // retry worker can finish.
               ...webhookConfirmSettlementFields(fresh),
+              // C11: the POS sync is QUEUED here, never awaited in the request.
+              ...webhookConfirmPosSyncFields(fresh),
               ...(mintedOtp ? {
                 deliveryOtpHash: mintedOtp.deliveryOtpHash,
                 deliveryOtpVersion: mintedOtp.deliveryOtpVersion,
@@ -1014,56 +1137,24 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         // (see the P1-H funding gate above), so nothing is left to debit here —
         // the deterministic ledger id makes a verify-channel debit converge.
 
-        // Auto-push KOT to Petpooja POS upon payment confirmation.
-
-        // Auto-push KOT to Petpooja POS upon payment confirmation.
-        // pushOrderToPetpooja returns false (not throw) on POS rejection —
-        // ignoring the return hid outstanding POS syncs behind a 200 ok.
+        // NO POS CALL IN THIS REQUEST (C11 finding 1, Critical). The confirm
+        // transaction above queued the sync (`petpoojaStatus` /
+        // `petpoojaSyncStatus: "pending_retry"`, see webhookConfirmPosSyncFields)
+        // and the existing `retryPetpoojaOrders` worker performs the push with
+        // its own lease, backoff and dead-letter lane.
         //
-        // Duplicate-capture guard: `payment.captured` AND `order.paid` are
-        // both delivered for one payment under DIFFERENT event ids, so the
-        // event-id claim above cannot dedupe them — the kitchen would ring
-        // twice for one paid order. The relayed marker is written only on a
-        // successful push, so its presence IS the "already pushed" marker,
-        // and a crashed push leaves it absent so a later retry still pushes.
-        // TWO accepted shapes: a POS-issued `petpoojaOrderId`, or
-        // `petpoojaAcceptedNoId` for an ack whose response omitted the id
-        // (which is every ack Petpooja's sandbox sends — the order still
-        // registers at the outlet, so it must dedupe too).
-        const kotSnap = await db.collection("orders").doc(orderId).get();
-        const kotData = kotSnap.exists ? ((kotSnap.data() as any) ?? {}) : {};
-        if (kotData.petpoojaOrderId || kotData.petpoojaAcceptedNoId) {
-          console.warn(
-            `[Razorpay Webhook] KOT already pushed for order ${orderId} — skipping duplicate push`
-          );
-        } else {
-        try {
-          const pushed = await pushOrderToPetpooja(orderId);
-          if (!pushed) {
-            // Truthful log (review fix): `pushed === false` can mean EITHER a
-            // retryable POS sync outstanding OR a parked
-            // `pending_configuration` state (a dead-end skip with NO
-            // automatic retry — recovery is manual, via the authorized push
-            // route after the menu is corrected). Name the actual state
-            // instead of claiming `pending_retry` for both, and never change
-            // money/notification logic here.
-            const kotState = await (db as any)
-              .collection("orders")
-              .doc(orderId)
-              .get()
-              .then((s: any) => (s.data()?.petpoojaStatus ?? "unknown"))
-              .catch(() => "unknown");
-            console.warn(
-              `[Razorpay Webhook] KOT push did not complete for order ${orderId} — petpoojaPush.state=${kotState}` +
-                (kotState === "pending_configuration"
-                  ? " (parked: manual recovery required after menu correction — no automatic retry)"
-                  : " (retry worker owns it)")
-            );
-          }
-        } catch (err) {
-          console.warn(`[Razorpay Webhook] KOT push queued for order ${orderId}:`, (err as any)?.message || err);
-        }
-        }
+        // The old code awaited `pushOrderToPetpooja` here. Its POST carries a
+        // 15 s abort, so any slow outlet held this response far past Razorpay's
+        // 5 s budget; the delivery counted as a failure, the retry hit
+        // `500 Event is being processed`, and 24 h of that DISABLES the webhook —
+        // which silently stops confirming every payer who closed the app.
+        //
+        // Duplicate KOTs are still impossible: `pushOrderToPetpooja` dedupes on
+        // `petpoojaOrderId` / `petpoojaAcceptedNoId` (the acceptance marker is
+        // written only by a real push), and the worker's pending_retry lease
+        // serialises overlapping ticks. `payment.captured` + `order.paid` for
+        // one payment therefore ring the kitchen once, in any arrival order.
+        // Customer confirmation is pushed by the order-created trigger, not here.
         } else {
           // P1-C layer 2 — a capture that lands on an order the expiry sweep
           // already CANCELLED (Razorpay cannot close an order, so the window is
@@ -1289,43 +1380,117 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
         }
       }
     } else if (event === "refund.failed") {
-      // A failed gateway refund must never remain in the processed map. Route
-      // it to the SAME helper the writers use, through the real handler.
+      // C11 finding 2 (Critical) — a failed gateway refund must RELEASE what its
+      // pending attempt reserved, or the order is wedged for ever: the ledger
+      // entry still consumes the refundable cap (400 REFUND_EXCEEDS_REMAINING),
+      // `refundStatus: "refund_pending"` + the reserved pending id make the
+      // single-in-flight guard answer 409 REFUND_IN_PROGRESS, the operator row
+      // stays IN_FLIGHT (the console renders it as a non-actionable UNKNOWN),
+      // and a same-request retry hit the "accepted-but-unsettled" shortcut and
+      // answered `{status:"pending", reused:true}` without POSTing anything —
+      // a success message for money that was never returned.
+      //
+      // The release (ledger + total + markers + obligation + `refunds/{row}` +
+      // `payment_refund_requests/{id}`) runs in ONE transaction in
+      // refundFailureRelease.ts, so the money truth and the operator records can
+      // never disagree. The request id survives (with an incremented attempt
+      // generation) so the operator's retry re-POSTs on a NEW idempotency key —
+      // reusing the failed key would replay the gateway's recorded failure.
       const failedEntity = payload.payload?.refund?.entity;
       const failedRefundId = typeof failedEntity?.id === "string" ? failedEntity.id : "";
       const orderIdFromNote = failedEntity?.notes?.orderId;
-      const paymentIdFromNote = failedEntity?.payment_id;
-      let failedOrderRef: any = null;
-      if (orderIdFromNote && isSafeDocId(String(orderIdFromNote))) {
-        failedOrderRef = db.collection("orders").doc(String(orderIdFromNote));
-      } else if (paymentIdFromNote) {
-        const lookup: any = await db
-          .collection("orders")
-          .where("payment.razorpayPaymentId", "==", paymentIdFromNote)
-          .limit(1)
-          .get();
-        const found = (lookup?.docs ?? [])[0];
-        if (found) failedOrderRef = found.ref;
+      const paymentIdFromNote =
+        typeof failedEntity?.payment_id === "string" ? failedEntity.payment_id : null;
+      const safeNoteOrderId =
+        typeof orderIdFromNote === "string" && isSafeDocId(orderIdFromNote)
+          ? orderIdFromNote
+          : null;
+      const gatewayReason =
+        (typeof failedEntity?.error_description === "string" && failedEntity.error_description) ||
+        (typeof failedEntity?.error_reason === "string" && failedEntity.error_reason) ||
+        (typeof failedEntity?.status === "string" ? `gateway status ${failedEntity.status}` : null);
+
+      if (!failedRefundId) {
+        // Nothing to address: park it rather than ack a money event silently.
+        await db.collection("unmatched_payments").doc(`ump_refund_failed_${eventId}`).set(
+          {
+            eventId,
+            event,
+            refundId: null,
+            razorpayPaymentId: paymentIdFromNote,
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+            reason: "refund_failed_missing_id",
+          },
+          { merge: true }
+        );
+        res.status(200).json({ status: "refund_failed_parked" });
+        return;
       }
-      if (failedOrderRef && failedRefundId) {
-        await (db as any).runTransaction(async (tx: any) => {
-          const snap: any = await tx.get(failedOrderRef);
-          const data: any = snap && snap.exists ? snap.data() : null;
-          if (!data) return;
-          tx.set(
-            failedOrderRef,
-            {
-              settlementProcessedRefunds: withoutProcessedRefund(
-                data.settlementProcessedRefunds,
-                failedRefundId
-              ),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-        });
+
+      const release = await releaseFailedRefund({
+        refundId: failedRefundId,
+        orderId: safeNoteOrderId,
+        paymentId: paymentIdFromNote,
+        eventId,
+        gatewayReason,
+      });
+
+      if (release.outcome === "order_not_found" || release.outcome === "unknown_order") {
+        // No order to release: park it visibly (the old code silently 200'd
+        // with no park doc and no snapshot, so a real failed refund on an
+        // unknown/duplicated payment disappeared).
+        await captureErrorSnapshot({
+          source: "payments",
+          severity: "high",
+          message:
+            `Gateway reported refund ${failedRefundId} as FAILED (${gatewayReason || "no reason given"}) but ` +
+            (release.outcome === "unknown_order"
+              ? "several orders carry that payment id — "
+              : "no order could be resolved — ") +
+            "manual review required",
+          orderId: safeNoteOrderId || undefined,
+          razorpayPaymentId: paymentIdFromNote || undefined,
+        }).catch(() => undefined);
+        await db.collection("unmatched_payments").doc(`ump_refund_failed_${eventId}`).set(
+          {
+            eventId,
+            event,
+            refundId: failedRefundId,
+            razorpayPaymentId: paymentIdFromNote,
+            claimedOrderId: safeNoteOrderId,
+            receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: "needs_review",
+            reason:
+              release.outcome === "unknown_order"
+                ? "refund_failed_ambiguous_match"
+                : "refund_failed_no_match",
+            gatewayReason: gatewayReason || null,
+          },
+          { merge: true }
+        );
+        res.status(200).json({ status: "refund_failed_parked" });
+        return;
       }
-      res.status(200).json({ status: "refund_failed_recorded" });
+
+      // Alert + customer message run OUTSIDE the money transaction (the state is
+      // already committed; a transport hiccup must not 500 a settled decision).
+      const releasedOrder = release.orderId
+        ? await db.collection("orders").doc(release.orderId).get().catch(() => null)
+        : null;
+      await announceFailedRefund(
+        release,
+        {
+          refundId: failedRefundId,
+          orderId: safeNoteOrderId,
+          paymentId: paymentIdFromNote,
+          eventId,
+          gatewayReason,
+        },
+        releasedOrder && releasedOrder.exists ? releasedOrder.data() : null
+      );
+
+      res.status(200).json({ status: "refund_failed_released", outcome: release.outcome });
       return;
     } else if (event === "refund.processed") {
       const refundEntity = payload.payload?.refund?.entity;

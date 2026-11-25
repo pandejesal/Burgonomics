@@ -14,9 +14,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
  * forever and Razorpay stops retrying on the 401.
  *
  * The fix (webhookHandler.ts): claim FIRST; only a genuinely-NEW claim is
- * subject to the freshness reject (and releases its claim doc so the
- * rejection leaves no phantom lease); a TAKEOVER of a dead lease is a
- * recovery attempt and bypasses the freshness reject.
+ * subject to the freshness rule, and since C11 finding 3 that rule never
+ * answers 401: a bounded late first delivery is processed with
+ * `lateDeliveryAt` stamped on the claim, and an absurdly old one (beyond the
+ * 30-day absolute bound) is parked in `unmatched_payments` with the claim
+ * COMPLETED. A TAKEOVER of a dead lease is a recovery attempt and bypasses the
+ * freshness rule entirely.
  *
  * HONESTY LIMIT: in-process document store; mock gateway + mock Petpooja,
  * no network, no secret. Harness mirrors webhook.replay.test.
@@ -255,10 +258,14 @@ describe("Razorpay webhook crash-recovery vs freshness window (stress sweep)", (
     const order = docs.get("orders/order_rec")!.data;
     expect(order.paymentStatus).toBe("completed");
     expect(order.routeTransferStatus).toBe('pending_retry');
-    expect(order.petpoojaOrderId).toMatch(/^pp_kot_/);
+    // C11 finding 1: the POS push is QUEUED by the confirm transaction (the
+    // retryPetpoojaOrders worker drains it) instead of being awaited inside the
+    // 5-second webhook ack budget — so no ticket id exists yet.
+    expect(order.petpoojaOrderId).toBeUndefined();
+    expect(order.petpoojaStatus).toBe("pending_retry");
   });
 
-  it("GUARD: a FIRST-delivery stale event stays 401 and leaves no phantom claim", async () => {
+  it("C11: a FIRST-delivery stale (but bounded) event is PROCESSED, not 401'd", async () => {
     control.seed("orders/order_stale_first", pendingOrder("order_stale_first", "pay_stale_first"));
     control.seed("branches/branch_surat_01", { monthlyFee: "0", razorpayAccountId: "acc_surat_1" });
 
@@ -268,12 +275,16 @@ describe("Razorpay webhook crash-recovery vs freshness window (stress sweep)", (
     const call = mockReqRes(payload);
     await handleRazorpayWebhook(call.req, call.res);
 
-    expect(call.out().statusCode).toBe(401);
+    // C11 finding 3: a signature-verified late FIRST delivery is an operational
+    // problem, not a forgery — never 401 (401 stops Razorpay retrying and the
+    // capture would be lost forever). It processes and the lateness is evidence.
+    expect(call.out().statusCode).toBe(200);
     const order = docs.get("orders/order_stale_first")!.data;
-    expect(order.paymentStatus).toBe("pending");
-    // No live idempotency claim must survive a plain rejection (otherwise the
-    // order's recovery path is burned for every future redelivery).
-    expect(docs.get("payment_audits/aud_evt_evt_stale_first")?.data?.completedAt).toBeFalsy();
+    expect(order.paymentStatus).toBe("completed");
+    // The lateness is stamped on the claim so ops can see it was late.
+    const claim = docs.get("payment_audits/aud_evt_evt_stale_first")?.data;
+    expect(claim?.lateDeliveryAt).toBeTypeOf("number");
+    expect(claim?.completedAt).toBeTruthy();
   });
 
   it("P2 RED: a capture landing between failed's read and write SURVIVES", async () => {

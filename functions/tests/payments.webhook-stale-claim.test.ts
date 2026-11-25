@@ -311,10 +311,15 @@ describe("Razorpay webhook idempotency claim (granted regression)", () => {
     expect(order["payment.status"]).toBe("completed");
     expect(order.routeTransferStatus).toBe('pending_retry');
     expect(order).toBeDefined();
-    expect(order.petpoojaOrderId).toMatch(/^pp_kot_/);
-    // Exactly one settlement write and one KOT marker write.
+    // C11: the webhook QUEUES the POS sync inside the money transaction and
+    // performs no POS call (it must answer inside Razorpay's 5 s budget). The
+    // queued row is the existing `retryPetpoojaOrders` lane.
+    expect(order.petpoojaStatus).toBe("pending_retry");
+    expect(order.petpoojaSyncStatus).toBe("pending_retry");
+    expect(order.petpoojaOrderId).toBeUndefined();
+    // Exactly one settlement write and no KOT marker write in this request.
     expect(transferWrites()).toHaveLength(0);
-    expect(kotWrites()).toHaveLength(1);
+    expect(kotWrites()).toHaveLength(0);
     expect(claimDocKeys()).toHaveLength(1);
   });
 
@@ -391,9 +396,14 @@ describe("Razorpay webhook idempotency claim (granted regression)", () => {
     const order = docs.get("orders/order_race_stale_1")!.data;
     expect(order.status).toMatchObject({ code: "CONFIRMED" });
     expect(order.paymentStatus).toBe("completed");
-    // MONEY-SAFETY: exactly one settlement and one KOT for one captured payment.
+    // MONEY-SAFETY: exactly one settlement, and ONE queued KOT row (no
+    // acceptance marker) for one captured payment. C11: the webhook queues the
+    // POS sync instead of ringing the kitchen inside the 5 s ack budget, so both
+    // takeovers must converge on the same single `pending_retry` lane row.
     expect(transferWrites()).toHaveLength(0);
-    expect(kotWrites()).toHaveLength(1);
+    expect(kotWrites()).toHaveLength(0);
+    expect(order.petpoojaStatus).toBe("pending_retry");
+    expect(order.petpoojaOrderId).toBeUndefined();
     expect(order.routeTransferStatus).toBe('pending_retry');
     expect(order).toBeDefined();
     // Still exactly ONE claim document for the event id.

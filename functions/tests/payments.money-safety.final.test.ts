@@ -885,7 +885,10 @@ describe("ITEM 5 — a webhook-only capture of an 86'd cart is refunded, never c
     expect(call.out().statusCode).toBe(200);
     expect(anyRefundPost()).toBe(0);
     expect(orderOf("ord_whok").paymentStatus).toBe("completed");
-    expect(orderOf("ord_whok").petpoojaOrderId).toMatch(/^pp_kot_/);
+    // C11: the webhook QUEUES the POS sync (no in-request POS call), so the
+    // kitchen is rung once by the existing retry worker rather than here.
+    expect(orderOf("ord_whok").petpoojaStatus).toBe("pending_retry");
+    expect(orderOf("ord_whok").petpoojaOrderId).toBeUndefined();
   });
 });
 
