@@ -1231,7 +1231,12 @@ export function formatPetpoojaOrderPayload(
     payment_type: paymentType,
     table_no: tableNo,
     no_of_persons: String(noOfPersons),
-    discount_total: money(discountAmount),
+    // ONE order discount: coupon + Grill-Coins, exactly the figure
+    // `petpoojaFinancials` subtracted to compute `total` and `collect_cash`.
+    // Re-reading `pricing.discount` here reported a SMALLER discount than the
+    // total it collected (a ₹50 ticket discount against an ₹80-reduced total)
+    // and broke the till/settlement reconciliation on every coin order.
+    discount_total: financials.discountTotal,
     // Petpooja 2 Nov 2026: `total_tax` carries only tax that was actually
     // ADDED — food GST for an exclusive menu, plus any GST on delivery/packing.
     // An inclusive line asserts no item_tax, so its included tax is not

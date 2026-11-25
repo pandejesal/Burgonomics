@@ -2830,6 +2830,13 @@ export {
   onTicketEscalatedNotificationTrigger,
 } from "./modules/notifications";
 
+// A5/rule C: a Partner brand-directory save FULL-REPLACES `admin_stores/{id}`
+// with the public projection, which drops the staff-close override and can
+// mirror a stale `isOpen: true` — reopening a kitchen staff closed. The guard
+// restores the close from the before snapshot; only the staff route can clear
+// it. (Additive export: one new trigger, nothing else on this shared file.)
+export { onAdminStoreDirectoryStatusGuard } from "./modules/stores/directoryStatusGuard";
+
 export const sweepStuckSettlementCapturesJob = onSchedule(
   { region: REGION, schedule: "*/30 * * * *", timeZone: "Asia/Kolkata", timeoutSeconds: 300 },
   async () => {

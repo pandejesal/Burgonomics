@@ -262,7 +262,7 @@ describe("R4b restaurant due, delivery flags and cash collection", () => {
     expect(info.Order.details.collect_cash).toBe("590.00");
   });
 
-  it("applies coupon and coin discounts to the total", () => {
+  it("applies coupon and coin discounts to the total, and reports BOTH as the ticket discount", () => {
     const o = order({ fulfillmentType: "DELIVERY", paymentMethod: "COD", dispatchProvider: "borzo" });
     o.pricing.discount = 50;
     o.pricing.loyaltyDiscount = 20;
@@ -270,7 +270,12 @@ describe("R4b restaurant due, delivery flags and cash collection", () => {
     const info = details(o);
     // 575 - 50 - 20 + 15 packaging + 60 courier
     expect(info.Order.details.total).toBe("580.00");
-    expect(info.Order.details.discount_total).toBe("50.00");
+    // A5 finding 2: the POS ticket's discount must EQUAL the discount that
+    // reduced the total. It used to report only the coupon (50) while the total
+    // was 70 lower — till/settlement reconciliation disagreed by the coins.
+    expect(info.Order.details.discount_total).toBe("70.00");
+    expect(info.Order.details.discount_type).toBe("F");
+    expect(info.Order.details.collect_cash).toBe("580.00");
   });
 });
 

@@ -1054,12 +1054,13 @@ describe("Petpooja menu PUSH — the sanitized vendor-truth fixture", () => {
   });
 });
 
-// The 166-item Sold-Out incident: every item carried `"in_stock": "2"`, the
+// The 166-item Sold-Out incident: every item carried `"in_stock": "2"`, the old
 // whitelist (1 / "1" / true) mapped all of them to `inStock: false`, and the run
 // wrote a green COMPLETED row — a fully dark catalogue looked like a healthy
-// sync. These pin the two additive guards: the RAW in_stock census is recorded
-// on the sync-log row, and an ALL-DARK run warns once. The whitelist itself is
-// NOT changed here — whether "2" means available is still open.
+// sync. The mapping is now the vendor's documented §22 one (1 = In Stock,
+// 0 = Out Of Stock, 2 = Do Not Track keeps the current state); these pin the
+// observability that sits on top of it: the RAW in_stock census on the sync-log
+// row, the ALL-DARK warning for a genuinely dark feed, and the readiness fields.
 describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", () => {
   let prevMock: boolean;
 
@@ -1081,7 +1082,7 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
     config.mock.petpoojaPos = prevMock;
   });
 
-  it("(a) records the raw census AND warns when EVERY item is unrecognised (all dark)", async () => {
+  it("(a) records the raw census AND warns when EVERY item is Out Of Stock (all dark)", async () => {
     const warn = spyOnWarn();
     try {
       const res = await handlePetpoojaMenuWebhook({
@@ -1089,9 +1090,9 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
         rest_id: "demo",
         categories: [{ categoryid: "90750", categoryname: "Burgers" }],
         items: [
-          { itemid: "17314", itemname: "Classic Veg Burger", item_categoryid: "90750", price: "199", in_stock: "2" },
-          { itemid: "17315", itemname: "Paneer Burger", item_categoryid: "90750", price: "219", in_stock: "2" },
-          { itemid: "17316", itemname: "Peri Peri Fries", item_categoryid: "90750", price: "99", in_stock: "2" },
+          { itemid: "17314", itemname: "Classic Veg Burger", item_categoryid: "90750", price: "199", in_stock: "0" },
+          { itemid: "17315", itemname: "Paneer Burger", item_categoryid: "90750", price: "219", in_stock: "0" },
+          { itemid: "17316", itemname: "Peri Peri Fries", item_categoryid: "90750", price: "99", in_stock: "0" },
         ],
       });
 
@@ -1099,7 +1100,7 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
 
       // 1. The census lands on the sync-log row, additively.
       expect(syncLogRows().length).toBe(1);
-      expect(latestSyncLog().inStockValues).toEqual({ "2": 3 });
+      expect(latestSyncLog().inStockValues).toEqual({ "0": 3 });
       // Existing fields keep their meaning.
       expect(latestSyncLog().status).toBe("COMPLETED");
       expect(latestSyncLog().error).toBeNull();
@@ -1110,7 +1111,7 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
       const message = warnText(warn);
       expect(message).toContain(DEMO_REST_ID);
       expect(message).toContain("ingested 3 items");
-      expect(message).toContain("2 x3");
+      expect(message).toContain("0 x3");
       expect(message).toContain("Sold Out");
     } finally {
       warn.mockRestore();
@@ -1125,8 +1126,10 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
         rest_id: "demo",
         items: [
           { itemid: "in1", itemname: "Available", price: "10", in_stock: 1 },
-          { itemid: "out1", itemname: "86-ed", price: "10", in_stock: "2" },
-          { itemid: "out2", itemname: "Also 86-ed", price: "10", in_stock: "0" },
+          // §22 "Do Not Track": the vendor makes no stock assertion here.
+          { itemid: "n2", itemname: "Do Not Track", price: "10", in_stock: "2" },
+          // §22 "Out Of Stock": the ONE recorded 86 in this feed.
+          { itemid: "out2", itemname: "86-ed", price: "10", in_stock: "0" },
         ],
       });
 
@@ -1158,15 +1161,15 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
     }
   });
 
-  it("(d) marks the sync row NOT catalogue-ready when the whole feed is unavailable", async () => {
+  it("(d) marks the sync row NOT catalogue-ready when the whole feed is Out Of Stock", async () => {
     const warn = spyOnWarn();
     try {
       await handlePetpoojaMenuWebhook({
         success: "1",
         rest_id: "demo",
         items: [
-          { itemid: "d1", itemname: "A", price: "10", in_stock: "2" },
-          { itemid: "d2", itemname: "B", price: "10", in_stock: "2" },
+          { itemid: "d1", itemname: "A", price: "10", in_stock: "0" },
+          { itemid: "d2", itemname: "B", price: "10", in_stock: "0" },
         ],
       });
 
@@ -1177,7 +1180,7 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
       // …but the row can no longer read as a healthy, orderable catalogue.
       expect(latestSyncLog().catalogueReady).toBe(false);
       expect(latestSyncLog().availabilityWarning).toBe("NO_ITEMS_IN_STOCK");
-      expect(latestSyncLog().inStockValues).toEqual({ "2": 2 });
+      expect(latestSyncLog().inStockValues).toEqual({ "0": 2 });
     } finally {
       warn.mockRestore();
     }
@@ -1239,17 +1242,15 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
     expect(latestSyncLog().unpricedInStockVariationMissingCount).toBe(1);
   });
 
-  it("(h) with the opt-in availability policy, unknown '2' is sellable only when priced", async () => {
+  it("(h) maps the documented §22 encoding: 2 = Do Not Track keeps state, 0 = Out Of Stock, 1 = In Stock", async () => {
     const warn = spyOnWarn();
-    const prevPolicy = config.petpooja.unknownStockPolicy;
-    config.petpooja.unknownStockPolicy = "available";
     try {
       await handlePetpoojaMenuWebhook({
         success: "1",
         rest_id: "demo",
         items: [
-          { itemid: "pos", itemname: "Priced unknown", price: "199", in_stock: "2" },
-          { itemid: "zero", itemname: "Unpriced unknown", price: "0", in_stock: "2" },
+          { itemid: "pos", itemname: "Priced Do Not Track", price: "199", in_stock: "2" },
+          { itemid: "zero", itemname: "Unpriced Do Not Track", price: "0", in_stock: "2" },
           { itemid: "out", itemname: "Explicit out", price: "99", in_stock: "0" },
           { itemid: "in", itemname: "Explicit in", price: "99", in_stock: 1 },
         ],
@@ -1259,15 +1260,19 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
         catalogueReady: true,
         availabilityWarning: null,
         inStockValues: { "2": 2, "0": 1, "1": 1 },
+        // "2" is documented, so it is NOT an unknown value and raises no alert.
+        inStockUnknownCount: 0,
       });
+      // Do Not Track asserts nothing: a NEW priced doc is sellable, never
+      // silently 86'd by a value that is not an availability statement.
       expect(savedDocs["products/prod_demo_pos"]).toMatchObject({
         price: 199,
         priceAvailable: true,
         inStock: true,
         pushInStock: "2",
       });
-      // The price guard wins over the vendor flag AND the availability policy:
-      // an unknown-stock item with no price never becomes a ₹0 order.
+      // The price guard outranks the flag: an unpriced item never becomes a
+      // ₹0 order, whatever the vendor sent.
       expect(savedDocs["products/prod_demo_zero"]).toMatchObject({
         price: 0,
         priceAvailable: false,
@@ -1276,11 +1281,10 @@ describe("Petpooja menu PUSH — the in_stock census and the ALL-DARK warning", 
       });
       expect(savedDocs["products/prod_demo_out"]).toMatchObject({ inStock: false });
       expect(savedDocs["products/prod_demo_in"]).toMatchObject({ inStock: true });
-      // No all-dark warning (the priced unknown item is orderable) and no
-      // price warning (the unpriced item was not explicitly flagged in stock).
+      // No all-dark warning (priced items are orderable) and no price warning
+      // (the unpriced item was not explicitly flagged in stock).
       expect(warn).not.toHaveBeenCalled();
     } finally {
-      config.petpooja.unknownStockPolicy = prevPolicy;
       warn.mockRestore();
     }
   });

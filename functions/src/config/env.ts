@@ -83,15 +83,17 @@ export const config = {
     cancelUrl:
       process.env.PETPOOJA_CANCEL_URL ||
       "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1/update_order_status",
-    // The Push Menu `in_stock` encoding is undocumented. A real 166-item push
-    // carried only "2", and the old whitelist (1 / "1" / true) turned the whole
-    // storefront Sold Out. Keep fail-closed as the default; an operator who has
-    // confirmed the outlet may opt into treating an unrecognised value as
-    // available. Unpriced items are ALWAYS unavailable (see resolvePushStock),
-    // so this cannot create a ₹0 order.
-    unknownStockPolicy: (process.env.PETPOOJA_UNKNOWN_STOCK_POLICY === "available"
-      ? "available"
-      : "unavailable") as "available" | "unavailable",
+    // The Push Menu `in_stock` encoding is now DOCUMENTED by the vendor's own
+    // item editor (`references/petpooja_save_order_api.md` §22): stock2 = Do
+    // Not Track, stock1 = In Stock, stock0 = Out Of Stock. The mapping lives in
+    // `menuSyncWebhook.resolvePushStockFlag` and is exact:
+    //   1 -> available, 0 -> unavailable, 2 -> keep the item's current state,
+    //   anything else -> keep the current state + ONE operator alert.
+    // There is deliberately NO environment knob here any more
+    // (PETPOOJA_UNKNOWN_STOCK_POLICY is retired): an unrecognised value used to
+    // default to "unavailable", which turned a real 166-item push carrying "2"
+    // into a fully Sold Out catalogue. "Do Not Track" and "unknown" may never
+    // mass-mark an outlet dark, so the failure direction is fixed in code.
     callbackUrl:
       process.env.PETPOOJA_CALLBACK_URL ||
       `https://asia-south1-${process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT_ID || "burgonomics-7faa8"}.cloudfunctions.net/api/petpooja/webhook`,

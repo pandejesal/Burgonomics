@@ -88,7 +88,6 @@ vi.mock("firebase-admin", () => {
 
 import { syncPetpoojaMenu } from "../src/modules/petpooja/menuSyncWebhook";
 import { calculateOrderPricing } from "../src/modules/payments/pricing.engine";
-import { config } from "../src/config/env";
 
 const fixture = JSON.parse(
   readFileSync(resolve(__dirname, "fixtures/petpooja-push-docsample.json"), "utf8")
@@ -137,14 +136,14 @@ describe("M2 mapper", () => {
     if (difference === "groups") second.addon = [];
     else second.addon[0].addon_item_selection_min = "0";
     item.variation.push(second);
-    const previous = config.petpooja.unknownStockPolicy;
-    config.petpooja.unknownStockPolicy = "available";
-    try {
-      await syncPetpoojaMenu(BRANCH, undefined, body);
-      expect(product("30672").inStock).toBe(false);
-      expect(product("30672").customizations).toHaveLength(1);
-      expect(lastLog().itemsWithUnsupportedVariationScopedAddons).toBe(1);
-    } finally { config.petpooja.unknownStockPolicy = previous; }
+    // The vendor's `"2"` (Do Not Track) would otherwise KEEP the current state,
+    // so this test states the item's stock explicitly to keep the disagreement
+    // the only reason it is unsellable.
+    item.in_stock = "1";
+    await syncPetpoojaMenu(BRANCH, undefined, body);
+    expect(product("30672").inStock).toBe(false);
+    expect(product("30672").customizations).toHaveLength(1);
+    expect(lastLog().itemsWithUnsupportedVariationScopedAddons).toBe(1);
   });
 
   it("lifts identical limits across multiple active variations, ignoring inactive differences", async () => {
@@ -329,7 +328,8 @@ describe("M2 mapper", () => {
     expect(item.customizations).toBeUndefined();
     expect(item.price).toBe(0);
     expect(item.priceAvailable).toBe(false);
-    // resolvePushStock unchanged: unpriced stays unsellable.
+    // The price guard outranks the flag: an unpriced item is never sellable,
+    // including under §22 "Do Not Track" ("2").
     expect(item.inStock).toBe(false);
 
     const log = lastLog();

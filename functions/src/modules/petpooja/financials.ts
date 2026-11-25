@@ -95,6 +95,17 @@ export interface PetpoojaFinancials {
   taxTotal: string;
   enable_delivery: number;
   collect_cash: string;
+  /**
+   * The ONE order discount that was subtracted from the item subtotal to reach
+   * `total` — coupon + coin (loyalty) combined, as a 2dp string.
+   *
+   * It is returned from here — rather than re-read by the payload builder — so
+   * `discount_total` on the wire can never drift from the discount that drives
+   * `total`/`collect_cash`. They were previously two independent reads, and a
+   * coin-discounted order reported a smaller POS discount than the total it
+   * collected (audit A5 finding 2).
+   */
+  discountTotal: string;
 }
 
 /**
@@ -157,5 +168,8 @@ export function petpoojaFinancials(input: PetpoojaFinancialInput): PetpoojaFinan
     // Vendor ruling: on a COD order collect_cash MUST equal total exactly, in
     // the same 2dp string form. Prepaid (ONLINE) collects nothing at the door.
     collect_cash: ((input.paymentType === "COD" ? total : 0) / 100).toFixed(2),
+    // The SAME paise figure `total` was computed from, so the POS ticket's
+    // `discount_total` (coupon + coins) always explains the total it collects.
+    discountTotal: (discount / 100).toFixed(2),
   };
 }

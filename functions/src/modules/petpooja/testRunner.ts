@@ -611,7 +611,7 @@ export function formatPetpoojaV21Payload(
             payment_type: "COD",
             table_no: order.tableNumber || "",
             no_of_persons: "0",
-            discount_total: money(discount),
+            discount_total: financials.discountTotal,
             tax_total: money(gst),
             discount_type: "F",
             total: financials.total,

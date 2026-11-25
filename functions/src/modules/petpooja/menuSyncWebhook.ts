@@ -248,28 +248,69 @@ function buildCategoryNameMap(categories: any): Map<string, string> {
 }
 
 /**
- * Resolve a Push Menu item's effective availability.
+ * The vendor's documented Push Menu `in_stock` encoding
+ * (`references/petpooja_save_order_api.md` §22, verified demo resubmission
+ * 2026-10-28):
  *
- * The vendor does not document the Push Menu `in_stock` encoding, and a real
- * 166-item push carried only `"2"`. Three rules, in order:
- *   1. An unpriced item is NEVER sellable. Missing/variation-only prices were
- *      the reason 81 SKUs could otherwise become ₹0 orders.
- *   2. Recognised flags win: 1 / "1" / true = available, 0 / "0" / false = out.
- *   3. An unrecognised flag (including "2" and an absent field) follows the
- *      operator's explicit policy. The default is fail-closed; setting
- *      PETPOOJA_UNKNOWN_STOCK_POLICY=available keeps a positive-priced menu
- *      orderable until the authoritative stock webhook corrects an item.
+ *   "The native item editor defines stock2 as **Do Not Track**, stock1 as In
+ *    Stock, stock0 as Out Of Stock."
+ *
+ * So the flag is THREE-valued, not a boolean:
+ *
+ *   1 / "1" / true  -> In Stock      -> available
+ *   0 / "0" / false -> Out Of Stock  -> unavailable
+ *   2 / "2"         -> Do Not Track  -> the vendor asserts NOTHING. Keep the
+ *                                      item's current state: a staff 86
+ *                                      survives, and a priced SKU the vendor
+ *                                      does not stock-control stays orderable.
+ *
+ * A value outside that table is NOT read as "out of stock". The old default
+ * policy did exactly that, and a real 166-item push carrying `"2"` on every
+ * line rendered the whole catalogue Sold Out (audit A5 finding 3). An
+ * unknown value keeps the current state too and raises ONE operator alert.
+ *
+ * An ABSENT field is the vendor saying nothing at all — same handling as
+ * "Do Not Track", without an alert.
+ */
+type PushStockFlag = "available" | "unavailable" | "keep" | "unknown";
+
+const DO_NOT_TRACK_VALUES = new Set<string>(["2"]);
+
+function resolvePushStockFlag(raw: unknown): PushStockFlag {
+  if (raw === 1 || raw === "1" || raw === true) return "available";
+  if (raw === 0 || raw === "0" || raw === false) return "unavailable";
+  // Absent/null: the field was not sent, so no stock assertion was made.
+  if (raw === undefined || raw === null) return "keep";
+  if (typeof raw === "string" && DO_NOT_TRACK_VALUES.has(raw.trim())) return "keep";
+  if (typeof raw === "number" && raw === 2) return "keep";
+  return "unknown";
+}
+
+/**
+ * Resolve a Push Menu item's effective availability from its §22 flag.
+ *
+ * Two rules, in order:
+ *   1. An unpriced item is NEVER sellable — missing/variation-only prices were
+ *      the reason 81 SKUs could otherwise become ₹0 orders. This outranks
+ *      every flag, including "Do Not Track".
+ *   2. Otherwise the flag decides: In Stock / Out Of Stock are explicit, and
+ *      Do Not Track (or an unrecognised value) KEEPS the item's current state.
+ *      `currentInStock` is the value already on the product document; when the
+ *      document is new, there is no state to keep and a PRICED item stays
+ *      sellable — a vendor that does not track stock is not asserting "86'd",
+ *      and an encoding we cannot read must never take a catalogue dark.
  */
 function resolvePushStock(
-  raw: unknown,
+  flag: PushStockFlag,
   price: unknown,
-  policy: "available" | "unavailable"
+  currentInStock: unknown
 ): boolean {
   const priceKnown = Number.isFinite(Number(price)) && Number(price) > 0;
   if (!priceKnown) return false;
-  if (raw === 1 || raw === "1" || raw === true) return true;
-  if (raw === 0 || raw === "0" || raw === false) return false;
-  return policy === "available";
+  if (flag === "available") return true;
+  if (flag === "unavailable") return false;
+  // keep / unknown: the document's own state wins; a fresh doc is sellable.
+  return typeof currentInStock === "boolean" ? currentInStock : true;
 }
 
 /**
@@ -588,15 +629,12 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   };
 
   // OBSERVABILITY ONLY — nothing below influences a single product document.
-  // A real push carried `"in_stock": "2"` on all 166 items; the whitelist maps
-  // that to `inStock: false`, so the whole catalogue rendered Sold Out while the
-  // run still wrote a green COMPLETED sync-log row and stamped the branch — a
-  // 100% dark catalogue was indistinguishable from a healthy sync, and nothing
-  // warned. Two additions, both additive: census the RAW `in_stock` values as
-  // they arrive (recorded on the sync-log row), and warn once when EVERY item
-  // came out not-in-stock. Whether "2" means available or unavailable is
-  // UNRESOLVED — that is exactly why the raw values are counted: the next real
-  // push answers it without a code change.
+  // A real push carried `"in_stock": "2"` on all 166 items; the old whitelist
+  // mapped that to `inStock: false`, so the whole catalogue rendered Sold Out
+  // while the run still wrote a green COMPLETED sync-log row and stamped the
+  // branch. The raw values are still censused on the sync-log row, an ALL-DARK
+  // run still warns once, and — for a value OUTSIDE the §22 table — ONE alert
+  // is raised for the whole sync.
   const rawInStockValues: Record<string, number> = {};
   const anomalyCensus: Record<string, number> = {};
   let malformedItemCount = 0;
@@ -607,6 +645,66 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   let unpricedInStockCount = 0;
   let unpricedVariationFlaggedCount = 0;
   let unpricedInStockVariationMissingCount = 0;
+  // §22 "Do Not Track" / unrecognised values KEEP the item's current state, so
+  // the sync needs the state already on this branch's product docs. Read once
+  // per run (only when a flag actually asks for it) instead of one get per SKU.
+  const currentStockByItemId: Map<string, unknown> = new Map();
+  let currentStockLoaded = false;
+  let currentStockReadFailed = false;
+  const unknownInStockValues: Record<string, number> = {};
+  let unknownInStockCount = 0;
+
+  const loadCurrentStock = async (): Promise<void> => {
+    if (currentStockLoaded) return;
+    currentStockLoaded = true;
+    try {
+      const PAGE = 500;
+      let lastDoc: any = null;
+      for (;;) {
+        let pageQuery: any = db
+          .collection("products")
+          .where("branchId", "==", branchId)
+          .orderBy("__name__")
+          .limit(PAGE);
+        if (lastDoc && typeof pageQuery.startAfter === "function") {
+          pageQuery = pageQuery.startAfter(lastDoc);
+        }
+        const snap = await pageQuery.get();
+        const docs = snap?.docs || [];
+        for (const d of docs) {
+          const dd = (d.data() as any) || {};
+          const pid = dd.petpoojaItemId ? String(dd.petpoojaItemId) : "";
+          if (pid) currentStockByItemId.set(pid, dd.inStock);
+        }
+        if (docs.length < PAGE) break;
+        lastDoc = docs[docs.length - 1];
+        if (!lastDoc || typeof pageQuery.startAfter !== "function") break;
+      }
+    } catch (err: any) {
+      // The state never loaded, so every keep/unknown item is treated as a
+      // FRESH doc — i.e. it stays sellable. That is the correct failure
+      // direction here: "the vendor did not assert a stock state" must never
+      // become "the catalogue is Sold Out". Reported, never swallowed.
+      currentStockReadFailed = true;
+      console.warn(
+        `[Petpooja Menu Sync] could not read existing stock state for branch ${branchId}:`,
+        err?.message || err
+      );
+    }
+  };
+
+  // Read the pre-run stock state ONCE, before anything is written, when any line
+  // in this feed does not assert a stock state (§22 "Do Not Track" or an unknown
+  // value). Doing it up front — rather than lazily inside the write loop — means
+  // the "current state" is always the state BEFORE this push, never this run's
+  // own half-committed batches on a >500-SKU catalogue.
+  const feedNeedsCurrentStock = Array.isArray(items)
+    ? items.some((item: any) => {
+        const flag = resolvePushStockFlag(item?.in_stock);
+        return flag === "keep" || flag === "unknown";
+      })
+    : false;
+  if (feedNeedsCurrentStock) await loadCurrentStock();
 
   for (const item of items) {
     // Census bucket. Normalised ONLY for grouping (`String(value)`), so "2"
@@ -676,22 +774,34 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     // M2 (corrected): the effective base price is the lowest active variation
     // price when the item HAS variations (never keyed on the flag — the
     // vendor's own sample is flagged "0"), else the item price. It is computed
-    // FIRST so the unchanged resolvePushStock sees a real price.
+    // FIRST so the stock resolver sees a real price.
     const effectivePrice = effectiveItemPrice(item);
     const priceKnown = effectivePrice > 0;
     // The flag's documented-as-true spellings, used only for the price-hazard
-    // census below. The effective `inStock` is resolved separately because an
-    // unrecognised flag (the real push carried "2" on all 166 items) must not
-    // silently make a priced item unsellable when the operator has opted into
-    // the availability policy, and must never make an unpriced item sellable.
+    // census below. The effective `inStock` is resolved separately because a
+    // "Do Not Track" / unrecognised value must never make an unpriced item
+    // sellable, and must never take a priced catalogue dark.
     const flagInStock =
       item.in_stock === 1 || item.in_stock === "1" || item.in_stock === true;
+    const pushStockFlag = resolvePushStockFlag(rawInStock);
+    if (pushStockFlag === "unknown") {
+      // ONE alert per sync, not per item: an encoding we cannot read is an
+      // OPERATOR fact about the feed, and 166 identical rows would page on-call
+      // 166 times for it.
+      unknownInStockCount++;
+      unknownInStockValues[rawInStockKey] = (unknownInStockValues[rawInStockKey] || 0) + 1;
+    }
+    // §22 "Do Not Track" and unknown values need the doc's CURRENT state.
+    let currentInStock: unknown;
+    if (pushStockFlag === "keep" || pushStockFlag === "unknown") {
+      currentInStock = currentStockByItemId.get(rawItemId);
+    }
     const scopedAddonContract = variationAddonContract(item);
     if (scopedAddonContract.unsupported) itemsWithUnsupportedVariationScopedAddons++;
     const inStock = !scopedAddonContract.unsupported && resolvePushStock(
-      item.in_stock,
+      pushStockFlag,
       effectivePrice,
-      config.petpooja.unknownStockPolicy
+      currentInStock
     );
     if (inStock) inStockTrueCount++;
 
@@ -829,9 +939,9 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
   const catalogueReady = validItemsCount > 0 && inStockTrueCount > 0;
   const availabilityWarning = allDark ? "NO_ITEMS_IN_STOCK" : null;
 
-  // The warning that would have caught the 166-item Sold-Out incident. A warn
-  // only: it never throws and does not change `status`, `error` or the returned
-  // counts.
+  // The alarm that would have caught the 166-item Sold-Out incident. Still a
+  // warn only: it never throws and does not change `status`, `error` or the
+  // returned counts.
   if (allDark) {
     const census = Object.entries(rawInStockValues)
       .map(([value, count]) => `${value} x${count}`)
@@ -839,6 +949,36 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
     console.warn(
       `[Petpooja Menu Sync] menu sync for outlet ${restId} ingested ${items.length} items and NONE are in stock (raw in_stock: ${census}) — the whole catalogue will render as Sold Out; verify the vendor's in_stock encoding`
     );
+  }
+
+  // An in_stock value OUTSIDE the §22 table: ONE alert for the whole sync.
+  // Nothing was mass-marked unavailable (every such item kept its current
+  // state), so this is not an outage — it is a vendor-encoding question that
+  // must reach a human before the next push. Recorded on the sync-log row too,
+  // so the next real push answers it without a code change.
+  if (unknownInStockCount > 0) {
+    const census = Object.entries(unknownInStockValues)
+      .map(([value, count]) => `${value} x${count}`)
+      .join(", ");
+    console.warn(
+      `[Petpooja Menu Sync] outlet ${restId} sent in_stock value(s) outside the documented encoding (${census}) on ${unknownInStockCount} item(s) — those items kept their current availability; nothing was marked sold out. Confirm the encoding with Petpooja.`
+    );
+    await captureErrorSnapshot({
+      source: "petpooja",
+      severity: "high",
+      message: `Menu push for branch ${branchId} carried in_stock value(s) outside the documented §22 encoding (${census}) on ${unknownInStockCount} of ${items.length} item(s). Every affected item KEPT its current availability — nothing was marked sold out. Confirm the vendor's in_stock encoding before trusting stock state from this feed.`,
+      branchId,
+      context: {
+        rawInStockValues: { ...unknownInStockValues },
+        unknownInStockCount,
+        itemsInFeed: items.length,
+        // A state read that failed degrades to "treat as fresh/sellable"; the
+        // alert says so rather than implying the keeps were authoritative.
+        existingStockReadFailed: currentStockReadFailed,
+      },
+    }).catch((err: any) => {
+      console.warn("[Petpooja Menu Sync] unknown in_stock alert failed:", err?.message || err);
+    });
   }
 
   // PRICE OBSERVABILITY: fire when the vendor flags an unpriced item in stock.
@@ -1202,8 +1342,12 @@ export async function syncPetpoojaMenu(branchId: string, caller?: StaffCaller, i
       conflicts: 0,
       // ADDITIVE observability: the RAW `in_stock` values seen this run, grouped
       // by String(value) — e.g. { "2": 166 }. Record-only; it never influences
-      // the products written, and no existing field is renamed or repurposed.
+      // what the products are, it reports what the vendor actually sent.
       inStockValues: rawInStockValues,
+      // Values outside the documented §22 table. Non-zero means ONE alert was
+      // raised and those items KEPT their current state.
+      inStockUnknownValues: unknownInStockValues,
+      inStockUnknownCount: unknownInStockCount,
       unpricedSkuCount,
       unpricedInStockCount,
       unpricedVariationFlaggedCount,
