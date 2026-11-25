@@ -14,6 +14,7 @@ import {
   providerCanCancelRemotely,
   type PendingDispatchCancel,
 } from "./dispatch.cancelPending";
+import { ACTIVE_SCAN_PAGE, scanActiveDocuments, staleEnough } from "./activeScan";
 
 /**
  * Shadowfax status-poll reconciliation (Hyperlocal Marketplace).
@@ -253,28 +254,32 @@ export async function pollActiveShadowfaxOrdersWorker(): Promise<ShadowfaxPollRe
 
   const now = Date.now();
 
-  let snap: any;
+  // A8-7: scan the whole active set with a cursor; the per-tick provider-call
+  // budget stays SHADOWFAX_POLL_QUERY_LIMIT (cost discipline preserved).
+  let staleDocs: any[] = [];
   try {
-    snap = await db
-      .collection("orders")
-      .where("deliveryStatus", "in", ["dispatched", "in_transit"])
-      .limit(SHADOWFAX_POLL_QUERY_LIMIT)
-      .get();
+    staleDocs = await scanActiveDocuments(
+      (startAfterDoc?: any) => {
+        const base = db
+          .collection("orders")
+          .where("deliveryStatus", "in", ["dispatched", "in_transit"])
+          .limit(ACTIVE_SCAN_PAGE);
+        return startAfterDoc ? (base as any).startAfter(startAfterDoc) : base;
+      },
+      (order: any) => {
+        if (order.dispatchProvider !== "shadowfax") return false;
+        const providerOrderId = String(order.dispatchOrderId ?? order.shadowfaxOrderId ?? "");
+        if (!/^\d+$/.test(providerOrderId)) return false;
+        return staleEnough(order, now, SHADOWFAX_POLL_MIN_STALENESS_MS);
+      },
+      SHADOWFAX_POLL_QUERY_LIMIT
+    );
   } catch (err: any) {
     // A worker that cannot read must not poll: returning zero keeps the tick
     // honest instead of reporting phantom coverage.
     console.error("[Shadowfax Poll] query failed:", err?.message || err);
     return result;
   }
-
-  const staleDocs = (snap?.docs || []).filter((doc: any) => {
-    const order = doc.data ? doc.data() : undefined;
-    if (!order) return false;
-    if (order.dispatchProvider !== "shadowfax") return false;
-    const providerOrderId = String(order.dispatchOrderId ?? order.shadowfaxOrderId ?? "");
-    if (!/^\d+$/.test(providerOrderId)) return false;
-    return now - toMillis(order.updatedAt) >= SHADOWFAX_POLL_MIN_STALENESS_MS;
-  });
 
   if (staleDocs.length === 0) return result;
 
@@ -346,6 +351,93 @@ export async function pollActiveShadowfaxOrdersWorker(): Promise<ShadowfaxPollRe
       );
   };
 
+  /**
+   * A8-2: contain a poll-observed cancellation exactly like the webhook does.
+   *
+   * The webhook RIDER_CANCELLED path parks the order `deliveryStatus:
+   * "needs_review"` with `needsRebook: false` and a `rebookTrigger`, then alerts
+   * the branch. The poller used to write only the evidence row and refresh
+   * `updatedAt`, so the customer tracker kept showing a live delivery that no
+   * longer existed, no human was told, and the refreshed timestamp reset the
+   * dead-letter clock so nothing escalated either.
+   *
+   * The cause is unverifiable from a pull (the pull body carries no
+   * `cancel_reason_text` classification guarantee we can trust for a rebook
+   * decision), so this is the MANUAL REVIEW shape: `cancellation_unverified`,
+   * never an automatic rebook. Rebooking stays a human step, exactly as the
+   * scope comment above promises.
+   *
+   * Returns true when the containment was applied on a still-owned booking.
+   */
+  const containProviderCancelled = async (
+    doc: any,
+    order: any,
+    data: any
+  ): Promise<boolean> => {
+    const providerOrderId = String(order.dispatchOrderId ?? order.shadowfaxOrderId ?? "");
+    let contained = false;
+    const apply = async (tx: any) => {
+      const freshSnap = await tx.get(doc.ref);
+      const fresh = freshSnap.exists ? freshSnap.data() : undefined;
+      if (!fresh) return;
+      // A rebook / staff teardown that landed mid-pull must win: this carrier's
+      // cancellation says nothing about the booking now on the order.
+      if (fresh.dispatchProvider !== "shadowfax") return;
+      if (String(fresh.dispatchOrderId ?? fresh.shadowfaxOrderId ?? "") !== providerOrderId) {
+        return;
+      }
+      // Already contained / closed: idempotent, nothing to write or alert.
+      if (fresh.deliveryStatus === "needs_review" || fresh.deliveryStatus === "cancelled" || fresh.deliveryStatus === "delivered") {
+        return;
+      }
+      const reasonText =
+        typeof data?.cancel_reason_text === "string" && data.cancel_reason_text.trim()
+          ? data.cancel_reason_text.trim().slice(0, 300)
+          : "The provider cancelled the booking (observed by status polling)";
+      const deliveryStatusBefore = String(fresh.deliveryStatus || "dispatched");
+      tx.set(
+        doc.ref,
+        {
+          // Same containment shape as dispatch.webhooks.ts RIDER_CANCELLED's
+          // manual-review arm.
+          deliveryStatus: "needs_review",
+          needsRebook: false,
+          rebookTrigger: "cancellation_unverified",
+          riderCancellationReason: reasonText,
+          delivery: withDeliveryMirror(fresh, {
+            status: "needs_review",
+            riderCancellationReason: reasonText,
+          }),
+          shadowfaxLastPulledStatus: pullStatus(data) || null,
+          shadowfaxLastPollError: null,
+          // A cancellation is a WIND-DOWN, not a healthy heartbeat: the dead
+          // letter counter is NOT reset here, and `updatedAt` is deliberately
+          // left alone so the silence clock keeps its true age.
+          shadowfaxPolledAt: nowTs(),
+          shadowfaxPollContained: {
+            reason: "provider_cancelled",
+            observedBy: "poll",
+            providerOrderId,
+            deliveryStatusBefore,
+            containedAt: nowTs(),
+          },
+        },
+        { merge: true }
+      );
+      contained = true;
+    };
+
+    if (db && typeof (db as any).runTransaction === "function") {
+      await (db as any).runTransaction(apply);
+    } else {
+      await apply({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, payload: any, opts?: any) => ref.set(payload, opts),
+      });
+    }
+    return contained;
+  };
+
   const pollOne = async (doc: any): Promise<"updated" | "polled"> => {
     const order = doc.data();
     const providerOrderId = String(order.dispatchOrderId ?? order.shadowfaxOrderId ?? "");
@@ -354,15 +446,64 @@ export async function pollActiveShadowfaxOrdersWorker(): Promise<ShadowfaxPollRe
 
       if (CANCELLED_PULL_STATUSES.has(pullStatus(data))) {
         await parkProviderCancelled(doc, order, data);
+        // A8-2: contain the order (stop the tracker, alert staff, no rebook)
+        // exactly like a webhook cancellation. `updatedAt` is NOT refreshed.
+        const contained = await containProviderCancelled(doc, order, data);
+        if (contained) {
+          try {
+            const { captureErrorSnapshot } = await import("../../core/errors");
+            await captureErrorSnapshot({
+              source: "dispatch",
+              severity: "high",
+              message:
+                `Shadowfax cancelled booking ${String(order.dispatchOrderId ?? "").slice(0, 64)} ` +
+                `for order ${doc.id} (observed by status polling, callback missed) — order ` +
+                `parked for manual review, no rebook attempted`,
+              orderId: doc.id,
+              branchId: order.branchId,
+              context: {
+                provider: "shadowfax",
+                providerOrderId: String(order.dispatchOrderId ?? "").slice(0, 64),
+                observedBy: "poll",
+              },
+            });
+          } catch {
+            // Alert best-effort: the containment write is the durable state.
+          }
+          try {
+            const branchId = typeof order.branchId === "string" ? order.branchId : "";
+            if (branchId) {
+              const { dispatchFCM } = await import("../notifications/fcm.service");
+              await dispatchFCM({
+                topic: `branch_${branchId}_orders`,
+                title: "Delivery cancelled — manual review",
+                body: `Order #${doc.id.substring(0, 6)}: Shadowfax cancelled the booking and the callback was missed (poll-confirmed). Staff must review — no rebook will be attempted.`,
+                data: {
+                  type: "dispatch_manual_review",
+                  orderId: doc.id,
+                  needsRebook: "false",
+                  provider: "shadowfax",
+                  observedBy: "poll",
+                },
+                purpose: "operational",
+                actor: { trusted: true },
+              });
+            }
+          } catch (err: any) {
+            console.warn(
+              "[Shadowfax Poll] branch alert for a contained cancellation failed:",
+              err?.message || err
+            );
+          }
+        }
         await doc.ref.set(
           {
             shadowfaxPolledAt: nowTs(),
-            updatedAt: nowTs(),
             shadowfaxLastPollError: null,
           },
           { merge: true }
         );
-        return "polled";
+        return "updated";
       }
 
       // Fresh-binding recheck + write in ONE transaction: a rebook that landed
@@ -635,6 +776,114 @@ export interface PendingCancelAttemptResult {
 }
 
 /**
+ * A8-3: deliver the "you must cancel this in the provider dashboard" alert.
+ *
+ * Borzo and Porter expose no cancel API in our adapter, so the human step is
+ * unavoidable — but it must REACH a human. Before this, the whole alert was a
+ * `dispatchCancelAlert` field on the order document, so staff discovered the
+ * live rider only when the rider called. This pushes through the existing
+ * branch operational channel (`branch_<id>_orders`), the same lane the
+ * Shadowfax dead-letter branch and the webhook rider-cancel alerts use.
+ *
+ * DEDUPED: a retried cancel (the customer retries, the order tick re-runs)
+ * must not ring the branch twice for the SAME booking. The claim is a
+ * deterministic marker document on the order (`dispatchCancelAlert` already
+ * carries the booking pair), so the key is the provider + provider order id
+ * and it is written before the send. A genuinely different booking (a rebook)
+ * has a different key and does alert.
+ *
+ * Never throws: the caller's durable record is already the trail, and a
+ * notification fault must never fail a cancellation.
+ */
+async function deliverManualCancelAlert(params: {
+  orderId: string;
+  provider: "borzo" | "porter" | "shadowfax";
+  providerOrderId: string;
+  reason: "staff_cancelled" | "order_cancelled";
+  requestedBy: string;
+}): Promise<{ alerted: boolean; channel: "branch" | null; reason: string }> {
+  const { orderId, provider, providerOrderId, reason } = params;
+  try {
+    let branchId = "";
+    try {
+      const snap = await db.collection("orders").doc(orderId).get();
+      const order = (snap?.exists ? snap.data() : undefined) as any;
+      branchId = typeof order?.branchId === "string" ? order.branchId : "";
+    } catch (err: any) {
+      console.warn(
+        `[Dispatch Cancel] could not read branch for order ${orderId}:`,
+        err?.message || err
+      );
+    }
+
+    const { captureErrorSnapshot } = await import("../../core/errors");
+    const message =
+      `Order ${orderId} was cancelled with a live ${provider} booking ${providerOrderId} that ` +
+      `cannot be cancelled from here — a rider may still be driving to it. Cancel it in the ` +
+      `${provider === "porter" ? "Porter enterprise" : "Borzo"} dashboard, then confirm ` +
+      `(POST /dispatch/cancel/confirm).`;
+    await captureErrorSnapshot({
+      source: "dispatch",
+      severity: "high",
+      message,
+      orderId,
+      branchId: branchId || undefined,
+      context: { provider, providerOrderId, reason, requestedBy: params.requestedBy },
+    }).catch(() => undefined);
+
+    if (!branchId) {
+      // No branch → no topic to push to. The durable record + snapshot above are
+      // the honest trail; never claim an alert that could not be sent.
+      return { alerted: false, channel: null, reason: "no_branch" };
+    }
+
+    // Dedupe marker on the order itself: one alert per (provider, booking).
+    // A retry for the same booking finds the marker and stays silent.
+    const markerRef = db.collection("orders").doc(orderId);
+    const previous = await markerRef.get().catch(() => undefined);
+    const previousAlert = previous?.exists
+      ? ((previous.data() as any)?.dispatchCancelAlert ?? null)
+      : null;
+    if (
+      previousAlert &&
+      previousAlert.code === "DISPATCH_CANCEL_MANUAL_REQUIRED" &&
+      previousAlert.provider === provider &&
+      String(previousAlert.providerOrderId ?? "") === providerOrderId &&
+      previousAlert.alerted === true
+    ) {
+      return { alerted: true, channel: "branch", reason: "already_alerted" };
+    }
+
+    const { dispatchFCM } = await import("../notifications/fcm.service");
+    const delivered = await dispatchFCM({
+      topic: `branch_${branchId}_orders`,
+      title: "Cancel this booking — order already cancelled",
+      body: `Order #${orderId.substring(0, 6)} is cancelled but ${provider} booking ${providerOrderId} is still live. Cancel it in the ${provider === "porter" ? "Porter" : "Borzo"} dashboard now — a rider may be on the way.`,
+      data: {
+        type: "dispatch_cancel_manual_required",
+        orderId,
+        provider,
+        providerOrderId: String(providerOrderId).slice(0, 64),
+        reason,
+        needsRebook: "false",
+      },
+      purpose: "operational",
+      actor: { trusted: true },
+    });
+    if (delivered === false) {
+      return { alerted: false, channel: null, reason: "transport_false" };
+    }
+    return { alerted: true, channel: "branch", reason: "sent" };
+  } catch (err: any) {
+    console.warn(
+      `[Dispatch Cancel] manual cancel alert for order ${orderId} failed:`,
+      err?.message || err
+    );
+    return { alerted: false, channel: null, reason: "send_failed" };
+  }
+}
+
+/**
  * Records the cancel intent and makes ONE bounded attempt.
  *
  * `provider`: whichever provider holds the booking. Only Shadowfax can actually
@@ -671,7 +920,19 @@ export async function recordAndAttemptProviderCancel(params: {
   }
 
   if (!providerCanCancelRemotely(provider)) {
-    // Borzo/Porter: no cancel API in our adapter. The record is the alert.
+    // Borzo/Porter: no cancel API in our adapter, so a human must cancel it in
+    // the provider dashboard. A8-3: the record alone is NOT an alert — a rider
+    // can keep driving to a cancelled order while nobody looks at the order
+    // document. The durable record stays exactly as it was (it still blocks a
+    // replacement dispatch until staff confirm), and the alert is DELIVERED
+    // through the existing staff notification channel, deduped per booking.
+    const delivery = await deliverManualCancelAlert({
+      orderId,
+      provider,
+      providerOrderId,
+      reason,
+      requestedBy,
+    });
     await orderRef.set(
       {
         dispatchPendingCancel: base,
@@ -682,6 +943,13 @@ export async function recordAndAttemptProviderCancel(params: {
           reason,
           requestedBy,
           message: manualCancelInstruction(provider, providerOrderId),
+          // A8-3: honest delivery state. `alerted` is true only when the push
+          // was actually handed to the staff channel (or was already delivered
+          // for this booking); a branch-less order records `false` and escalates
+          // through the snapshot instead of pretending it rang.
+          alerted: delivery.alerted,
+          alertChannel: delivery.channel,
+          alertReason: delivery.reason,
           raisedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -696,6 +964,13 @@ export async function recordAndAttemptProviderCancel(params: {
     const message = `Shadowfax cancellation needs the numeric booking id — got ${JSON.stringify(
       providerOrderId
     ).slice(0, 60)}. Cancel it in the Shadowfax dashboard and confirm.`;
+    const delivery = await deliverManualCancelAlert({
+      orderId,
+      provider: "shadowfax",
+      providerOrderId,
+      reason,
+      requestedBy,
+    });
     await orderRef.set(
       {
         dispatchPendingCancel: { ...base, state: "dead_lettered", staffActionRequired: message },
@@ -706,6 +981,9 @@ export async function recordAndAttemptProviderCancel(params: {
           reason,
           requestedBy,
           message,
+          alerted: delivery.alerted,
+          alertChannel: delivery.channel,
+          alertReason: delivery.reason,
           raisedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -828,11 +1106,31 @@ export async function retryPendingShadowfaxCancels(): Promise<ShadowfaxCancelRet
 
   let snap: any;
   try {
-    snap = await db
-      .collection("orders")
-      .where("dispatchPendingCancel.state", "==", "pending")
-      .limit(SHADOWFAX_POLL_QUERY_LIMIT)
-      .get();
+    // A8-7: the SCAN covers the whole `pending` set (cursor pages); only the
+    // number of provider CALL attempts stays bounded per tick. A staff-cancelled
+    // row used to fill the 25-row window and defer every order-cancelled retry
+    // queued behind it indefinitely.
+    snap = {
+      docs: await scanActiveDocuments(
+        (startAfterDoc?: any) => {
+          const base = db
+            .collection("orders")
+            .where("dispatchPendingCancel.state", "==", "pending")
+            .limit(ACTIVE_SCAN_PAGE);
+          return startAfterDoc ? (base as any).startAfter(startAfterDoc) : base;
+        },
+        (order: any) => {
+          const record = order?.dispatchPendingCancel;
+          if (!record || record.state !== "pending") return false;
+          // A staff release is a question only a human can answer (P1-D); this
+          // worker only finishes cancellations that came from an ORDER cancel.
+          if (record.reason !== "order_cancelled") return false;
+          if (record.provider !== "shadowfax" || !record.providerOrderId) return false;
+          return true;
+        },
+        SHADOWFAX_POLL_QUERY_LIMIT
+      ),
+    };
   } catch (err: any) {
     console.error("[Shadowfax Cancel] query failed:", err?.message || err);
     return result;
@@ -842,8 +1140,8 @@ export async function retryPendingShadowfaxCancels(): Promise<ShadowfaxCancelRet
     const order = doc.data ? doc.data() : undefined;
     const record = order?.dispatchPendingCancel as PendingDispatchCancel | undefined;
     if (!record || record.state !== "pending") continue;
-    // A staff release is a question only a human can answer (P1-D); this worker
-    // only finishes cancellations that came from an ORDER cancel.
+    // Re-checked per document: the scan already filtered, and a row that
+    // changed between the page read and this iteration is skipped, not guessed.
     if (record.reason !== "order_cancelled") continue;
     if (record.provider !== "shadowfax" || !record.providerOrderId) continue;
     result.scanned++;

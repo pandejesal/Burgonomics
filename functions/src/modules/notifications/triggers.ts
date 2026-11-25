@@ -1,6 +1,13 @@
 import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
+import * as admin from "firebase-admin";
 import { db } from "../../core/firebase";
-import { buildKotAlertMessage, buildCustomerOrderUpdateMessage, buildTicketAlertMessage, buildRefundReviewAlertMessage } from "./templates";
+import {
+  buildKotAlertMessage,
+  buildCustomerOrderUpdateMessage,
+  buildTicketAlertMessage,
+  buildRefundReviewAlertMessage,
+  truncatePushText,
+} from "./templates";
 import { sendFcmMessage, sendMulticastFcm } from "./fcmClient";
 import { TRUSTED_SERVER_ACTOR } from "./sendGate";
 import { captureErrorSnapshot } from "../../core/errors";
@@ -425,6 +432,134 @@ export async function handleOrderStatusChanged(
 }
 
 /**
+ * A8-8 (preprod audit c11) — customer copy for DELIVERY-MIRROR transitions.
+ *
+ * `handleOrderStatusChanged` returns unless `status.code` changed, which is
+ * correct for kitchen copy but silenced the two updates a waiting customer
+ * actually watches: the rider being allocated (`delivery.status:
+ * "rider_assigned"`, written by Porter `DRIVER_ALLOCATED`, Shadowfax `ALLOTTED`
+ * and the webhook `courier_assigned` arm) and the rider reaching the store
+ * (`delivery.status: "at_pickup"`, written by `ARRIVED_AT_PICKUP` and by the
+ * Shadowfax `ARRIVED` callback). None of those changes `status.code`.
+ *
+ * Scope is deliberately narrow:
+ *   - fires ONLY on a real mirror transition, never on a GPS-only patch;
+ *   - never on a terminal/cancelled order (that copy belongs to the status path);
+ *   - never when `status.code` ALSO changed, so one update can never produce two
+ *     pushes (the status trigger already owns that event);
+ *   - deduped per transition through `orderNotificationMirror` on the order, so
+ *     a redelivered Firestore event cannot ring the customer twice.
+ *
+ * Neverthrows to its caller: it runs beside the status trigger and a notification
+ * fault must not reject (and therefore replay) the whole update event.
+ */
+export async function handleOrderDeliveryMirrorChange(
+  orderId: string,
+  before: any,
+  after: any
+): Promise<void> {
+  const beforeCode = typeof before?.status === "object" ? before.status?.code : before?.status;
+  const afterCode = typeof after?.status === "object" ? after.status?.code : after?.status;
+  // A status-code change is the status trigger's event: stay out of it.
+  if (beforeCode !== afterCode) return;
+
+  const terminal =
+    after?.status?.terminal === true || after?.status?.kind === "completed" || after?.status === "delivered";
+  const cancelled =
+    String(afterCode || "").toUpperCase() === "CANCELLED" || after?.status?.kind === "cancelled";
+  if (terminal || cancelled) return;
+  if (after?.deliveryStatus === "delivered" || after?.deliveryStatus === "cancelled") return;
+
+  const beforeMirror = String(before?.delivery?.status ?? "").toLowerCase();
+  const afterMirror = String(after?.delivery?.status ?? "").toLowerCase();
+  if (beforeMirror === afterMirror) return;
+
+  // Only the two "where is my rider" transitions get their own copy.
+  const kind =
+    afterMirror === "rider_assigned"
+      ? ("ORDER_RIDER_ASSIGNED" as const)
+      : afterMirror === "at_pickup"
+        ? ("ORDER_RIDER_AT_STORE" as const)
+        : null;
+  if (!kind) return;
+
+  // Dedupe: one push per transition, recorded on the order. The marker is read
+  // from the CURRENT document (a redelivered event carries a stale `after`
+  // snapshot from before the first send), so the guard survives replays.
+  let marker = String(after?.orderNotificationMirror ?? "");
+  if (marker !== afterMirror) {
+    try {
+      const current = await db.collection("orders").doc(orderId).get();
+      marker = String(current?.data?.()?.orderNotificationMirror ?? marker);
+    } catch {
+      // A read fault falls back to the event payload; the send is still
+      // self-guarded, and a duplicate copy is better than a silent miss.
+    }
+  }
+  if (marker === afterMirror) return;
+
+  const customerId = after?.customerId || after?.userId || after?.customer?.id;
+  if (!customerId) return;
+  const orderNumber =
+    after?.shortCode || after?.orderNumber || String(orderId).substring(0, 6).toUpperCase();
+
+  const title = kind === "ORDER_RIDER_ASSIGNED" ? "Rider assigned" : "Rider at the store";
+  // PII boundary: no rider name/phone in the tray body. The partner app fetches
+  // detail from `data`; the lock screen stays generic.
+  const body =
+    kind === "ORDER_RIDER_ASSIGNED"
+      ? `A delivery partner has been assigned to order #${orderNumber}. Track it in the app.`
+      : `Your delivery partner has reached the store for order #${orderNumber}. It will be on its way shortly.`;
+
+  try {
+    const userDoc = await db.collection("users").doc(customerId).get();
+    const fcmTokens: string[] = userDoc?.data?.()?.fcmTokens || [];
+    const customer = { id: orderId, orderNumber, fulfillmentType: after?.fulfillment || "delivery" };
+    const message = buildCustomerOrderUpdateMessage(fcmTokens[0] || "", customer, "OUT_FOR_DELIVERY");
+    // The shared sender persists the inbox row BEFORE FCM, so a customer with no
+    // registered token still sees the update in-app.
+    await sendMulticastFcm(
+      fcmTokens,
+      {
+        notification: { title, body: truncatePushText(body) },
+        data: {
+          orderId: String(orderId),
+          orderNumber: String(orderNumber),
+          status: String(afterMirror.toUpperCase()),
+          type: kind,
+        },
+        android: message.android,
+        apns: message.apns,
+      },
+      customerId,
+      { purpose: "orderUpdates", actor: TRUSTED_SERVER_ACTOR, critical: false }
+    );
+    // Record AFTER a successful send so a failure still allows one retry on
+    // the next genuine update, instead of silently dropping the copy forever.
+    await db.collection("orders").doc(orderId).set(
+      {
+        orderNotificationMirror: afterMirror,
+        orderNotificationMirrorAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.error(
+      `[onOrderDeliveryMirrorChange] delivery-mirror push failed for ${orderId}:`,
+      err?.message || err
+    );
+    await captureErrorSnapshot({
+      source: "notifications",
+      severity: "medium",
+      message: `delivery-mirror push failed for order ${orderId} (${afterMirror}) — customer not told the rider update`,
+      orderId,
+      customerId,
+      errorStack: err?.stack,
+    }).catch(() => undefined);
+  }
+}
+
+/**
  * Trigger: Fires when an existing order document is updated in Firestore.
  * Applies strict state-delta checks to prevent duplicate push loops.
  */
@@ -441,6 +576,20 @@ export const onOrderStatusChangedNotificationTrigger = onDocumentUpdated(
       change.before.data(),
       change.after.data()
     );
+    // A8-8: the rider updates that do not change status.code. Additive and
+    // self-guarded; a fault here must never replay the status trigger.
+    try {
+      await handleOrderDeliveryMirrorChange(
+        event.params.orderId,
+        change.before.data(),
+        change.after.data()
+      );
+    } catch (err: any) {
+      console.warn(
+        "[onOrderStatusChangedTrigger] delivery-mirror handler failed:",
+        err?.message || err
+      );
+    }
   }
 );
 

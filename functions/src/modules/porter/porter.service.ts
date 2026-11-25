@@ -7,6 +7,7 @@ import {
   dispatchCancelUnconfirmedError,
   pendingCancelBlocking,
 } from "../dispatch/dispatch.cancelPending";
+import { ACTIVE_SCAN_PAGE, scanActiveDocuments, staleEnough } from "../dispatch/activeScan";
 import {
   timingSafeEqual,
   verifyPorterWebhookSignature,
@@ -1816,32 +1817,52 @@ export async function manualBranchDispatch(params: ManualBranchDispatchParams) {
 }
 
 /**
+ * A8-7: page the whole active set instead of a single unfiltered 25-row page.
+ *
+ * Both poller queries fetched `.limit(25)` on the dispatch legs and only THEN
+ * filtered by provider + staleness, so in a fleet with more than 25 active
+ * deliveries a stale order outside the first page was never polled, never
+ * advanced its poll count, and never reached its dead-letter escalation.
+ * The shared cursor scan walks the whole active set; the per-tick provider-call
+ * budget (`PORTER_POLL_CALL_BUDGET`) still bounds the CALLS.
+ */
+const PORTER_POLL_CALL_BUDGET = 25;
+
+/**
  * 5-Minute Polling Fallback Worker for active Porter deliveries with delayed webhooks (> 15 minutes).
  */
 export async function pollActivePorterOrdersWorker(): Promise<{
   polledCount: number;
   updatedCount: number;
 }> {
-  // Query orders currently in dispatched or in_transit state
-  const activeOrdersSnap = await db
-    .collection("orders")
-    .where("deliveryStatus", "in", ["dispatched", "in_transit"])
-    .limit(25)
-    .get();
-
-  let polledCount = 0;
-  let updatedCount = 0;
   const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
   const now = Date.now();
 
-  // Stale-only fan-out: orders with fresh webhook updates are skipped without
-  // any fetch (M31 cost discipline preserved from the serial version).
-  const staleDocs = (activeOrdersSnap.docs || []).filter((doc: any) => {
-    const order = doc.data();
-    if (!order?.porterOrderId) return false;
-    const lastUpdated = order.updatedAt?.toMillis ? order.updatedAt.toMillis() : 0;
-    return now - lastUpdated >= FIFTEEN_MINUTES_MS;
-  });
+  let staleDocs: any[] = [];
+  try {
+    staleDocs = await scanActiveDocuments(
+      (startAfterDoc?: any) => {
+        const base = db
+          .collection("orders")
+          .where("deliveryStatus", "in", ["dispatched", "in_transit"])
+          .limit(ACTIVE_SCAN_PAGE);
+        return startAfterDoc ? (base as any).startAfter(startAfterDoc) : base;
+      },
+      (order: any) => {
+        if (!order?.porterOrderId) return false;
+        // A row that moved to another carrier belongs to that carrier's poller.
+        if (order?.dispatchProvider && order.dispatchProvider !== "porter") return false;
+        return staleEnough(order, now, FIFTEEN_MINUTES_MS);
+      },
+      PORTER_POLL_CALL_BUDGET
+    );
+  } catch (err: any) {
+    console.error("[Porter Polling Worker] query failed:", err?.message || err);
+    return { polledCount: 0, updatedCount: 0 };
+  }
+
+  let polledCount = 0;
+  let updatedCount = 0;
 
   // Skip empty ticks: nothing stale → no fetches, no writes.
   if (staleDocs.length === 0) {
@@ -1974,8 +1995,40 @@ export async function pollActivePorterOrdersWorker(): Promise<{
 
           updatePayload.porterPollCount = 0;
           updatePayload.porterLastPollError = null;
-          await doc.ref.set(updatePayload, { merge: true });
-          return "updated";
+          // A8-4: the fresh-binding recheck + the status write happen in ONE
+          // transaction. A DELIVERED webhook (or a carrier cancel + auto-rebook
+          // to another provider) that landed during the 15s GET must win: the
+          // stale poll result is dropped instead of regressing a terminal order
+          // or writing onto the replacement booking.
+          let applied = false;
+          const applyPoll = async (tx: any) => {
+            const freshSnap = await tx.get(doc.ref);
+            const fresh = freshSnap?.exists ? freshSnap.data() : undefined;
+            if (!fresh) return;
+            if (fresh.dispatchProvider !== "porter") return;
+            if (String(fresh.porterOrderId ?? "") !== String(porterOrderId)) return;
+            if (
+              fresh.deliveryStatus === "delivered" ||
+              fresh.deliveryStatus === "cancelled" ||
+              fresh.deliveryStatus === "needs_review" ||
+              fresh.deliveryStatus === "needs_reconciliation" ||
+              fresh.dispatchStatus === "needs_reconciliation"
+            ) {
+              return;
+            }
+            if (fresh.needsRebook === true && !updatePayload.deliveryStatus) return;
+            tx.set(doc.ref, updatePayload, { merge: true });
+            applied = true;
+          };
+          if (db && typeof (db as any).runTransaction === "function") {
+            await (db as any).runTransaction(applyPoll);
+          } else {
+            await applyPoll({
+              get: (ref: any) => ref.get(),
+              set: (ref: any, payload: any, opts?: any) => ref.set(payload, opts),
+            });
+          }
+          return applied ? "updated" : "polled";
         } else {
           await recordPollFailure(`Porter API HTTP ${response.status}`);
           return "polled";

@@ -365,6 +365,136 @@ function staleClaimParkWrite(): Record<string, any> {
   };
 }
 
+/**
+ * A8-1 (preprod audit c11) — the booking-side fence.
+ *
+ * The customer cancel refuses a FRESH `dispatch_pending` claim, but a cancel
+ * that committed a moment before the claim (or during the provider POST) must
+ * still win: a live rider on a CANCELLED order is the worst outcome in this
+ * module. So the success write is re-checked against a FRESH snapshot inside a
+ * transaction, and a terminal (cancelled) order is NOT resurrected.
+ *
+ * Returns `{ committed: true }` after writing, or `{ cancelled: true }` when
+ * the booking must be voided, or `{ closed: true, cancelled: false }` when the
+ * order finished (delivered) during the POST. Firestore shims without
+ * transactions (tests) get the identical rules on one re-read.
+ */
+async function commitBookingWrite(
+  orderDoc: any,
+  write: Record<string, any>
+): Promise<{ committed: boolean; cancelled: boolean; closed: boolean }> {
+  const decide = (fresh: any): { cancelled: boolean; closed: boolean } => {
+    const terminal = terminalDeliveryStatus(fresh);
+    if (terminal === null) return { cancelled: false, closed: false };
+    return { cancelled: isCancelledOrder(fresh), closed: true };
+  };
+  if (db && typeof (db as any).runTransaction === "function") {
+    const outcome: any = await (db as any).runTransaction(async (tx: any) => {
+      const freshSnap = await tx.get(orderDoc.ref);
+      const fresh = freshSnap?.exists ? freshSnap.data() : undefined;
+      // A deleted order must not receive a binding either — treat it as void.
+      if (!fresh) return { cancelled: true, closed: true, missing: true as const };
+      const state = decide(fresh);
+      if (state.closed) return state;
+      tx.set(orderDoc.ref, write, { merge: true });
+      return { committed: true, cancelled: false, closed: false };
+    });
+    if (outcome?.committed === true) return { committed: true, cancelled: false, closed: false };
+    return { committed: false, cancelled: outcome?.cancelled === true, closed: true };
+  }
+  const freshSnap = await orderDoc.ref.get();
+  const fresh = freshSnap?.exists ? freshSnap.data() : undefined;
+  if (!fresh) return { committed: false, cancelled: true, closed: true };
+  const state = decide(fresh);
+  if (state.closed) return { committed: false, ...state };
+  await orderDoc.ref.set(write, { merge: true });
+  return { committed: true, cancelled: false, closed: false };
+}
+
+/**
+ * The booked-but-voided outcome (A8-1): the provider accepted a real booking
+ * for an order that was cancelled while the POST was in flight. Nothing local
+ * is bound (no `deliveryStatus`, no provider fields, no rebook arming), the
+ * remote booking is cancelled through the SAME durable record every other
+ * cancellation uses, and staff are ALERTED through the real notification
+ * channel — a cancelled order with a live rider is a phone call, not a field.
+ *
+ * Never throws: the caller turns this into a typed 409.
+ */
+async function voidBookingOnCancelledOrder(params: {
+  orderId: string;
+  branchId?: string | null;
+  provider: ProviderId;
+  providerOrderId: string;
+  staffName?: string;
+}): Promise<void> {
+  const { orderId, provider, providerOrderId } = params;
+  try {
+    const { recordAndAttemptProviderCancel } = await import("./shadowfax.reconcile");
+    await recordAndAttemptProviderCancel({
+      orderId,
+      provider,
+      providerOrderId: String(providerOrderId),
+      reason: "order_cancelled",
+      requestedBy: `dispatch:${params.staffName || "unattributed"}`,
+    });
+  } catch (err: any) {
+    // The record is the durable trail; a unexpected fault here must not mask
+    // the cancel or turn into a fake success.
+    console.error(
+      `[Dispatch] voided booking could not be recorded for order ${orderId}:`,
+      err?.message || err
+    );
+  }
+
+  const message =
+    `Order ${orderId} was cancelled while the ${provider} booking was in flight. ` +
+    `Booking ${String(providerOrderId).slice(0, 64)} may still have a rider on the road — ` +
+    `cancel it with the provider now; no replacement rider was booked.`;
+  try {
+    await captureErrorSnapshot({
+      source: "dispatch",
+      severity: "high",
+      message,
+      orderId,
+      branchId: params.branchId || undefined,
+      context: { provider, providerOrderId: String(providerOrderId).slice(0, 64), reason: "cancel_during_booking" },
+    });
+  } catch {
+    // Alert best-effort: the cancel record above is the durable trail.
+  }
+
+  // The staff alert is DELIVERED by `recordAndAttemptProviderCancel` above:
+  // that path owns the per-booking dedupe and records `alerted`. Pushing a
+  // second copy from here would ring the branch twice for one event.
+}
+
+function bookingVoidedError(orderId: string, provider: ProviderId, providerOrderId: string): Error {
+  const err: any = new Error(
+    `This order was cancelled while the ${provider} booking was in flight. The booking ` +
+      `(${String(providerOrderId).slice(0, 12)}) was not attached to the order and staff have been ` +
+      `alerted to cancel it with the provider.`
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_VOIDED_ORDER_CANCELLED";
+  return err;
+}
+
+/**
+ * The booking landed on an order that closed (delivered/completed) during the
+ * POST. Nothing is bound, and this is NOT reported as a successful dispatch.
+ */
+function bookingClosedError(orderId: string, provider: ProviderId, providerOrderId: string): Error {
+  const err: any = new Error(
+    `This order closed while the ${provider} booking was in flight. The booking ` +
+      `(${String(providerOrderId).slice(0, 12)}) was not attached to the order - reconcile it ` +
+      `with the provider.`
+  );
+  err.statusCode = 409;
+  err.code = "DISPATCH_ORDER_CLOSED_DURING_BOOKING";
+  return err;
+}
+
 function storedDispatchSummary(d: any): any {
   return {
     provider: (d?.dispatchProvider as ProviderId) || (d?.porterOrderId ? "porter" : null),
@@ -1351,7 +1481,25 @@ export async function dispatchBook(params: DispatchBookParams): Promise<any> {
     assignedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
-  await orderDoc.ref.set(write, { merge: true });
+  const outcome = await commitBookingWrite(orderDoc, write);
+  if (outcome.committed !== true) {
+    if (outcome.cancelled === true) {
+      // A8-1: the order was cancelled while this booking was in flight. Do not
+      // bind the rider, and tell staff to call the remote booking off.
+      await voidBookingOnCancelledOrder({
+        orderId,
+        branchId: order.branchId,
+        provider: booked.provider,
+        providerOrderId: String(booked.providerOrderId),
+        staffName,
+      });
+      throw bookingVoidedError(orderId, booked.provider, String(booked.providerOrderId));
+    }
+    // Closed but NOT cancelled (e.g. delivered during the POST). The provider
+    // really did book, but the order no longer accepts a binding: say so
+    // honestly and keep the booking id for staff instead of a false "dispatched".
+    throw bookingClosedError(orderId, booked.provider, String(booked.providerOrderId));
+  }
 
   // Server orderId mapping: bind provider order id → our orderId so the
   // webhook resolves through the map (hint stays a hint, DR10).

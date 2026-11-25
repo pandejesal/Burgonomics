@@ -2368,6 +2368,11 @@ export const hourlyPetpoojaMenuSync = onSchedule(
     region: REGION,
     schedule: "0 * * * *", // Hourly
     timeZone: "Asia/Kolkata",
+    // A8-9: active branches are synced in chunks of 4 with a 15s menu GET each,
+    // so >16 active branches can exceed the 60s v2 default and be killed mid-walk
+    // (later branches stay stale that hour; the 30-minute lock TTL means no later
+    // tick recovers the same run). Same posture as the other fan-out schedulers.
+    timeoutSeconds: 540,
   },
   async () => {
     // Whole-run overlap guard (TTL < cadence, >> 60s function timeout):
@@ -2529,6 +2534,11 @@ export const pollActivePorterDeliveries = onSchedule(
     region: REGION,
     schedule: "*/5 * * * *", // Every 5 minutes
     timeZone: "Asia/Kolkata",
+    // A8-5: up to 25 stale orders per tick in chunks of 5, each a provider GET
+    // bounded at 15s (~75s worst case) — never the 60s v2 default, which would
+    // kill the tick mid-batch and leave later chunks' `porterPollCount` frozen.
+    // Matches its Shadowfax sibling's posture.
+    timeoutSeconds: 540,
   },
   async () => {
     const { ran, result } = await withSchedulerLock(

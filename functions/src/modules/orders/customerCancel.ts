@@ -54,8 +54,46 @@ const CUSTOMER_CANCEL_MAX_RANK = 2;
 
 const TERMINAL_CODES = ["CANCELLED", "DELIVERED", "COMPLETED", "PICKED_UP", "REFUNDED", "FAILED"];
 
-/** Delivery legs that mean a rider is already committed to the order. */
-const RIDER_ASSIGNED_LEGS = ["dispatched", "driver_allocated", "rider_assigned", "in_transit"];
+/**
+ * Delivery legs that mean a rider is already committed to the order, and are
+ * therefore identity-INDEPENDENT: `driver_allocated` means the provider picked
+ * a driver, `rider_assigned` that the driver was pushed to us, `in_transit` that
+ * the parcel is moving. `dispatched` is NOT in this list on purpose: the
+ * booking write sets that leg on a freshly ACCEPTED booking, often before any
+ * rider exists (A8-6), so it only counts when rider identity proves it.
+ */
+const RIDER_ASSIGNED_LEGS = ["driver_allocated", "rider_assigned", "in_transit"];
+
+/**
+ * Per-order dispatch claim lease, mirrored from `dispatch.router`
+ * (`DISPATCH_CLAIM_TTL_MS`). A FRESH claim means a provider POST may be in
+ * flight; an EXPIRED one means the attempt crashed and the booking-side fence
+ * owns that outcome.
+ */
+const DISPATCH_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+function claimFreshMs(claimedAt: any): number {
+  if (typeof claimedAt === "number" && Number.isFinite(claimedAt)) return claimedAt;
+  return claimedAt && typeof claimedAt.toMillis === "function" ? claimedAt.toMillis() : 0;
+}
+
+/**
+ * A8-1 fence: true while a booking for this order may still be happening.
+ * `claimDispatch` sets `dispatchStatus: "dispatch_pending"` and only THEN POSTs
+ * the provider — through that window there is no rider identity and
+ * `deliveryStatus` still reads the pre-booking value, so every other guard
+ * passes and the cancel would commit under a live booking. Both claim lanes are
+ * covered (the generic walk and Porter's own direct-tap lease).
+ */
+function bookingInProgress(order: any): boolean {
+  const generic =
+    order?.dispatchStatus === "dispatch_pending" &&
+    Date.now() - claimFreshMs(order?.dispatchClaimedAt) < DISPATCH_CLAIM_TTL_MS;
+  const porter =
+    order?.porterDispatchStatus === "dispatch_pending" &&
+    Date.now() - claimFreshMs(order?.porterDispatchClaimedAt) < DISPATCH_CLAIM_TTL_MS;
+  return generic || porter;
+}
 
 /** Legacy docs may store `status` as a plain string; new docs store a map. */
 function statusCodeOf(order: any): string {
@@ -75,12 +113,18 @@ function isTerminalOrder(order: any): boolean {
  * True when a rider already owns the delivery leg. Rider identity is the
  * definitive signal (the provider assigns it); a moving delivery status is the
  * belt-and-braces equivalent for a booking whose rider patch has not landed.
+ *
+ * A8-6: a bare `dispatched` leg is a successful BOOKING, not an assignment —
+ * the booking write sets it before any rider exists. Requiring identity there
+ * is what keeps a rider-less booking cancellable, exactly as the owner decision
+ * says, instead of refusing the customer with "a delivery partner is assigned".
  */
 function hasAssignedRider(order: any): boolean {
   const hasRiderIdentity =
     Boolean(String(order?.riderName ?? "").trim()) || Boolean(String(order?.riderPhone ?? "").trim());
   if (hasRiderIdentity) return true;
-  return RIDER_ASSIGNED_LEGS.includes(String(order?.deliveryStatus ?? "").toLowerCase());
+  if (RIDER_ASSIGNED_LEGS.includes(String(order?.deliveryStatus ?? "").toLowerCase())) return true;
+  return false;
 }
 
 export interface CustomerCancelInput {
@@ -163,7 +207,21 @@ export async function cancelOrderAsCustomer(
       );
     }
 
-    // 4. The rider guard: a live rider is cancelled by staff/dispatch, never by
+    // 4. A8-1 fence: a provider booking may be IN FLIGHT right now. During the
+    // claim→POST window there is no rider identity and `deliveryStatus` is still
+    // the pre-booking value, so the guards below would all pass and the cancel
+    // would commit under a live booking. Refuse briefly; the booking (or the
+    // booking-side fence, which voids a booking that lands on a cancelled order)
+    // resolves it within seconds.
+    if (bookingInProgress(fresh)) {
+      throw serviceError(
+        "DISPATCH_BOOKING_IN_PROGRESS",
+        "A delivery partner is being booked for this order right now — please retry the cancellation in a few seconds.",
+        409
+      );
+    }
+
+    // 5. The rider guard: a live rider is cancelled by staff/dispatch, never by
     // the customer's one-tap app cancel. A BOOKING with no assigned rider is
     // still cancellable and gets the durable provider intent post-commit.
     if (hasAssignedRider(fresh)) {

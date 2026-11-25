@@ -236,10 +236,13 @@ describe("Shadowfax status poll (missed-webhook recovery)", () => {
     expect(docOf("ord_sfx_poll_nowind").riderName).toBeUndefined();
   });
 
-  it("parks a provider-side CANCELLED for review and buys no rider", async () => {
-    // A pull-observed cancellation is evidence, but the poll may not run the
-    // cancel containment + auto-rebook machinery: a misread body must never
-    // flip a live order AND release a booking the rider is still serving.
+  it("contains a provider-side CANCELLED for review and buys no rider", async () => {
+    // A pull-observed cancellation is evidence, and the poll may still not run
+    // the auto-rebook machinery: a misread body must never buy a second rider.
+    // But it MUST contain the order (A8-2): stop the tracker and tell staff,
+    // exactly like the webhook cancellation — leaving the order "dispatched"
+    // froze the customer on a delivery that no longer existed and reset the
+    // dead-letter clock.
     seedOrder("ord_sfx_poll_cancel");
     fetchHandler = () =>
       okJson({
@@ -256,9 +259,14 @@ describe("Shadowfax status poll (missed-webhook recovery)", () => {
 
     const res = await pollActiveShadowfaxOrdersWorker();
 
-    expect(res.updatedCount).toBe(0);
-    expect(docOf("ord_sfx_poll_cancel").deliveryStatus).toBe("dispatched");
-    expect(docOf("ord_sfx_poll_cancel").needsRebook).toBeUndefined();
+    expect(res.updatedCount).toBe(1);
+    expect(docOf("ord_sfx_poll_cancel").deliveryStatus).toBe("needs_review");
+    // Never an automatic rebook: the cause of a pull cancellation is not a
+    // verified carrier cancel, so a human decides.
+    expect(docOf("ord_sfx_poll_cancel").needsRebook).toBe(false);
+    expect(docOf("ord_sfx_poll_cancel").rebookTrigger).toBe("cancellation_unverified");
+    // The order keeps its binding so staff can reconcile the real booking.
+    expect(docOf("ord_sfx_poll_cancel").dispatchProvider).toBe("shadowfax");
     const parks = Object.keys(savedDocs).filter((k) =>
       k.startsWith("unmatched_dispatch_events/")
     );
