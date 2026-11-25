@@ -333,7 +333,7 @@ describe("verify-path KOT parity", () => {
     expect(fetchStub).not.toHaveBeenCalled();
   });
 
-  it("webhook then verify: one push, not two", async () => {
+  it("webhook then verify: ONE push in total (the webhook only queues)", async () => {
     seedConfirmableOrder("order_kot_wh_first");
     writeLog.length = 0;
 
@@ -343,21 +343,35 @@ describe("verify-path KOT parity", () => {
     await handleRazorpayWebhook(call.req, call.res);
     expect(call.out().statusCode).toBe(200);
 
+    // C11: the webhook answers inside Razorpay's 5 s budget, so it QUEUES the
+    // POS sync and performs no POS call. The queued row is the existing
+    // `retryPetpoojaOrders` lane.
     const afterWebhook = docs.get("orders/order_kot_wh_first")!.data;
     expect(afterWebhook.paymentStatus).toBe("completed");
-    expect(afterWebhook.petpoojaOrderId).toMatch(/^pp_kot_/);
-    expect(kotMarkerWrites("order_kot_wh_first")).toHaveLength(1);
+    expect(afterWebhook.petpoojaStatus).toBe("pending_retry");
+    expect(afterWebhook.petpoojaOrderId).toBeUndefined();
+    expect(kotMarkerWrites("order_kot_wh_first")).toHaveLength(0);
+    expect(fetchStub).not.toHaveBeenCalled();
 
+    // The verify channel finds the SAME queued row and pushes it exactly once.
     const verified: any = await verifyPayment(
       verifyParams("order_kot_wh_first", "pay_kot_wh_first")
     );
     expect(verified.success).toBe(true);
 
-    // The verify channel found the webhook's marker and deduped.
     expect(kotMarkerWrites("order_kot_wh_first")).toHaveLength(1);
-    expect(docs.get("orders/order_kot_wh_first")!.data.petpoojaOrderId).toBe(
-      afterWebhook.petpoojaOrderId
+    const kotId = docs.get("orders/order_kot_wh_first")!.data.petpoojaOrderId;
+    expect(kotId).toMatch(/^pp_kot_/);
+
+    // A redelivered capture must not ring again, and must not resurrect the
+    // queued state over the recorded acceptance.
+    const replay = mockReqRes(
+      capturedPayload("evt_kot_wh_first_2", "order_kot_wh_first", "pay_kot_wh_first", ORDER_AMOUNT_PAISE)
     );
+    await handleRazorpayWebhook(replay.req, replay.res);
+    expect(replay.out().statusCode).toBe(200);
+    expect(kotMarkerWrites("order_kot_wh_first")).toHaveLength(1);
+    expect(docs.get("orders/order_kot_wh_first")!.data.petpoojaOrderId).toBe(kotId);
     expect(fetchStub).not.toHaveBeenCalled();
   });
 

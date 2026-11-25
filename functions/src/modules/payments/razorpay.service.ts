@@ -2741,10 +2741,33 @@ async function assertLivePaymentMatchesOrder(args: {
 
   if (payment?.status !== "captured") {
     // Parked, never auto-captured (see doc comment above).
+    //
+    // C11: the parked state is a DEAD END unless the payment id is recorded and
+    // something asks the gateway what happened to it. `awaitingCapturePaymentId`
+    // + `awaitingCaptureSince` are what the scheduled `awaitingCaptureSweep`
+    // reads: once the hold is gone (failed/created/cancelled) it releases the
+    // marker so the unpaid-order sweep can cancel; while it is still
+    // `authorized` the order stays blocked and ops is paged. Without these two
+    // fields the order sat PLACED for ever and the hold was never voided.
+    //
+    // The nested `payment` map is carried through so a shallow-merge harness
+    // (and real Firestore's recursive merge) land the same document: dropping
+    // `payment.method` here would hide the order from the expiry predicates.
     await orderRef.set(
       {
         paymentStatus: "awaiting_capture",
         "payment.status": "awaiting_capture",
+        payment: {
+          ...(args.orderData?.payment &&
+          typeof args.orderData.payment === "object" &&
+          !Array.isArray(args.orderData.payment)
+            ? args.orderData.payment
+            : {}),
+          status: "awaiting_capture",
+          awaitingCapturePaymentId: razorpayPaymentId,
+        },
+        awaitingCapturePaymentId: razorpayPaymentId,
+        awaitingCaptureSince: Date.now(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -3139,6 +3162,14 @@ export interface RefundParams {
 }
 
 /**
+ * Razorpay's documented maximum length for ONE `notes` value (the API accepts
+ * 15 key/value pairs, keys ≤255 and values ≤512 characters). Anything longer is
+ * rejected with `400 Notes validation failed`.
+ * Source: https://razorpay.com/docs/api/refunds/create-normal#errors
+ */
+export const REFUND_NOTES_MAX_CHARS = 512;
+
+/**
  * Fixed-width collision-resistant hash of unambiguous [orderId, paymentId, requestId].
  * Formats a bounded, safe idempotency key for the Razorpay X-Refund-Idempotency header.
  */
@@ -3146,6 +3177,28 @@ export function computeGatewayRefundKey(orderId: string, paymentId: string, requ
   const unambiguous = JSON.stringify([orderId, paymentId, requestId]);
   const digest = crypto.createHash("sha256").update(unambiguous).digest("hex");
   return `rfnd_${digest}`;
+}
+
+/**
+ * C11 — the gateway idempotency key for a specific ATTEMPT of one refund
+ * request.
+ *
+ * Attempt 1 keeps the historical key byte-for-byte (refunds already on the wire
+ * keep replaying), and later attempts MUST differ. Razorpay dedupes by key:
+ * replaying the key of a refund it has already marked `failed` returns the
+ * failure again, so the same-request retry the refund console offers would
+ * report "pending" for ever without ever moving money.
+ */
+export function computeGatewayRefundKeyForAttempt(
+  orderId: string,
+  paymentId: string,
+  requestId: string,
+  attempt: number
+): string {
+  const generation = Math.max(1, Math.trunc(Number(attempt) || 1));
+  return generation === 1
+    ? computeGatewayRefundKey(orderId, paymentId, requestId)
+    : computeGatewayRefundKey(orderId, paymentId, `${requestId}#${generation}`);
 }
 
 /**
@@ -3303,6 +3356,27 @@ export async function autoRefund(
     ? refundRequestDocId(orderId, capturedPaymentId, refundRequestId)
     : null;
   const reqRef = reqDocId ? db.collection("payment_refund_requests").doc(reqDocId) : null;
+  /**
+   * C11 — gateway idempotency keys are per ATTEMPT, not per request.
+   *
+   * A gateway-failed refund releases its reservation and marks the request
+   * record `failed` with `attemptGeneration` set to the NEXT attempt number (see
+   * refundFailureRelease.ts). Razorpay dedupes by key, so a retry that reused the
+   * failed attempt's key would replay the recorded failure and the money would
+   * never move. Attempt 1 keeps the historical key, so refunds already on the
+   * wire keep replaying exactly as before.
+   */
+  const gatewayKeyForAttemptOf = (existingReq: any): string => {
+    const generation = Math.max(1, Number(existingReq?.attemptGeneration) || 1);
+    return refundRequestId && generation > 1
+      ? computeGatewayRefundKeyForAttempt(
+          orderId,
+          capturedPaymentId,
+          refundRequestId,
+          generation
+        )
+      : defaultGatewayKey;
+  };
   const claimed = await runTx(async (tx) => {
     const snap = await tx.get(orderRef);
     const reqSnap = reqRef ? await tx.get(reqRef) : null;
@@ -3435,12 +3509,56 @@ export async function autoRefund(
             reused: true as const,
           },
         };
+      } else if (existingReq.status === "failed") {
+        // C11 — A REFUND THE GATEWAY REPORTED AS FAILED.
+        //
+        // The release path (refundFailureRelease.ts) already deleted this
+        // refund's ledger reservation and cleared the pending markers, so the
+        // cap and single-in-flight guards let a retry through. What must NOT
+        // happen is a replay: the old code fell through to the pending branch,
+        // saw the accepted id and returned `{status:"pending", reused:true}`
+        // without POSTing — a success message for money that never moved.
+        //
+        // The retry is a genuinely NEW attempt at the gateway, on a NEW
+        // idempotency key (a failed key replays the failure), so the request
+        // identity is preserved while the wire request is fresh. The failed
+        // gateway id is kept for the audit trail.
+        const failedRefundId =
+          typeof existingReq.refundId === "string" && existingReq.refundId.trim()
+            ? existingReq.refundId.trim()
+            : null;
+        // A retry of a FAILED attempt must never reuse that attempt's key, so the
+        // generation used here is at least 2 even if the release path never
+        // stamped one (a request marked failed by another writer, or an older
+        // record). Generation 1 is the historical key.
+        const nextGeneration = Math.max(2, Number(existingReq.attemptGeneration) || 1);
+        tx.set(
+          reqRef!,
+          {
+            ...(failedRefundId
+              ? {
+                  previousFailedRefundIds:
+                    admin.firestore.FieldValue.arrayUnion(failedRefundId),
+                }
+              : {}),
+            attemptGeneration: nextGeneration,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        gatewayKeyToUse = gatewayKeyForAttemptOf({
+          ...existingReq,
+          attemptGeneration: nextGeneration,
+        });
       } else if (existingReq.status === "pending") {
         // Pending attempt validation: must strictly bind all fields (paymentId, amount, reason, gatewayKey)
         const paymentMatches = existingReq.paymentId === razorpayPaymentId;
         const amountMatches = existingReq.requestedPaise === requestedPaise;
         const reasonMatches = (existingReq.reason ?? null) === (reason ?? null);
-        const keyMatches = existingReq.gatewayKey && existingReq.gatewayKey === defaultGatewayKey;
+        const keyMatches =
+          existingReq.gatewayKey &&
+          (existingReq.gatewayKey === defaultGatewayKey ||
+            existingReq.gatewayKey === gatewayKeyForAttemptOf(existingReq));
         if (!paymentMatches || !amountMatches || !reasonMatches || !keyMatches) {
           const conflict: any = new Error(
             `Pending refund request ${refundRequestId} payload or gateway key mismatch — conflict refused.`
@@ -3840,12 +3958,31 @@ export async function autoRefund(
     transferStatusForRefund === "transferred" ||
     transferStatusForRefund === "needs_reconciliation";
 
+  // C11 finding 5 (Medium) — Razorpay rejects any `notes` VALUE longer than 512
+  // characters with `400 Notes validation failed`, and a 4xx is classified as a
+  // PROVEN rejection, so every retry re-sent the same over-long body and failed
+  // again: the money stayed with the brand until somebody shortened the text.
+  // The refund route accepts a 2,000-character reason and the cancel route
+  // passes the customer's own words through `Cancelled (<reason>)`, so this is
+  // reachable in normal operation.
+  //
+  // The gateway value is CLAMPED here; the full text is preserved on the
+  // client-denied `payment_refund_requests` record, so nothing an operator typed
+  // is lost — and it is NOT copied into the brand-readable `payment_audits` row
+  // (C11 finding 6, see the audit write at the end of this function).
+  const refundNotes: Record<string, string> = { orderId };
+  if (reason) {
+    refundNotes.reason =
+      reason.length > REFUND_NOTES_MAX_CHARS
+        ? `${reason.slice(0, REFUND_NOTES_MAX_CHARS - 1)}…`
+        : reason;
+  } else {
+    refundNotes.reason = "Customer support resolution / item rejection";
+  }
+
   const refundPayload: any = {
     ...(canReverseTransfer ? { reverse_all: true } : {}),
-    notes: {
-      orderId,
-      reason: reason || "Customer support resolution / item rejection",
-    },
+    notes: refundNotes,
   };
 
   if (amountRupees && amountRupees > 0) {
@@ -4674,7 +4811,17 @@ export async function autoRefund(
     }
   }
 
-  // Append audit trail
+  // Append audit trail.
+  //
+  // C11 finding 6 (Medium), partial: this row lives in `payment_audits`, which
+  // every brand login can read (`allow read: if isBrandOwner()`), and the refund
+  // reason is operator/support free text taken from customer conversations — it
+  // routinely contains names, phone numbers and complaint detail. The raw text is
+  // therefore NOT copied here any more. It stays on
+  // `payment_refund_requests/{prfnd_*}` (client-denied in firestore.rules), and
+  // this row keeps only a length plus a non-reversible digest so an operator can
+  // still correlate an audit row with the request that produced it without the
+  // console or a CSV export carrying the personal data.
   const auditId = `aud_rfnd_${Date.now()}_${refundResult.id}`;
   await db.collection("payment_audits").doc(auditId).set({
     orderId,
@@ -4682,7 +4829,11 @@ export async function autoRefund(
     refundId: refundResult.id,
     amountRupees: amountRupees ?? null,
     action: "refund_processed",
-    reason: reason ?? null,
+    reasonRedacted: true,
+    reasonLength: typeof reason === "string" ? reason.length : 0,
+    reasonHash: typeof reason === "string" && reason
+      ? crypto.createHash("sha256").update(reason).digest("hex").slice(0, 32)
+      : null,
     refundRequestId: refundRequestId ?? null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });

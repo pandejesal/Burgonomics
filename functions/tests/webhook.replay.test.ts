@@ -177,15 +177,18 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     };
   });
 
-  it("processes once: a replayed event returns already_processed with no second KOT push", async () => {
+  it("processes once: a replayed event returns already_processed with no second POS queue", async () => {
     const first = mockReqRes(capturedPayload("evt_replay_9"));
     await handleRazorpayWebhook(first.req, first.res);
     expect(first.out().statusCode).toBe(200);
     expect(first.out().body).toMatchObject({ status: "ok" });
 
-    const firstKotId = savedDocs["orders/order_replay_1"].petpoojaOrderId;
-    expect(firstKotId).toMatch(/^pp_kot_/);
-    expect(savedDocs["orders/order_replay_1"].paymentStatus).toBe("completed");
+    // C11: the POS sync is QUEUED in the money transaction; the webhook makes no
+    // POS call at all (Razorpay allows 5 s, the POS POST aborts at 15 s).
+    const queuedRow = savedDocs["orders/order_replay_1"];
+    expect(queuedRow.petpoojaStatus).toBe("pending_retry");
+    expect(queuedRow.petpoojaOrderId).toBeUndefined();
+    expect(queuedRow.paymentStatus).toBe("completed");
     // The nested payment object is what the customer app's finalizePaidOrder
     // reads; top-level/dotted markers alone leave it refusing a paid order.
     expect(savedDocs["orders/order_replay_1"].payment).toMatchObject({
@@ -199,8 +202,9 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     await handleRazorpayWebhook(second.req, second.res);
     expect(second.out().statusCode).toBe(200);
     expect(second.out().body).toMatchObject({ status: "already_processed" });
-    // No second KOT push happened — the order doc is untouched by the replay.
-    expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBe(firstKotId);
+    // No second POS queue write happened — the order doc is untouched by the replay.
+    expect(savedDocs["orders/order_replay_1"].petpoojaStatus).toBe("pending_retry");
+    expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBeUndefined();
   });
 
   // Robustness, and the opposite failure mode to every other test here: a
@@ -603,8 +607,10 @@ describe("Razorpay webhook idempotency (real handler)", () => {
     expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBe('pending_retry');
     const transferId = savedDocs["orders/order_replay_1"]["payment.routeTransfer"]?.id;
     expect(transferId).toBeUndefined();
-    const kotId = savedDocs["orders/order_replay_1"].petpoojaOrderId;
-    expect(kotId).toMatch(/^pp_kot_/);
+    // C11: the POS sync is QUEUED by the money transaction; no ticket id exists
+    // after the ack (see payments.c11.webhook-ack-budget.test.ts).
+    expect(savedDocs["orders/order_replay_1"].petpoojaStatus).toBe("pending_retry");
+    expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBeUndefined();
 
     // Swap the stored receipt for a sentinel: if the order.paid delivery
     // re-POSTed the transfer it would overwrite this with a fresh trf_mock_*.
@@ -637,8 +643,10 @@ describe("Razorpay webhook idempotency (real handler)", () => {
       "trf_sentinel_no_repost"
     );
     expect(savedDocs["orders/order_replay_1"].routeTransferStatus).toBe("pending_retry");
-    // KOT dedupe: petpoojaOrderId is the "already pushed" marker.
-    expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBe(kotId);
+    // POS dedupe: the queued row stays queued; the replay must not invent a
+    // ticket id nor drag a recorded acceptance back into the lane.
+    expect(savedDocs["orders/order_replay_1"].petpoojaStatus).toBe("pending_retry");
+    expect(savedDocs["orders/order_replay_1"].petpoojaOrderId).toBeUndefined();
   });
 
   // ── Refund accounting: each gateway refund id is counted EXACTLY ONCE —

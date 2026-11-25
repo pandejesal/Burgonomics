@@ -18,6 +18,24 @@ const { mockDb, savedDocs, notifySpy } = vi.hoisted(() => {
   // closure, so the spy lives in this one.
   const notifySpy = vi.fn(async (_request: any) => ({ outcome: "unknown" as const }));
   const savedDocs: Record<string, any> = {};
+  // Real Firestore merge-set semantics for maps: fields are merged RECURSIVELY
+  // ("Fields omitted from this set() call remain untouched"), and a
+  // `FieldValue.delete()` on a nested field removes exactly that field. A
+  // shallow spread would silently accept an empty-map patch that the real SDK
+  // ignores, hiding a failed refund's surviving settlement entry.
+  const DELETE = "MOCK_DELETE";
+  const isPlain = (v: any) => !!v && typeof v === "object" && !Array.isArray(v);
+  const mergeInto = (base: any, patch: any): any => {
+    const out: any = isPlain(base) ? { ...base } : {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === DELETE) {
+        delete out[key];
+        continue;
+      }
+      out[key] = isPlain(value) ? mergeInto(out[key], value) : value;
+    }
+    return out;
+  };
   const docRef = (colName: string, docId: string) => ({
     id: docId,
     path: `${colName}/${docId}`,
@@ -29,8 +47,11 @@ const { mockDb, savedDocs, notifySpy } = vi.hoisted(() => {
     })),
     set: vi.fn(async (data: any, options?: any) => {
       const docPath = `${colName}/${docId}`;
+      // RECURSIVE merge, exactly as the SDK documents it: an omitted field
+      // survives, a `MOCK_DELETE` sentinel removes it. A shallow spread would
+      // let an empty-map patch "clear" a map the real SDK keeps.
       savedDocs[docPath] =
-        options?.merge && savedDocs[docPath] ? { ...savedDocs[docPath], ...data } : data;
+        options?.merge && savedDocs[docPath] ? mergeInto(savedDocs[docPath], data) : data;
     }),
     // Mirrors Firestore create(): fails when the doc already exists.
     create: vi.fn(async (data: any) => {
