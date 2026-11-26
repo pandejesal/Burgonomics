@@ -390,7 +390,10 @@ describe("customer-readable document shape for server-created cash orders", () =
       // The Firestore ref id is the customer app's key. Without this body field
       // listOrders quarantines the doc and tracking says "Order not found".
       id: ORDER,
-      shortCode: `BG-${ORDER.slice(-6).toUpperCase()}`,
+      // A2 #4 (preprod audit cycle 11): the code is now SERVER-derived from a
+      // hash of the order id and reserved in `shorts/`, no longer the caller's
+      // own id suffix (which let two ids collide on one code). The shape the
+      // customer surface renders is unchanged.
       store: snapshot,
       customerId: CUSTOMER,
       userId: CUSTOMER,
@@ -406,6 +409,10 @@ describe("customer-readable document shape for server-created cash orders", () =
     // a string, and cash must have the same customer-readable shape.
     expect(typeof doc.placedAt).toBe("string");
     expect(Number.isNaN(Date.parse(doc.placedAt))).toBe(false);
+    // The code is still present and still six unambiguous characters; only its
+    // DERIVATION changed (server hash + `shorts/` reservation, A2 #4).
+    expect(doc.shortCode).toMatch(/^BG-[0-9A-Z]{6}$/);
+    expect(doc.shortCode).not.toBe(`BG-${ORDER.slice(-6).toUpperCase()}`);
   });
 
   it("writes a store snapshot and body id when an API caller omits the display store", async () => {

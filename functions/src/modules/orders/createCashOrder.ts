@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { checkoutEstimatedAt } from "./checkoutEta";
+import { planShortCodeReservation } from "./shortCode";
+import { whatsappConsentFields } from "../notifications/whatsappConsent";
 import * as admin from "firebase-admin";
 import { z } from "zod";
 import { db } from "../../core/firebase";
@@ -427,6 +429,12 @@ export async function createCashOrder(
         coupon = couponSnap.exists ? couponSnap.data() : null;
       }
 
+      // A2 #4: the order's human-readable code is SERVER-derived and uniquely
+      // reserved. This is the transaction's last READ — the coupon reservation
+      // and the quote claim below both write, and a tx.get after a tx.set is
+      // refused at runtime.
+      const shortCodePlan = await planShortCodeReservation(tx, input.orderId, { branchId });
+
       const { packagingUsedFallback: _fallback, ...totals } = computeSnapshotPricing({
         items: lines,
         products,
@@ -600,6 +608,10 @@ export async function createCashOrder(
             }
           : undefined;
 
+      // Claim the reserved code in the SAME commit as the order. A crash before
+      // the commit leaks one candidate (never a wrong code); the retry finds its
+      // own reservation and reuses it.
+      shortCodePlan.reserve();
       tx.create(orderRef, {
         // Ownership — both fields, exactly as the customer create rule requires.
         customerId: actorUid,
@@ -610,7 +622,7 @@ export async function createCashOrder(
         orderId: input.orderId,
         branchId,
         ...(storeId ? { storeId } : {}),
-        shortCode: `BG-${input.orderId.slice(-6).toUpperCase()}`,
+        shortCode: shortCodePlan.code,
         // Fulfillment (canonical + the legacy aliases the KOT builder reads).
         orderType: input.orderType,
         fulfillment: input.orderType,
@@ -633,7 +645,9 @@ export async function createCashOrder(
           ? { fulfillmentInstructions: input.fulfillmentInstructions }
           : {}),
         ...(input.tableNumber ? { tableNumber: input.tableNumber } : {}),
-        whatsappOptIn: input.whatsappOptIn !== false,
+        // Owner decision 2026-11-25 #3: OFF unless the customer explicitly said
+        // yes, with a server-stamped consent time. Never inferred from absence.
+        ...whatsappConsentFields(input.whatsappOptIn),
         ...(estimatedAt ? { estimatedAt } : {}),
         ...(quoteId ? { deliveryQuoteId: quoteId } : {}),
         // Server-owned state.

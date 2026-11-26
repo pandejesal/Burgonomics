@@ -10,6 +10,7 @@ import {
 } from "./walkInBill";
 import { WalkInError } from "./walkInErrors";
 import { createWalkInSchema, type CreateWalkInRequest } from "./walkInSchema";
+import { planShortCodeReservation } from "./shortCode";
 
 /** Re-exported so the route wiring and its tests keep one import site. */
 export { createWalkInSchema };
@@ -187,6 +188,12 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
         branchId: input.branchId,
         orderType,
       });
+      // A2 #4: the code is SERVER-derived and uniquely reserved. Planned here
+      // (a read) and claimed with the order create below, because Firestore
+      // forbids a read after the first write.
+      const shortCodePlan = await planShortCodeReservation(tx, orderId, {
+        branchId: input.branchId,
+      });
       if (totals.split.totalAmountPaise !== input.expectedTotalPaise) {
         throw new WalkInError(
           409,
@@ -221,13 +228,22 @@ export async function createWalkIn(actorUid: string, raw: unknown): Promise<Walk
       // the server's placed instant, confirmed, never unresolved.
       const placedAtMs = Date.now();
       receipt.branchName = branchName;
+      shortCodePlan.reserve();
       tx.create(orderRef, {
         customerId: "cust_walkin",
-        userId: actorUid,
+        // A2 #3 (preprod audit cycle 11): a counter sale is NOT the booking staff
+        // member's own order. `userId: actorUid` put every walk-in they rang up
+        // into their personal customer history (the read rule and the app's
+        // `where("userId","==",uid)` query both key on this field), showing other
+        // customers' names and phones on the customer surface. The sentinel keeps
+        // the order out of every customer-scoped query; the real actor is in
+        // `walkInActorUid` (server-owned) and in the audit row.
+        userId: "cust_walkin",
+        walkInActorUid: actorUid,
         branchId: input.branchId,
         branchName,
         city,
-        shortCode: `BG-${orderId.slice(-6).toUpperCase()}`,
+        shortCode: shortCodePlan.code,
         orderType,
         fulfillment: orderType,
         fulfillmentType: orderType,

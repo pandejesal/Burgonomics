@@ -154,6 +154,30 @@ describe("R4b restaurant due, delivery flags and cash collection", () => {
     }
   });
 
+  it("reads the walk-in actor from walkInActorUid on a post-A2 #3 counter sale", () => {
+    // A2 #3 (preprod audit cycle 11): a walk-in no longer stamps the staff uid in
+    // `userId` (that field put other customers' orders into the staff member's
+    // own customer history). The actor now lives in the server-written
+    // `walkInActorUid`; the paid walk-in classification must follow it, and must
+    // still fail closed when neither identity is present.
+    for (const paymentMethod of ["upi", "razorpay"]) {
+      const walkin = order({
+        customerId: "cust_walkin",
+        userId: "cust_walkin",
+        walkInActorUid: "staff_1",
+        paymentStatus: "completed",
+        orderType: "takeaway",
+        paymentMethod,
+        pricing: { grandTotal: 10, gst: 0 },
+        items: [{ itemId: "l1", petpoojaItemId: "101", name: "Item", price: 10, quantity: 1 }],
+      });
+      expect(details(walkin).Order.details).toMatchObject({ order_type: "P", payment_type: "CARD", collect_cash: "0.00", total: "10.00" });
+      // A blank actor is not proof of anything: no payment type, no ticket.
+      expect(() => details({ ...walkin, walkInActorUid: "  " })).toThrow(/unverified payment type/);
+      expect(() => details({ ...walkin, walkInActorUid: undefined })).toThrow(/unverified payment type/);
+    }
+  });
+
   it("refuses unknown fulfillment or tender", () => {
     expect(() => details(order({ fulfillment: "unknown", paymentMethod: "cod" }))).toThrow(PetpoojaStructuralError);
     expect(() => details(order({ fulfillment: "takeaway", paymentMethod: "unknown" }))).toThrow(PetpoojaStructuralError);

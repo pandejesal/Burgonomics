@@ -12,7 +12,8 @@ import {
   settleRefundReviewAlert,
   planCancelRefundObligation,
 } from "../orders/cancelRefundObligation";
-import { hasServerPaymentChannel } from "../orders/paymentGate";
+import { hasServerPaymentChannel, requiresServerCaptureForKitchen } from "../orders/paymentGate";
+import { claimAdmissionNotice, isNotifiableCustomer, releaseAdmissionNotice } from "./admission";
 
 const REGION = "asia-south1";
 
@@ -52,9 +53,165 @@ function isRefundObligationSelfWrite(before: any, after: any): boolean {
   return sawSelfKey;
 }
 
+/** Kitchen admission, reusing the ONE predicate the rest of the system uses. */
+function kitchenAdmitted(order: any): boolean {
+  // `requiresServerCaptureForKitchen` names the LANE (an online order needs a
+  // capture; cash/walk-in do not). The capture marker is what then admits an
+  // online order — the same two-step `assertKitchenAdmissionPaid` performs.
+  return !requiresServerCaptureForKitchen(order) || hasServerPaymentChannel(order);
+}
+
+function orderLabelOf(order: any, orderId: string): string {
+  return order.shortCode || order.orderNumber || orderId.substring(0, 6).toUpperCase();
+}
+
+/**
+ * A2 #1 (preprod audit cycle 11): the ONLY place an order is announced — the
+ * kitchen chime and the customer's "Order Confirmed!" — behind the same
+ * admission predicate that gates the kitchen everywhere else, and behind an
+ * exactly-once receipt so a redelivered Firestore event (or a direct retry of
+ * the status handler) cannot double-chime.
+ *
+ * Called from two places:
+ *   - creation: a server cash order / walk-in counter sale is admitted at birth;
+ *     an online draft is NOT (it exists before Razorpay opens);
+ *   - status change: the moment a capture turns a draft into an admitted order.
+ */
+async function announceAdmittedOrder(
+  orderId: string,
+  order: any,
+  source: "create" | "capture"
+): Promise<void> {
+  if (!kitchenAdmitted(order)) return;
+
+  const branchId = order.branchId || order.store?.id;
+  if (!branchId) {
+    console.warn(`[onOrderAdmission] Order ${orderId} has no branchId`);
+    return;
+  }
+
+  // --- Kitchen acoustic KOT chime -------------------------------------------
+  if (await claimAdmissionNotice(orderId, "kitchen_kot", { branchId, source })) {
+    try {
+      const kotMessage = buildKotAlertMessage(branchId, {
+        id: orderId,
+        orderNumber: orderLabelOf(order, orderId),
+        fulfillmentType: order.fulfillment || order.fulfillmentType || "DELIVERY",
+        totalAmount: order.totals?.grandTotal || order.pricing?.grandTotal || order.total || 0,
+        tableNumber: order.tableNumber,
+      });
+
+      const sent = await sendFcmMessage(kotMessage, {
+        purpose: "operational",
+        actor: TRUSTED_SERVER_ACTOR,
+        critical: true,
+      });
+      if (sent) {
+        console.log(`[onOrderAdmission] Dispatched acoustic KOT alert to branch_${branchId}_orders`);
+      } else {
+        // Loop 5: kitchen got no acoustic alert — snapshot so ops can
+        // investigate / re-push; never pretend the chime went out.
+        await captureErrorSnapshot({
+          source: "notifications",
+          severity: "high",
+          message: `KOT push for order ${orderId} returned false (no transport or mock) — kitchen may be silent`,
+          orderId,
+          branchId,
+        });
+      }
+    } catch (err: any) {
+      // The chime did NOT go out: release the receipt so a retry is still owed.
+      await releaseAdmissionNotice(orderId, "kitchen_kot");
+      console.error("[onOrderAdmission] Failed to dispatch KOT notification:", err?.message || err);
+      await captureErrorSnapshot({
+        source: "notifications",
+        severity: "high",
+        message: `KOT push notification failed for order ${orderId} — kitchen may be blind`,
+        orderId,
+        branchId,
+        errorStack: err?.stack,
+      });
+    }
+  }
+
+  // --- Customer admission confirmation -------------------------------------
+  // Only the admission copy ("we have your order, track it live"). Every later
+  // status has its own dedicated push below, so a PREPARING bump must never be
+  // relabelled "Order Confirmed!".
+  const statusCode = String(
+    typeof order.status === "object" ? order.status?.code : order.status
+  ).toUpperCase();
+  if (statusCode !== "PLACED" && statusCode !== "CONFIRMED") return;
+
+  // B5-S1: only backend-backed copy leaves this path (eta/partner from the doc;
+  // veg/refund flags only when the doc actually carries them).
+  const customerId = order.customerId || order.userId || order.customer?.id;
+  // Walk-in counter sales have no customer account: `users/cust_walkin` is not a
+  // person, and the inbox row it produced was unreadable by anyone.
+  if (!isNotifiableCustomer(customerId)) return;
+
+  if (!(await claimAdmissionNotice(orderId, "customer_confirmed", { customerId }))) return;
+
+  try {
+    if (typeof db.collection === "function") {
+      const userDoc = await db.collection("users").doc(customerId).get();
+      const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
+      const confirmMessage = buildCustomerOrderUpdateMessage(
+        fcmTokens[0] || "",
+        {
+          id: orderId,
+          orderNumber: orderLabelOf(order, orderId),
+          fulfillmentType: order.fulfillment || order.fulfillmentType || "delivery",
+          storeName: order.store?.name || "Burgonomics",
+          etaMinutes: order.etaMinutes,
+          deliveryPartnerName: order.deliveryPartner?.name,
+          allVeg: order.allVeg === true ? true : undefined,
+          refundInitiated: order.refundStatus === "refunded" || order.refundStatus === "INITIATED" ? true : undefined,
+          paymentMethod: order.payment?.method,
+        },
+        statusCode || "PLACED"
+      );
+      // Zero tokens is not a reason to lose the message: the shared sender
+      // persists the inbox row first, then no transport call happens.
+      await sendMulticastFcm(
+        fcmTokens,
+        {
+          notification: confirmMessage.notification,
+          data: confirmMessage.data,
+          android: confirmMessage.android,
+          apns: confirmMessage.apns,
+        },
+        customerId,
+        { purpose: "orderUpdates", actor: TRUSTED_SERVER_ACTOR, critical: true }
+      );
+    }
+  } catch (err: any) {
+    // Give the claim back so a retry can deliver it WITHOUT re-ringing the
+    // kitchen (the kitchen receipt is a separate, already-claimed document).
+    await releaseAdmissionNotice(orderId, "customer_confirmed");
+    console.error("[onOrderAdmission] Failed to dispatch customer confirmation:", err?.message || err);
+    await captureErrorSnapshot({
+      source: "notifications",
+      severity: "medium",
+      message: `customer order-confirmation push failed for order ${orderId} — customer silent; check user fcmTokens then re-push from the order page`,
+      orderId,
+      branchId,
+      customerId,
+      errorStack: err?.stack,
+    });
+  }
+}
+
 /**
  * Trigger: Fires when an order is first created in Firestore.
- * Transmits acoustic KOT push notification to branch KDS / POS terminals.
+ *
+ * A2 #1 (preprod audit cycle 11): NOT every order is announced here. The online
+ * checkout draft is created before Razorpay opens, so chiming the kitchen and
+ * telling the customer "Order Confirmed!" for it fired the one signal that means
+ * "food is coming" on every abandoned payment. Admission is decided by
+ * `requiresServerCaptureForKitchen` (server cash marker or the walk-in counter
+ * stream); an online order is announced when its capture lands (see the
+ * status-change handler below).
  */
 export const onOrderCreatedNotificationTrigger = onDocumentCreated(
   {
@@ -69,101 +226,7 @@ export const onOrderCreatedNotificationTrigger = onDocumentCreated(
     const orderId = event.params.orderId;
     const branchId = order.branchId || order.store?.id;
 
-    if (!branchId) {
-      console.warn(`[onOrderCreatedTrigger] Order ${orderId} has no branchId`);
-      return;
-    }
-
-    try {
-      const kotMessage = buildKotAlertMessage(branchId, {
-        id: orderId,
-        orderNumber: order.shortCode || order.orderNumber || orderId.substring(0, 6).toUpperCase(),
-        fulfillmentType: order.fulfillment || order.fulfillmentType || "DELIVERY",
-        totalAmount: order.totals?.grandTotal || order.pricing?.grandTotal || order.total || 0,
-        tableNumber: order.tableNumber,
-      });
-
-      const sent = await sendFcmMessage(kotMessage, {
-        purpose: "operational",
-        actor: TRUSTED_SERVER_ACTOR,
-        critical: true,
-      });
-      if (sent) {
-        console.log(`[onOrderCreatedTrigger] Dispatched acoustic KOT alert to branch_${branchId}_orders`);
-      } else {
-        // Loop 5: kitchen got no acoustic alert — snapshot so ops can
-        // investigate / re-push; never pretend the chime went out.
-        await captureErrorSnapshot({
-          source: "notifications",
-          severity: "high",
-          message: `KOT push for order ${orderId} returned false (no transport or mock) — kitchen may be silent`,
-          orderId,
-          branchId,
-        });
-      }
-    } catch (err: any) {
-      // KDS-blind kitchen: snapshot LOUD with order+branch refs (was console-only).
-      console.error("[onOrderCreatedTrigger] Failed to dispatch KOT notification:", err?.message || err);
-      await captureErrorSnapshot({
-        source: "notifications",
-        severity: "high",
-        message: `KOT push notification failed for order ${orderId} — kitchen may be blind`,
-        orderId,
-        branchId,
-        errorStack: err?.stack,
-      });
-    }
-
-    // Customer order confirmation (PLACED) — previously only the kitchen was
-    // notified on create; customers heard nothing until the first status bump.
-    // B5-S1: only backend-backed copy leaves this trigger (eta/partner from
-    // the doc; veg/refund flags only when the doc actually carries them).
-    const customerId = order.customerId || order.userId || order.customer?.id;
-    try {
-      if (customerId && typeof db.collection === "function") {
-        const userDoc = await db.collection("users").doc(customerId).get();
-        const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
-        const confirmMessage = buildCustomerOrderUpdateMessage(
-          fcmTokens[0] || "",
-          {
-            id: orderId,
-            orderNumber: order.shortCode || order.orderNumber || orderId.substring(0, 6).toUpperCase(),
-            fulfillmentType: order.fulfillment || order.fulfillmentType || "delivery",
-            storeName: order.store?.name || "Burgonomics",
-            etaMinutes: order.etaMinutes,
-            deliveryPartnerName: order.deliveryPartner?.name,
-            allVeg: order.allVeg === true ? true : undefined,
-            refundInitiated: order.refundStatus === "refunded" || order.refundStatus === "INITIATED" ? true : undefined,
-            paymentMethod: order.payment?.method,
-          },
-          "PLACED"
-        );
-        // Zero tokens is not a reason to lose the message: the shared sender
-        // persists the inbox row first, then no transport call happens.
-        await sendMulticastFcm(
-          fcmTokens,
-          {
-            notification: confirmMessage.notification,
-            data: confirmMessage.data,
-            android: confirmMessage.android,
-            apns: confirmMessage.apns,
-          },
-          customerId,
-          { purpose: "orderUpdates", actor: TRUSTED_SERVER_ACTOR, critical: true }
-        );
-      }
-    } catch (err: any) {
-      console.error("[onOrderCreatedTrigger] Failed to dispatch customer confirmation:", err?.message || err);
-      await captureErrorSnapshot({
-        source: "notifications",
-        severity: "medium",
-        message: `customer order-confirmation push failed for order ${orderId} — customer silent, kitchen already notified; check user fcmTokens then re-push from the order page`,
-        orderId,
-        branchId,
-        customerId,
-        errorStack: err?.stack,
-      });
-    }
+    await announceAdmittedOrder(orderId, order, "create");
 
     // Owner decision 2026-11-20: a COD order the SERVER created goes to the
     // kitchen NOW. Strictly last and in its own try/catch, exactly like the
@@ -336,7 +399,20 @@ export async function handleOrderStatusChanged(
 
   const customerId = after.customerId || after.userId || after.customer?.id;
 
-  if (customerId) {
+  // A2 #1 (preprod audit cycle 11): the CAPTURE is the admission event for an
+  // online order. Before it, the document is a pre-payment draft and nobody was
+  // told about it (the creation trigger is gated on the same predicate); the
+  // moment the server marker lands, the kitchen is chimed and the customer gets
+  // the admission confirmation — exactly once, through the same claim receipt.
+  // The generic status push below is skipped for this ONE transition so a
+  // captured order is not confirmed twice.
+  const admitsNow = !kitchenAdmitted(before) && kitchenAdmitted(after);
+  if (admitsNow) {
+    await announceAdmittedOrder(orderId, after, "capture");
+    return;
+  }
+
+  if (isNotifiableCustomer(customerId)) {
 
     try {
       // Fetch customer FCM tokens if Firestore db is available

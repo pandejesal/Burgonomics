@@ -23,6 +23,8 @@ import {
   normalizeCoupon,
 } from "../coupons/couponAuthority";
 import { branchConfigFromDoc } from "./createCashOrder";
+import { planShortCodeReservation } from "./shortCode";
+import { whatsappConsentFields } from "../notifications/whatsappConsent";
 
 /**
  * Server-owned online order draft. The client sends only catalogue selections
@@ -334,6 +336,10 @@ export async function createOnlineDraft(actorUid: string, raw: unknown): Promise
         const couponSnap = await tx.get(db.collection("coupons").doc(couponCode));
         coupon = couponSnap.exists ? couponSnap.data() : null;
       }
+      // A2 #4: server-derived, uniquely reserved display code. Planned here (a
+      // read) and claimed with the order create below, because Firestore forbids
+      // a read after the first write.
+      const shortCodePlan = await planShortCodeReservation(tx, input.orderId, { branchId });
       const { packagingUsedFallback: _fallback, ...totals } = computeSnapshotPricing({
         items: lines,
         products,
@@ -380,7 +386,7 @@ export async function createOnlineDraft(actorUid: string, raw: unknown): Promise
       const timestamp = admin.firestore.FieldValue.serverTimestamp();
       const order: Record<string, any> = {
         id: input.orderId, orderId: input.orderId, customerId: actorUid, userId: actorUid,
-        branchId, storeId: input.storeId, shortCode: `BG-${input.orderId.slice(-6).toUpperCase()}`,
+        branchId, storeId: input.storeId, shortCode: shortCodePlan.code,
         orderType: input.orderType, fulfillment: input.orderType, fulfillmentType: input.orderType,
         store: {
           id: input.storeId,
@@ -403,7 +409,9 @@ export async function createOnlineDraft(actorUid: string, raw: unknown): Promise
         ...(input.notes ? { notes: input.notes } : {}),
         ...(input.fulfillmentInstructions ? { fulfillmentInstructions: input.fulfillmentInstructions } : {}),
         ...(input.tableNumber ? { tableNumber: input.tableNumber } : {}),
-        whatsappOptIn: input.whatsappOptIn !== false,
+        // Owner decision 2026-11-25 #3: OFF unless the customer explicitly said
+        // yes, with a server-stamped consent time. Never inferred from absence.
+        ...whatsappConsentFields(input.whatsappOptIn),
         ...(input.deliveryQuoteId ? { deliveryQuoteId: input.deliveryQuoteId } : {}),
         status: placed,
         paymentMethod: "online",
@@ -436,6 +444,7 @@ export async function createOnlineDraft(actorUid: string, raw: unknown): Promise
       order.onlineDraftReceipt = receipt;
 
       // All reads above are complete. Writes are committed atomically below.
+      shortCodePlan.reserve();
       if (input.deliveryQuoteId) {
         tx.set(db.collection(DELIVERY_FEE_QUOTES).doc(input.deliveryQuoteId), {
           usedByOrderId: input.orderId,

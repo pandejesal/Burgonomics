@@ -642,11 +642,21 @@ function resolveKotType(order: any): { orderType: "delivery" | "takeaway" | "din
   const raw = String(order?.fulfillmentType || order?.orderType || order?.fulfillment || "").trim().toLowerCase().replace(/[ -]/g, "_");
   const orderType = raw === "delivery" ? "delivery" : raw === "takeaway" || raw === "pickup" || raw === "pick_up" ? "takeaway" : raw === "dinein" || raw === "dine_in" ? "dinein" : null;
   const tender = String(order?.paymentMethod || order?.payment?.method || "").trim().toLowerCase();
-  // Rules reserve this sentinel for a scoped staff create, protect both ids
-  // and paymentStatus thereafter, and require the staff uid as userId.
+  // A2 #3 (preprod audit cycle 11): a counter sale is not a customer account.
+  // New walk-ins write `userId: "cust_walkin"` and record the booking staff uid
+  // in the dedicated server-owned `walkInActorUid`; an order created before that
+  // fix still carries the staff uid in `userId`. Both shapes are recognised, and
+  // a sentinel `userId` with no actor is still refused (fail closed).
+  const walkInActor =
+    typeof order?.walkInActorUid === "string" && order.walkInActorUid.trim()
+      ? order.walkInActorUid.trim()
+      : typeof order?.userId === "string" &&
+          order.userId.trim() &&
+          order.userId !== "cust_walkin"
+        ? order.userId.trim()
+        : "";
   const paidWalkIn = order?.customerId === "cust_walkin" &&
-    typeof order?.userId === "string" && order.userId.trim() !== "" &&
-    order.userId !== "cust_walkin" && order?.paymentStatus === "completed";
+    walkInActor !== "" && order?.paymentStatus === "completed";
   const paymentType = order?.paymentChannel === "razorpay" ? "ONLINE" : tender === "cod" || tender === "cash" ? "COD" : paidWalkIn && ["card", "upi", "razorpay"].includes(tender) ? "CARD" : null;
   const gaps: PetpoojaStructuralGap[] = [];
   if (!orderType) gaps.push({ field: "Order.details.order_type", reason: `unknown fulfillment type ${raw || "(missing)"}` });
